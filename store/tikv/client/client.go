@@ -230,9 +230,7 @@ type RPCClient struct {
 	security config.Security
 
 	idleNotify uint32
-	// recycleMu protect the conns from being modified during a connArray is taken out and used.
-	// That means recycleIdleConnArray() will wait until nobody doing sendBatchRequest()
-	recycleMu sync.RWMutex
+
 	// Periodically check whether there is any connection that is idle and then close and remove these connections.
 	// Implement background cleanup.
 	isClosed    bool
@@ -271,6 +269,12 @@ func (c *RPCClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg 
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// An idle connArray will not change to active again, this avoid the race condition
+	// that recycling idle connection close an active connection unexpectedly (idle -> active).
+	if array.batchConn != nil && array.isIdle() {
+		return nil, errors.Errorf("rpcClient is idle")
 	}
 	return array, nil
 }
@@ -349,15 +353,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}()
 
 	if atomic.CompareAndSwapUint32(&c.idleNotify, 1, 0) {
-		c.recycleMu.Lock()
-		c.recycleIdleConnArray()
-		c.recycleMu.Unlock()
+		go c.recycleIdleConnArray()
 	}
 
 	// TiDB will not send batch commands to TiFlash, to resolve the conflict with Batch Cop Request.
 	enableBatch := req.StoreTp != tikvrpc.TiDB && req.StoreTp != tikvrpc.TiFlash
-	c.recycleMu.RLock()
-	defer c.recycleMu.RUnlock()
 	connArray, err := c.getConnArray(addr, enableBatch)
 	if err != nil {
 		return nil, errors.Trace(err)
