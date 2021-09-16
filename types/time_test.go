@@ -1042,8 +1042,8 @@ func TestCompare(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestDurationClock(c *C) {
-	defer testleak.AfterTest(c)()
+func TestDurationClock(t *testing.T) {
+	t.Parallel()
 	// test hour, minute, second and micro second
 	tbl := []struct {
 		Input       string
@@ -1057,13 +1057,13 @@ func (s *testTimeSuite) TestDurationClock(c *C) {
 		{"2010-10-10 11:11:11.000011", 11, 11, 11, 11},
 	}
 
-	for _, t := range tbl {
-		d, err := types.ParseDuration(&stmtctx.StatementContext{TimeZone: time.UTC}, t.Input, types.MaxFsp)
-		c.Assert(err, IsNil)
-		c.Assert(d.Hour(), Equals, t.Hour)
-		c.Assert(d.Minute(), Equals, t.Minute)
-		c.Assert(d.Second(), Equals, t.Second)
-		c.Assert(d.MicroSecond(), Equals, t.MicroSecond)
+	for _, tt := range tbl {
+		d, err := types.ParseDuration(&stmtctx.StatementContext{TimeZone: time.UTC}, tt.Input, types.MaxFsp)
+		require.NoError(t, err)
+		require.Equal(t, tt.Hour, d.Hour())
+		require.Equal(t, tt.Minute, d.Minute())
+		require.Equal(t, tt.Second, d.Second())
+		require.Equal(t, tt.MicroSecond, d.MicroSecond())
 	}
 }
 
