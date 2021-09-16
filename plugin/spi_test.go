@@ -47,7 +47,7 @@ func TestExportManifest(t *testing.T) {
 	err := exported.OnInit(context.Background(), exported)
 	require.NoError(t, err)
 	audit := plugin.DeclareAuditManifest(exported)
-	audit.OnGeneralEvent(context.Background(), nil, plugin.Log, "QUERY")
+	audit.OnGeneralEvent(context.Background(), nil, plugin.Completed, "QUERY")
 	require.True(t, callRecorder.NotifyEventCalled)
 	require.True(t, callRecorder.OnInitCalled)
 }

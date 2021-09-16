@@ -1397,7 +1397,7 @@ func AllocHandle(ctx context.Context, sctx sessionctx.Context, t table.Table) (k
 
 func allocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table, n uint64) (int64, int64, error) {
 	meta := t.Meta()
-	base, maxID, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, meta.ID, n, 1, 1)
+	base, maxID, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1469,7 +1469,7 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 // RebaseAutoID implements table.Table RebaseAutoID interface.
 // Both auto-increment and auto-random can use this function to do rebase on explicit newBase value (without shadow bits).
 func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
-	return t.Allocators(ctx).Get(tp).Rebase(t.tableID, newBase, isSetStep)
+	return t.Allocators(ctx).Get(tp).Rebase(newBase, isSetStep)
 }
 
 // Type implements table.Table Type interface.
@@ -1643,7 +1643,7 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 			return err1
 		}
 		var base, end, round int64
-		base, end, round, err1 = sequenceAlloc.AllocSeqCache(t.tableID)
+		base, end, round, err1 = sequenceAlloc.AllocSeqCache()
 		if err1 != nil {
 			return err1
 		}
@@ -1719,7 +1719,7 @@ func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqN
 	if err != nil {
 		return 0, false, err
 	}
-	res, alreadySatisfied, err := sequenceAlloc.RebaseSeq(t.tableID, newVal)
+	res, alreadySatisfied, err := sequenceAlloc.RebaseSeq(newVal)
 	if err != nil {
 		return 0, false, err
 	}
