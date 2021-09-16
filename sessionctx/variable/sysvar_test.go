@@ -419,8 +419,21 @@ func TestTxnIsolation(t *testing.T) {
 	_, err = sv.Validate(vars, "read-uncommitted", ScopeSession)
 	require.Equal(t, "[variable:8048]The isolation level 'READ-UNCOMMITTED' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", err.Error())
 
-	vars.systems[TiDBSkipIsolationLevelCheck] = "ON"
+	// Enable global skip isolation check doesn't affect current session
+	require.Nil(t, GetSysVar(TiDBSkipIsolationLevelCheck).SetGlobalFromHook(vars, "ON", true))
+	_, err = sv.Validate(vars, "Serializable", ScopeSession)
+	require.Equal(t, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", err.Error())
 
+	// Enable session skip isolation check
+	require.Nil(t, GetSysVar(TiDBSkipIsolationLevelCheck).SetSessionFromHook(vars, "ON"))
+
+	val, err = sv.Validate(vars, "Serializable", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "SERIALIZABLE", val)
+
+	// Init TiDBSkipIsolationLevelCheck like what loadCommonGlobalVariables does
+	vars = NewSessionVars()
+	require.NoError(t, vars.SetSystemVarWithRelaxedValidation(TiDBSkipIsolationLevelCheck, "1"))
 	val, err = sv.Validate(vars, "Serializable", ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "SERIALIZABLE", val)
