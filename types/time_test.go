@@ -1988,7 +1988,8 @@ func TestGetTimezone(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestParseWithTimezone(c *C) {
+func TestParseWithTimezone(t *testing.T) {
+	t.Parallel()
 	getTZ := func(tzSign string, tzHour, tzMinue int) *time.Location {
 		offset := tzHour*60*60 + tzMinue*60
 		if tzSign == "-" {
@@ -2003,83 +2004,73 @@ func (s *testTimeSuite) TestParseWithTimezone(c *C) {
 	cases := []struct {
 		lit          string
 		fsp          int8
-		parseChecker Checker
 		gt           time.Time
 		sysTZ        *time.Location
 	}{
 		{
 			"2006-01-02T15:04:05Z",
 			0,
-			IsNil,
 			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("+", 0, 0)),
 			getTZ("+", 0, 0),
 		},
 		{
 			"2006-01-02T15:04:05Z",
 			0,
-			IsNil,
 			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("+", 0, 0)),
 			getTZ("+", 10, 0),
 		},
 		{
 			"2020-10-21T16:05:10.50Z",
 			2,
-			IsNil,
 			time.Date(2020, 10, 21, 16, 5, 10, 500*1000*1000, getTZ("+", 0, 0)),
 			getTZ("-", 10, 0),
 		},
 		{
 			"2020-10-21T16:05:10.50+08",
 			2,
-			IsNil,
 			time.Date(2020, 10, 21, 16, 5, 10, 500*1000*1000, getTZ("+", 8, 0)),
 			getTZ("-", 10, 0),
 		},
 		{
 			"2020-10-21T16:05:10.50-0700",
 			2,
-			IsNil,
 			time.Date(2020, 10, 21, 16, 5, 10, 500*1000*1000, getTZ("-", 7, 0)),
 			getTZ("-", 10, 0),
 		},
 		{
 			"2020-10-21T16:05:10.50+09:00",
 			2,
-			IsNil,
 			time.Date(2020, 10, 21, 16, 5, 10, 500*1000*1000, getTZ("+", 9, 0)),
 			getTZ("-", 10, 0),
 		},
 		{
 			"2006-01-02T15:04:05+09:00",
 			0,
-			IsNil,
 			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("+", 9, 0)),
 			getTZ("+", 8, 0),
 		},
 		{
 			"2006-01-02T15:04:05-02:00",
 			0,
-			IsNil,
 			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("-", 2, 0)),
 			getTZ("+", 3, 0),
 		},
 		{
 			"2006-01-02T15:04:05-14:00",
 			0,
-			IsNil,
 			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("-", 14, 0)),
 			getTZ("+", 14, 0),
 		},
 	}
 	for ith, ca := range cases {
-		t, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: ca.sysTZ}, ca.lit, mysql.TypeTimestamp, ca.fsp)
-		c.Assert(err, ca.parseChecker, Commentf("tidb time parse misbehaved on %d", ith))
+		v, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: ca.sysTZ}, ca.lit, mysql.TypeTimestamp, ca.fsp)
+		require.NoErrorf(t, err, "tidb time parse misbehaved on %d", ith)
 		if err != nil {
 			continue
 		}
-		t1, err := t.GoTime(ca.sysTZ)
-		c.Assert(err, IsNil, Commentf("tidb time convert failed on %d", ith))
-		c.Assert(t1.In(time.UTC), Equals, ca.gt.In(time.UTC), Commentf("parsed time mismatch on %dth case", ith))
+		t1, err := v.GoTime(ca.sysTZ)
+		require.NoErrorf(t, err, "tidb time convert failed on %d", ith)
+		require.Equalf(t, ca.gt.In(time.UTC), t1.In(time.UTC), "parsed time mismatch on %dth case", ith)
 	}
 }
 
