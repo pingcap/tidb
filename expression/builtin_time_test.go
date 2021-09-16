@@ -1865,7 +1865,7 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		c.Assert(f, NotNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(v.GetMysqlTime().String(), Equals, test.expect)
+		c.Assert(v.GetString(), Equals, test.expect)
 	}
 
 	args := types.MakeDatums(date[0], nil, "DAY")
@@ -1907,7 +1907,7 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		c.Assert(f, NotNil)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(v.GetMysqlTime().String(), Equals, test.expected)
+		c.Assert(v.GetString(), Equals, test.expected)
 	}
 
 	testYears := []struct {
@@ -1930,7 +1930,7 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		c.Assert(f, NotNil)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(v.GetMysqlTime().String(), Equals, test.expected)
+		c.Assert(v.GetString(), Equals, test.expected)
 	}
 
 	testOverflowYears := []struct {
