@@ -1959,7 +1959,8 @@ func TestFromGoTime(t *testing.T) {
 
 }
 
-func (s *testTimeSuite) TestGetTimezone(c *C) {
+func TestGetTimezone(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		input    string
 		idx      int
@@ -1983,7 +1984,7 @@ func (s *testTimeSuite) TestGetTimezone(c *C) {
 	}
 	for ith, ca := range cases {
 		idx, tzSign, tzHour, tzSep, tzMinute := types.GetTimezone(ca.input)
-		c.Assert([5]interface{}{idx, tzSign, tzHour, tzSep, tzMinute}, Equals, [5]interface{}{ca.idx, ca.tzSign, ca.tzHour, ca.tzSep, ca.tzMinute}, Commentf("idx %d", ith))
+		require.Equal(t, [5]interface{}{ca.idx, ca.tzSign, ca.tzHour, ca.tzSep, ca.tzMinute}, [5]interface{}{idx, tzSign, tzHour, tzSep, tzMinute}, "idx %d", ith)
 	}
 }
 
