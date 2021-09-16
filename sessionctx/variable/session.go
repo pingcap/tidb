@@ -947,6 +947,9 @@ type SessionVars struct {
 	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
 	MPPStoreFailTTL string
 
+	// ReadStaleness indicates the staleness duration for the following query
+	ReadStaleness time.Duration
+
 	// cached is used to optimze the object allocation.
 	cached struct {
 		curr int8
