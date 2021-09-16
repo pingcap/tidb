@@ -1842,7 +1842,8 @@ func TestTruncateFrac(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestTimeSub(c *C) {
+func TestTimeSub(t *testing.T) {
+	t.Parallel()
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -1856,15 +1857,15 @@ func (s *testTimeSuite) TestTimeSub(c *C) {
 	sc := &stmtctx.StatementContext{
 		TimeZone: time.UTC,
 	}
-	for _, t := range tbl {
-		v1, err := types.ParseTime(sc, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
-		v2, err := types.ParseTime(sc, t.Arg2, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
-		dur, err := types.ParseDuration(sc, t.Ret, types.MaxFsp)
-		c.Assert(err, IsNil)
+	for _, tt := range tbl {
+		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
+		v2, err := types.ParseTime(sc, tt.Arg2, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
+		dur, err := types.ParseDuration(sc, tt.Ret, types.MaxFsp)
+		require.NoError(t, err)
 		rec := v1.Sub(sc, &v2)
-		c.Assert(rec, Equals, dur)
+		require.Equal(t, dur, rec)
 	}
 }
 
