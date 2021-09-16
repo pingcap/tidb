@@ -747,6 +747,7 @@ func (s *testIntegrationSerialSuite) TestMPPShuffledJoin(c *C) {
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
 func (s *testIntegrationSerialSuite) TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
