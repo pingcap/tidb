@@ -68,6 +68,7 @@ func (s *testPartitionPruneSuit) TestHashPartitionPruner(c *C) {
 	tk.MustExec("create table t7(a int, b int) partition by hash(a + b) partitions 10;")
 	tk.MustExec("create table t8(a int, b int) partition by hash(a) partitions 6;")
 	tk.MustExec("create table t9(a bit(1) default null, b int(11) default null) partition by hash(a) partitions 3;") //issue #22619
+	tk.MustExec("create table t10(a bigint unsigned) partition BY hash (a);")
 
 	var input []string
 	var output []struct {
@@ -485,4 +486,15 @@ func (s *testPartitionPruneSuit) TestRangePartitionPredicatePruner(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func (s *testPartitionPruneSuit) TestIssue26551(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (`COL1` int, `COL3` bigint) PARTITION BY HASH ((`COL1` * `COL3`))PARTITIONS 13;")
+	tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE col3 =2659937067964964513 and col1 = 783367513002;").Check(testkit.Rows(
+		"TableDual 0.00 root  rows:0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT value is out of range in '(test.t.col1 * test.t.col3)'"))
 }
