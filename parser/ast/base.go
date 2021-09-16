@@ -17,7 +17,7 @@ import (
 	"github.com/pingcap/parser/types"
 )
 
-// node is the struct implements node interface except for Accept method.
+// node is the struct implements Node interface except for Accept method.
 // Node implementations should embed it in.
 type node struct {
 	text   string
