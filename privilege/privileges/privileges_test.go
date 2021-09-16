@@ -2493,8 +2493,8 @@ func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
 	tk.MustExec(`CREATE TABLE placement_rule_table_se (a int) PRIMARY_REGION="se"`)
 	tk.MustExec(`CREATE TABLE placement_rule_table_nl (a int) PRIMARY_REGION="nl"`)
 	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
-		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl        0 0 0",
-		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se        0 0 0"))
+		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl       0 0",
+		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se       0 0"))
 	tk.MustExec("CREATE USER placement_rule_user_schema")
 	tk.MustExec("CREATE USER placement_rule_user_table")
 	tk.MustExec("GRANT SELECT ON placement_rule_db.placement_rule_table_se TO placement_rule_user_table")
@@ -2509,7 +2509,7 @@ func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
 		Username: "placement_rule_user_table",
 		Hostname: "somehost",
 	}, nil, nil))
-	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows("<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se        0 0 0"))
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows("<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se       0 0"))
 
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "root",
@@ -2521,6 +2521,6 @@ func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
 		Hostname: "somehost",
 	}, nil, nil))
 	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
-		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl        0 0 0",
-		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se        0 0 0"))
+		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl       0 0",
+		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se       0 0"))
 }
