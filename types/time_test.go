@@ -1573,7 +1573,8 @@ func TestExtractDatetimeNum(t *testing.T) {
 	require.Equal(t, int64(0), res)
 }
 
-func (s *testTimeSuite) TestExtractDurationNum(c *C) {
+func TestExtractDurationNum(t *testing.T) {
+	t.Parallel()
 	type resultTbl struct {
 		unit   string
 		expect int64
@@ -1628,12 +1629,12 @@ func (s *testTimeSuite) TestExtractDurationNum(c *C) {
 		in := testcase.in
 		for _, col := range testcase.resTbls {
 			res, err := types.ExtractDurationNum(&in, col.unit)
-			c.Assert(err, IsNil)
-			c.Assert(res, Equals, col.expect)
+			require.NoError(t, err)
+			require.Equal(t, col.expect, res)
 		}
 		res, err := types.ExtractDurationNum(&in, "TEST_ERROR")
-		c.Assert(res, Equals, int64(0))
-		c.Assert(err, ErrorMatches, "invalid unit.*")
+		require.Equal(t, int64(0), res)
+		require.Regexp(t, "invalid unit.*", err)
 	}
 }
 
