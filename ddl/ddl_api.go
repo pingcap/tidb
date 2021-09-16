@@ -175,8 +175,6 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 				return ErrConflictingDeclarations.GenWithStackByArgs(toCharset, info.CharsetName)
 			}
 			toCollate = info.Name
-			// TODO: Add default and give error?
-			// TODO: Check for all PlacementOpts
 
 		}
 	}
@@ -186,7 +184,6 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		}
 	}
 
-	// TODO: Check if Placement Rules was set/changes? How to handle removal?
 	// Check if need to change charset/collation.
 	dbName := model.NewCIStr(stmt.Name)
 	is := d.GetInfoSchemaWithInterceptor(ctx)
