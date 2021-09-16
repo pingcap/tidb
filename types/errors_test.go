@@ -49,10 +49,11 @@ func TestError(t *testing.T) {
 		ErrWrongValue,
 	}
 
-	t.Run("ValidateErrorCodes", func(t *testing.T) {
-		for _, err := range kvErrs {
+	t.Parallel()
+	for _, err := range kvErrs {
+		t.Run("ValidateErrorCodes", func(t *testing.T) {
 			code := terror.ToSQLError(err).Code
-			require.Equal(t, uint16(err.Code()), code, fmt.Sprintf("err: %v", err))
-		}
-	})
+			require.Equal(t, code, uint16(err.Code()), fmt.Sprintf("err: %v", err))
+		})
+	}
 }
