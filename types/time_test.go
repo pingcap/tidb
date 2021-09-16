@@ -1695,7 +1695,8 @@ func TestParseDurationValue(t *testing.T) {
 
 }
 
-func (s *testTimeSuite) TestIsClockUnit(c *C) {
+func TestIsClockUnit(t *testing.T) {
+	t.Parallel()
 	tbl := []struct {
 		input    string
 		expected bool
@@ -1718,7 +1719,7 @@ func (s *testTimeSuite) TestIsClockUnit(c *C) {
 	}
 	for _, col := range tbl {
 		output := types.IsClockUnit(col.input)
-		c.Assert(output, Equals, col.expected)
+		require.Equal(t, col.expected, output)
 	}
 }
 
