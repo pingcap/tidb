@@ -1641,6 +1641,12 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty, cand
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
+	if candidate.isMatchProp {
+		// TableSample on partition table can't keep order.
+		if ds.tableInfo.GetPartitionInfo() != nil {
+			return invalidTask, nil
+		}
+	}
 	p := PhysicalTableSample{
 		TableSampleInfo: ds.SampleInfo,
 		TableInfo:       ds.table,
@@ -1975,11 +1981,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 	if !prop.IsEmpty() && !prop.CanAddEnforcer {
 		return invalidTask, 1, nil
 	}
-	if p.cte.cteTask != nil {
-		// Already built it.
-		return p.cte.cteTask, 1, nil
-	}
-
+	// The physical plan has been build when derive stats.
 	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
 	cst := p.cte.seedPartPhysicalPlan.Cost()
@@ -1987,13 +1989,9 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 		cst += p.cte.recursivePartPhysicalPlan.Cost()
 	}
 	t = &rootTask{pcte, cst, false}
-<<<<<<< HEAD
-	p.cte.cteTask = t
-=======
 	if prop.CanAddEnforcer {
 		t = enforceProperty(prop, t, p.basePlan.ctx)
 	}
->>>>>>> 57d704bff... planner: fix CTE bug when MergeJoin is used (#25514)
 	return t, 1, nil
 }
 

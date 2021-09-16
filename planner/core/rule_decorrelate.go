@@ -192,7 +192,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 					switch expr := aggFunc.Args[0].(type) {
 					case *expression.Column:
 						if idx := apply.schema.ColumnIndex(expr); idx != -1 {
-							desc, err := aggregation.NewAggFuncDesc(agg.ctx, agg.AggFuncs[i].Name, []expression.Expression{apply.schema.Columns[idx]}, false)
+							desc, err := aggregation.NewAggFuncDesc(agg.ctx, agg.AggFuncs[i].Name, []expression.Expression{apply.schema.Columns[idx]}, agg.AggFuncs[i].HasDistinct)
 							if err != nil {
 								return nil, err
 							}
