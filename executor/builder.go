@@ -1643,7 +1643,8 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 	// If the calculation row count for this Projection operator is smaller
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
-	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
+
+	if b.ctx.GetSessionVars().UseParallel || int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
 	return e
