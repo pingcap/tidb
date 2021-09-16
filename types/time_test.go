@@ -1738,22 +1738,23 @@ func TestIsDateFormat(t *testing.T) {
 	require.True(t, output)
 }
 
-func (s *testTimeSuite) TestParseTimeFromInt64(c *C) {
+func TestParseTimeFromInt64(t *testing.T) {
+	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 
 	input := int64(20190412140000)
 	output, err := types.ParseTimeFromInt64(sc, input)
-	c.Assert(err, IsNil)
-	c.Assert(output.Fsp(), Equals, types.DefaultFsp)
-	c.Assert(output.Type(), Equals, mysql.TypeDatetime)
-	c.Assert(output.Year(), Equals, 2019)
-	c.Assert(output.Month(), Equals, 04)
-	c.Assert(output.Day(), Equals, 12)
-	c.Assert(output.Hour(), Equals, 14)
-	c.Assert(output.Minute(), Equals, 00)
-	c.Assert(output.Second(), Equals, 00)
-	c.Assert(output.Microsecond(), Equals, 00)
+	require.NoError(t, err)
+	require.Equal(t, types.DefaultFsp, output.Fsp())
+	require.Equal(t, mysql.TypeDatetime, output.Type())
+	require.Equal(t, 2019, output.Year())
+	require.Equal(t, 04, output.Month())
+	require.Equal(t, 12, output.Day())
+	require.Equal(t, 14, output.Hour())
+	require.Equal(t, 00, output.Minute())
+	require.Equal(t, 00, output.Second())
+	require.Equal(t, 00, output.Microsecond())
 }
 
 func (s *testTimeSuite) TestGetFormatType(c *C) {
