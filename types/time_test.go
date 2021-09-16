@@ -1470,10 +1470,11 @@ func TestExtractDurationValue(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestCurrentTime(c *C) {
+func TestCurrentTime(t *testing.T) {
+	t.Parallel()
 	res := types.CurrentTime(mysql.TypeTimestamp)
-	c.Assert(res.Type(), Equals, mysql.TypeTimestamp)
-	c.Assert(res.Fsp(), Equals, int8(0))
+	require.Equal(t, mysql.TypeTimestamp, res.Type())
+	require.Equal(t, int8(0), res.Fsp())
 }
 
 func (s *testTimeSuite) TestInvalidZero(c *C) {
