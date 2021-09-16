@@ -1466,11 +1466,9 @@ var tablePlacementRulesCols = []columnInfo{
 	{name: "REGIONS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 	{name: "CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 	{name: "LEADER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "VOTER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 	{name: "FOLLOWER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 	{name: "LEARNER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 	{name: "SCHEDULE", tp: mysql.TypeVarchar, size: 20, flag: mysql.NotNullFlag}, // EVEN or MAJORITY_IN_PRIMARY
-	{name: "VOTERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 	{name: "FOLLOWERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 	{name: "LEARNERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 }

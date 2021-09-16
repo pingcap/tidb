@@ -235,14 +235,14 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	// test for normal cases
 	tk.MustExec("alter placement policy x REGIONS=\"bj,sh\"")
 	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x REGIONS=\"bj,sh\" SCHEDULED"))
-	tk.MustQuery("select * from information_schema.placement_rules where policy_name = 'x'").Check(testkit.Rows("1 def x <nil> <nil> <nil>  bj,sh       0 0 0"))
+	tk.MustQuery("select * from information_schema.placement_rules where policy_name = 'x'").Check(testkit.Rows("1 def x <nil> <nil> <nil>  bj,sh      0 0"))
 
 	tk.MustExec("alter placement policy x " +
 		"PRIMARY_REGION=\"bj\" " +
 		"REGIONS=\"sh\" " +
 		"SCHEDULE=\"EVEN\"")
 	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"sh\" SCHEDULE=\"EVEN\" SCHEDULED"))
-	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_RULES WHERE POLICY_NAME='x'").Check(testkit.Rows("1 def x <nil> <nil> <nil> bj sh      EVEN 0 0 0"))
+	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_RULES WHERE POLICY_NAME='x'").Check(testkit.Rows("1 def x <nil> <nil> <nil> bj sh     EVEN 0 0"))
 
 	tk.MustExec("alter placement policy x " +
 		"LEADER_CONSTRAINTS=\"[+region=us-east-1]\" " +
@@ -266,9 +266,9 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	)
 	tk.MustQuery("SELECT " +
 		"CATALOG_NAME,POLICY_NAME,SCHEMA_NAME,TABLE_NAME,PARTITION_NAME," +
-		"PRIMARY_REGION,REGIONS,CONSTRAINTS,LEADER_CONSTRAINTS,VOTER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,LEARNER_CONSTRAINTS," +
-		"SCHEDULE,VOTERS,FOLLOWERS,LEARNERS FROM INFORMATION_SCHEMA.placement_rules WHERE POLICY_NAME='x'").Check(
-		testkit.Rows("def x <nil> <nil> <nil>   [+disk=ssd]  [+region=bj]  [+region=sh]  5 0 3"),
+		"PRIMARY_REGION,REGIONS,CONSTRAINTS,LEADER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,LEARNER_CONSTRAINTS," +
+		"SCHEDULE,FOLLOWERS,LEARNERS FROM INFORMATION_SCHEMA.placement_rules WHERE POLICY_NAME='x'").Check(
+		testkit.Rows("def x <nil> <nil> <nil>   [+disk=ssd]   [+region=sh]  0 3"),
 	)
 
 	// test alter not exist policies
@@ -318,7 +318,7 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		c.Assert(policySetting.Schedule, Equals, "")
 	}
 	checkFunc(tbl.Meta().DirectPlacementOpts)
-	tk.MustQuery("SELECT * FROM information_schema.placement_rules WHERE TABLE_NAME = 't'").Check(testkit.Rows("<nil> def <nil> test t <nil> cn-east-1 cn-east-1, cn-east-2 [+disk=ssd]   [+zone=cn-east-1]   0 2 0"))
+	tk.MustQuery("SELECT * FROM information_schema.placement_rules WHERE TABLE_NAME = 't'").Check(testkit.Rows("<nil> def <nil> test t <nil> cn-east-1 cn-east-1, cn-east-2 [+disk=ssd]  [+zone=cn-east-1]   2 0"))
 	tk.MustExec("drop table if exists t")
 
 	// Direct placement option and placement policy can't co-exist.
@@ -378,7 +378,6 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
 		c.Assert(policySetting.Followers, Equals, uint64(2))
 		c.Assert(policySetting.FollowerConstraints, Equals, "[+zone=cn-east-1]")
-		c.Assert(policySetting.Voters, Equals, uint64(0))
 		c.Assert(policySetting.VoterConstraints, Equals, "")
 		c.Assert(policySetting.Learners, Equals, uint64(0))
 		c.Assert(policySetting.LearnerConstraints, Equals, "")
@@ -386,7 +385,7 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		c.Assert(policySetting.Schedule, Equals, "")
 	}
 	checkFunc(tbl.Meta().DirectPlacementOpts)
-	tk.MustQuery("SELECT * FROM information_schema.placement_rules WHERE TABLE_NAME = 't'").Check(testkit.Rows("<nil> def <nil> test t <nil> cn-east-1 cn-east-1, cn-east-2 [+disk=ssd]   [+zone=cn-east-1]   0 2 0"))
+	tk.MustQuery("SELECT * FROM information_schema.placement_rules WHERE TABLE_NAME = 't'").Check(testkit.Rows("<nil> def <nil> test t <nil> cn-east-1 cn-east-1, cn-east-2 [+disk=ssd]  [+zone=cn-east-1]   2 0"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop placement policy if exists x")
 }

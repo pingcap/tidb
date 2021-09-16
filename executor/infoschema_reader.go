@@ -2830,11 +2830,8 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 	// Get global PLACEMENT POLICIES
 	// Currently no privileges needed for seeing global PLACEMENT POLICIES!
 	for _, policy := range is.AllPlacementPolicies() {
-		// Did we say that we would skip syntactic sugar?
-		// I proposed it to be transformed, xhebox proposed to keep it :)
-		// How about to do both, then one can see if syntactic sugar was used?
-
-		// TODO: if PrimaryRegion or Regions are set,
+		// Currently we skip converting syntactic sugar. We might revisit this decision still in the future
+		// I.e.: if PrimaryRegion or Regions are set,
 		// also convert them to LeaderConstraints and FollowerConstraints
 		// for better user experience searching for particular constraints
 
@@ -2849,11 +2846,9 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 			policy.PlacementSettings.Regions,
 			policy.PlacementSettings.Constraints,
 			policy.PlacementSettings.LeaderConstraints,
-			policy.PlacementSettings.VoterConstraints,
 			policy.PlacementSettings.FollowerConstraints,
 			policy.PlacementSettings.LearnerConstraints,
 			policy.PlacementSettings.Schedule,
-			policy.PlacementSettings.Voters,
 			policy.PlacementSettings.Followers,
 			policy.PlacementSettings.Learners,
 		)
@@ -2870,38 +2865,11 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 			}
 			// TODO: Filter on table, to avoid iterating over every table if SELECT * FROM placment_rules WHERE TABLE_NAME IN ('t1', 't2')
 			// Any privilege on the schema or a table within the schema should allow showing the direct placement rules for that schema (on schema level)
-			// TODO: add test for privileges per table
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			anyTablePriv = true
 			// TODO: get DIRECT PLACEMENT from partitions
-			/* if table.GetPartitionInfo() != nil {
-				for _, pi := range table.GetPartitionInfo().Definitions {
-					if pi.DirectPlacementOpts != nil {
-						record := types.MakeDatums(
-							nil,                   // PLACEMENT POLICY ID, null since direct placement
-							infoschema.CatalogVal, // CATALOG
-							nil,                   // PLACEMENT POLICY, null since direct placement
-							schema.Name.O,         // SCHEMA
-							table.Name.O,          // TABLE
-							pi.Name.O,             // PARTITION
-							pi.DirectPlacementOpts.PrimaryRegion,
-							pi.DirectPlacementOpts.Regions,
-							pi.DirectPlacementOpts.Constraints,
-							pi.DirectPlacementOpts.LeaderConstraints,
-							pi.DirectPlacementOpts.VoterConstraints,
-							pi.DirectPlacementOpts.FollowerConstraints,
-							pi.DirectPlacementOpts.LearnerConstraints,
-							pi.DirectPlacementOpts.Schedule,
-							pi.DirectPlacementOpts.Voters,
-							pi.DirectPlacementOpts.Followers,
-							pi.DirectPlacementOpts.Learners,
-						)
-						rows = append(rows, record)
-					}
-				}
-			} */
 			if table.DirectPlacementOpts == nil {
 				continue
 			}
@@ -2916,11 +2884,9 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 				table.DirectPlacementOpts.Regions,
 				table.DirectPlacementOpts.Constraints,
 				table.DirectPlacementOpts.LeaderConstraints,
-				table.DirectPlacementOpts.VoterConstraints,
 				table.DirectPlacementOpts.FollowerConstraints,
 				table.DirectPlacementOpts.LearnerConstraints,
 				table.DirectPlacementOpts.Schedule,
-				table.DirectPlacementOpts.Voters,
 				table.DirectPlacementOpts.Followers,
 				table.DirectPlacementOpts.Learners,
 			)
@@ -2932,29 +2898,6 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 			continue
 		}
 		// TODO: get DIRECT PLACEMENT from schema
-		/* if schema.DirectPlacementOpts != nil {
-			record := types.MakeDatums(
-				nil,                   // PLACEMENT POLICY ID, null since direct placement
-				infoschema.CatalogVal, // CATALOG
-				nil,                   // PLACEMENT POLICY, null since direct placement
-				schema.Name.O,         // SCHEMA
-				nil,                   // TABLE
-				nil,                   // PARTITION
-				schema.DirectPlacementOpts.PrimaryRegion,
-				schema.DirectPlacementOpts.Regions,
-				schema.DirectPlacementOpts.Constraints,
-				schema.DirectPlacementOpts.LeaderConstraints,
-				schema.DirectPlacementOpts.VoterConstraints,
-				schema.DirectPlacementOpts.FollowerConstraints,
-				schema.DirectPlacementOpts.LearnerConstraints,
-				schema.DirectPlacementOpts.Schedule,
-				schema.DirectPlacementOpts.Voters,
-				schema.DirectPlacementOpts.Followers,
-				schema.DirectPlacementOpts.Learners,
-			)
-			rows = append(rows, record)
-
-		} */
 	}
 
 	e.rows = rows
