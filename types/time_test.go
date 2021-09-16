@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1790,10 +1789,10 @@ func (s *testTimeSuite) TestgetFracIndex(c *C) {
 	}
 }
 
-func (s *testTimeSuite) TestTimeOverflow(c *C) {
+func TestTimeOverflow(t *testing.T) {
+	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Output bool
@@ -1816,11 +1815,11 @@ func (s *testTimeSuite) TestTimeOverflow(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDatetime(sc, test.Input)
-		c.Assert(err, IsNil)
-		isOverflow, err := types.DateTimeIsOverflow(sc, t)
-		c.Assert(err, IsNil)
-		c.Assert(isOverflow, Equals, test.Output)
+		v, err := types.ParseDatetime(sc, test.Input)
+		require.NoError(t, err)
+		isOverflow, err := types.DateTimeIsOverflow(sc, v)
+		require.NoError(t, err)
+		require.Equal(t, test.Output, isOverflow)
 	}
 }
 
