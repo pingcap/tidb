@@ -15,7 +15,6 @@
 package types
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/parser/terror"
@@ -23,6 +22,8 @@ import (
 )
 
 func TestError(t *testing.T) {
+	t.Parallel()
+
 	kvErrs := []*terror.Error{
 		ErrInvalidDefault,
 		ErrDataTooLong,
@@ -49,11 +50,8 @@ func TestError(t *testing.T) {
 		ErrWrongValue,
 	}
 
-	t.Parallel()
 	for _, err := range kvErrs {
-		t.Run("ValidateErrorCodes", func(t *testing.T) {
-			code := terror.ToSQLError(err).Code
-			require.Equal(t, code, uint16(err.Code()), fmt.Sprintf("err: %v", err))
-		})
+		code := terror.ToSQLError(err).Code
+		require.Equalf(t, code, uint16(err.Code()), "err: %v", err)
 	}
 }
