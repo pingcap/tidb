@@ -66,8 +66,6 @@ func TestMemTracker4UpdateExec(t *testing.T) {
 }
 
 func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
-	t.Skip("This test has been broken for a long time. See also #28101.")
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -81,7 +79,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	log.SetLevel(zap.InfoLevel)
 	oom.tracker = ""
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "", oom.tracker)
+	require.Equal(t, "schemaLeaseChecker is not set for this transaction", oom.tracker)
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "expensive_query during bootstrap phase", oom.tracker)
@@ -131,8 +129,6 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 }
 
 func TestMemTracker4DeleteExec(t *testing.T) {
-	t.Skip("This test has been broken for a long time. See also #28101.")
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -164,7 +160,7 @@ func TestMemTracker4DeleteExec(t *testing.T) {
 	oom.tracker = ""
 	tk.Session().GetSessionVars().MemQuotaQuery = 10000
 	tk.MustExec("delete MemTracker4DeleteExec1, MemTracker4DeleteExec2 from MemTracker4DeleteExec1 join MemTracker4DeleteExec2 on MemTracker4DeleteExec1.a=MemTracker4DeleteExec2.a")
-	require.Equal(t, "expensive_query during bootstrap phase", oom.tracker)
+	require.Equal(t, "memory exceeds quota, rateLimitAction delegate to fallback action", oom.tracker)
 }
 
 var oom *oomCapture
@@ -184,7 +180,7 @@ type oomCapture struct {
 }
 
 func (h *oomCapture) Write(entry zapcore.Entry, fields []zapcore.Field) error {
-	if strings.Contains(entry.Message, "memory exceeds quota") {
+	if entry.Message == "memory exceeds quota" {
 		err, _ := fields[0].Interface.(error)
 		str := err.Error()
 		begin := strings.Index(str, "8001]")
