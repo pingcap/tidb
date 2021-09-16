@@ -111,6 +111,10 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 			-- -coverpkg=./... \
 			|| { $(FAILPOINT_DISABLE); exit 1; }
 else
+# grep regex: Filter out all tidb logs starting with:
+# - '[20' (like [2021/09/15 ...] [INFO]..)
+# - 'PASS:' to ignore passed tests
+# - 'ok ' to ignore passed directories
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
