@@ -435,6 +435,8 @@ type cteInfo struct {
 	limitLP       LogicalPlan
 	// seedStat is shared between logicalCTE and logicalCTETable.
 	seedStat *property.StatsInfo
+	// The LogicalCTEs that reference the same table should share the same CteClass.
+	cteClass *CTEClass
 }
 
 // PlanBuilder builds Plan from an ast.Node.
