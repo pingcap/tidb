@@ -1487,18 +1487,19 @@ func TestInvalidZero(t *testing.T) {
 	require.False(t, in.InvalidZero())
 }
 
-func (s *testTimeSuite) TestGetFsp(c *C) {
+func TestGetFsp(t *testing.T) {
+	t.Parallel()
 	res := types.GetFsp("2019:04:12 14:00:00.123456")
-	c.Assert(res, Equals, int8(6))
+	require.Equal(t, int8(6), res)
 
 	res = types.GetFsp("2019:04:12 14:00:00.1234567890")
-	c.Assert(res, Equals, int8(6))
+	require.Equal(t, int8(6), res)
 
 	res = types.GetFsp("2019:04:12 14:00:00.1")
-	c.Assert(res, Equals, int8(1))
+	require.Equal(t, int8(1), res)
 
 	res = types.GetFsp("2019:04:12 14:00:00")
-	c.Assert(res, Equals, int8(0))
+	require.Equal(t, int8(0), res)
 }
 
 func (s *testTimeSuite) TestExtractDatetimeNum(c *C) {
