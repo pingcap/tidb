@@ -1185,6 +1185,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		cc.ctx.SetCommandValue(cmd)
 	}
 	cc.loadCharsetResults(ctx, vars)
+	defer cc.textDumper.Clean()
 
 	dataStr := string(hack.String(data))
 	switch cmd {

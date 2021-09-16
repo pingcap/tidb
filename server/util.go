@@ -51,6 +51,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 func parseNullTermString(b []byte) (str []byte, remain []byte) {
@@ -285,6 +287,11 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 type textDumper struct {
 	encoding charset.Encoding
 	isBinary bool
+	buffer []byte
+}
+
+func (d *textDumper) Clean() {
+	d.buffer = nil
 }
 
 func (d *textDumper) encode(src []byte) []byte {
@@ -294,11 +301,14 @@ func (d *textDumper) encode(src []byte) []byte {
 		}
 		return src
 	}
-	result, _ := d.encoding.Encode(src)
+	result, err := d.encoding.Encode(d.buffer, src)
+	if err != nil {
+		logutil.BgLogger().Debug("encode error", zap.Error(err))
+	}
 	if d.isBinary {
 		return []byte(fmt.Sprintf("0x%X", result))
 	}
-	return hack.Slice(result)
+	return result
 }
 
 func (d *textDumper) dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
