@@ -412,6 +412,9 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 }
 
 func (s *session) UpdateColStatsUsage(colStatsUsage map[model.TableColumnID]time.Time) {
+	if s.statsCollector == nil {
+		return
+	}
 	s.statsCollector.UpdateColStatsUsage(colStatsUsage)
 }
 

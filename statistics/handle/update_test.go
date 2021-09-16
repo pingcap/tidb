@@ -2329,3 +2329,32 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeRatio(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
 }
+
+func (s *testSerialStatsSuite) TestCollectColumnStatsUsage(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	h := s.do.StatsHandle()
+
+	// TODO: make the view builtin
+	tk.MustExec(`CREATE VIEW column_stats_usage_info
+AS
+  SELECT c.table_schema     AS table_schema,
+         c.table_name       AS table_name,
+         c.column_name      AS column_name,
+         u.last_used_at     AS last_used_at,
+         u.last_analyzed_at AS last_analyzed_at
+  FROM   information_schema.columns AS c
+         JOIN information_schema.tables AS t
+           ON c.table_schema = t.table_schema
+              AND c.table_name = t.table_name
+         JOIN mysql.column_stats_usage AS u
+           ON u.table_id = t.tidb_table_id
+              AND u.column_id = c.ordinal_position`)
+
+	tk.MustExec("create table t1 (a int primary key, b int, c int)")
+	tk.MustExec("insert into t values (1,2,3), (4,5,6), (7,8,9)")
+	tk.MustExec("select * fromm t1 where a > 2")
+
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	tk.MustQuery("select column_name from column_stats_usage_info where table_schema = 'test' and table_name = 't1'").Sort().Check(testkit.Rows("a"))
+}

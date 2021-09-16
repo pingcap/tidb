@@ -109,7 +109,8 @@ type HistColl struct {
 	Pseudo         bool
 
 	// UniqueID2TblColID maps expression.Column.UniqueID to (TableID, ColumnID). It's used to track which statistics.Column
-	// is used or needed when using UniqueID to look up HistColl.Columns.
+	// is used(needed) when using UniqueID to look up HistColl.Columns. UniqueID2TblColID is nil if HistColl.Columns use
+	// expression.Column.ID as key.
 	UniqueID2TblColID map[int64]model.TableColumnID
 }
 
@@ -405,21 +406,23 @@ func GetOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.
 func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 	cols := make(map[int64]*Column)
+	uniqueID2TblColID := make(map[int64]model.TableColumnID, len(columns))
 	for _, col := range columns {
 		colHist, ok := coll.Columns[col.ID]
 		if ok {
 			cols[col.UniqueID] = colHist
 		}
+		uniqueID2TblColID[col.UniqueID] = model.TableColumnID{TableID: coll.PhysicalID, ColumnID: col.ID}
 	}
 	newColl := &HistColl{
-		PhysicalID:     coll.PhysicalID,
-		HavePhysicalID: coll.HavePhysicalID,
-		Pseudo:         coll.Pseudo,
-		Count:          coll.Count,
-		ModifyCount:    coll.ModifyCount,
-		Columns:        cols,
+		PhysicalID:        coll.PhysicalID,
+		HavePhysicalID:    coll.HavePhysicalID,
+		Pseudo:            coll.Pseudo,
+		Count:             coll.Count,
+		ModifyCount:       coll.ModifyCount,
+		Columns:           cols,
+		UniqueID2TblColID: uniqueID2TblColID,
 	}
-	// TODO: do we need to set UniqueID2TblColID?
 	return newColl
 }
 
@@ -953,12 +956,15 @@ func (coll *HistColl) GetIndexAvgRowSize(ctx sessionctx.Context, cols []*express
 // GetValidColumn returns the column stats if it exists and is valid. Otherwise it returns nil.
 // Also, it tracks the used(needed) column stats in sc.ColStatsUsage.
 func (coll *HistColl) GetValidColumn(sc *stmtctx.StatementContext, colID int64, collPseudo bool) *Column {
+	// track the column stats usage
 	if coll.UniqueID2TblColID != nil {
 		if tblColID, ok := coll.UniqueID2TblColID[colID]; ok {
-			// track the column stats usage
-			// TODO: check the assumption that all the column stats usage is accessed by UniqueID
 			sc.ColStatsUsage[tblColID] = time.Now()
 		}
+	} else {
+		// TODO: check whether coll.PhysicalID is always valid
+		tblColID := model.TableColumnID{TableID: coll.PhysicalID, ColumnID: colID}
+		sc.ColStatsUsage[tblColID] = time.Now()
 	}
 	if c, ok := coll.Columns[colID]; ok && !c.IsInvalid(sc, collPseudo) {
 		return c
