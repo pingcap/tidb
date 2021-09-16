@@ -1774,7 +1774,8 @@ func TestGetFormatType(t *testing.T) {
 	require.False(t, isDate)
 }
 
-func (s *testTimeSuite) TestgetFracIndex(c *C) {
+func TestGetFracIndex(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		str         string
 		expectIndex int
@@ -1785,7 +1786,7 @@ func (s *testTimeSuite) TestgetFracIndex(c *C) {
 	}
 	for _, testCase := range testCases {
 		index := types.GetFracIndex(testCase.str)
-		c.Assert(index, Equals, testCase.expectIndex)
+		require.Equal(t, testCase.expectIndex, index)
 	}
 }
 
