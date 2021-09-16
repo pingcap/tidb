@@ -992,9 +992,9 @@ func TestConvert(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestCompare(c *C) {
+func TestCompare(t *testing.T) {
+	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -1007,20 +1007,20 @@ func (s *testTimeSuite) TestCompare(c *C) {
 		{"0000-00-00 00:00:00", "0000-00-00 00:00:00", 0},
 	}
 
-	for _, t := range tbl {
-		v1, err := types.ParseTime(sc, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
+	for _, tt := range tbl {
+		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
 
-		ret, err := v1.CompareString(nil, t.Arg2)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, t.Ret)
+		ret, err := v1.CompareString(nil, tt.Arg2)
+		require.NoError(t, err)
+		require.Equal(t, tt.Ret, ret)
 	}
 
 	v1, err := types.ParseTime(sc, "2011-10-10 11:11:11", mysql.TypeDatetime, types.MaxFsp)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	res, err := v1.CompareString(nil, "Test should error")
-	c.Assert(err, NotNil)
-	c.Assert(res, Equals, 0)
+	require.Error(t, err)
+	require.Equal(t, 0, res)
 
 	tbl = []struct {
 		Arg1 string
@@ -1032,13 +1032,13 @@ func (s *testTimeSuite) TestCompare(c *C) {
 		{"11:11:11", "11:11:11.123", -1},
 	}
 
-	for _, t := range tbl {
-		v1, err := types.ParseDuration(nil, t.Arg1, types.MaxFsp)
-		c.Assert(err, IsNil)
+	for _, tt := range tbl {
+		v1, err := types.ParseDuration(nil, tt.Arg1, types.MaxFsp)
+		require.NoError(t, err)
 
-		ret, err := v1.CompareString(nil, t.Arg2)
-		c.Assert(err, IsNil)
-		c.Assert(ret, Equals, t.Ret)
+		ret, err := v1.CompareString(nil, tt.Arg2)
+		require.NoError(t, err)
+		require.Equal(t, tt.Ret, ret)
 	}
 }
 
