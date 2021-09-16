@@ -93,10 +93,11 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 	fakeRowInsertion := mutation{key: []byte{1, 1}, value: []byte{1, 1, 1}}
 
 	type caseData struct {
-		columnMap    map[int64]*model.ColumnInfo
-		rowToInsert  []types.Datum
-		rowInsertion mutation
-		correct      bool
+		columnIDToInfo      map[int64]*model.ColumnInfo
+		columnIDToFieldType map[int64]*types.FieldType
+		rowToInsert         []types.Datum
+		rowInsertion        mutation
+		correct             bool
 	}
 
 	testData := []caseData{
@@ -107,6 +108,9 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 					Offset:    0,
 					FieldType: *types.NewFieldType(mysql.TypeShort),
 				},
+			},
+			map[int64]*types.FieldType{
+				101: types.NewFieldType(mysql.TypeShort),
 			},
 			[]types.Datum{types.NewIntDatum(233)},
 			mutation{key: mockRowKey233, value: mockValue233},
@@ -120,12 +124,16 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 					FieldType: *types.NewFieldType(mysql.TypeShort),
 				},
 			},
+			map[int64]*types.FieldType{
+				101: types.NewFieldType(mysql.TypeShort),
+			},
 			[]types.Datum{types.NewIntDatum(1)},
 			fakeRowInsertion,
 			false,
 		},
 		{ // no input row
 			map[int64]*model.ColumnInfo{},
+			map[int64]*types.FieldType{},
 			nil,
 			fakeRowInsertion,
 			true,
@@ -138,6 +146,9 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 					FieldType: *types.NewFieldType(mysql.TypeShort),
 				},
 			},
+			map[int64]*types.FieldType{
+				101: types.NewFieldType(mysql.TypeShort),
+			},
 			[]types.Datum{types.NewIntDatum(233)},
 			mutation{key: mockRowKey233, value: []byte{0, 1, 2, 3}},
 			false,
@@ -145,7 +156,7 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 	}
 
 	for caseID, data := range testData {
-		err := checkRowInsertionConsistency(sessVars, data.columnMap, data.rowToInsert, data.rowInsertion)
+		err := checkRowInsertionConsistency(sessVars, data.rowToInsert, data.rowInsertion, data.columnIDToInfo, data.columnIDToFieldType)
 		require.Equal(t, data.correct, err == nil, "case id = %v", caseID)
 	}
 }

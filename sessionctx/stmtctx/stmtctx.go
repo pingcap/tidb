@@ -187,8 +187,9 @@ type StatementContext struct {
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
 
-	// columnMap maps tableID -> ColID -> ColumnInfo. It saves redundant computations when checking data consistency.
-	ColumnMap map[int64]map[int64]*model.ColumnInfo
+	// TableToColumnMaps is a map from tableID to a series of maps. The maps are needed when checking data consistency.
+	// Save them here to reduce redundant computations.
+	TableToColumnMaps map[int64]interface{}
 }
 
 // StmtHints are SessionVars related sql hints.

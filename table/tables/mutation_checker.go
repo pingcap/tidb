@@ -36,9 +36,11 @@ type mutation struct {
 	value []byte
 }
 
-type indexHelperInfo struct {
-	indexInfo   *model.IndexInfo
-	rowColInfos []rowcodec.ColInfo
+type columnMaps struct {
+	ColumnIDToInfo       map[int64]*model.ColumnInfo
+	ColumnIDToFieldType  map[int64]*types.FieldType
+	IndexIDToInfo        map[int64]*model.IndexInfo
+	IndexIDToRowColInfos map[int64][]rowcodec.ColInfo
 }
 
 // CheckIndexConsistency checks whether the given set of mutations corresponding to a single row is consistent.
@@ -74,48 +76,23 @@ func CheckIndexConsistency(sessVars *variable.SessionVars, t *TableCommon,
 		return errors.Trace(err)
 	}
 
+	columnMaps := getOrBuildColumnMaps(sessVars.StmtCtx, t)
+
 	if rowToInsert != nil {
-		if err := checkRowInsertionConsistency(sessVars, getOrBuildColumnMap(sessVars.StmtCtx, t), rowToInsert, rowInsertion); err != nil {
+		if err := checkRowInsertionConsistency(sessVars, rowToInsert, rowInsertion, columnMaps.ColumnIDToInfo, columnMaps.ColumnIDToFieldType); err != nil {
 			return errors.Trace(err)
 		}
 	}
-	if err := checkIndexKeys(sc, sessVars, t, rowToInsert, rowToRemove, indexMutations); err != nil {
+	if err := checkIndexKeys(sc, sessVars, t, rowToInsert, rowToRemove, indexMutations, columnMaps.IndexIDToInfo, columnMaps.IndexIDToRowColInfos); err != nil {
 		return errors.Trace(err)
 	}
 	// TODO: check whether handles match in index and row mutations
 	return nil
 }
 
-// getOrBuildColumnMap tries to get the column map from stmt ctx. If there isn't one, it builds one and stores it.
-// It saves redundant computations of the map.
-func getOrBuildColumnMap(sc *stmtctx.StatementContext, t *TableCommon) map[int64]*model.ColumnInfo {
-	if sc.ColumnMap == nil {
-		sc.ColumnMap = make(map[int64]map[int64]*model.ColumnInfo)
-	}
-	columnMap, ok := sc.ColumnMap[t.tableID]
-	if !ok {
-		columnMap = make(map[int64]*model.ColumnInfo)
-		for _, col := range t.Meta().Columns {
-			columnMap[col.ID] = col
-		}
-		sc.ColumnMap[t.tableID] = columnMap
-	}
-	return columnMap
-}
-
 // checkIndexKeys checks whether the decoded data from keys of index mutations are consistent with the expected ones.
-func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon,
-	rowToInsert, rowToRemove []types.Datum, indexMutations []mutation) error {
-	indexIDMap := make(map[int64]indexHelperInfo)
-	for _, index := range t.indices {
-		if index.Meta().Primary && t.meta.IsCommonHandle {
-			continue
-		}
-		indexIDMap[index.Meta().ID] = indexHelperInfo{
-			index.Meta(),
-			BuildRowcodecColInfoForIndexColumns(index.Meta(), t.Meta()),
-		}
-	}
+func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon, rowToInsert, rowToRemove []types.Datum,
+	indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo, indexIDToRowColInfos map[int64][]rowcodec.ColInfo) error {
 
 	var indexData []types.Datum
 	for _, m := range indexMutations {
@@ -125,18 +102,22 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 			return errors.Trace(err)
 		}
 
-		indexHelperInfo, ok := indexIDMap[indexID]
+		indexInfo, ok := indexIDToInfo[indexID]
+		if !ok {
+			return errors.New("index not found")
+		}
+		rowColInfos, ok := indexIDToRowColInfos[indexID]
 		if !ok {
 			return errors.New("index not found")
 		}
 
 		// when we cannot decode the key to get the original value
-		if len(m.value) == 0 && NeedRestoredData(indexHelperInfo.indexInfo.Columns, t.Meta().Columns) {
+		if len(m.value) == 0 && NeedRestoredData(indexInfo.Columns, t.Meta().Columns) {
 			continue
 		}
 
-		decodedIndexValues, err := tablecodec.DecodeIndexKV(m.key, m.value, len(indexHelperInfo.indexInfo.Columns),
-			tablecodec.HandleNotNeeded, indexHelperInfo.rowColInfos)
+		decodedIndexValues, err := tablecodec.DecodeIndexKV(m.key, m.value, len(indexInfo.Columns),
+			tablecodec.HandleNotNeeded, rowColInfos)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -149,7 +130,7 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 		}
 
 		for i, v := range decodedIndexValues {
-			fieldType := &t.Columns[indexHelperInfo.indexInfo.Columns[i].Offset].FieldType
+			fieldType := &t.Columns[indexInfo.Columns[i].Offset].FieldType
 			datum, err := tablecodec.DecodeColumnValue(v, fieldType, sessVars.Location())
 			if err != nil {
 				return errors.Trace(err)
@@ -158,9 +139,9 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 		}
 
 		if len(m.value) == 0 {
-			err = compareIndexData(sc, t.Columns, indexData, rowToRemove, indexHelperInfo.indexInfo)
+			err = compareIndexData(sc, t.Columns, indexData, rowToRemove, indexInfo)
 		} else {
-			err = compareIndexData(sc, t.Columns, indexData, rowToInsert, indexHelperInfo.indexInfo)
+			err = compareIndexData(sc, t.Columns, indexData, rowToInsert, indexInfo)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -171,26 +152,14 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 
 // checkRowInsertionConsistency checks whether the values of row mutations are consistent with the expected ones
 // We only check data added since a deletion of a row doesn't care about its value (and we cannot know it)
-func checkRowInsertionConsistency(sessVars *variable.SessionVars, columnMap map[int64]*model.ColumnInfo, rowToInsert []types.Datum, rowInsertion mutation) error {
+func checkRowInsertionConsistency(sessVars *variable.SessionVars, rowToInsert []types.Datum, rowInsertion mutation,
+	columnIDToInfo map[int64]*model.ColumnInfo, columnIDToFieldType map[int64]*types.FieldType) error {
 	if rowToInsert == nil {
 		// it's a deletion
 		return nil
 	}
 
-	if err := checkRowMutationWithData(sessVars, rowInsertion.value, rowToInsert, columnMap); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-// checkRowMutationWithData checks if the given row mutation is consistent with the expected one
-// precondition: expectedData contains all fields in order
-func checkRowMutationWithData(sessVars *variable.SessionVars, mutationValue []byte, expectedData []types.Datum, columnMap map[int64]*model.ColumnInfo) error {
-	columnFieldMap := make(map[int64]*types.FieldType)
-	for id, col := range columnMap {
-		columnFieldMap[id] = &col.FieldType
-	}
-	decodedData, err := tablecodec.DecodeRowToDatumMap(mutationValue, columnFieldMap, sessVars.Location())
+	decodedData, err := tablecodec.DecodeRowToDatumMap(rowInsertion.value, columnIDToFieldType, sessVars.Location())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -199,7 +168,7 @@ func checkRowMutationWithData(sessVars *variable.SessionVars, mutationValue []by
 	// Instead, we check that decoded index values are consistent with the input row.
 
 	for columnID, decodedDatum := range decodedData {
-		inputDatum := expectedData[columnMap[columnID].Offset]
+		inputDatum := rowToInsert[columnIDToInfo[columnID].Offset]
 		cmp, err := decodedDatum.CompareDatum(sessVars.StmtCtx, &inputDatum)
 		if err != nil {
 			return errors.Trace(err)
@@ -210,7 +179,6 @@ func checkRowMutationWithData(sessVars *variable.SessionVars, mutationValue []by
 			return errors.Errorf("inconsistent row mutation, row datum = {%v}, input datum = {%v}", decodedDatum.String(), inputDatum.String())
 		}
 	}
-
 	return nil
 }
 
@@ -267,4 +235,37 @@ func compareIndexData(sc *stmtctx.StatementContext, cols []*table.Column, indexD
 		}
 	}
 	return nil
+}
+
+// getOrBuildColumnMaps tries to get the columnMaps from stmt ctx. If there isn't one, it builds one and stores it.
+// It saves redundant computations of the map.
+func getOrBuildColumnMaps(sc *stmtctx.StatementContext, t *TableCommon) columnMaps {
+	if sc.TableToColumnMaps == nil {
+		sc.TableToColumnMaps = make(map[int64]interface{})
+	}
+	originalMaps, ok := sc.TableToColumnMaps[t.tableID]
+	if !ok {
+		maps := columnMaps{
+			make(map[int64]*model.ColumnInfo, len(t.Meta().Columns)),
+			make(map[int64]*types.FieldType, len(t.Meta().Columns)),
+			make(map[int64]*model.IndexInfo, len(t.Indices())),
+			make(map[int64][]rowcodec.ColInfo, len(t.Indices())),
+		}
+
+		for _, col := range t.Meta().Columns {
+			maps.ColumnIDToInfo[col.ID] = col
+			maps.ColumnIDToFieldType[col.ID] = &col.FieldType
+		}
+		for _, index := range t.Indices() {
+			if index.Meta().Primary && t.meta.IsCommonHandle {
+				continue
+			}
+			maps.IndexIDToInfo[index.Meta().ID] = index.Meta()
+			maps.IndexIDToRowColInfos[index.Meta().ID] = BuildRowcodecColInfoForIndexColumns(index.Meta(), t.Meta())
+		}
+
+		sc.TableToColumnMaps[t.tableID] = maps
+		return maps
+	}
+	return originalMaps.(columnMaps)
 }
