@@ -6398,6 +6398,8 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 					ptDef.DirectPlacementOpts = &model.PlacementSettings{}
 				}
 				ptDef.DirectPlacementOpts.VoterConstraints = op.StrValue
+			default:
+				return errors.Trace(errors.New("unknown placement policy option"))
 			}
 		}
 	}
@@ -6424,7 +6426,7 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
 		SchemaName: schema.Name.L,
-		Type:       model.ActionAlterTablePartitionOptions,
+		Type:       model.ActionAlterTablePartitionPolicy,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partitionID, ptDef},
 	}
