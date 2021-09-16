@@ -1329,7 +1329,8 @@ func TestCheckTimestamp(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestExtractDurationValue(c *C) {
+func TestExtractDurationValue(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		unit   string
 		format string
@@ -1461,10 +1462,10 @@ func (s *testTimeSuite) TestExtractDurationValue(c *C) {
 	for i, tt := range tests {
 		dur, err := types.ExtractDurationValue(tt.unit, tt.format)
 		if tt.failed {
-			c.Assert(err, NotNil, Commentf(failedComment+", dur: %v", i, tt.unit, tt.format, dur.String()))
+			require.Errorf(t, err, failedComment+", dur: %v", i, tt.unit, tt.format, dur.String())
 		} else {
-			c.Assert(err, IsNil, Commentf(failedComment+", error stack", i, tt.unit, tt.format, errors.ErrorStack(err)))
-			c.Assert(dur.String(), Equals, tt.ans, Commentf(failedComment, i, tt.unit, tt.format))
+			require.NoErrorf(t, err, failedComment+", error stack: %s", i, tt.unit, tt.format, errors.ErrorStack(err))
+			require.Equalf(t, tt.ans, dur.String(), failedComment, i, tt.unit, tt.format)
 		}
 	}
 }
