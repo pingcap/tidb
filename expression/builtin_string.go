@@ -1364,6 +1364,11 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 	if len(delim) == 0 {
 		return "", false, nil
 	}
+	// when count > MaxInt64, returns whole string.
+	c, ok := b.args[2].(*Constant)
+	if count < 0 && ok && c.Value.Kind() == types.KindUint64 {
+		return str, false, nil
+	}
 
 	strs := strings.Split(str, delim)
 	start, end := int64(0), int64(len(strs))
@@ -1376,8 +1381,8 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 		// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
 		count = -count
 		if count < 0 {
-			// -count overflows max int64, returns an empty string.
-			return "", false, nil
+			// -count overflows max int64, returns whole string.
+			return str, false, nil
 		}
 
 		if count < end {
