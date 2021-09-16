@@ -849,10 +849,16 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
+
+		schema := currentDB
 		if t.Schema.String() != "" {
-			currentDB = t.Schema
+			schema = t.Schema
 		}
-		tableInfo, err := p.ensureInfoSchema().TableByName(currentDB, t.Name)
+		tableInfo, err := p.ensureInfoSchema().TableByName(schema, t.Name)
+		if infoschema.ErrTableNotExists.Equal(err) {
+			// Non-exist table will be checked in ddl executor
+			continue
+		}
 		if err != nil {
 			p.err = err
 			return
