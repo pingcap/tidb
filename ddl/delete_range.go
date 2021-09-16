@@ -234,7 +234,12 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 				logutil.BgLogger().Error("[ddl] delRange emulator complete task failed", zap.Error(err))
 				return errors.Trace(err)
 			}
-			logutil.BgLogger().Info("[ddl] delRange emulator complete task", zap.Int64("jobID", r.JobID), zap.Int64("elementID", r.ElementID))
+			startKey, endKey := r.Range()
+			logutil.BgLogger().Info("[ddl] delRange emulator complete task",
+				zap.Int64("jobID", r.JobID),
+				zap.Int64("elementID", r.ElementID),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey))
 			break
 		}
 		if err := util.UpdateDeleteRange(ctx, r, newStartKey, oldStartKey); err != nil {
