@@ -249,6 +249,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	if s.cfg.Socket != "" {
+
+		err := cleanupStaleSocket(s.cfg.Socket)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		if s.socket, err = net.Listen("unix", s.cfg.Socket); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -293,6 +299,30 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	variable.RegisterStatistics(s)
 
 	return s, nil
+}
+
+func cleanupStaleSocket(socket string) error {
+	sockStat, err := os.Stat(socket)
+	if err == nil {
+		if sockStat.Mode().Type() != os.ModeSocket {
+			return fmt.Errorf(
+				"the specified socket file %s is a %s instead of a socket file",
+				socket, sockStat.Mode().String())
+		}
+
+		_, err = net.Dial("unix", socket)
+		if err != nil {
+			logutil.BgLogger().Warn("Unix socket exists and is nonfunctional, removing it",
+				zap.String("socket", socket), zap.Error(err))
+			err = os.Remove(socket)
+			if err != nil {
+				return fmt.Errorf("failed to remove socket file %s", socket)
+			}
+		} else {
+			return fmt.Errorf("unix socket %s exists and is functional, not removing it", socket)
+		}
+	}
+	return nil
 }
 
 func setSSLVariable(ca, key, cert string) {
