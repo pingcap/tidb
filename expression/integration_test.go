@@ -8869,7 +8869,7 @@ func (s *testIntegrationSerialSuite) TestLikeWithCollation(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk.MustQuery(`select 'a' like 'A' collate utf8mb4_unicode_ci;`).Check(testkit.Rows("1"))
-	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_unicode_ci;`, "[expression:1270]Illegal mix of collations (utf8mb4_bin,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT), (utf8mb4_bin,NUMERIC) for operation 'like'")
+	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_unicode_ci;`, "[expression:1270]Illegal mix of collations (utf8mb4_bin,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT), (binary,NUMERIC) for operation 'like'")
 	tk.MustQuery(`select '😛' collate utf8mb4_general_ci like '😋';`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select '😛' collate utf8mb4_general_ci = '😋';`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci like '😋';`).Check(testkit.Rows("0"))
@@ -9775,6 +9775,19 @@ func (s *testIntegrationSuite2) TestIssue25591(c *C) {
 	rows.Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite) TestIssue27236(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	row := tk.MustQuery(`select extract(hour_second from "-838:59:59.00");`)
+	row.Check(testkit.Rows("-8385959"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(c1 varchar(100));`)
+	tk.MustExec(`insert into t values('-838:59:59.00'), ('700:59:59.00');`)
+	row = tk.MustQuery(`select extract(hour_second from c1) from t order by c1;`)
+	row.Check(testkit.Rows("-8385959", "7005959"))
+}
+
 func (s *testIntegrationSuite2) TestIssue25526(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -9786,6 +9799,19 @@ func (s *testIntegrationSuite2) TestIssue25526(c *C) {
 
 	rows := tk.MustQuery("select tbl_6.col_31 from tbl_6 where col_31 in (select col_102 from tbl_17 where tbl_17.col_102 = 9999 and tbl_17.col_105 = 0);")
 	rows.Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestIssue26958(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c_int int not null);")
+	tk.MustExec("insert into t1 values (1), (2), (3),(1),(2),(3);")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (c_int int not null);")
+	tk.MustExec("insert into t2 values (1), (2), (3),(1),(2),(3);")
+	tk.MustQuery("select \n(select count(distinct c_int) from t2 where c_int >= t1.c_int) c1, \n(select count(distinct c_int) from t2 where c_int >= t1.c_int) c2\nfrom t1 group by c_int;\n").
+		Check(testkit.Rows("3 3", "2 2", "1 1"))
 }
 
 func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
