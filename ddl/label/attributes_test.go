@@ -15,26 +15,20 @@
 package label
 
 import (
-	"errors"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
+func TestNewLabel(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(&testLabelSuite{})
-
-type testLabelSuite struct{}
-
-func (t *testLabelSuite) TestNew(c *C) {
 	type TestCase struct {
 		name  string
 		input string
 		label Label
 	}
+
 	tests := []TestCase{
 		{
 			name:  "normal",
@@ -54,14 +48,18 @@ func (t *testLabelSuite) TestNew(c *C) {
 		},
 	}
 
-	for _, t := range tests {
-		label, err := NewLabel(t.input)
-		c.Assert(err, IsNil)
-		c.Assert(label, DeepEquals, t.label, Commentf("%s", t.name))
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			label, err := NewLabel(test.input)
+			require.NoError(t, err)
+			require.Equal(t, test.label, label)
+		})
 	}
 }
 
-func (t *testLabelSuite) TestRestore(c *C) {
+func TestRestoreLabel(t *testing.T) {
+	t.Parallel()
+
 	type TestCase struct {
 		name   string
 		input  Label
@@ -69,9 +67,11 @@ func (t *testLabelSuite) TestRestore(c *C) {
 	}
 
 	input, err := NewLabel("merge_option=allow")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	input1, err := NewLabel(" merge_option=allow  ")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	tests := []TestCase{
 		{
 			name:   "normal",
@@ -85,49 +85,51 @@ func (t *testLabelSuite) TestRestore(c *C) {
 		},
 	}
 
-	for _, t := range tests {
-		output := t.input.Restore()
-		c.Assert(output, Equals, t.output, Commentf("%s", t.name))
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			output := test.input.Restore()
+			require.Equal(t, test.output, output)
+		})
 	}
 }
 
-var _ = Suite(&testLabelsSuite{})
+func TestNewLabels(t *testing.T) {
+	t.Parallel()
 
-type testLabelsSuite struct{}
-
-func (t *testLabelsSuite) TestNew(c *C) {
 	labels, err := NewLabels(nil)
-	c.Assert(err, IsNil)
-	c.Assert(labels, HasLen, 0)
+	require.NoError(t, err)
+	require.Len(t, labels, 0)
 
 	labels, err = NewLabels([]string{})
-	c.Assert(err, IsNil)
-	c.Assert(labels, HasLen, 0)
+	require.NoError(t, err)
+	require.Len(t, labels, 0)
 
 	labels, err = NewLabels([]string{"merge_option=allow"})
-	c.Assert(err, IsNil)
-	c.Assert(labels, HasLen, 1)
-	c.Assert(labels[0].Key, Equals, "merge_option")
-	c.Assert(labels[0].Value, Equals, "allow")
+	require.NoError(t, err)
+	require.Len(t, labels, 1)
+	require.Equal(t, "merge_option", labels[0].Key)
+	require.Equal(t, "allow", labels[0].Value)
 
 	// test multiple attributes
 	labels, err = NewLabels([]string{"merge_option=allow", "key=value"})
-	c.Assert(err, IsNil)
-	c.Assert(labels, HasLen, 2)
-	c.Assert(labels[0].Key, Equals, "merge_option")
-	c.Assert(labels[0].Value, Equals, "allow")
-	c.Assert(labels[1].Key, Equals, "key")
-	c.Assert(labels[1].Value, Equals, "value")
+	require.NoError(t, err)
+	require.Len(t, labels, 2)
+	require.Equal(t, "merge_option", labels[0].Key)
+	require.Equal(t, "allow", labels[0].Value)
+	require.Equal(t, "key", labels[1].Key)
+	require.Equal(t, "value", labels[1].Value)
 
 	// test duplicated attributes
 	labels, err = NewLabels([]string{"merge_option=allow", "merge_option=allow"})
-	c.Assert(err, IsNil)
-	c.Assert(labels, HasLen, 1)
-	c.Assert(labels[0].Key, Equals, "merge_option")
-	c.Assert(labels[0].Value, Equals, "allow")
+	require.NoError(t, err)
+	require.Len(t, labels, 1)
+	require.Equal(t, "merge_option", labels[0].Key)
+	require.Equal(t, "allow", labels[0].Value)
 }
 
-func (t *testLabelsSuite) TestAdd(c *C) {
+func TestAddLabels(t *testing.T) {
+	t.Parallel()
+
 	type TestCase struct {
 		name   string
 		labels Labels
@@ -136,19 +138,21 @@ func (t *testLabelsSuite) TestAdd(c *C) {
 	}
 
 	labels, err := NewLabels([]string{"merge_option=allow"})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	label, err := NewLabel("somethingelse=true")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	l1, err := NewLabels([]string{"key=value"})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	l2, err := NewLabel("key=value")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	l3, err := NewLabels([]string{"key=value1"})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	tests := []TestCase{
 		{
 			"normal",
-			labels, label,
+			labels,
+			label,
 			nil,
 		},
 		{
@@ -161,29 +165,34 @@ func (t *testLabelsSuite) TestAdd(c *C) {
 			append(labels, Label{
 				Key:   "merge_option",
 				Value: "allow",
-			}), label,
+			}),
+			label,
 			nil,
 		},
 		{
 			"conflict attributes",
-			l3, l2,
+			l3,
+			l2,
 			ErrConflictingAttributes,
 		},
 	}
 
-	for _, t := range tests {
-		err := t.labels.Add(t.label)
-		comment := Commentf("%s: %v", t.name, err)
-		if t.err == nil {
-			c.Assert(err, IsNil, comment)
-			c.Assert(t.labels[len(t.labels)-1], DeepEquals, t.label, comment)
-		} else {
-			c.Assert(errors.Is(err, t.err), IsTrue, comment)
-		}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err = test.labels.Add(test.label)
+			if test.err == nil {
+				require.NoError(t, err)
+				require.Equal(t, test.label, test.labels[len(test.labels)-1])
+			} else {
+				require.ErrorIs(t, err, test.err)
+			}
+		})
 	}
 }
 
-func (t *testLabelsSuite) TestRestore(c *C) {
+func TestRestoreLabels(t *testing.T) {
+	t.Parallel()
+
 	type TestCase struct {
 		name   string
 		input  Labels
@@ -191,15 +200,15 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 	}
 
 	input1, err := NewLabel("merge_option=allow")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	input2, err := NewLabel("key=value")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	input3, err := NewLabel("db=d1")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	input4, err := NewLabel("table=t1")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	input5, err := NewLabel("partition=p1")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	tests := []TestCase{
 		{
@@ -224,8 +233,10 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 		},
 	}
 
-	for _, t := range tests {
-		res := t.input.Restore()
-		c.Assert(res, Equals, t.output, Commentf("%s", t.name))
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			output := test.input.Restore()
+			require.Equal(t, test.output, output)
+		})
 	}
 }
