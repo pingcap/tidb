@@ -344,3 +344,51 @@ func (s *testSuite5) TestIssue24547(c *C) {
 	tk.MustExec("insert into b(v, k1, k2) values('1', '1', '1'), ('22', '22', '22'), ('333', '333', '333'), ('2333', '2333', '2333'), ('555', '555', '555')")
 	tk.MustExec("delete a from a inner join b on a.k1 = b.k1 and a.k2 = b.k2 where b.k2 <> '333'")
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSuite5) TestIssue27893(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (a enum('x','y'))")
+	tk.MustExec("create table t2 (a int, key(a))")
+	tk.MustExec("insert into t1 values('x')")
+	tk.MustExec("insert into t2 values(1)")
+	tk.MustQuery("select /*+ inl_join(t2) */ count(*) from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ inl_hash_join(t2) */ count(*) from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("1"))
+}
+
+func (s *testSuite5) TestPartitionTableIndexJoinAndIndexReader(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec(`create table t (a int, b int, key(a)) partition by hash(a) partitions 4`)
+	tk.MustExec("create table tnormal (a int, b int, key(a), key(b))")
+	nRows := 512
+	values := make([]string, 0, nRows)
+	for i := 0; i < nRows; i++ {
+		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(nRows), rand.Intn(nRows)))
+	}
+	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
+	tk.MustExec(fmt.Sprintf("insert into tnormal values %v", strings.Join(values, ", ")))
+
+	randRange := func() (int, int) {
+		a, b := rand.Intn(nRows), rand.Intn(nRows)
+		if a > b {
+			return b, a
+		}
+		return a, b
+	}
+	for i := 0; i < nRows; i++ {
+		lb, rb := randRange()
+		cond := fmt.Sprintf("(t2.b between %v and %v)", lb, rb)
+		result := tk.MustQuery("select t1.a from tnormal t1, tnormal t2 where t1.a=t2.b and " + cond).Sort().Rows()
+		tk.MustQuery("select /*+ TIDB_INLJ(t1, t2) */ t1.a from t t1, t t2 where t1.a=t2.b and " + cond).Sort().Check(result)
+	}
+}
+>>>>>>> c10331066... executor: fix wrong index hash join when hash col is enum (#28032)
