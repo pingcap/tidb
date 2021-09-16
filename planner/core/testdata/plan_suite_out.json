@@ -2487,5 +2487,27 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIssue27233",
+    "Cases": [
+      {
+        "SQL": "SELECT col2 FROM PK_S_MULTI_31 AS T1 WHERE (SELECT count(DISTINCT COL1, COL2) FROM PK_S_MULTI_31 AS T2 WHERE T2.COL1>T1.COL1)>2 order by col2;",
+        "Plan": [
+          "Sort 0.80 root  test.pk_s_multi_31.col2",
+          "└─Projection 0.80 root  test.pk_s_multi_31.col2",
+          "  └─Selection 0.80 root  gt(Column#7, 2)",
+          "    └─HashAgg 1.00 root  group by:test.pk_s_multi_31.col1, test.pk_s_multi_31.col2, funcs:firstrow(test.pk_s_multi_31.col2)->test.pk_s_multi_31.col2, funcs:count(distinct test.pk_s_multi_31.col1, test.pk_s_multi_31.col2)->Column#7",
+          "      └─HashJoin 100000000.00 root  CARTESIAN left outer join, other cond:gt(test.pk_s_multi_31.col1, test.pk_s_multi_31.col1)",
+          "        ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "        │ └─IndexFullScan 10000.00 cop[tikv] table:T2, index:PRIMARY(COL1, COL2) keep order:false, stats:pseudo",
+          "        └─IndexReader(Probe) 10000.00 root  index:IndexFullScan",
+          "          └─IndexFullScan 10000.00 cop[tikv] table:T1, index:PRIMARY(COL1, COL2) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "100"
+        ]
+      }
+    ]
   }
 ]
