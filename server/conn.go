@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -1189,8 +1188,8 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
 	}
-	cc.loadCharsetResults(ctx, vars)
-	defer cc.textDumper.Clean()
+	cc.textDumper = newTextDumper(ctx, vars)
+	defer cc.textDumper.clean()
 
 	dataStr := string(hack.String(data))
 	switch cmd {
@@ -1951,7 +1950,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 		column.DefaultValue = []byte{}
 
 		data = data[0:4]
-		data = column.Dump(data, cc.textDumper.encode)
+		data = column.Dump(data, cc.getTextDumper().encode)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
@@ -1999,18 +1998,11 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	return false, cc.flush(ctx)
 }
 
-// loadCharsetResults reads the system variable @@character_set_results and updates the textDumper.
-func (cc *clientConn) loadCharsetResults(ctx context.Context, sysVars *variable.SessionVars) {
-	chs, err := variable.GetSessionOrGlobalSystemVar(sysVars, variable.CharacterSetResults)
-	if err != nil {
-		logutil.Logger(ctx).Info("get character_set_results system variable failed", zap.Error(err))
-	}
+func (cc *clientConn) getTextDumper() *textDumper {
 	if cc.textDumper == nil {
-		cc.textDumper = &textDumper{}
+		return &textDumper{}
 	}
-	fmtCharset := charset.Format(chs)
-	cc.textDumper.isBinary = fmtCharset == charset.CharsetBinary
-	cc.textDumper.encoding.UpdateEncoding(fmtCharset)
+	return cc.textDumper
 }
 
 func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
@@ -2021,7 +2013,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 	}
 	for _, v := range columns {
 		data = data[0:4]
-		data = v.Dump(data, cc.textDumper.encode)
+		data = v.Dump(data, cc.getTextDumper().encode)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
@@ -2081,7 +2073,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			if binary {
 				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i))
 			} else {
-				data, err = cc.textDumper.dumpTextRow(data, rs.Columns(), req.GetRow(i))
+				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i), cc.getTextDumper())
 			}
 			if err != nil {
 				reg.End()

@@ -579,9 +579,8 @@ func TestConnExecutionTimeout(t *testing.T) {
 		server: &Server{
 			capability: defaultCapability,
 		},
-		ctx:        tc,
-		alloc:      arena.NewAllocator(32 * 1024),
-		textDumper: &textDumper{},
+		ctx:   tc,
+		alloc: arena.NewAllocator(32 * 1024),
 	}
 	srv := &Server{
 		clients: map[uint64]*clientConn{

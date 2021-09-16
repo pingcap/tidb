@@ -37,6 +37,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
@@ -286,12 +288,47 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 
 type textDumper struct {
 	encoding charset.Encoding
+	buffer   []byte
 	isBinary bool
-	buffer []byte
+	isNull   bool
 }
 
-func (d *textDumper) Clean() {
+// newTextDumper reads the system variable @@character_set_results and creates the textDumper.
+func newTextDumper(ctx context.Context, sysVars *variable.SessionVars) *textDumper {
+	chs, err := variable.GetSessionOrGlobalSystemVar(sysVars, variable.CharacterSetResults)
+	if err != nil {
+		logutil.Logger(ctx).Info("get character_set_results system variable failed", zap.Error(err))
+	}
+	chsName := charset.Format(chs)
+	ret := &textDumper{}
+	ret.encoding.UpdateEncoding(chsName)
+	ret.isBinary = chsName == charset.CharsetBinary
+	ret.isNull = len(chsName) == 0
+	return ret
+}
+
+// clean prevent the textDumper from holding too much memory.
+func (d *textDumper) clean() {
 	d.buffer = nil
+}
+
+func (d *textDumper) resetCharset() func() {
+	origin := d.encoding.Name()
+	return func() {
+		if d.isBinary || d.isNull {
+			d.encoding.UpdateEncoding(charset.Formatted(origin))
+		}
+	}
+}
+
+func (d *textDumper) updateCharset(chsID uint16) {
+	if d.isNull || d.isBinary {
+		chs, _, err := charset.GetCharsetInfoByID(int(chsID))
+		if err != nil {
+			chs = ""
+		}
+		d.encoding.UpdateEncoding(charset.Formatted(chs))
+	}
 }
 
 func (d *textDumper) encode(src []byte) []byte {
@@ -311,25 +348,15 @@ func (d *textDumper) encode(src []byte) []byte {
 	return result
 }
 
-func (d *textDumper) dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
+func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *textDumper) ([]byte, error) {
 	tmp := make([]byte, 0, 20)
-	originCharset := charset.Formatted(d.encoding.Name())
-	charsetResultIsNull := len(originCharset) == 0
-	if charsetResultIsNull || d.isBinary {
-		defer d.encoding.UpdateEncoding(originCharset)
-	}
+	defer d.resetCharset()()
 	for i, col := range columns {
 		if row.IsNull(i) {
 			buffer = append(buffer, 0xfb)
 			continue
 		}
-		if charsetResultIsNull || d.isBinary {
-			chs, _, err := charset.GetCharsetInfoByID(int(col.Charset))
-			if err != nil {
-				chs = ""
-			}
-			d.encoding.UpdateEncoding(charset.Formatted(chs))
-		}
+		d.updateCharset(col.Charset)
 		switch col.Type {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
 			tmp = strconv.AppendInt(tmp[:0], row.GetInt64(i), 10)
