@@ -21,6 +21,7 @@ import (
 )
 
 func TestSQLDecode(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		str     string
 		passwd  string
@@ -52,6 +53,7 @@ func TestSQLDecode(t *testing.T) {
 }
 
 func TestSQLEncode(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		str     string
 		passwd  string
