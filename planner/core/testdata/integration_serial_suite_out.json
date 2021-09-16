@@ -991,6 +991,26 @@
           "                    └─Selection 8.00 batchCop[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
           "                      └─TableFullScan 8.00 batchCop[tiflash] table:t2 keep order:false"
         ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*), t2.v1, t2.v2 from t3 left join t2 on t3.v1 = t2.v1 and t3.v2 = t2.v2 group by t2.v1, t2.v2",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#9, test.t2.v1, test.t2.v2",
+          "    └─HashAgg 1.00 batchCop[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:sum(Column#16)->Column#9, funcs:firstrow(test.t2.v1)->test.t2.v1, funcs:firstrow(test.t2.v2)->test.t2.v2",
+          "      └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.v1, collate: N/A], [name: test.t2.v2, collate: N/A]",
+          "          └─HashAgg 1.00 batchCop[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:count(1)->Column#16",
+          "            └─HashJoin 1.00 batchCop[tiflash]  left outer join, equal:[eq(test.t3.v1, test.t2.v1) eq(test.t3.v2, test.t2.v2)]",
+          "              ├─ExchangeReceiver(Build) 1.00 batchCop[tiflash]  ",
+          "              │ └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t3.v1, collate: N/A], [name: test.t3.v2, collate: N/A]",
+          "              │   └─TableFullScan 1.00 batchCop[tiflash] table:t3 keep order:false",
+          "              └─ExchangeReceiver(Probe) 8.00 batchCop[tiflash]  ",
+          "                └─ExchangeSender 8.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.v1, collate: N/A], [name: test.t2.v2, collate: N/A]",
+          "                  └─Selection 8.00 batchCop[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
+          "                    └─TableFullScan 8.00 batchCop[tiflash] table:t2 keep order:false"
+        ]
       }
     ]
   },
