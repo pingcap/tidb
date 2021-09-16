@@ -1906,7 +1906,8 @@ func TestCheckMonthDay(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestFormatIntWidthN(c *C) {
+func TestFormatIntWidthN(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		num    int
 		width  int
@@ -1924,7 +1925,7 @@ func (s *testTimeSuite) TestFormatIntWidthN(c *C) {
 	}
 	for _, ca := range cases {
 		re := types.FormatIntWidthN(ca.num, ca.width)
-		c.Assert(re, Equals, ca.result)
+		require.Equal(t, ca.result, re)
 	}
 }
 
