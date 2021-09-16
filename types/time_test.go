@@ -45,18 +45,18 @@ func TestTimeEncoding(t *testing.T) {
 
 	for ith, tt := range tests {
 		ct := types.FromDate(tt.Year, tt.Month, tt.Day, tt.Hour, tt.Minute, tt.Second, tt.Microsecond)
-		time := types.NewTime(ct, tt.Type, tt.Fsp)
-		require.Equalf(t, tt.Expect, *((*uint64)(unsafe.Pointer(&time))), "%d failed.", ith)
-		require.Equalf(t, ct, time.CoreTime(), "%d core time failed.", ith)
-		require.Equalf(t, tt.Type, time.Type(), "%d type failed.", ith)
-		require.Equalf(t, tt.Fsp, time.Fsp(), "%d fsp failed.", ith)
-		require.Equalf(t, tt.Year, time.Year(), "%d year failed.", ith)
-		require.Equalf(t, tt.Month, time.Month(), "%d month failed.", ith)
-		require.Equalf(t, tt.Day, time.Day(), "%d day failed.", ith)
-		require.Equalf(t, tt.Hour, time.Hour(), "%d hour failed.", ith)
-		require.Equalf(t, tt.Minute, time.Minute(), "%d minute failed.", ith)
-		require.Equalf(t, tt.Second, time.Second(), "%d second failed.", ith)
-		require.Equalf(t, tt.Microsecond, time.Microsecond(), "%d microsecond failed.", ith)
+		v := types.NewTime(ct, tt.Type, tt.Fsp)
+		require.Equalf(t, tt.Expect, *((*uint64)(unsafe.Pointer(&v))), "%d failed.", ith)
+		require.Equalf(t, ct, v.CoreTime(), "%d core time failed.", ith)
+		require.Equalf(t, tt.Type, v.Type(), "%d type failed.", ith)
+		require.Equalf(t, tt.Fsp, v.Fsp(), "%d fsp failed.", ith)
+		require.Equalf(t, tt.Year, v.Year(), "%d year failed.", ith)
+		require.Equalf(t, tt.Month, v.Month(), "%d month failed.", ith)
+		require.Equalf(t, tt.Day, v.Day(), "%d day failed.", ith)
+		require.Equalf(t, tt.Hour, v.Hour(), "%d hour failed.", ith)
+		require.Equalf(t, tt.Minute, v.Minute(), "%d minute failed.", ith)
+		require.Equalf(t, tt.Second, v.Second(), "%d second failed.", ith)
+		require.Equalf(t, tt.Microsecond, v.Microsecond(), "%d microsecond failed.", ith)
 	}
 }
 
@@ -114,9 +114,9 @@ func TestDateTime(t *testing.T) {
 	}
 
 	for _, test := range table {
-		time, err := types.ParseDatetime(sc, test.Input)
+		v, err := types.ParseDatetime(sc, test.Input)
 		require.NoError(t, err)
-		require.Equal(t, test.Expect, time.String())
+		require.Equal(t, test.Expect, v.String())
 	}
 
 	fspTbl := []struct {
@@ -145,14 +145,14 @@ func TestDateTime(t *testing.T) {
 	}
 
 	for _, test := range fspTbl {
-		time, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
+		v, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
 		require.NoError(t, err)
-		require.Equal(t, test.Expect, time.String())
+		require.Equal(t, test.Expect, v.String())
 	}
 
-	time, _ := types.ParseTime(sc, "121231113045.9999999", mysql.TypeDatetime, 6)
-	require.Equal(t, 46, time.Second())
-	require.Equal(t, 0, time.Microsecond())
+	v, _ := types.ParseTime(sc, "121231113045.9999999", mysql.TypeDatetime, 6)
+	require.Equal(t, 46, v.Second())
+	require.Equal(t, 0, v.Microsecond())
 
 	// test error
 	errTable := []string{
@@ -191,9 +191,9 @@ func TestTimestamp(t *testing.T) {
 	}
 
 	for _, test := range table {
-		time, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test.Input)
+		v, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test.Input)
 		require.NoError(t, err)
-		require.Equal(t, test.Expect, time.String())
+		require.Equal(t, test.Expect, v.String())
 	}
 
 	errTable := []string{
@@ -278,9 +278,9 @@ func TestDate(t *testing.T) {
 	}
 
 	for _, test := range table {
-		time, err := types.ParseDate(sc, test.Input)
+		v, err := types.ParseDate(sc, test.Input)
 		require.NoError(t, err)
-		require.Equal(t, test.Expect, time.String())
+		require.Equal(t, test.Expect, v.String())
 	}
 
 	errTable := []string{
@@ -608,10 +608,10 @@ func TestCodec(t *testing.T) {
 	}
 
 	for _, test := range tbl {
-		time, err := types.ParseTime(sc, test, mysql.TypeDatetime, types.MaxFsp)
+		v, err := types.ParseTime(sc, test, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
 
-		packed, _ = time.ToPackedUint()
+		packed, _ = v.ToPackedUint()
 
 		dest := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, types.MaxFsp)
 		err = dest.FromPackedUint(packed)
@@ -718,9 +718,9 @@ func TestToNumber(t *testing.T) {
 	}
 
 	for _, test := range tblDateTime {
-		time, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
+		v, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
 		require.NoError(t, err)
-		require.Equal(t, test.Expect, time.ToNumber().String())
+		require.Equal(t, test.Expect, v.ToNumber().String())
 	}
 
 	// Fix issue #1046
@@ -741,9 +741,9 @@ func TestToNumber(t *testing.T) {
 	}
 
 	for _, test := range tblDate {
-		time, err := types.ParseTime(sc, test.Input, mysql.TypeDate, 0)
+		v, err := types.ParseTime(sc, test.Input, mysql.TypeDate, 0)
 		require.NoError(t, err)
-		require.Equal(t, test.Expect, time.ToNumber().String())
+		require.Equal(t, test.Expect, v.ToNumber().String())
 	}
 
 	tblDuration := []struct {
@@ -764,10 +764,10 @@ func TestToNumber(t *testing.T) {
 	}
 
 	for _, test := range tblDuration {
-		time, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		v, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		require.NoError(t, err)
 		// now we can only changetypes.Duration's Fsp to check ToNumber with different Fsp
-		require.Equal(t, test.Expect, time.ToNumber().String())
+		require.Equal(t, test.Expect, v.ToNumber().String())
 	}
 }
 
@@ -794,12 +794,12 @@ func TestParseTimeFromFloatString(t *testing.T) {
 	}
 
 	for _, test := range table {
-		time, err := types.ParseTimeFromFloatString(sc, test.Input, mysql.TypeDatetime, test.Fsp)
+		v, err := types.ParseTimeFromFloatString(sc, test.Input, mysql.TypeDatetime, test.Fsp)
 		if test.ExpectError {
 			require.Error(t, err)
 		} else {
 			require.NoError(t, err)
-			require.Equal(t, test.Expect, time.String())
+			require.Equal(t, test.Expect, v.String())
 		}
 	}
 }
