@@ -645,3 +645,20 @@ func (s *testDBSuite6) TestAlterTablePartitionWithPlacementPolicy(c *C) {
 	}
 	checkFunc(ptDef.DirectPlacementOpts)
 }
+
+func testGetPartitionDefinitionsByName(c *C, ctx sessionctx.Context, db string, table string, ptName string) model.PartitionDefinition {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(tbl, NotNil)
+	var ptDef model.PartitionDefinition
+	for _, def := range tbl.Meta().Partition.Definitions {
+		if ptName == def.Name.L {
+			ptDef = def
+			break
+		}
+	}
+	return ptDef
+}

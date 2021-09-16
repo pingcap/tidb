@@ -72,81 +72,10 @@ const (
 	longBlobMaxLength     = 4294967295
 )
 
-func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, dbOps []*ast.DatabaseOption) error {
+func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
 	dbInfo := &model.DBInfo{Name: schema}
-	var opt *ast.CharsetOpt
-	if len(dbOps) != 0 {
-		opt = &ast.CharsetOpt{}
-		for _, val := range dbOps {
-			switch val.Tp {
-			case ast.DatabaseOptionCharset:
-				opt.Chs = val.Value
-			case ast.DatabaseOptionCollate:
-				opt.Col = val.Value
-			case ast.DatabaseOptionPlacementPrimaryRegion:
-				if dbInfo.DirectPlacementOpts == nil {
-					dbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-				}
-				dbInfo.DirectPlacementOpts.PrimaryRegion = val.Value
-			case ast.DatabaseOptionPlacementRegions:
-				if dbInfo.DirectPlacementOpts == nil {
-					dbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-				}
-				dbInfo.DirectPlacementOpts.Regions = val.Value
-			case ast.DatabaseOptionPlacementFollowerCount:
-				if dbInfo.DirectPlacementOpts == nil {
-					dbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-				}
-				dbInfo.DirectPlacementOpts.Followers = val.UintValue
-			case ast.DatabaseOptionPlacementVoterCount:
-				if dbInfo.DirectPlacementOpts == nil {
-					dbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-				}
-				dbInfo.DirectPlacementOpts.Voters = val.UintValue
-			case ast.DatabaseOptionPlacementLearnerCount:
-				if dbInfo.DirectPlacementOpts == nil {
-					dbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-				}
-				dbInfo.DirectPlacementOpts.Learners = val.UintValue
-			case ast.DatabaseOptionPlacementSchedule:
-				if dbInfo.DirectPlacementOpts == nil {
-					dbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-				}
-				dbInfo.DirectPlacementOpts.Schedule = val.Value
-			case ast.DatabaseOptionPlacementConstraints:
-				if dbInfo.DirectPlacementOpts == nil {
-					dbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-				}
-				dbInfo.DirectPlacementOpts.Constraints = val.Value
-			case ast.DatabaseOptionPlacementLeaderConstraints:
-				if dbInfo.DirectPlacementOpts == nil {
-					dbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-				}
-				dbInfo.DirectPlacementOpts.LeaderConstraints = val.Value
-			case ast.DatabaseOptionPlacementLearnerConstraints:
-				if dbInfo.DirectPlacementOpts == nil {
-					dbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-				}
-				dbInfo.DirectPlacementOpts.LearnerConstraints = val.Value
-			case ast.DatabaseOptionPlacementFollowerConstraints:
-				if dbInfo.DirectPlacementOpts == nil {
-					dbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-				}
-				dbInfo.DirectPlacementOpts.FollowerConstraints = val.Value
-			case ast.DatabaseOptionPlacementVoterConstraints:
-				if dbInfo.DirectPlacementOpts == nil {
-					dbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-				}
-				dbInfo.DirectPlacementOpts.VoterConstraints = val.Value
-			case ast.DatabaseOptionPlacementPolicy:
-				dbInfo.PlacementPolicyRef = &model.PolicyRefInfo{
-					Name: model.NewCIStr(val.Value),
-				}
-			}
-		}
-	}
-	if opt != nil {
-		chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: opt.Chs, Col: opt.Col})
+	if charsetInfo != nil {
+		chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetInfo.Chs, Col: charsetInfo.Col})
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -184,25 +113,6 @@ func (d *ddl) CreateSchemaWithInfo(
 
 	if err := checkCharsetAndCollation(dbInfo.Charset, dbInfo.Collate); err != nil {
 		return errors.Trace(err)
-	}
-
-	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
-	if dbInfo.DirectPlacementOpts != nil && dbInfo.PlacementPolicyRef != nil {
-		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(dbInfo.PlacementPolicyRef.Name))
-	}
-	if dbInfo.DirectPlacementOpts != nil {
-		// check the direct placement option compatibility.
-		if err := checkPolicyValidation(dbInfo.DirectPlacementOpts); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	if dbInfo.PlacementPolicyRef != nil {
-		// placement policy reference will override the direct placement options.
-		policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(dbInfo.PlacementPolicyRef.Name)
-		if !ok {
-			return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(dbInfo.PlacementPolicyRef.Name))
-		}
-		dbInfo.PlacementPolicyRef.ID = policy.ID
 	}
 
 	// FIXME: support `tryRetainID`.
@@ -6468,6 +6378,8 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 					ptDef.DirectPlacementOpts = &model.PlacementSettings{}
 				}
 				ptDef.DirectPlacementOpts.VoterConstraints = op.StrValue
+			default:
+				return errors.Trace(errors.New("unknown placement policy option"))
 			}
 		}
 	}
@@ -6494,7 +6406,7 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
 		SchemaName: schema.Name.L,
-		Type:       model.ActionAlterTablePartitionOptions,
+		Type:       model.ActionAlterTablePartitionPolicy,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partitionID, ptDef},
 	}

@@ -247,7 +247,19 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
-	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), s.Options)
+	var opt *ast.CharsetOpt
+	if len(s.Options) != 0 {
+		opt = &ast.CharsetOpt{}
+		for _, val := range s.Options {
+			switch val.Tp {
+			case ast.DatabaseOptionCharset:
+				opt.Chs = val.Value
+			case ast.DatabaseOptionCollate:
+				opt.Col = val.Value
+			}
+		}
+	}
+	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
 			err = nil
