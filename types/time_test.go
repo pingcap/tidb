@@ -21,7 +21,6 @@ import (
 	"time"
 	"unsafe"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -30,11 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testTimeSuite{})
-
-type testTimeSuite struct {
-}
 
 func TestTimeEncoding(t *testing.T) {
 	t.Parallel()
@@ -2002,10 +1996,10 @@ func TestParseWithTimezone(t *testing.T) {
 	// we first parse the string literal, and convert it into UTC and then compare it with the ground truth time in UTC.
 	// note that sysTZ won't affect the physical time the string literal represents.
 	cases := []struct {
-		lit          string
-		fsp          int8
-		gt           time.Time
-		sysTZ        *time.Location
+		lit   string
+		fsp   int8
+		gt    time.Time
+		sysTZ *time.Location
 	}{
 		{
 			"2006-01-02T15:04:05Z",
