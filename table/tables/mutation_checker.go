@@ -105,7 +105,7 @@ func getOrBuildColumnMap(sc *stmtctx.StatementContext, t *TableCommon) map[int64
 
 // checkIndexKeys checks whether the decoded data from keys of index mutations are consistent with the expected ones.
 func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon,
-	dataAdded []types.Datum, dataRemoved []types.Datum, indexMutations []mutation) error {
+	rowToInsert, rowToRemove []types.Datum, indexMutations []mutation) error {
 	indexIDMap := make(map[int64]indexHelperInfo)
 	for _, index := range t.indices {
 		if index.Meta().Primary && t.meta.IsCommonHandle {
@@ -117,6 +117,7 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 		}
 	}
 
+	var indexData []types.Datum
 	for _, m := range indexMutations {
 		_, indexID, _, err := tablecodec.DecodeIndexKey(m.key)
 		if err != nil {
@@ -139,7 +140,14 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 		if err != nil {
 			return errors.Trace(err)
 		}
-		indexData := make([]types.Datum, 0)
+
+		// reuse the underlying memory, save an allocation
+		if indexData == nil {
+			indexData = make([]types.Datum, 0, len(decodedIndexValues))
+		} else {
+			indexData = indexData[:0]
+		}
+
 		for i, v := range decodedIndexValues {
 			fieldType := &t.Columns[indexHelperInfo.indexInfo.Columns[i].Offset].FieldType
 			datum, err := tablecodec.DecodeColumnValue(v, fieldType, sessVars.Location())
@@ -150,9 +158,9 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 		}
 
 		if len(m.value) == 0 {
-			err = compareIndexData(sc, t.Columns, indexData, dataRemoved, indexHelperInfo.indexInfo)
+			err = compareIndexData(sc, t.Columns, indexData, rowToRemove, indexHelperInfo.indexInfo)
 		} else {
-			err = compareIndexData(sc, t.Columns, indexData, dataAdded, indexHelperInfo.indexInfo)
+			err = compareIndexData(sc, t.Columns, indexData, rowToInsert, indexHelperInfo.indexInfo)
 		}
 		if err != nil {
 			return errors.Trace(err)
