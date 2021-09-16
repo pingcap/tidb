@@ -2868,13 +2868,13 @@ func (s *testSerialDBSuite) TestCreateTableWithSpecialComment(c *C) {
 
 	// case for direct options
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("CREATE TABLE `t` (\n"+
-		"  `a` int(11) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-		"/*T![placement] PRIMARY_REGION=\"cn-east-1\" "+
-		"REGIONS=\"cn-east-1, cn-east-2\" "+
-		"FOLLOWERS=2 "+
-		"CONSTRAINTS=\"[+disk=ssd]\" "+
+	tk.MustExec("CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
+		"/*T![placement] PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"CONSTRAINTS=\"[+disk=ssd]\" " +
 		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" */",
 	)
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
