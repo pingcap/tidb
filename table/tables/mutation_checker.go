@@ -61,7 +61,7 @@ type columnMaps struct {
 // (a) {added indices} is a subset of {needed indices} => each index mutation is consistent with the input/row key/value
 // (b) {needed indices} is a subset of {added indices}. The check process would be exactly the same with how we generate
 // 		the mutations, thus ignored.
-func CheckIndexConsistency(sessVars *variable.SessionVars, t *TableCommon,
+func CheckIndexConsistency(txn kv.Transaction, sessVars *variable.SessionVars, t *TableCommon,
 	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle) error {
 	if t.Meta().GetPartitionInfo() != nil {
 		return nil
@@ -76,7 +76,7 @@ func CheckIndexConsistency(sessVars *variable.SessionVars, t *TableCommon,
 		return errors.Trace(err)
 	}
 
-	columnMaps := getOrBuildColumnMaps(sessVars.StmtCtx, t)
+	columnMaps := getOrBuildColumnMaps(txn, t)
 
 	if rowToInsert != nil {
 		if err := checkRowInsertionConsistency(sessVars, rowToInsert, rowInsertion, columnMaps.ColumnIDToInfo, columnMaps.ColumnIDToFieldType); err != nil {
@@ -239,13 +239,14 @@ func compareIndexData(sc *stmtctx.StatementContext, cols []*table.Column, indexD
 
 // getOrBuildColumnMaps tries to get the columnMaps from stmt ctx. If there isn't one, it builds one and stores it.
 // It saves redundant computations of the map.
-func getOrBuildColumnMaps(sc *stmtctx.StatementContext, t *TableCommon) columnMaps {
-	if sc.TableToColumnMaps == nil {
-		sc.TableToColumnMaps = make(map[int64]interface{})
+func getOrBuildColumnMaps(txn kv.Transaction, t *TableCommon) columnMaps {
+	tableMaps, ok := txn.GetOption(kv.TableToColumnMaps).(map[int64]columnMaps)
+	if !ok || tableMaps == nil {
+		tableMaps = make(map[int64]columnMaps)
 	}
-	originalMaps, ok := sc.TableToColumnMaps[t.tableID]
+	maps, ok := tableMaps[t.tableID]
 	if !ok {
-		maps := columnMaps{
+		maps = columnMaps{
 			make(map[int64]*model.ColumnInfo, len(t.Meta().Columns)),
 			make(map[int64]*types.FieldType, len(t.Meta().Columns)),
 			make(map[int64]*model.IndexInfo, len(t.Indices())),
@@ -264,8 +265,8 @@ func getOrBuildColumnMaps(sc *stmtctx.StatementContext, t *TableCommon) columnMa
 			maps.IndexIDToRowColInfos[index.Meta().ID] = BuildRowcodecColInfoForIndexColumns(index.Meta(), t.Meta())
 		}
 
-		sc.TableToColumnMaps[t.tableID] = maps
-		return maps
+		tableMaps[t.tableID] = maps
+		txn.SetOption(kv.TableToColumnMaps, tableMaps)
 	}
-	return originalMaps.(columnMaps)
+	return maps
 }
