@@ -72,7 +72,7 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 	tk.MustExec("use test")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope",
+		failpoint.Enable("tikvclient/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
 		tk.MustExec(testcase.preSQL)
 		tk.MustExec(testcase.sql)
@@ -87,7 +87,7 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 		}
 		tk.MustExec("commit")
 	}
-	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Disable("tikvclient/injectTxnScope")
 }
 
 func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
@@ -288,6 +288,7 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 			assert: "github.com/pingcap/tidb/executor/assertBatchPointStalenessOption",
 		},
 	}
+	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
 	for _, testcase := range testcases {
 		failpoint.Enable(testcase.assert, `return("sh")`)
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
@@ -301,6 +302,19 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		tk.MustExec(`begin;`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
+		failpoint.Disable(testcase.assert)
+	}
+	// assert follower read closest read
+	for _, testcase := range testcases {
+		failpoint.Enable(testcase.assert, `return("sh")`)
+		tk.MustExec(`begin;`)
+		tk.MustQuery(testcase.sql)
+		tk.MustExec(`commit`)
+		failpoint.Disable(testcase.assert)
+	}
+	for _, testcase := range testcases {
+		failpoint.Enable(testcase.assert, `return("sh")`)
+		tk.MustQuery(testcase.sql)
 		failpoint.Disable(testcase.assert)
 	}
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)

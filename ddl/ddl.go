@@ -412,6 +412,8 @@ func (d *ddl) close() {
 		d.sessPool.close()
 	}
 
+	variable.UnregisterStatistics(d)
+
 	logutil.BgLogger().Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -698,8 +700,7 @@ type RecoverInfo struct {
 	TableInfo     *model.TableInfo
 	DropJobID     int64
 	SnapshotTS    uint64
-	CurAutoIncID  int64
-	CurAutoRandID int64
+	AutoIDs       meta.AutoIDGroup
 	OldSchemaName string
 	OldTableName  string
 }

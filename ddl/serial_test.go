@@ -1066,7 +1066,11 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 		once.Do(func() {
 			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
-				return t.DropTableOrView(job.SchemaID, job.TableID, true)
+				err := t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del()
+				if err != nil {
+					return err
+				}
+				return t.DropTableOrView(job.SchemaID, job.TableID)
 			})
 			c.Assert(err, IsNil)
 		})
@@ -1710,9 +1714,9 @@ func (s *testSerialDBSuite) TestCreateTableNoBlock(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime"), IsNil)
 	}()
 	save := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(1)
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1")
 	defer func() {
-		variable.SetDDLErrorCountLimit(save)
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", save))
 	}()
 
 	tk.MustExec("drop table if exists t")
