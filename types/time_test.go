@@ -1723,18 +1723,19 @@ func TestIsClockUnit(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestIsDateFormat(c *C) {
+func TestIsDateFormat(t *testing.T) {
+	t.Parallel()
 	input := "1234:321"
 	output := types.IsDateFormat(input)
-	c.Assert(output, Equals, false)
+	require.False(t, output)
 
 	input = "2019-04-01"
 	output = types.IsDateFormat(input)
-	c.Assert(output, Equals, true)
+	require.True(t, output)
 
 	input = "2019-4-1"
 	output = types.IsDateFormat(input)
-	c.Assert(output, Equals, true)
+	require.True(t, output)
 }
 
 func (s *testTimeSuite) TestParseTimeFromInt64(c *C) {
