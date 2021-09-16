@@ -114,11 +114,11 @@ type StatementContext struct {
 		copied  uint64
 		touched uint64
 
-		message           string
-		warnings          []SQLWarn
-		errorCount        uint16
-		execDetails       execdetails.ExecDetails
-		allExecDetails    []*execdetails.ExecDetails
+		message        string
+		warnings       []SQLWarn
+		errorCount     uint16
+		execDetails    execdetails.ExecDetails
+		allExecDetails []*execdetails.ExecDetails
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
