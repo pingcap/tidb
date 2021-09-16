@@ -3361,7 +3361,11 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		}
 		bf.tp.Flen, bf.tp.Decimal = mysql.MaxDurationWidthWithFsp, mathutil.Max(arg0Dec, internalFsp)
 	} else {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, dateEvalTp, argTps...)
+		createEvalTp := types.ETDatetime
+		if dateEvalTp == types.ETString {
+			createEvalTp = types.ETString
+		}
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, createEvalTp, argTps...)
 		if err != nil {
 			return nil, err
 		}
@@ -4169,7 +4173,11 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		}
 		bf.tp.Flen, bf.tp.Decimal = mysql.MaxDurationWidthWithFsp, mathutil.Max(arg0Dec, internalFsp)
 	} else {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, dateEvalTp, argTps...)
+		createEvalTp := types.ETDatetime
+		if dateEvalTp == types.ETString {
+			createEvalTp = types.ETString
+		}
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, createEvalTp, argTps...)
 		if err != nil {
 			return nil, err
 		}
