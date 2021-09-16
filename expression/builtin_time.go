@@ -3556,7 +3556,13 @@ func (b *builtinAddDateStringIntSig) evalString(row chunk.Row) (string, bool, er
 		return types.ZeroTime.String(), true, err
 	}
 
+	isClockUnit := types.IsClockUnit(unit)
 	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	dateTp := mysql.TypeDate
+	if date.Type() == mysql.TypeDatetime || isClockUnit {
+		dateTp = mysql.TypeDatetime
+	}
+	result.SetType(dateTp)
 	return result.String(), isNull || err != nil, err
 }
 
@@ -4278,6 +4284,12 @@ func (b *builtinSubDateStringIntSig) evalString(row chunk.Row) (string, bool, er
 	}
 
 	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	isClockUnit := types.IsClockUnit(unit)
+	dateTp := mysql.TypeDate
+	if date.Type() == mysql.TypeDatetime || isClockUnit {
+		dateTp = mysql.TypeDatetime
+	}
+	result.SetType(dateTp)
 	return result.String(), isNull || err != nil, err
 }
 

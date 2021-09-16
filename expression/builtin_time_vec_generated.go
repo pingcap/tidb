@@ -1734,6 +1734,8 @@ func (b *builtinAddDateStringIntSig) vecEvalString(input *chunk.Chunk, result *c
 		return err
 	}
 
+	isClockUnit := types.IsClockUnit(unit)
+
 	result.ReserveString(n)
 
 	dateBuf.MergeNulls(intervalBuf)
@@ -1749,6 +1751,11 @@ func (b *builtinAddDateStringIntSig) vecEvalString(input *chunk.Chunk, result *c
 		if isNull {
 			result.AppendNull()
 		} else {
+			dateTp := mysql.TypeDate
+			if dateBuf.Times()[i].Type() == mysql.TypeDatetime || isClockUnit {
+				dateTp = mysql.TypeDatetime
+			}
+			resDate.SetType(dateTp)
 			result.AppendString(resDate.String())
 		}
 	}
@@ -2547,6 +2554,8 @@ func (b *builtinSubDateStringIntSig) vecEvalString(input *chunk.Chunk, result *c
 		return err
 	}
 
+	isClockUnit := types.IsClockUnit(unit)
+
 	result.ReserveString(n)
 
 	dateBuf.MergeNulls(intervalBuf)
@@ -2556,12 +2565,18 @@ func (b *builtinSubDateStringIntSig) vecEvalString(input *chunk.Chunk, result *c
 			continue
 		}
 		resDate, isNull, err := b.sub(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
+
 		if err != nil {
 			return err
 		}
 		if isNull {
 			result.AppendNull()
 		} else {
+			dateTp := mysql.TypeDate
+			if dateBuf.Times()[i].Type() == mysql.TypeDatetime || isClockUnit {
+				dateTp = mysql.TypeDatetime
+			}
+			resDate.SetType(dateTp)
 			result.AppendString(resDate.String())
 		}
 	}
