@@ -1929,7 +1929,8 @@ func TestFormatIntWidthN(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestFromGoTime(c *C) {
+func TestFromGoTime(t *testing.T) {
+	t.Parallel()
 	// Test rounding of nanosecond to millisecond.
 	cases := []struct {
 		input string
@@ -1949,11 +1950,11 @@ func (s *testTimeSuite) TestFromGoTime(c *C) {
 	}
 
 	for ith, ca := range cases {
-		t, err := time.Parse(time.RFC3339Nano, ca.input)
-		c.Assert(err, IsNil)
+		v, err := time.Parse(time.RFC3339Nano, ca.input)
+		require.NoError(t, err)
 
-		t1 := types.FromGoTime(t)
-		c.Assert(t1, Equals, types.FromDate(ca.yy, ca.mm, ca.dd, ca.hh, ca.min, ca.sec, ca.micro), Commentf("idx %d", ith))
+		t1 := types.FromGoTime(v)
+		require.Equalf(t, types.FromDate(ca.yy, ca.mm, ca.dd, ca.hh, ca.min, ca.sec, ca.micro), t1, "idx %d", ith)
 	}
 
 }
