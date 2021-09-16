@@ -288,6 +288,7 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 			assert: "github.com/pingcap/tidb/executor/assertBatchPointStalenessOption",
 		},
 	}
+	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
 	for _, testcase := range testcases {
 		failpoint.Enable(testcase.assert, `return("sh")`)
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
@@ -301,6 +302,19 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		tk.MustExec(`begin;`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
+		failpoint.Disable(testcase.assert)
+	}
+	// assert follower read closest read
+	for _, testcase := range testcases {
+		failpoint.Enable(testcase.assert, `return("sh")`)
+		tk.MustExec(`begin;`)
+		tk.MustQuery(testcase.sql)
+		tk.MustExec(`commit`)
+		failpoint.Disable(testcase.assert)
+	}
+	for _, testcase := range testcases {
+		failpoint.Enable(testcase.assert, `return("sh")`)
+		tk.MustQuery(testcase.sql)
 		failpoint.Disable(testcase.assert)
 	}
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
