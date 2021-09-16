@@ -321,8 +321,10 @@ func (d *textDumper) resetCharset() func() {
 	}
 }
 
+// updateCharset is used to set the encoding for each column.
 func (d *textDumper) updateCharset(chsID uint16) {
 	if d.isNull || d.isBinary {
+		// Only need to update when @@character_set_results = null | binary.
 		chs, _, err := charset.GetCharsetInfoByID(int(chsID))
 		if err != nil {
 			chs = ""
