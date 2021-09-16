@@ -1091,7 +1091,8 @@ func TestParseDateFormat(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestTimestampDiff(c *C) {
+func TestTimestampDiff(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		unit   string
 		t1     types.CoreTime
@@ -1110,7 +1111,7 @@ func (s *testTimeSuite) TestTimestampDiff(c *C) {
 	for _, test := range tests {
 		t1 := types.NewTime(test.t1, mysql.TypeDatetime, 6)
 		t2 := types.NewTime(test.t2, mysql.TypeDatetime, 6)
-		c.Assert(types.TimestampDiff(test.unit, t1, t2), Equals, test.expect)
+		require.Equal(t, test.expect, types.TimestampDiff(test.unit, t1, t2))
 	}
 }
 
