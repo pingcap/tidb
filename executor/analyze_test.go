@@ -662,11 +662,8 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows())
 	tk.MustExec("insert into t values (1,1)")
 	tk.MustExec("analyze incremental table t index")
-<<<<<<< HEAD
-=======
 	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warning
 	c.Assert(h.LoadNeededHistograms(), IsNil)
->>>>>>> b7cde2493... planner: fix the unstable test case TestAnalyzeIncremental (#26848)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0"))
 	tk.MustExec("insert into t values (2,2)")
 	tk.MustExec("analyze incremental table t index")
