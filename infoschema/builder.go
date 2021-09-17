@@ -83,12 +83,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// handle placement rule cache
 	switch diff.Type {
 	case model.ActionCreateTable:
-		b.applyPlacementPolicyDependency(newTableID, diff.PolicyID)
 		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
 			return nil, errors.Trace(err)
 		}
 	case model.ActionDropTable:
-		b.removePlacementPolicyDependency(oldTableID, diff.PolicyID)
 		b.applyPlacementDelete(placement.GroupID(oldTableID))
 	case model.ActionTruncateTable:
 		b.applyPlacementDelete(placement.GroupID(oldTableID))
@@ -510,22 +508,6 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	return affected
 }
 
-func (b *Builder) applyPlacementPolicyDependency(tableID, policyID int64) {
-	if policyID != 0 {
-		if po, ok := b.is.PolicyByID(policyID); ok {
-			b.is.AttachPolicyDependency(po.Name.L, []int64{tableID})
-		}
-	}
-}
-
-func (b *Builder) removePlacementPolicyDependency(oldTableID, policyID int64) {
-	if policyID != 0 {
-		if po, ok := b.is.PolicyByID(policyID); ok {
-			b.is.DetachPolicyDependency(po.Name.L, []int64{oldTableID})
-		}
-	}
-}
-
 func (b *Builder) applyPlacementDelete(id string) {
 	b.is.deleteBundle(id)
 }
@@ -579,19 +561,6 @@ func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	is := b.is
 	for _, v := range oldIS.AllPlacementPolicies() {
 		is.policyMap[v.Name.L] = v
-	}
-}
-
-func (b *Builder) copyPolicyDependenciesMap(oldIS *infoSchema) {
-	is := b.is
-	oldIS.policyDependencyMutex.RLock()
-	defer oldIS.policyDependencyMutex.RUnlock()
-	for k, v := range oldIS.policyDependencySet {
-		newSubMap := make(map[int64]struct{}, len(v))
-		for id, _ := range v {
-			newSubMap[id] = struct{}{}
-		}
-		is.policyDependencySet[k] = newSubMap
 	}
 }
 
@@ -698,7 +667,6 @@ func NewBuilder(store kv.Storage) *Builder {
 		is: &infoSchema{
 			schemaMap:           map[string]*schemaTables{},
 			policyMap:           map[string]*model.PolicyInfo{},
-			policyDependencySet: map[string]map[int64]struct{}{},
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},

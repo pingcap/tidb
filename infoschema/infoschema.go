@@ -59,8 +59,6 @@ type InfoSchema interface {
 	RuleBundles() []*placement.Bundle
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
-	// DismissPolicyDependencies return whether it's ok to drop/modify a policy.
-	DismissPolicyDependencies(name string) []int64
 }
 
 type sortedTables []table.Table
@@ -102,10 +100,6 @@ type infoSchema struct {
 	// policyMap stores all placement policies.
 	policyMutex sync.RWMutex
 	policyMap   map[string]*model.PolicyInfo
-
-	// policyDependencyMap stores all the element ids which depended on this policy.
-	policyDependencyMutex sync.RWMutex
-	policyDependencySet   map[string]map[int64]struct{}
 
 	schemaMap map[string]*schemaTables
 
@@ -380,19 +374,6 @@ func (is *infoSchema) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
 	return t, r
 }
 
-func (is *infoSchema) DismissPolicyDependencies(name string) []int64 {
-	is.policyDependencyMutex.RLock()
-	defer is.policyDependencyMutex.RUnlock()
-	t, r := is.policyDependencySet[name]
-	ids := make([]int64, 0, len(t))
-	if r && len(t) > 0 {
-		for k, _ := range t {
-			ids = append(ids, k)
-		}
-	}
-	return ids
-}
-
 // AllPlacementPolicies returns all placement policies
 func (is *infoSchema) AllPlacementPolicies() []*model.PolicyInfo {
 	is.policyMutex.RLock()
@@ -419,33 +400,6 @@ func (is *infoSchema) RuleBundles() []*placement.Bundle {
 		bundles = append(bundles, bundle)
 	}
 	return bundles
-}
-
-func (is *infoSchema) AttachPolicyDependency(policyName string, ids []int64) {
-	is.policyDependencyMutex.Lock()
-	defer is.policyDependencyMutex.Unlock()
-	for _, id := range ids {
-		_, ok := is.policyDependencySet[policyName]
-		if !ok {
-			is.policyDependencySet[policyName] = make(map[int64]struct{})
-		}
-		is.policyDependencySet[policyName][id] = struct{}{}
-	}
-}
-
-func (is *infoSchema) DetachPolicyDependency(policyName string, ids []int64) {
-	is.policyDependencyMutex.Lock()
-	defer is.policyDependencyMutex.Unlock()
-	for _, id := range ids {
-		_, ok := is.policyDependencySet[policyName]
-		if !ok {
-			return
-		}
-		delete(is.policyDependencySet[policyName], id)
-		if len(is.policyDependencySet) == 0 {
-			delete(is.policyDependencySet, policyName)
-		}
-	}
 }
 
 func (is *infoSchema) SetPolicy(policy *model.PolicyInfo) {
