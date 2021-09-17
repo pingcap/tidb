@@ -184,7 +184,8 @@ func TestToFloat32(t *testing.T) {
 	require.Equal(t, datum.GetFloat64(), converted.GetFloat64())
 }
 
-func (ts *testTypeConvertSuite) TestToFloat64(c *C) {
+func TestToFloat64(t *testing.T) {
+	t.Parallel()
 	testCases := []struct {
 		d      Datum
 		errMsg string
@@ -201,14 +202,14 @@ func (ts *testTypeConvertSuite) TestToFloat64(c *C) {
 
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
-	for _, t := range testCases {
-		converted, err := t.d.ToFloat64(sc)
-		if t.errMsg == "" {
-			c.Assert(err, IsNil)
+	for _, testCase := range testCases {
+		converted, err := testCase.d.ToFloat64(sc)
+		if testCase.errMsg == "" {
+			require.NoError(t, err)
 		} else {
-			c.Assert(err, ErrorMatches, t.errMsg)
+			require.Regexp(t, testCase.errMsg, err)
 		}
-		c.Assert(converted, Equals, t.result)
+		require.Equal(t, testCase.result, converted)
 	}
 }
 
