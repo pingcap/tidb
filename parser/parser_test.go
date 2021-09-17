@@ -6341,6 +6341,32 @@ func (s *testParserSuite) TestPlanRecreator(c *C) {
 	c.Assert(v.Analyze, IsTrue)
 }
 
+func (s *testParserSuite) TestCharsetIntroducer(c *C) {
+	p := parser.New()
+	// `_gbk` is treated as an identifier.
+	_, _, err := p.Parse("select _gbk 'a';", "", "")
+	c.Assert(err, IsNil)
+
+	charset.AddCharset(&charset.Charset{
+		Name:             "gbk",
+		DefaultCollation: "gbk_bin",
+		Collations:       map[string]*charset.Collation{},
+		Desc:             "gbk",
+		Maxlen:           2,
+	})
+	defer charset.RemoveCharset("gbk")
+	// `_gbk` is treated as a character set.
+	_, _, err = p.Parse("select _gbk 'a';", "", "")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	_, _, err = p.Parse("select _gbk 0x1234;", "", "")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	_, _, err = p.Parse("select _gbk 0b101001;", "", "")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1115]Unsupported character introducer: 'gbk'")
+}
+
 func (s *testParserSuite) TestGBKEncoding(c *C) {
 	p := parser.New()
 	gbkEncoding, _ := charset.Lookup("gbk")

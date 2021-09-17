@@ -290,4 +290,7 @@ var encodingNextCharacterLength = map[string]func([]byte) int{
 		}
 		return 4
 	},
+	"binary": func(bs []byte) int {
+		return 1
+	},
 }
