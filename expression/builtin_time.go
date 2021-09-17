@@ -4944,25 +4944,6 @@ type timestampFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *timestampFunctionClass) getDefaultFsp(tp *types.FieldType) int8 {
-	if tp.Tp == mysql.TypeDatetime || tp.Tp == mysql.TypeDate || tp.Tp == mysql.TypeDuration ||
-		tp.Tp == mysql.TypeTimestamp {
-		return int8(tp.Decimal)
-	}
-	switch cls := tp.EvalType(); cls {
-	case types.ETInt:
-		return types.MinFsp
-	case types.ETReal, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson, types.ETString:
-		return types.MaxFsp
-	case types.ETDecimal:
-		if tp.Decimal < int(types.MaxFsp) {
-			return int8(tp.Decimal)
-		}
-		return types.MaxFsp
-	}
-	return types.MaxFsp
-}
-
 func (c *timestampFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -4971,9 +4952,18 @@ func (c *timestampFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if argLen == 2 {
 		evalTps = append(evalTps, types.ETString)
 	}
-	fsp := c.getDefaultFsp(args[0].GetType())
+	fsp, err := getExpressionFsp(ctx, args[0])
+	if err != nil {
+		return nil, err
+	}
 	if argLen == 2 {
-		fsp = mathutil.MaxInt8(fsp, c.getDefaultFsp(args[1].GetType()))
+		fsp2, err := getExpressionFsp(ctx, args[1])
+		if err != nil {
+			return nil, err
+		}
+		if fsp2 > fsp {
+			fsp = fsp2
+		}
 	}
 	isFloat := false
 	switch args[0].GetType().Tp {
