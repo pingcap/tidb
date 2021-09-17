@@ -1014,7 +1014,7 @@ func (s *testStaleTxnSerialSuite) TestStaleReadPrepare(c *C) {
 	c.Assert("execute p1", NotNil)
 }
 
-func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
+func (s *testStaleTxnSerialSuite) TestStmtCtxStaleFlag(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1105,4 +1105,42 @@ func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
 		// assert stale read flag should be false after each statement execution
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.IsStaleness, IsFalse)
 	}
+}
+
+func (s *testStaleTxnSerialSuite) TestStaleSessionQuery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	tk.MustExec("use test")
+	tk.MustExec("create table t10 (id int);")
+	tk.MustExec("insert into t10 (id) values (1)")
+	time.Sleep(2 * time.Second)
+	now := time.Now()
+	tk.MustExec(`set @@tidb_read_staleness="-1s"`)
+	// query will use stale read
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, now.Unix()-1)), IsNil)
+	c.Assert(tk.MustQuery("select * from t10;").Rows(), HasLen, 1)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/injectNow"), IsNil)
+	// begin transaction won't be affected by read staleness
+	tk.MustExec("begin")
+	tk.MustExec("insert into t10(id) values (2);")
+	tk.MustExec("commit")
+	tk.MustExec("insert into t10(id) values (3);")
+	// query will still use staleness read
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, now.Unix()-1)), IsNil)
+	c.Assert(tk.MustQuery("select * from t10").Rows(), HasLen, 1)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/injectNow"), IsNil)
+	// assert stale read is not exist after empty the variable
+	tk.MustExec(`set @@tidb_read_staleness=""`)
+	c.Assert(tk.MustQuery("select * from t10").Rows(), HasLen, 3)
 }
