@@ -2810,6 +2810,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return err
 	}
+	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	return nil
 }
 
