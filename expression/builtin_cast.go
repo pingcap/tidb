@@ -1947,7 +1947,7 @@ func WrapWithCastAsTime(ctx sessionctx.Context, expr Expression, tp *types.Field
 	}
 	switch x := expr.GetType().EvalType(); x {
 	case types.ETInt:
-		tp.Decimal = 0
+		tp.Decimal = int(types.MinFsp)
 	case types.ETString, types.ETReal, types.ETJson:
 		tp.Decimal = int(types.MaxFsp)
 	case types.ETDatetime, types.ETTimestamp, types.ETDuration:
