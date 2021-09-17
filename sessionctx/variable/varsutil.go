@@ -121,11 +121,11 @@ func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 	if normalizedValue == "" {
 		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
 	}
-	cht, _, err := charset.GetCharsetInfo(normalizedValue)
+	cs, err := charset.GetCharsetInfo(normalizedValue)
 	if err != nil {
 		return normalizedValue, errors.Trace(err)
 	}
-	return cht, nil
+	return cs.Name, nil
 }
 
 // checkReadOnly requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.
@@ -226,6 +226,41 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 		return err
 	}
 	return vars.SetStmtVar(name, sVal)
+}
+
+func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, error) {
+	val, err := vars.GlobalVarsAccessor.GetTiDBTableValue(name)
+	if err != nil { // handle empty result or other errors
+		return defaultVal, nil
+	}
+	return trueFalseToOnOff(val), nil
+}
+
+func setTiDBTableValue(vars *SessionVars, name, value, comment string) error {
+	value = onOffToTrueFalse(value)
+	return vars.GlobalVarsAccessor.SetTiDBTableValue(name, value, comment)
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func trueFalseToOnOff(str string) string {
+	if strings.EqualFold("true", str) {
+		return On
+	} else if strings.EqualFold("false", str) {
+		return Off
+	}
+	return str
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func onOffToTrueFalse(str string) string {
+	if strings.EqualFold("ON", str) {
+		return "true"
+	} else if strings.EqualFold("OFF", str) {
+		return "false"
+	}
+	return str
 }
 
 const (
@@ -400,6 +435,19 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 	s.SnapshotTS = 0
 	s.SnapshotInfoschema = nil
 	return err
+}
+
+func setReadStaleness(s *SessionVars, sVal string) error {
+	if sVal == "" {
+		s.ReadStaleness = 0
+		return nil
+	}
+	d, err := time.ParseDuration(sVal)
+	if err != nil {
+		return err
+	}
+	s.ReadStaleness = d
+	return nil
 }
 
 // serverGlobalVariable is used to handle variables that acts in server and global scope.

@@ -53,7 +53,7 @@ import (
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
 	CreateUserTable = `CREATE TABLE IF NOT EXISTS mysql.user (
-		Host					CHAR(64),
+		Host					CHAR(255),
 		User					CHAR(32),
 		authentication_string	TEXT,
 		plugin					CHAR(64),
@@ -93,14 +93,14 @@ const (
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
-		"Host CHAR(60) NOT NULL DEFAULT ''," +
+		"Host CHAR(255) NOT NULL DEFAULT ''," +
 		"User CHAR(80) NOT NULL DEFAULT ''," +
 		"Priv LONGTEXT NOT NULL DEFAULT ''," +
 		"PRIMARY KEY (Host, User)" +
 		")"
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE IF NOT EXISTS mysql.db (
-		Host					CHAR(60),
+		Host					CHAR(255),
 		DB						CHAR(64),
 		User					CHAR(32),
 		Select_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -125,7 +125,7 @@ const (
 		PRIMARY KEY (Host, DB, User));`
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
 	CreateTablePrivTable = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
-		Host		CHAR(60),
+		Host		CHAR(255),
 		DB			CHAR(64),
 		User		CHAR(32),
 		Table_name	CHAR(64),
@@ -136,7 +136,7 @@ const (
 		PRIMARY KEY (Host, DB, User, Table_name));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
-		Host		CHAR(60),
+		Host		CHAR(255),
 		DB			CHAR(64),
 		User		CHAR(32),
 		Table_name	CHAR(64),
@@ -339,22 +339,14 @@ const (
 		PRIV char(32) NOT NULL DEFAULT '',
 		WITH_GRANT_OPTION enum('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (USER,HOST,PRIV)
-	  );`
-
-	// CreatePlacementPolicyTable store the placement policys.
-	CreatePlacementPolicyTable = `CREATE TABLE IF NOT EXISTS mysql.placement_policy (
-		NAME varchar(64) NOT NULL,
-		PRIMARY_REGION varchar(255) DEFAULT NULL,
-		REGIONS varchar(255) DEFAULT NULL,
-		LEADERS BIGINT UNSIGNED DEFAULT NULL,
-		FOLLOWERS BIGINT UNSIGNED DEFAULT NULL,
-		VOTERS BIGINT UNSIGNED DEFAULT NULL,
-		SCHEDULE varchar(255) DEFAULT NULL,
-		CONSTRAINTS varchar(255) DEFAULT NULL,
-		LEADER_CONSTRAINTS varchar(255) DEFAULT NULL,
-		FOLLOWER_CONSTRAINTS varchar(255) DEFAULT NULL,
-		VOTER_CONSTRAINTS varchar(255) DEFAULT NULL,
-		PRIMARY KEY (NAME)
+	);`
+	// CreateCapturePlanBaselinesBlacklist stores the baseline capture filter rules.
+	CreateCapturePlanBaselinesBlacklist = `CREATE TABLE IF NOT EXISTS mysql.capture_plan_baselines_blacklist (
+		id bigint(64) auto_increment,
+		filter_type varchar(32) NOT NULL COMMENT "type of the filter, only db, table and frequency supported now",
+		filter_value varchar(32) NOT NULL,
+		key idx(filter_type),
+		primary key(id)
 	);`
 )
 
@@ -515,13 +507,17 @@ const (
 	version71 = 71
 	// version72 adds snapshot column for mysql.stats_meta
 	version72 = 72
-	// version73 adds the placement policy for mysql.placement_meta
+	// version73 adds mysql.capture_plan_baselines_blacklist table
 	version73 = 73
+	// version74 changes global variable `tidb_stmt_summary_max_stmt_count` value from 200 to 3000.
+	version74 = 74
+	// version75 update mysql.*.host from char(60) to char(255)
+	version75 = 75
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version73
+var currentBootstrapVersion int64 = version75
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -598,6 +594,8 @@ var (
 		upgradeToVer71,
 		upgradeToVer72,
 		upgradeToVer73,
+		upgradeToVer74,
+		upgradeToVer75,
 	}
 )
 
@@ -1551,7 +1549,26 @@ func upgradeToVer73(s Session, ver int64) {
 	if ver >= version73 {
 		return
 	}
-	doReentrantDDL(s, CreatePlacementPolicyTable)
+	doReentrantDDL(s, CreateCapturePlanBaselinesBlacklist)
+}
+
+func upgradeToVer74(s Session, ver int64) {
+	if ver >= version74 {
+		return
+	}
+	// The old default value of `tidb_stmt_summary_max_stmt_count` is 200, we want to enlarge this to the new default value when TiDB upgrade.
+	mustExecute(s, fmt.Sprintf("UPDATE mysql.global_variables SET VARIABLE_VALUE='%[1]v' WHERE VARIABLE_NAME = 'tidb_stmt_summary_max_stmt_count' AND CAST(VARIABLE_VALUE AS SIGNED) = 200", config.GetGlobalConfig().StmtSummary.MaxStmtCount))
+}
+
+func upgradeToVer75(s Session, ver int64) {
+	if ver >= version75 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.global_priv MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.db MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Host CHAR(255)")
 }
 
 func writeOOMAction(s Session) {
@@ -1632,8 +1649,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsFMSketchTable)
 	// Create global_grants
 	mustExecute(s, CreateGlobalGrantsTable)
-	// Create placement_policy
-	mustExecute(s, CreatePlacementPolicyTable)
+	// Create capture_plan_baselines_blacklist
+	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

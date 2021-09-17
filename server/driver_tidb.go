@@ -398,7 +398,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		// * utf8mb4, the multiple is 4
 		// We used to check non-string types to avoid the truncation problem in some MySQL
 		// client such as Navicat. Now we only allow string type enter this branch.
-		charsetDesc, err := charset.GetCharsetDesc(fld.Column.Charset)
+		charsetDesc, err := charset.GetCharsetInfo(fld.Column.Charset)
 		if err != nil {
 			ci.ColumnLength *= 4
 		} else {

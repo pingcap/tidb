@@ -947,6 +947,9 @@ type SessionVars struct {
 	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
 	MPPStoreFailTTL string
 
+	// ReadStaleness indicates the staleness duration for the following query
+	ReadStaleness time.Duration
+
 	// cached is used to optimze the object allocation.
 	cached struct {
 		curr int8
@@ -1615,19 +1618,6 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 
 	return nil
 }
-
-// special session variables.
-const (
-	SQLModeVar           = "sql_mode"
-	CharacterSetResults  = "character_set_results"
-	MaxAllowedPacket     = "max_allowed_packet"
-	TimeZone             = "time_zone"
-	TxnIsolation         = "tx_isolation"
-	TransactionIsolation = "transaction_isolation"
-	TxnIsolationOneShot  = "tx_isolation_one_shot"
-	MaxExecutionTime     = "max_execution_time"
-	ReadOnly             = "read_only"
-)
 
 // TableDelta stands for the changed count for one table or partition.
 type TableDelta struct {

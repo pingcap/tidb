@@ -183,16 +183,16 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name          string
-	UsingVars     []expression.Expression
-	PrepareParams []types.Datum
-	ExecID        uint32
-	SnapshotTS    uint64
-	IsStaleness   bool
-	TxnScope      string
-	Stmt          ast.StmtNode
-	StmtType      string
-	Plan          Plan
+	Name             string
+	UsingVars        []expression.Expression
+	PrepareParams    []types.Datum
+	ExecID           uint32
+	SnapshotTS       uint64
+	IsStaleness      bool
+	ReadReplicaScope string
+	Stmt             ast.StmtNode
+	StmtType         string
+	Plan             Plan
 }
 
 // Check if result of GetVar expr is BinaryLiteral
@@ -263,7 +263,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			vars.PreparedParams = append(vars.PreparedParams, val)
 		}
 	}
-	snapshotTS, txnScope, isStaleness, err := e.handleExecuteBuilderOption(sctx, preparedObj)
+	snapshotTS, readReplicaScope, isStaleness, err := e.handleExecuteBuilderOption(sctx, preparedObj)
 	if err != nil {
 		return err
 	}
@@ -299,16 +299,16 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		return err
 	}
 	e.SnapshotTS = snapshotTS
-	e.TxnScope = txnScope
+	e.ReadReplicaScope = readReplicaScope
 	e.IsStaleness = isStaleness
 	e.Stmt = prepared.Stmt
 	return nil
 }
 
 func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
-	preparedObj *CachedPrepareStmt) (snapshotTS uint64, txnScope string, isStaleness bool, err error) {
+	preparedObj *CachedPrepareStmt) (snapshotTS uint64, readReplicaScope string, isStaleness bool, err error) {
 	snapshotTS = 0
-	txnScope = oracle.GlobalTxnScope
+	readReplicaScope = oracle.GlobalTxnScope
 	isStaleness = false
 	err = nil
 	vars := sctx.GetSessionVars()
@@ -325,7 +325,7 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 		}
 		snapshotTS = vars.TxnReadTS.UseTxnReadTS()
 		isStaleness = true
-		txnScope = config.GetTxnScopeFromConfig()
+		readReplicaScope = config.GetTxnScopeFromConfig()
 		return
 	}
 	// It means we meet following case:
@@ -346,7 +346,7 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 			return
 		}
 		isStaleness = true
-		txnScope = config.GetTxnScopeFromConfig()
+		readReplicaScope = config.GetTxnScopeFromConfig()
 		return
 	}
 	// It means we meet following case:
@@ -356,7 +356,7 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 	if vars.InTxn() && vars.TxnCtx.IsStaleness {
 		isStaleness = true
 		snapshotTS = vars.TxnCtx.StartTS
-		txnScope = vars.TxnCtx.TxnScope
+		readReplicaScope = vars.TxnCtx.TxnScope
 		return
 	}
 	return
@@ -1036,7 +1036,11 @@ func (e *Explain) prepareSchema() error {
 	case (format == types.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == types.ExplainFormatBrief):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose:
-		fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
+		if e.Analyze || e.RuntimeStatsColl != nil {
+			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
+		} else {
+			fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
+		}
 	case format == types.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatDOT:
@@ -1277,12 +1281,13 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	estRows, estCost, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 
 	var row []string
-	if e.Analyze {
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, nil)
-		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
-	} else if e.RuntimeStatsColl != nil {
+	if e.Analyze || e.RuntimeStatsColl != nil {
+		row = []string{id, estRows}
+		if e.Format == types.ExplainFormatVerbose {
+			row = append(row, estCost)
+		}
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, e.RuntimeStatsColl)
-		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
+		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}
 		if e.Format == types.ExplainFormatVerbose {
