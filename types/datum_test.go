@@ -157,30 +157,31 @@ func TestToInt64(t *testing.T) {
 	testDatumToInt64(t, v, int64(3))
 }
 
-func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
+func TestToFloat32(t *testing.T) {
+	t.Parallel()
 	ft := NewFieldType(mysql.TypeFloat)
 	var datum = NewFloat64Datum(281.37)
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	converted, err := datum.ConvertTo(sc, ft)
-	c.Assert(err, IsNil)
-	c.Assert(converted.Kind(), Equals, KindFloat32)
-	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
+	require.NoError(t, err)
+	require.Equal(t, KindFloat32, converted.Kind())
+	require.Equal(t, float32(281.37), converted.GetFloat32())
 
 	datum.SetString("281.37", mysql.DefaultCollationName)
 	converted, err = datum.ConvertTo(sc, ft)
-	c.Assert(err, IsNil)
-	c.Assert(converted.Kind(), Equals, KindFloat32)
-	c.Assert(converted.GetFloat32(), Equals, float32(281.37))
+	require.NoError(t, err)
+	require.Equal(t, KindFloat32, converted.Kind())
+	require.Equal(t, float32(281.37), converted.GetFloat32())
 
 	ft = NewFieldType(mysql.TypeDouble)
 	datum = NewFloat32Datum(281.37)
 	converted, err = datum.ConvertTo(sc, ft)
-	c.Assert(err, IsNil)
-	c.Assert(converted.Kind(), Equals, KindFloat64)
+	require.NoError(t, err)
+	require.Equal(t, KindFloat64, converted.Kind())
 	// Convert to float32 and convert back to float64, we will get a different value.
-	c.Assert(converted.GetFloat64(), Not(Equals), 281.37)
-	c.Assert(converted.GetFloat64(), Equals, datum.GetFloat64())
+	require.NotEqual(t, 281.37, converted.GetFloat64())
+	require.Equal(t, datum.GetFloat64(), converted.GetFloat64())
 }
 
 func (ts *testTypeConvertSuite) TestToFloat64(c *C) {
