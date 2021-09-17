@@ -5706,8 +5706,7 @@ func (s *testSessionSuite) TestTemporaryTableInterceptor(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(val, BytesEquals, []byte("v1"))
 
-		err = txn.Rollback()
-		c.Assert(err, IsNil)
+		tk.Se.RollbackTxn(context.Background())
 	}
 
 	// Also check GetSnapshotWithTS
