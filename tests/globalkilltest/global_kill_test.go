@@ -448,12 +448,11 @@ func TestWithoutPD(t *testing.T) {
 	// Test mysql client CTRL-C
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
 	elapsed := s.killByCtrlC(t, port, sleepTime)
-	log.Info("elapsed", zap.Any("elapsed", elapsed))
-	require.GreaterOrEqual(t, elapsed.Seconds(), float64(sleepTime))
+	require.GreaterOrEqual(t, elapsed, sleepTime*time.Second)
 
 	// Test KILL statement
 	elapsed = s.killByKillStatement(t, db, db, sleepTime)
-	require.Less(t, elapsed.Seconds(), float64(sleepTime))
+	require.Less(t, elapsed, sleepTime*time.Second)
 }
 
 // [Test Scenario 2] One TiDB with PD, killed by Ctrl+C, and killed by KILL.
@@ -478,11 +477,11 @@ func TestOneTiDB(t *testing.T) {
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
 	// see TiDB's logging for the truncation warning.
 	elapsed := s.killByCtrlC(t, port, sleepTime)
-	require.GreaterOrEqual(t, elapsed.Seconds(), float64(sleepTime))
+	require.GreaterOrEqual(t, elapsed, sleepTime*time.Second)
 
 	// Test KILL statement
 	elapsed = s.killByKillStatement(t, db, db, sleepTime)
-	require.Less(t, elapsed.Seconds(), float64(sleepTime))
+	require.Less(t, elapsed, sleepTime*time.Second)
 }
 
 // [Test Scenario 3] Multiple TiDB nodes, killed {local,remote} by {Ctrl-C,KILL}.
@@ -522,15 +521,15 @@ func TestMultipleTiDB(t *testing.T) {
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
 	// see TiDB's logging for the truncation warning.
 	elapsed = s.killByCtrlC(t, port1, sleepTime)
-	require.GreaterOrEqual(t, elapsed.Seconds(), float64(sleepTime))
+	require.GreaterOrEqual(t, elapsed, sleepTime*time.Second)
 
 	// kill local by KILL
 	elapsed = s.killByKillStatement(t, db1a, db1b, sleepTime)
-	require.Less(t, elapsed.Seconds(), float64(sleepTime))
+	require.Less(t, elapsed, sleepTime*time.Second)
 
 	// kill remotely
 	elapsed = s.killByKillStatement(t, db1a, db2, sleepTime)
-	require.Less(t, elapsed.Seconds(), float64(sleepTime))
+	require.Less(t, elapsed, sleepTime*time.Second)
 }
 
 func TestLostConnection(t *testing.T) {
@@ -632,9 +631,9 @@ func TestLostConnection(t *testing.T) {
 		// [Test Scenario 7] Connections can be killed after PD lost connection for long time and then recovered.
 		sleepTime := 2
 		elapsed := s.killByKillStatement(t, db1, db1, sleepTime)
-		require.Less(t, elapsed.Seconds(), float64(sleepTime))
+		require.Less(t, elapsed, sleepTime*time.Second)
 
 		elapsed = s.killByKillStatement(t, db1, db2, sleepTime)
-		require.Less(t, elapsed.Seconds(), float64(sleepTime))
+		require.Less(t, elapsed, sleepTime*time.Second)
 	}
 }

@@ -171,6 +171,6 @@ func TestReplicationWriter(t *testing.T) {
 	require.NoError(t, err)
 	// SUPER user can't write
 	_, err = s.db.Exec("insert into t values (1)")
-	require.NoError(t, err)
+	require.Equal(t, err.Error(), ReadOnlyErrMsg)
 	<-timer.C
 }
