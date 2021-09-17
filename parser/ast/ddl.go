@@ -3268,6 +3268,7 @@ var (
 	ErrSystemVersioningWrongPartitions      = terror.ClassDDL.NewStd(mysql.ErrSystemVersioningWrongPartitions)
 	ErrTooManyValues                        = terror.ClassDDL.NewStd(mysql.ErrTooManyValues)
 	ErrWrongPartitionTypeExpectedSystemTime = terror.ClassDDL.NewStd(mysql.ErrWrongPartitionTypeExpectedSystemTime)
+	ErrUnknownCharacterSet                  = terror.ClassDDL.NewStd(mysql.ErrUnknownCharacterSet)
 )
 
 type SubPartitionDefinition struct {

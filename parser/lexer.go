@@ -147,12 +147,12 @@ func (s *Scanner) tryDecodeToUTF8String(sql string) string {
 		}
 		return sql
 	}
-	utf8Lit, ok := s.encoding.Decode(Slice(sql))
-	if !ok {
-		s.AppendError(errors.Errorf("Cannot convert string '%x' from %s to utf8mb4", sql, s.encoding.Name()))
+	utf8Lit, err := s.encoding.Decode(nil, Slice(sql))
+	if err != nil {
+		s.AppendError(err)
 		s.lastErrorAsWarn()
 	}
-	return utf8Lit
+	return string(utf8Lit)
 }
 
 func (s *Scanner) getNextToken() int {
