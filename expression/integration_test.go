@@ -9810,6 +9810,16 @@ func (s *testIntegrationSuite2) TestIssue25526(c *C) {
 	rows.Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite) TestIssue27610(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists PK_TCOLLATION3966STROBJSTROBJ;`)
+	tk.MustExec("CREATE TABLE `PK_TCOLLATION3966STROBJSTROBJ` (\n  `COL1` enum('ll','aa','bb','cc','dd','ee') COLLATE utf8_general_ci NOT NULL,\n  `COL2` varchar(20) COLLATE utf8_general_ci DEFAULT NULL,\n  PRIMARY KEY (`COL1`) /*T![clustered_index] CLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
+	tk.MustExec(`insert into PK_TCOLLATION3966STROBJSTROBJ values("ee", "tttt");`)
+	tk.MustQuery("SELECT col1, COL2 FROM PK_TCOLLATION3966STROBJSTROBJ WHERE COL1 IN ('notexist','6') and col2 not in (\"abcd\");").
+		Check(testkit.Rows())
+}
+
 func (s *testIntegrationSuite) TestIssue26977(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	result := tk.MustQuery("select a + 1 as f from (select cast(0xfffffffffffffff0 as unsigned) as a union select cast(1 as unsigned)) t having f != 2;")
