@@ -6381,6 +6381,10 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 		return err
 	}
 
+	if err = checkPlacementPolicyNotInUseFromInfoSchema(is, policy); err != nil {
+		return err
+	}
+
 	job := &model.Job{
 		SchemaID:   policy.ID,
 		SchemaName: policy.Name.L,
