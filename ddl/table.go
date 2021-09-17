@@ -94,8 +94,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// refer the policy id used the schema diff to build the link with policy in information schema.
-		job.CtxVars = []interface{}{tbInfo.PlacementPolicyRef.ID}
 	}
 	if bundle == nil {
 		// get the default bundle from DB or PD.
