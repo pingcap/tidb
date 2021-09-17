@@ -1108,7 +1108,11 @@ func (c *getTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = c.tp.Flen
+	fsp := args[0].GetType().Flen - mysql.MaxDatetimeWidthNoFsp
+	if fsp > 0 {
+		fsp--
+	}
+	bf.setDecimalAndFlenForDatetime(fsp)
 	sig = &builtinGetTimeVarSig{bf}
 	return sig, nil
 }
