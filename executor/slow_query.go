@@ -492,7 +492,7 @@ func getLineIndex(offset offset, index int) int {
 }
 
 // splitByColon split a line like "field:value field:value..." which is hacked by re.Split
-func splitByColon(line string) (fields[]string, values[]string) {
+func splitByColon(line string) (fields []string, values []string) {
 	re := regexp.MustCompile(`\w+: `)
 	matches := re.FindAllStringIndex(line, -1)
 	fields = make([]string, 0, len(matches))
