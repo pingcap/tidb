@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -124,6 +125,11 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 	for _, child := range p.Children() {
 		res = append(res, genHintsFromPhysicalPlan(child, nodeType)...)
 	}
+	if phCte, ok := p.(*PhysicalCTE); ok {
+		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.seedPartPhysicalPlan, nodeType)...)
+		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.recursivePartPhysicalPlan, nodeType)...)
+	}
+
 	qbName, err := utilhint.GenerateQBName(nodeType, p.SelectBlockOffset())
 	if err != nil {
 		return res

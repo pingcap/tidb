@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -38,36 +39,36 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
 type BatchPointGetExec struct {
 	baseExecutor
 
-	tblInfo     *model.TableInfo
-	idxInfo     *model.IndexInfo
-	handles     []kv.Handle
-	physIDs     []int64
-	partExpr    *tables.PartitionExpr
-	partPos     int
-	singlePart  bool
-	partTblID   int64
-	idxVals     [][]types.Datum
-	startTS     uint64
-	txnScope    string
-	isStaleness bool
-	snapshotTS  uint64
-	txn         kv.Transaction
-	lock        bool
-	waitTime    int64
-	inited      uint32
-	values      [][]byte
-	index       int
-	rowDecoder  *rowcodec.ChunkDecoder
-	keepOrder   bool
-	desc        bool
-	batchGetter kv.BatchGetter
+	tblInfo          *model.TableInfo
+	idxInfo          *model.IndexInfo
+	handles          []kv.Handle
+	physIDs          []int64
+	partExpr         *tables.PartitionExpr
+	partPos          int
+	singlePart       bool
+	partTblID        int64
+	idxVals          [][]types.Datum
+	startTS          uint64
+	readReplicaScope string
+	isStaleness      bool
+	snapshotTS       uint64
+	txn              kv.Transaction
+	lock             bool
+	waitTime         int64
+	inited           uint32
+	values           [][]byte
+	index            int
+	rowDecoder       *rowcodec.ChunkDecoder
+	keepOrder        bool
+	desc             bool
+	batchGetter      kv.BatchGetter
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -115,40 +116,43 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
 	}
 	if e.runtimeStats != nil {
-		snapshotStats := &tikv.SnapshotRuntimeStats{}
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
 		stmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
-	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	replicaReadType := e.ctx.GetSessionVars().GetReplicaRead()
+	if replicaReadType.IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
-	snapshot.SetOption(kv.TxnScope, e.txnScope)
+	snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
 	snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
 	failpoint.Inject("assertBatchPointStalenessOption", func(val failpoint.Value) {
 		assertScope := val.(string)
 		if len(assertScope) > 0 {
-			if e.isStaleness && assertScope != e.txnScope {
+			if e.isStaleness && assertScope != e.readReplicaScope {
 				panic("batch point get staleness option fail")
 			}
 		}
 	})
 
-	if e.isStaleness && e.txnScope != kv.GlobalTxnScope {
+	if replicaReadType.IsClosestRead() && e.readReplicaScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
-				Value: e.txnScope,
+				Value: e.readReplicaScope,
 			},
 		})
 	}
 	setResourceGroupTagForTxn(stmtCtx, snapshot)
 	// Avoid network requests for the temporary table.
 	if e.tblInfo.TempTableType == model.TempTableGlobal {
-		snapshot = globalTemporaryTableSnapshot{snapshot}
+		snapshot = temporaryTableSnapshot{snapshot, nil}
+	} else if e.tblInfo.TempTableType == model.TempTableLocal {
+		snapshot = temporaryTableSnapshot{snapshot, e.ctx.GetSessionVars().TemporaryTableData}
 	}
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
@@ -166,14 +170,37 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	return nil
 }
 
-// Global temporary table would always be empty, so get the snapshot data of it is meanless.
-// globalTemporaryTableSnapshot inherits kv.Snapshot and override the BatchGet methods to return empty.
-type globalTemporaryTableSnapshot struct {
+// Temporary table would always use memBuffer in session as snapshot.
+// temporaryTableSnapshot inherits kv.Snapshot and override the BatchGet methods to return empty.
+type temporaryTableSnapshot struct {
 	kv.Snapshot
+	sessionData variable.TemporaryTableData
 }
 
-func (s globalTemporaryTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	return make(map[string][]byte), nil
+func (s temporaryTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	values := make(map[string][]byte)
+	if s.sessionData == nil {
+		return values, nil
+	}
+
+	for _, key := range keys {
+		val, err := s.sessionData.Get(ctx, key)
+		if err == kv.ErrNotExist {
+			continue
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		if len(val) == 0 {
+			continue
+		}
+
+		values[string(key)] = val
+	}
+
+	return values, nil
 }
 
 // Close implements the Executor interface.

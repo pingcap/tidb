@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -195,7 +196,14 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
 	if fieldTp.EvalType().IsStringKind() && !isBinaryStr {
-		fieldTp.Charset, fieldTp.Collate = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
+		fieldTp.Charset, fieldTp.Collate = DeriveCollationFromExprs(ctx, args...)
+		if fieldTp.Charset == charset.CharsetBin && fieldTp.Collate == charset.CollationBin {
+			// When args are Json and Numerical type(eg. Int), the fieldTp is String.
+			// Both their charset/collation is binary, but the String need a default charset/collation.
+			fieldTp.Charset, fieldTp.Collate = charset.GetDefaultCharsetAndCollate()
+		}
+	} else {
+		fieldTp.Charset, fieldTp.Collate = charset.CharsetBin, charset.CollationBin
 	}
 	if isBinaryFlag {
 		fieldTp.Flag |= mysql.BinaryFlag

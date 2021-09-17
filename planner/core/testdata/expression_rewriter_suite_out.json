@@ -1,0 +1,67 @@
+[
+  {
+    "Name": "TestMultiColInExpression",
+    "Cases": [
+      {
+        "SQL": "select * from t1 where (t1.a, t1.b) in (select a, b from t2)",
+        "Plan": [
+          "HashJoin 2.25 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─HashAgg(Build) 1.69 root  group by:test.t2.a, test.t2.b, funcs:firstrow(test.t2.a)->test.t2.a, funcs:firstrow(test.t2.b)->test.t2.b",
+          "│ └─TableReader 2.25 root  data:Selection",
+          "│   └─Selection 2.25 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│     └─TableFullScan 4.00 cop[tikv] table:t2 keep order:false",
+          "└─TableReader(Probe) 2.25 root  data:Selection",
+          "  └─Selection 2.25 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Res": [
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where (t1.a, t1.b) not in (select a, b from t2)",
+        "Plan": [
+          "HashJoin 3.20 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 4.00 root  data:TableFullScan",
+          "│ └─TableFullScan 4.00 cop[tikv] table:t2 keep order:false",
+          "└─TableReader(Probe) 4.00 root  data:TableFullScan",
+          "  └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Res": [
+          "4 4"
+        ]
+      },
+      {
+        "SQL": "select t1.a from t1 group by t1.a having (a, count(1)) in (select a, b from t2)",
+        "Plan": [
+          "HashJoin 1.69 root  inner join, equal:[eq(test.t2.a, test.t1.a) eq(test.t2.b, Column#7)]",
+          "├─HashAgg(Build) 1.69 root  group by:test.t2.a, test.t2.b, funcs:firstrow(test.t2.a)->test.t2.a, funcs:firstrow(test.t2.b)->test.t2.b",
+          "│ └─TableReader 2.25 root  data:Selection",
+          "│   └─Selection 2.25 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│     └─TableFullScan 4.00 cop[tikv] table:t2 keep order:false",
+          "└─HashAgg(Probe) 2.25 root  group by:test.t1.a, funcs:count(1)->Column#7, funcs:firstrow(test.t1.a)->test.t1.a",
+          "  └─TableReader 3.00 root  data:Selection",
+          "    └─Selection 3.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Res": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select t1.a from t1 group by t1.a having (a, count(1)) not in (select a, b from t2)",
+        "Plan": [
+          "HashJoin 2.40 root  CARTESIAN anti semi join, other cond:eq(Column#7, test.t2.b), eq(test.t1.a, test.t2.a)",
+          "├─TableReader(Build) 4.00 root  data:TableFullScan",
+          "│ └─TableFullScan 4.00 cop[tikv] table:t2 keep order:false",
+          "└─HashAgg(Probe) 3.00 root  group by:test.t1.a, funcs:count(1)->Column#7, funcs:firstrow(test.t1.a)->test.t1.a",
+          "  └─TableReader 4.00 root  data:TableFullScan",
+          "    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"
+        ],
+        "Res": [
+          "4"
+        ]
+      }
+    ]
+  }
+]

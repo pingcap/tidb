@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -277,6 +278,14 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.My
 		return nil, true, nil
 	}
 	res, err := dt.ToDecimal(ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return nil, false, err
+	}
+	// The decimal may be modified during plan building.
+	_, frac := res.PrecisionAndFrac()
+	if frac < c.GetType().Decimal {
+		err = res.Round(res, c.GetType().Decimal, types.ModeHalfEven)
+	}
 	return res, false, err
 }
 
@@ -382,6 +391,15 @@ func (c *Constant) ResolveIndices(_ *Schema) (Expression, error) {
 
 func (c *Constant) resolveIndices(_ *Schema) error {
 	return nil
+}
+
+// ResolveIndicesByVirtualExpr implements Expression interface.
+func (c *Constant) ResolveIndicesByVirtualExpr(_ *Schema) (Expression, bool) {
+	return c, true
+}
+
+func (c *Constant) resolveIndicesByVirtualExpr(_ *Schema) bool {
+	return true
 }
 
 // Vectorized returns if this expression supports vectorized evaluation.

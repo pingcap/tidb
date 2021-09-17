@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -57,7 +58,7 @@ type Context interface {
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 
-	// GetClient gets a kv.Client.
+	// GetMPPClient gets a kv.MPPClient.
 	GetMPPClient() kv.MPPClient
 
 	// SetValue saves a value associated with this context for key.
@@ -112,7 +113,7 @@ type Context interface {
 	AddTableLock([]model.TableLockTpInfo)
 	// ReleaseTableLocks releases table locks in the session lock map.
 	ReleaseTableLocks(locks []model.TableLockTpInfo)
-	// ReleaseTableLockByTableID releases table locks in the session lock map by table ID.
+	// ReleaseTableLockByTableIDs releases table locks in the session lock map by table IDs.
 	ReleaseTableLockByTableIDs(tableIDs []int64)
 	// CheckTableLocked checks the table lock.
 	CheckTableLocked(tblID int64) (bool, model.TableLockType)
@@ -128,6 +129,9 @@ type Context interface {
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
 	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
+	// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
+	// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
+	GetBuiltinFunctionUsage() map[string]uint32
 }
 
 type basicCtxType int

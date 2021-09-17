@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -539,7 +540,12 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 
 // String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
-	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
+	var str strings.Builder
+	str.WriteString("time:")
+	str.WriteString(FormatDuration(time.Duration(e.consume)))
+	str.WriteString(", loops:")
+	str.WriteString(strconv.FormatInt(int64(e.loop), 10))
+	return str.String()
 }
 
 // GetTime get the int64 total time

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -67,7 +68,7 @@ type Manager interface {
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
 
 	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USER_PRIVILEGES table.
-	UserPrivilegesTable() [][]types.Datum
+	UserPrivilegesTable(activeRoles []*auth.RoleIdentity, user, host string) [][]types.Datum
 
 	// ActiveRoles active roles for current session.
 	// The first illegal role will be returned.

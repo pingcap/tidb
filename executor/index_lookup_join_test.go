@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -272,7 +273,7 @@ func (s *testSuite5) TestIssue19411(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 values (2)")
 	tk.MustExec("insert into t2 values (2)")
-	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */ * from t1 left join t2 on t1.c_int = t2.c_int").Check(testkit.Rows(
+	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */ * from t1 left join t2 on t1.c_int = t2.c_int").Sort().Check(testkit.Rows(
 		"1 1",
 		"2 2"))
 	tk.MustExec("commit")
@@ -346,6 +347,19 @@ func (s *testSuite5) TestIssue24547(c *C) {
 	tk.MustExec("insert into a(v, k1, k2) values('1', '1', '1'), ('22', '22', '22'), ('333', '333', '333'), ('3444', '3444', '3444'), ('444', '444', '444')")
 	tk.MustExec("insert into b(v, k1, k2) values('1', '1', '1'), ('22', '22', '22'), ('333', '333', '333'), ('2333', '2333', '2333'), ('555', '555', '555')")
 	tk.MustExec("delete a from a inner join b on a.k1 = b.k1 and a.k2 = b.k2 where b.k2 <> '333'")
+}
+
+func (s *testSuite5) TestIssue27893(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (a enum('x','y'))")
+	tk.MustExec("create table t2 (a int, key(a))")
+	tk.MustExec("insert into t1 values('x')")
+	tk.MustExec("insert into t2 values(1)")
+	tk.MustQuery("select /*+ inl_join(t2) */ count(*) from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ inl_hash_join(t2) */ count(*) from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite5) TestPartitionTableIndexJoinAndIndexReader(c *C) {
