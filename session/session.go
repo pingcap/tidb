@@ -2023,6 +2023,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if readReplicaType.IsFollowerRead() {
 			s.txn.SetOption(kv.ReplicaRead, readReplicaType)
 		}
+		s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	}
 	return &s.txn, nil
 }
@@ -2087,6 +2088,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		IsStaleness: false,
 		TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
 	}
+	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	return nil
 }
 
@@ -2132,6 +2134,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 		IsStaleness: true,
 		TxnScope:    txnScope,
 	}
+	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	return nil
 }
 
@@ -2810,6 +2813,13 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	return nil
 }
 
+// GetSnapshotWithTS returns a snapshot with ts.
+func (s *session) GetSnapshotWithTS(ts uint64) kv.Snapshot {
+	snap := s.GetStore().GetSnapshot(kv.Version{Ver: ts})
+	snap.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
+	return snap
+}
+
 // GetStore gets the store of session.
 func (s *session) GetStore() kv.Storage {
 	return s.store
@@ -3047,4 +3057,8 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 
 func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
 	return s.builtinFunctionUsage
+}
+
+func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {
+	return temptable.SessionSnapshotInterceptor(s)
 }
