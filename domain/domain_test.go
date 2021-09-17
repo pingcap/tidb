@@ -67,7 +67,7 @@ func SubTestInfo(t *testing.T) {
 		Storage: s,
 		pdAddrs: []string{cluster.Members[0].GRPCAddr()}}
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory)
+	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory, nil)
 	defer func() {
 		dom.Close()
 		err := s.Close()
@@ -160,7 +160,7 @@ func SubTestDomain(t *testing.T) {
 	require.NoError(t, err)
 
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory, nil)
 	err = dom.Init(ddlLease, sysMockFactory)
 	require.NoError(t, err)
 

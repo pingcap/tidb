@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 type handleRange struct {
@@ -252,17 +251,17 @@ func TestRequestBuilder1(t *testing.T) {
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x23},
 			},
 		},
-		Cacheable:      true,
-		KeepOrder:      false,
-		Desc:           false,
-		Concurrency:    variable.DefDistSQLScanConcurrency,
-		IsolationLevel: 0,
-		Priority:       0,
-		NotFillCache:   false,
-		SyncLog:        false,
-		Streaming:      false,
-		ReplicaRead:    kv.ReplicaReadLeader,
-		TxnScope:       oracle.GlobalTxnScope,
+		Cacheable:        true,
+		KeepOrder:        false,
+		Desc:             false,
+		Concurrency:      variable.DefDistSQLScanConcurrency,
+		IsolationLevel:   0,
+		Priority:         0,
+		NotFillCache:     false,
+		SyncLog:          false,
+		Streaming:        false,
+		ReplicaRead:      kv.ReplicaReadLeader,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
@@ -330,17 +329,17 @@ func TestRequestBuilder2(t *testing.T) {
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x23},
 			},
 		},
-		Cacheable:      true,
-		KeepOrder:      false,
-		Desc:           false,
-		Concurrency:    variable.DefDistSQLScanConcurrency,
-		IsolationLevel: 0,
-		Priority:       0,
-		NotFillCache:   false,
-		SyncLog:        false,
-		Streaming:      false,
-		ReplicaRead:    kv.ReplicaReadLeader,
-		TxnScope:       oracle.GlobalTxnScope,
+		Cacheable:        true,
+		KeepOrder:        false,
+		Desc:             false,
+		Concurrency:      variable.DefDistSQLScanConcurrency,
+		IsolationLevel:   0,
+		Priority:         0,
+		NotFillCache:     false,
+		SyncLog:          false,
+		Streaming:        false,
+		ReplicaRead:      kv.ReplicaReadLeader,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
@@ -379,17 +378,17 @@ func TestRequestBuilder3(t *testing.T) {
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x65},
 			},
 		},
-		Cacheable:      true,
-		KeepOrder:      false,
-		Desc:           false,
-		Concurrency:    variable.DefDistSQLScanConcurrency,
-		IsolationLevel: 0,
-		Priority:       0,
-		NotFillCache:   false,
-		SyncLog:        false,
-		Streaming:      false,
-		ReplicaRead:    kv.ReplicaReadLeader,
-		TxnScope:       oracle.GlobalTxnScope,
+		Cacheable:        true,
+		KeepOrder:        false,
+		Desc:             false,
+		Concurrency:      variable.DefDistSQLScanConcurrency,
+		IsolationLevel:   0,
+		Priority:         0,
+		NotFillCache:     false,
+		SyncLog:          false,
+		Streaming:        false,
+		ReplicaRead:      kv.ReplicaReadLeader,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
@@ -424,21 +423,21 @@ func TestRequestBuilder4(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
-		Tp:             103,
-		StartTs:        0x0,
-		Data:           []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
-		KeyRanges:      keyRanges,
-		Cacheable:      true,
-		KeepOrder:      false,
-		Desc:           false,
-		Concurrency:    variable.DefDistSQLScanConcurrency,
-		IsolationLevel: 0,
-		Priority:       0,
-		Streaming:      true,
-		NotFillCache:   false,
-		SyncLog:        false,
-		ReplicaRead:    kv.ReplicaReadLeader,
-		TxnScope:       oracle.GlobalTxnScope,
+		Tp:               103,
+		StartTs:          0x0,
+		Data:             []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
+		KeyRanges:        keyRanges,
+		Cacheable:        true,
+		KeepOrder:        false,
+		Desc:             false,
+		Concurrency:      variable.DefDistSQLScanConcurrency,
+		IsolationLevel:   0,
+		Priority:         0,
+		Streaming:        true,
+		NotFillCache:     false,
+		SyncLog:          false,
+		ReplicaRead:      kv.ReplicaReadLeader,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
@@ -471,19 +470,19 @@ func TestRequestBuilder5(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
-		Tp:             104,
-		StartTs:        0x0,
-		Data:           []uint8{0x8, 0x0, 0x18, 0x0, 0x20, 0x0},
-		KeyRanges:      keyRanges,
-		KeepOrder:      true,
-		Desc:           false,
-		Concurrency:    15,
-		IsolationLevel: kv.RC,
-		Priority:       1,
-		NotFillCache:   true,
-		SyncLog:        false,
-		Streaming:      false,
-		TxnScope:       oracle.GlobalTxnScope,
+		Tp:               104,
+		StartTs:          0x0,
+		Data:             []uint8{0x8, 0x0, 0x18, 0x0, 0x20, 0x0},
+		KeyRanges:        keyRanges,
+		KeepOrder:        true,
+		Desc:             false,
+		Concurrency:      15,
+		IsolationLevel:   kv.RC,
+		Priority:         1,
+		NotFillCache:     true,
+		SyncLog:          false,
+		Streaming:        false,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
@@ -503,19 +502,19 @@ func TestRequestBuilder6(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
-		Tp:             105,
-		StartTs:        0x0,
-		Data:           []uint8{0x10, 0x0, 0x18, 0x0},
-		KeyRanges:      keyRanges,
-		KeepOrder:      false,
-		Desc:           false,
-		Concurrency:    concurrency,
-		IsolationLevel: 0,
-		Priority:       0,
-		NotFillCache:   true,
-		SyncLog:        false,
-		Streaming:      false,
-		TxnScope:       oracle.GlobalTxnScope,
+		Tp:               105,
+		StartTs:          0x0,
+		Data:             []uint8{0x10, 0x0, 0x18, 0x0},
+		KeyRanges:        keyRanges,
+		KeepOrder:        false,
+		Desc:             false,
+		Concurrency:      concurrency,
+		IsolationLevel:   0,
+		Priority:         0,
+		NotFillCache:     true,
+		SyncLog:          false,
+		Streaming:        false,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
@@ -541,18 +540,18 @@ func TestRequestBuilder7(t *testing.T) {
 				Build()
 			require.NoError(t, err)
 			expect := &kv.Request{
-				Tp:             0,
-				StartTs:        0x0,
-				KeepOrder:      false,
-				Desc:           false,
-				Concurrency:    concurrency,
-				IsolationLevel: 0,
-				Priority:       0,
-				NotFillCache:   false,
-				SyncLog:        false,
-				Streaming:      false,
-				ReplicaRead:    replicaRead.replicaReadType,
-				TxnScope:       oracle.GlobalTxnScope,
+				Tp:               0,
+				StartTs:          0x0,
+				KeepOrder:        false,
+				Desc:             false,
+				Concurrency:      concurrency,
+				IsolationLevel:   0,
+				Priority:         0,
+				NotFillCache:     false,
+				SyncLog:          false,
+				Streaming:        false,
+				ReplicaRead:      replicaRead.replicaReadType,
+				ReadReplicaScope: kv.GlobalReplicaScope,
 			}
 			require.Equal(t, expect, actual)
 		})
@@ -567,15 +566,15 @@ func TestRequestBuilder8(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
-		Tp:             0,
-		StartTs:        0x0,
-		Data:           []uint8(nil),
-		Concurrency:    variable.DefDistSQLScanConcurrency,
-		IsolationLevel: 0,
-		Priority:       0,
-		MemTracker:     (*memory.Tracker)(nil),
-		SchemaVar:      0,
-		TxnScope:       oracle.GlobalTxnScope,
+		Tp:               0,
+		StartTs:          0x0,
+		Data:             []uint8(nil),
+		Concurrency:      variable.DefDistSQLScanConcurrency,
+		IsolationLevel:   0,
+		Priority:         0,
+		MemTracker:       (*memory.Tracker)(nil),
+		SchemaVar:        0,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
