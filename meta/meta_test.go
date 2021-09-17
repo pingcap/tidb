@@ -473,6 +473,8 @@ func TestDDL(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
+		// copy iterator variable into a new variable, see issue #27779
+		tc := tc
 		t.Run(tc.desc, func(t *testing.T) {
 			t.Parallel()
 			store, err := mockstore.NewMockStore()
