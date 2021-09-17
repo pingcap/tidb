@@ -1365,8 +1365,7 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 		return "", false, nil
 	}
 	// when count > MaxInt64, returns whole string.
-	c, ok := b.args[2].(*Constant)
-	if count < 0 && ok && c.Value.Kind() == types.KindUint64 {
+	if count < 0 && mysql.HasUnsignedFlag(b.args[2].GetType().Flag) {
 		return str, false, nil
 	}
 
