@@ -1005,8 +1005,10 @@ func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 
 	// for substring_index with overflow
 	tk.MustQuery(`select substring_index('xyz', 'abc', 9223372036854775808)`).Check(testkit.Rows(`xyz`))
-	tk.MustQuery(`select substring_index("aaa.bbb.ccc.ddd.eee.fff.ggg",'.',18446744073709551613);`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee.fff.ggg`))
-	tk.MustQuery(`select substring_index("aaa.bbb.ccc.ddd.eee.fff.ggg",'.',-18446744073709551613);`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee.fff.ggg`))
+	tk.MustQuery(`select substring_index("aaa.bbb.ccc.ddd.eee",'.',18446744073709551613);`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee`))
+	tk.MustQuery(`select substring_index("aaa.bbb.ccc.ddd.eee",'.',-18446744073709551613);`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee`))
+	tk.MustQuery(`select substring_index('aaa.bbb.ccc.ddd.eee', '.', 18446744073709551615 - 1 + id) from (select 1 as id) as t1`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee`))
+	tk.MustQuery(`select substring_index('aaa.bbb.ccc.ddd.eee', '.', -18446744073709551615 - 1 + id) from (select 1 as id) as t1`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee`))
 
 	// for hex
 	tk.MustExec("drop table if exists t")
