@@ -36,26 +36,16 @@ func TestZapLoggerWithKeys(t *testing.T) {
 
 	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
 	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
-<<<<<<< HEAD
 	err := InitZapLogger(conf)
-	c.Assert(err, IsNil)
-=======
-	err := InitLogger(conf)
 	require.NoError(t, err)
->>>>>>> 9f1c6b80f... util/logutil: migrate to testify (#26322)
 	connID := uint64(123)
 	ctx := WithConnID(context.Background(), connID)
 	testZapLogger(ctx, t, fileCfg.Filename, zapLogWithConnIDPattern)
 	err = os.Remove(fileCfg.Filename)
 	require.NoError(t, err)
 
-<<<<<<< HEAD
 	err = InitZapLogger(conf)
-	c.Assert(err, IsNil)
-=======
-	err = InitLogger(conf)
 	require.NoError(t, err)
->>>>>>> 9f1c6b80f... util/logutil: migrate to testify (#26322)
 	key := "ctxKey"
 	val := "ctxValue"
 	ctx1 := WithKeyValue(context.Background(), key, val)
@@ -93,14 +83,9 @@ func testZapLogger(ctx context.Context, t *testing.T, fileName, pattern string) 
 
 func TestSetLevel(t *testing.T) {
 	conf := NewLogConfig("info", DefaultLogFormat, "", EmptyFileLogConfig, false)
-<<<<<<< HEAD
 	err := InitZapLogger(conf)
-	c.Assert(err, IsNil)
-=======
-	err := InitLogger(conf)
 	require.NoError(t, err)
 	require.Equal(t, zap.InfoLevel, log.GetLevel())
->>>>>>> 9f1c6b80f... util/logutil: migrate to testify (#26322)
 
 	err = SetLevel("warn")
 	require.NoError(t, err)
