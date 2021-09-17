@@ -506,7 +506,7 @@ func splitByColon(line string) (fields[]string, values[]string) {
 
 		end = match[0]
 		if beg != 0 {
-			// trim " " if exits
+			// trim " "
 			values = append(values, line[beg:end-1])
 		}
 		beg = match[1]
