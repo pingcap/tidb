@@ -176,8 +176,8 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		return
 	}
 	for _, col := range stableColsStats(statsTbl.Columns) {
-		// Pass a nil StatementContext to avoid column stats being marked as needed.
-		if col.IsInvalid(nil, false) {
+		// Set needLoad to false to avoid column stats being marked as needed.
+		if col.IsInvalid(false, false) {
 			continue
 		}
 		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.Count, false))

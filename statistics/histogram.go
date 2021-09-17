@@ -1065,13 +1065,13 @@ func (c *Column) MemoryUsage() (sum int64) {
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
 
-// IsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
+// IsInvalid checks if this column is invalid. If needLoad is true and this column has histogram but not loaded yet, then we mark it
 // as need histogram.
-func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
+func (c *Column) IsInvalid(needLoad bool, collPseudo bool) bool {
 	if collPseudo && c.NotAccurate() {
 		return true
 	}
-	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sc != nil {
+	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && needLoad {
 		HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
 	}
 	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)

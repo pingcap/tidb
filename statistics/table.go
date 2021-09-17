@@ -882,6 +882,8 @@ func (coll *HistColl) GetAvgRowSize(ctx sessionctx.Context, cols []*expression.C
 			// Normally this would not happen, it is for compatibility with old version stats which
 			// does not include TotColSize.
 			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
+				// TODO: Even if we don't have the column stats, we can make a finer estimation of the average column size depending on the column type.
+				// After we support analyze part of columns, we have more chances to enter here so we need a better estimation.
 				size += pseudoColSize
 				continue
 			}
@@ -966,7 +968,7 @@ func (coll *HistColl) GetValidColumn(sc *stmtctx.StatementContext, colID int64, 
 		tblColID := model.TableColumnID{TableID: coll.PhysicalID, ColumnID: colID}
 		sc.ColStatsUsage[tblColID] = time.Now()
 	}
-	if c, ok := coll.Columns[colID]; ok && !c.IsInvalid(sc, collPseudo) {
+	if c, ok := coll.Columns[colID]; ok && !c.IsInvalid(true, collPseudo) {
 		return c
 	}
 	return nil

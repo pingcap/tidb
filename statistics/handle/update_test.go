@@ -2335,6 +2335,7 @@ func (s *testSerialStatsSuite) TestCollectColumnStatsUsage(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
 
+	tk.MustExec("use test")
 	// TODO: make the view builtin
 	tk.MustExec(`CREATE VIEW column_stats_usage_info
 AS
@@ -2351,10 +2352,18 @@ AS
            ON u.table_id = t.tidb_table_id
               AND u.column_id = c.ordinal_position`)
 
-	tk.MustExec("create table t1 (a int primary key, b int, c int)")
-	tk.MustExec("insert into t values (1,2,3), (4,5,6), (7,8,9)")
-	tk.MustExec("select * fromm t1 where a > 2")
+	tk.MustExec("create table t1 (a int, b int, c int)")
+	tk.MustExec("insert into t1 values (1,2,3), (4,5,6), (7,8,9)")
+	tk.MustExec("create table t2 (a int primary key, b int, c int)")
+	tk.MustExec("insert into t2 values (1,2,3), (4,5,6), (7,8,9)")
 
+	tk.MustExec("select * fromm t1 where a > 2")
 	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
-	tk.MustQuery("select column_name from column_stats_usage_info where table_schema = 'test' and table_name = 't1'").Sort().Check(testkit.Rows("a"))
+	tk.MustQuery("select table_name, column_name from column_stats_usage_info where table_schema = 'test'").Sort().Check(testkit.Rows("t1 a"))
+	tk.MustExec("delete from mysql.column_stats_usage")
+
+	tk.MustExec("select * from t2 where a > 2")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	tk.MustQuery("select table_name, column_name from column_stats_usage_info where table_schema = 'test'").Sort().Check(testkit.Rows("t2 a"))
+	tk.MustExec("delete from mysql.column_stats_usage")
 }
