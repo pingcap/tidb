@@ -32,16 +32,17 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -146,9 +147,9 @@ type PreprocessorReturn struct {
 	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
-	LastSnapshotTS uint64
-	InfoSchema     infoschema.InfoSchema
-	TxnScope       string
+	LastSnapshotTS   uint64
+	InfoSchema       infoschema.InfoSchema
+	ReadReplicaScope string
 }
 
 // PreprocessExecuteISUpdate is used to update information schema for special Execute statement in the preprocessor.
@@ -375,9 +376,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
 	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
-		if tempAttachedIs, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
-			is = tempAttachedIs.InfoSchema
-		}
+		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
 	tbl, err := is.TableByName(sName, tn.Name)
@@ -422,37 +421,21 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 
 	// Check the bind operation is not on any temporary table.
-	var resNode ast.ResultSetNode
-	switch n := originNode.(type) {
-	case *ast.SelectStmt:
-		resNode = n
-	case *ast.SetOprStmt:
-		resNode = n
-	case *ast.DeleteStmt:
-		resNode = n.TableRefs.TableRefs
-	case *ast.UpdateStmt:
-		resNode = n.TableRefs.TableRefs
-	//TODO: What about insert into (select * from t)
-	case *ast.InsertStmt:
-		resNode = n.Table.TableRefs
-	}
-	if resNode != nil {
-		tblNames := extractTableList(resNode, nil, false)
-		for _, tn := range tblNames {
-			tbl, err := p.tableByName(tn)
-			if err != nil {
-				// If the operation is order is: drop table -> drop binding
-				// The table doesn't  exist, it is not an error.
-				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-					continue
-				}
-				p.err = err
-				return
+	tblNames := extractTableList(originNode, nil, false)
+	for _, tn := range tblNames {
+		tbl, err := p.tableByName(tn)
+		if err != nil {
+			// If the operation is order is: drop table -> drop binding
+			// The table doesn't  exist, it is not an error.
+			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				continue
 			}
-			if tbl.Meta().TempTableType != model.TempTableNone {
-				p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
-				return
-			}
+			p.err = err
+			return
+		}
+		if tbl.Meta().TempTableType != model.TempTableNone {
+			p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
+			return
 		}
 	}
 
@@ -1536,14 +1519,14 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
 	// otherwise we should directly set the return param from TxnCtx.
-	p.TxnScope = oracle.GlobalTxnScope
+	p.ReadReplicaScope = kv.GlobalReplicaScope
 	if p.ctx.GetSessionVars().InTxn() {
 		if node != nil {
 			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
 			return
 		}
 		txnCtx := p.ctx.GetSessionVars().TxnCtx
-		p.TxnScope = txnCtx.TxnScope
+		p.ReadReplicaScope = txnCtx.TxnScope
 		// It means we meet following case:
 		// 1. start transaction read only as of timestamp ts
 		// 2. select statement
@@ -1557,15 +1540,16 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	// If the statement is in auto-commit mode, we will check whether there exists read_ts, if exists,
 	// we will directly use it. The txnScope will be defined by the zone label, if it is not set, we will use
 	// global txnScope directly.
-	ts := p.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
-	if ts > 0 {
+	readTS := p.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+	readStaleness := p.ctx.GetSessionVars().ReadStaleness
+	var ts uint64
+	switch {
+	case readTS > 0:
+		ts = readTS
 		if node != nil {
 			p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
 			return
 		}
-		// it means we meet following case:
-		// 1. set transaction read only as of timestamp ts
-		// 2. select statement
 		if !p.initedLastSnapshotTS {
 			p.SnapshotTSEvaluator = func(sessionctx.Context) (uint64, error) {
 				return ts, nil
@@ -1573,8 +1557,11 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.LastSnapshotTS = ts
 			p.setStalenessReturn()
 		}
-	}
-	if node != nil {
+	case readTS == 0 && node != nil:
+		// If we didn't use read_ts, and node isn't nil, it means we use 'select table as of timestamp ... '
+		// for stale read
+		// It means we meet following case:
+		// select statement with as of timestamp
 		ts, p.err = calculateTsExpr(p.ctx, node)
 		if p.err != nil {
 			return
@@ -1583,11 +1570,25 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = errors.Trace(err)
 			return
 		}
-		// It means we meet following case:
-		// select statement with as of timestamp
 		if !p.initedLastSnapshotTS {
 			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
 				return calculateTsExpr(ctx, node)
+			}
+			p.LastSnapshotTS = ts
+			p.setStalenessReturn()
+		}
+	case readTS == 0 && node == nil && readStaleness != 0:
+		ts, p.err = calculateTsWithReadStaleness(p.ctx, readStaleness)
+		if p.err != nil {
+			return
+		}
+		if err := sessionctx.ValidateStaleReadTS(context.Background(), p.ctx, ts); err != nil {
+			p.err = errors.Trace(err)
+			return
+		}
+		if !p.initedLastSnapshotTS {
+			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
+				return calculateTsWithReadStaleness(p.ctx, readStaleness)
 			}
 			p.LastSnapshotTS = ts
 			p.setStalenessReturn()
@@ -1609,17 +1610,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = fmt.Errorf("can not get any information schema based on snapshotTS: %d", p.LastSnapshotTS)
 			return
 		}
-		// the same as session.wrapWithTemporaryTable
-		if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); !ok {
-			localTmp := p.ctx.GetSessionVars().LocalTemporaryTables
-			if localTmp != nil {
-				is = &infoschema.TemporaryTableAttachedInfoSchema{
-					InfoSchema:           is,
-					LocalTemporaryTables: localTmp.(*infoschema.LocalTemporaryTables),
-				}
-			}
-		}
-		p.InfoSchema = is
+		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
 	}
 	if p.flag&inPrepare == 0 {
 		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
@@ -1648,7 +1639,7 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *preprocessor) setStalenessReturn() {
-	txnScope := config.GetTxnScopeFromConfig()
+	scope := config.GetTxnScopeFromConfig()
 	p.IsStaleness = true
-	p.TxnScope = txnScope
+	p.ReadReplicaScope = scope
 }

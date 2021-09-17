@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/placementpolicy"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -39,6 +38,7 @@ type InfoSchema interface {
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
+	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
 	TableByID(id int64) (table.Table, bool)
 	AllocByID(id int64) (autoid.Allocators, bool)
 	AllSchemaNames() []string
@@ -57,6 +57,8 @@ type InfoSchema interface {
 	SetBundle(*placement.Bundle)
 	// RuleBundles will return a copy of all rule bundles.
 	RuleBundles() []*placement.Bundle
+	// AllPlacementPolicies returns all placement policies
+	AllPlacementPolicies() []*model.PolicyInfo
 }
 
 type sortedTables []table.Table
@@ -97,7 +99,7 @@ type infoSchema struct {
 
 	// policyMap stores all placement policies.
 	policyMutex sync.RWMutex
-	policyMap   map[string]*placementpolicy.PolicyInfo
+	policyMap   map[string]*model.PolicyInfo
 
 	schemaMap map[string]*schemaTables
 
@@ -112,7 +114,7 @@ type infoSchema struct {
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
-	result.policyMap = make(map[string]*placementpolicy.PolicyInfo)
+	result.policyMap = make(map[string]*model.PolicyInfo)
 	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
@@ -137,7 +139,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
-	result.policyMap = make(map[string]*placementpolicy.PolicyInfo)
+	result.policyMap = make(map[string]*model.PolicyInfo)
 	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
@@ -212,6 +214,16 @@ func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
 		}
 	}
 	return false
+}
+
+func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
+	// TODO: use another hash map to avoid traveling on the policy map
+	for _, v := range is.policyMap {
+		if v.ID == id {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
@@ -355,17 +367,18 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 }
 
 // PolicyByName is used to find the policy.
-func (is *infoSchema) PolicyByName(name string) (*placementpolicy.PolicyInfo, bool) {
+func (is *infoSchema) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
-	t, r := is.policyMap[name]
+	t, r := is.policyMap[name.L]
 	return t, r
 }
 
-func (is *infoSchema) PlacementPolicies() []*placementpolicy.PolicyInfo {
+// AllPlacementPolicies returns all placement policies
+func (is *infoSchema) AllPlacementPolicies() []*model.PolicyInfo {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
-	policies := make([]*placementpolicy.PolicyInfo, 0, len(is.policyMap))
+	policies := make([]*model.PolicyInfo, 0, len(is.policyMap))
 	for _, policy := range is.policyMap {
 		policies = append(policies, policy)
 	}

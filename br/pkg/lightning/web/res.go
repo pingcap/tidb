@@ -20,4 +20,4 @@ import (
 	"net/http"
 )
 
-var Res http.FileSystem = http.Dir("web/dist")
+var Res http.FileSystem = http.Dir("br/web/dist")
