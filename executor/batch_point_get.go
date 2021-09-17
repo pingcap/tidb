@@ -123,8 +123,9 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
 		stmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
-	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	replicaReadType := e.ctx.GetSessionVars().GetReplicaRead()
+	if replicaReadType.IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
 	snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
@@ -138,7 +139,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		}
 	})
 
-	if e.isStaleness && e.readReplicaScope != kv.GlobalTxnScope {
+	if replicaReadType.IsClosestRead() && e.readReplicaScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
