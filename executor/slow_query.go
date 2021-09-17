@@ -21,6 +21,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -490,6 +491,33 @@ func getLineIndex(offset offset, index int) int {
 	return fileLine
 }
 
+// splitByColon split a line like "field:value field:value..." which is hacked by re.Split
+func splitByColon(line string) (fields[]string, values[]string) {
+	re := regexp.MustCompile(`\w+:\s`)
+	matches := re.FindAllStringIndex(line, -1)
+	fields = make([]string, 0, len(matches))
+	values = make([]string, 0, len(matches))
+
+	beg := 0
+	end := 0
+	for _, match := range matches {
+		// trim ": "
+		fields = append(fields, line[match[0]:match[1]-2])
+
+		end = match[0]
+		if beg != 0 {
+			// trim " " if exits
+			values = append(values, strings.TrimSpace(line[beg:end]))
+		}
+		beg = match[1]
+	}
+
+	if end != len(line) {
+		values = append(values, line[beg:])
+	}
+	return fields, values
+}
+
 func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
 	start := time.Now()
 	defer func() {
@@ -554,10 +582,9 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				} else if strings.HasPrefix(line, variable.SlowLogCopBackoffPrefix) {
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogBackoffDetail, line, e.checker, fileLine)
 				} else {
-					fieldValues := strings.Split(line, " ")
-					for i := 0; i < len(fieldValues)-1; i += 2 {
-						field := strings.TrimSuffix(fieldValues[i], ":")
-						valid := e.setColumnValue(sctx, row, tz, field, fieldValues[i+1], e.checker, fileLine)
+					fields, values := splitByColon(line)
+					for i := 0; i < len(fields); i += 1 {
+						valid := e.setColumnValue(sctx, row, tz, fields[i], values[i], e.checker, fileLine)
 						if !valid {
 							startFlag = false
 							break
