@@ -262,6 +262,9 @@ var (
 	// ErrPlacementPolicyWithDirectOption is returned when create/alter table with both placement policy and placement options existed.
 	ErrPlacementPolicyWithDirectOption = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyWithDirectOption)
 
+	// ErrPlacementPolicyInUse is returned when placement policy is in use in drop/alter.
+	ErrPlacementPolicyInUse = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyInUse)
+
 	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
 	ErrMultipleDefConstInListPart = dbterror.ClassDDL.NewStd(mysql.ErrMultipleDefConstInListPart)
 

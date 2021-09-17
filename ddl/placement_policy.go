@@ -144,11 +144,20 @@ func checkPlacementPolicyExistAndCancelNonExistJob(t *meta.Meta, job *model.Job,
 	return nil, err
 }
 
-func onDropPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	policyInfo, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+
+	err = checkPlacementPolicyNotInUse(d, t, policyInfo)
+	if err != nil {
+		if ErrPlacementPolicyInUse.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+
 	switch policyInfo.State {
 	case model.StatePublic:
 		// public -> write only
@@ -231,4 +240,54 @@ func onAlterPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Finish this job.
 	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, nil)
 	return ver, nil
+}
+
+func checkPlacementPolicyNotInUse(d *ddlCtx, t *meta.Meta, policy *model.PolicyInfo) error {
+	currVer, err := t.GetSchemaVersion()
+	if err != nil {
+		return err
+	}
+	is := d.infoCache.GetLatest()
+	if is.SchemaMetaVersion() == currVer {
+		return checkPlacementPolicyNotInUseFromInfoSchema(is, policy)
+	}
+
+	return checkPlacementPolicyNotInUseFromMeta(t, policy)
+}
+
+func checkPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy *model.PolicyInfo) error {
+	for _, dbInfo := range is.AllSchemas() {
+		// TODO: check policy is not in use for databases
+		for _, tbl := range is.SchemaTables(dbInfo.Name) {
+			tblInfo := tbl.Meta()
+			if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
+				return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+			}
+			// TODO: check policy is not in use for partitions
+		}
+	}
+	return nil
+}
+
+func checkPlacementPolicyNotInUseFromMeta(t *meta.Meta, policy *model.PolicyInfo) error {
+	schemas, err := t.ListDatabases()
+	if err != nil {
+		return err
+	}
+
+	for _, dbInfo := range schemas {
+		// TODO: check policy is not in use for databases
+		tables, err := t.ListTables(dbInfo.ID)
+		if err != nil {
+			return err
+		}
+
+		for _, tblInfo := range tables {
+			if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
+				return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+			}
+			// TODO: check policy is not in use for partitions
+		}
+	}
+	return nil
 }
