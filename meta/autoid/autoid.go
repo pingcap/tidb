@@ -336,12 +336,12 @@ func (alloc *allocator) rebase4Signed(requiredBase int64, allocIDs bool) error {
 }
 
 // rebase4Sequence won't alloc batch immediately, cause it won't cache value in allocator.
-func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) (int64, bool, error) {
+func (alloc *allocator) rebase4Sequence(requiredBase int64) (int64, bool, error) {
 	startTime := time.Now()
 	alreadySatisfied := false
 	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		currentEnd, err := m.GetSequenceValue(alloc.dbID, tableID)
+		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
+		currentEnd, err := acc.SequenceValue().Get()
 		if err != nil {
 			return err
 		}
@@ -362,7 +362,7 @@ func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) (int64, boo
 		// If we don't want to allocate IDs, for example when creating a table with a given base value,
 		// We need to make sure when other TiDB server allocates ID for the first time, requiredBase + 1
 		// will be allocated, so we need to increase the end to exactly the requiredBase.
-		_, err = m.GenSequenceValue(alloc.dbID, tableID, requiredBase-currentEnd)
+		_, err = acc.SequenceValue().Inc(requiredBase - currentEnd)
 		return err
 	})
 	// TODO: sequence metrics
@@ -429,7 +429,7 @@ func (alloc *allocator) ForceRebase(requiredBase int64) error {
 func (alloc *allocator) RebaseSeq(requiredBase int64) (int64, bool, error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
-	return alloc.rebase4Sequence(alloc.tbID, requiredBase)
+	return alloc.rebase4Sequence(requiredBase)
 }
 
 func (alloc *allocator) GetType() AllocatorType {
@@ -551,7 +551,7 @@ func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset i
 func (alloc *allocator) AllocSeqCache() (int64, int64, int64, error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
-	return alloc.alloc4Sequence(alloc.tbID)
+	return alloc.alloc4Sequence()
 }
 
 func validIncrementAndOffset(increment, offset int64) bool {
@@ -848,7 +848,7 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 // 3: sequence allocation may have negative growth.
 // 4: sequence allocation batch length can be dissatisfied.
 // 5: sequence batch allocation will be consumed immediately.
-func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, round int64, err error) {
+func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err error) {
 	increment := alloc.sequence.Increment
 	offset := alloc.sequence.Start
 	minValue := alloc.sequence.MinValue
@@ -861,7 +861,7 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 	var newBase, newEnd int64
 	startTime := time.Now()
 	err = kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 		var (
 			err1    error
 			seqStep int64
@@ -870,7 +870,7 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 		// round is used to count cycle times in sequence with cycle option.
 		if alloc.sequence.Cycle {
 			// GetSequenceCycle is used to get the flag `round`, which indicates whether the sequence is already in cycle.
-			round, err1 = m.GetSequenceCycle(alloc.dbID, tableID)
+			round, err1 = acc.SequenceValue().Get()
 			if err1 != nil {
 				return err1
 			}
@@ -884,7 +884,7 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 		}
 
 		// Get the global new base.
-		newBase, err1 = m.GetSequenceValue(alloc.dbID, tableID)
+		newBase, err1 = acc.SequenceValue().Get()
 		if err1 != nil {
 			return err1
 		}
@@ -904,7 +904,7 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 				newBase = alloc.sequence.MaxValue + 1
 				offset = alloc.sequence.MaxValue
 			}
-			err1 = m.SetSequenceValue(alloc.dbID, tableID, newBase)
+			err1 = acc.SequenceValue().Put(newBase)
 			if err1 != nil {
 				return err1
 			}
@@ -914,7 +914,7 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 			// SetSequenceCycle is used to store the flag `round` which indicates whether the sequence is already in cycle.
 			// round > 0 means the sequence is already in cycle, so the offset should be minvalue / maxvalue rather than sequence.start.
 			// TiDB is a stateless node, it should know whether the sequence is already in cycle when restart.
-			err1 = m.SetSequenceCycle(alloc.dbID, tableID, round)
+			err1 = acc.SequenceCircle().Put(round)
 			if err1 != nil {
 				return err1
 			}
@@ -931,7 +931,7 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 		} else {
 			delta = -seqStep
 		}
-		newEnd, err1 = m.GenSequenceValue(alloc.dbID, tableID, delta)
+		newEnd, err1 = acc.SequenceValue().Inc(delta)
 		return err1
 	})
 
@@ -943,7 +943,7 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 	logutil.Logger(context.TODO()).Debug("alloc sequence value",
 		zap.Uint64(" from value", uint64(newBase)),
 		zap.Uint64("to value", uint64(newEnd)),
-		zap.Int64("table ID", tableID),
+		zap.Int64("table ID", alloc.tbID),
 		zap.Int64("database ID", alloc.dbID))
 	return newBase, newEnd, round, nil
 }
@@ -957,6 +957,8 @@ func (alloc *allocator) getIDAccessor(txn kv.Transaction) meta.AutoIDAccessor {
 		return acc.IncrementID(alloc.tbVersion)
 	case AutoRandomType:
 		return acc.RandomID()
+	case SequenceType:
+		return acc.SequenceValue()
 	}
 	return nil
 }

@@ -93,6 +93,9 @@ type AccessorPicker interface {
 	RowID() AutoIDAccessor
 	RandomID() AutoIDAccessor
 	IncrementID(tableVersion uint16) AutoIDAccessor
+
+	SequenceValue() AutoIDAccessor
+	SequenceCircle() AutoIDAccessor
 }
 
 type autoIDAccessors struct {
@@ -157,6 +160,18 @@ func (a *autoIDAccessors) IncrementID(tableVersion uint16) AutoIDAccessor {
 // RandomID is used to get the auto_random ID meta key-value accessor.
 func (a *autoIDAccessors) RandomID() AutoIDAccessor {
 	a.access.idEncodeFn = a.access.m.autoRandomTableIDKey
+	return &a.access
+}
+
+// SequenceValue is used to get the sequence value key-value accessor.
+func (a *autoIDAccessors) SequenceValue() AutoIDAccessor {
+	a.access.idEncodeFn = a.access.m.sequenceKey
+	return &a.access
+}
+
+// SequenceCircle is used to get the sequence circle key-value accessor.
+func (a *autoIDAccessors) SequenceCircle() AutoIDAccessor {
+	a.access.idEncodeFn = a.access.m.sequenceCycleKey
 	return &a.access
 }
 
