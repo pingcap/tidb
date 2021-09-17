@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,11 +25,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
-// DispatchMPPTasks dispathes all tasks and returns an iterator.
+// DispatchMPPTasks dispatches all tasks and returns an iterator.
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks)
 	if resp == nil {
@@ -74,7 +78,17 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		kvReq.Streaming = false
 	}
 	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction)
+	originalSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
+	eventCb := func(event trxevents.TransactionEvent) {
+		// Note: Do not assume this callback will be invoked within the same goroutine.
+		if copMeetLock := event.GetCopMeetLock(); copMeetLock != nil {
+			logutil.Logger(ctx).Debug("coprocessor encounters lock",
+				zap.Uint64("startTS", kvReq.StartTs),
+				zap.Stringer("lock", copMeetLock.LockInfo),
+				zap.String("stmt", originalSQL))
+		}
+	}
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, enabledRateLimitAction, eventCb)
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return nil, err
@@ -134,9 +148,9 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 }
 
 // Analyze do a analyze request.
-func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables,
+func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, sessionMemTracker *memory.Tracker) (SelectResult, error) {
-	resp := client.Send(ctx, kvReq, vars, sessionMemTracker, false)
+	resp := client.Send(ctx, kvReq, vars, sessionMemTracker, false, nil)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -156,10 +170,10 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 }
 
 // Checksum sends a checksum request.
-func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables) (SelectResult, error) {
+func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{}) (SelectResult, error) {
 	// FIXME: As BR have dependency of `Checksum` and TiDB also introduced BR as dependency, Currently we can't edit
 	// Checksum function signature. The two-way dependence should be removed in future.
-	resp := client.Send(ctx, kvReq, vars, nil, false)
+	resp := client.Send(ctx, kvReq, vars, nil, false, nil)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}

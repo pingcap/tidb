@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -68,7 +69,7 @@ func (s *testSuite3) TestGrantDBScope(c *C) {
 	createUserSQL := `CREATE USER 'testDB'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
 	// Make sure all the db privs for new user is empty.
-	sql := fmt.Sprintf("SELECT * FROM mysql.db WHERE User=\"testDB\" and host=\"localhost\"")
+	sql := `SELECT * FROM mysql.db WHERE User="testDB" and host="localhost"`
 	tk.MustQuery(sql).Check(testkit.Rows())
 
 	// Grant each priv to the user.
@@ -89,6 +90,13 @@ func (s *testSuite3) TestGrantDBScope(c *C) {
 		sql := fmt.Sprintf("SELECT %s FROM mysql.DB WHERE User=\"testDB1\" and host=\"localhost\" and db=\"test\";", mysql.Priv2UserCol[v])
 		tk.MustQuery(sql).Check(testkit.Rows("Y"))
 	}
+
+	// Grant in wrong scope.
+	_, err := tk.Exec(` grant create user on test.* to 'testDB1'@'localhost';`)
+	c.Assert(terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")), IsTrue)
+
+	_, err = tk.Exec("GRANT SUPER ON test.* TO 'testDB1'@'localhost';")
+	c.Assert(terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")), IsTrue)
 }
 
 func (s *testSuite3) TestWithGrantOption(c *C) {
@@ -97,7 +105,7 @@ func (s *testSuite3) TestWithGrantOption(c *C) {
 	createUserSQL := `CREATE USER 'testWithGrant'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
 	// Make sure all the db privs for new user is empty.
-	sql := fmt.Sprintf("SELECT * FROM mysql.db WHERE User=\"testWithGrant\" and host=\"localhost\"")
+	sql := `SELECT * FROM mysql.db WHERE User="testWithGrant" and host="localhost"`
 	tk.MustQuery(sql).Check(testkit.Rows())
 
 	// Grant select priv to the user, with grant option.
@@ -112,7 +120,7 @@ func (s *testSuite3) TestWithGrantOption(c *C) {
 	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("Y"))
 }
 
-func (s *testSuiteP1) TestTableScope(c *C) {
+func (s *testSuiteP1) TestGrantTableScope(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testTbl'@'localhost' IDENTIFIED BY '123';`
@@ -148,9 +156,12 @@ func (s *testSuiteP1) TestTableScope(c *C) {
 		p := fmt.Sprintf("%v", row[0])
 		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
 	}
+
+	_, err := tk.Exec("GRANT SUPER ON test2 TO 'testTbl1'@'localhost';")
+	c.Assert(err, ErrorMatches, "\\[executor:1144\\]Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used")
 }
 
-func (s *testSuite3) TestColumnScope(c *C) {
+func (s *testSuite3) TestGrantColumnScope(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testCol'@'localhost' IDENTIFIED BY '123';`
@@ -188,6 +199,9 @@ func (s *testSuite3) TestColumnScope(c *C) {
 		p := fmt.Sprintf("%v", row[0])
 		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
 	}
+
+	_, err := tk.Exec("GRANT SUPER(c2) ON test3 TO 'testCol1'@'localhost';")
+	c.Assert(err, ErrorMatches, "\\[executor:1221\\]Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES")
 }
 
 func (s *testSuite3) TestIssue2456(c *C) {
@@ -362,6 +376,14 @@ func (s *testSuite3) TestMaintainRequire(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSuite3) TestMaintainAuthString(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`CREATE USER 'maint_auth_str1'@'%' IDENTIFIED BY 'foo'`)
+	tk.MustQuery("SELECT authentication_string FROM mysql.user WHERE `Host` = '%' and `User` = 'maint_auth_str1'").Check(testkit.Rows("*F3A2A51A9B0F2BE2468926B4132313728C250DBF"))
+	tk.MustExec(`ALTER USER 'maint_auth_str1'@'%' REQUIRE SSL`)
+	tk.MustQuery("SELECT authentication_string FROM mysql.user WHERE `Host` = '%' and `User` = 'maint_auth_str1'").Check(testkit.Rows("*F3A2A51A9B0F2BE2468926B4132313728C250DBF"))
+}
+
 func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create user genius")
@@ -374,9 +396,6 @@ func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
 	tk.MustExec("create table if not exists xx (id int)")
 	// Case sensitive
 	_, err = tk.Exec("grant Select,Insert on XX to 'genius'")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
-	// The database name should also case sensitive match.
-	_, err = tk.Exec("grant Select,Insert on Test.xx to 'genius'")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
 
 	_, err = tk.Exec("grant Select,Insert on xx to 'genius'")
@@ -394,4 +413,35 @@ func (s *testSuite3) TestIssue22721(c *C) {
 	tk.MustExec("GRANT USAGE ON sync_ci_data.* TO 'sync_ci_data'@'%';")
 	tk.MustExec("GRANT USAGE ON test.* TO 'sync_ci_data'@'%';")
 	tk.MustExec("GRANT USAGE ON test.xx TO 'sync_ci_data'@'%';")
+}
+
+func (s *testSuite3) TestGrantDynamicPrivs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user dyn")
+
+	_, err := tk.Exec("GRANT BACKUP_ADMIN ON test.* TO dyn")
+	c.Assert(terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel), IsTrue)
+	_, err = tk.Exec("GRANT BOGUS_GRANT ON *.* TO dyn")
+	c.Assert(terror.ErrorEqual(err, executor.ErrDynamicPrivilegeNotRegistered), IsTrue)
+
+	tk.MustExec("GRANT BACKUP_Admin ON *.* TO dyn") // grant one priv
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % BACKUP_ADMIN N"))
+
+	tk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, BACKUP_ADMIN ON *.* TO dyn") // grant multiple
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(
+		testkit.Rows("dyn % BACKUP_ADMIN N", "dyn % SYSTEM_VARIABLES_ADMIN N"),
+	)
+
+	tk.MustExec("GRANT ROLE_ADMIN, BACKUP_ADMIN ON *.* TO dyn WITH GRANT OPTION") // grant multiple with GRANT option.
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(
+		testkit.Rows("dyn % BACKUP_ADMIN Y", "dyn % ROLE_ADMIN Y", "dyn % SYSTEM_VARIABLES_ADMIN N"),
+	)
+
+	tk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, Select, ROLE_ADMIN ON *.* TO dyn") // grant mixed dynamic/non dynamic
+	tk.MustQuery("SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn'").Check(testkit.Rows("N"))
+	tk.MustQuery("SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='SYSTEM_VARIABLES_ADMIN'").Check(testkit.Rows("N"))
+
+	tk.MustExec("GRANT CONNECTION_ADMIN, Insert ON *.* TO dyn WITH GRANT OPTION") // grant mixed dynamic/non dynamic with GRANT option.
+	tk.MustQuery("SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn'").Check(testkit.Rows("Y"))
+	tk.MustQuery("SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='CONNECTION_ADMIN'").Check(testkit.Rows("Y"))
 }

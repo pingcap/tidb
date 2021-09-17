@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	math2 "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -71,7 +73,7 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 		}
 		return types.ETInt
 	}
-	if types.IsBinaryStr(ft) {
+	if types.IsBinaryStr(ft) || ft.Tp == mysql.TypeBit {
 		return types.ETInt
 	}
 	evalTp4Ft := types.ETReal
@@ -82,13 +84,6 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 		}
 	}
 	return evalTp4Ft
-}
-
-// setFlenDecimal4Int is called to set proper `Flen` and `Decimal` of return
-// type according to the two input parameter's types.
-func setFlenDecimal4Int(retTp, a, b *types.FieldType) {
-	retTp.Decimal = 0
-	retTp.Flen = mysql.MaxIntWidth
 }
 
 // setFlenDecimal4RealOrDecimal is called to set proper `Flen` and `Decimal` of return
@@ -141,7 +136,9 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 		retTp.Flen = mysql.MaxDecimalWidth
 		return
 	}
-	retTp.Flen = a.Flen + decb + precIncrement
+	aPrec := types.DecimalLength2Precision(a.Flen, a.Decimal, mysql.HasUnsignedFlag(a.Flag))
+	retTp.Flen = aPrec + decb + precIncrement
+	retTp.Flen = types.Precision2LengthNoTruncation(retTp.Flen, retTp.Decimal, mysql.HasUnsignedFlag(retTp.Flag))
 	if retTp.Flen > mysql.MaxDecimalWidth {
 		retTp.Flen = mysql.MaxDecimalWidth
 	}
@@ -188,7 +185,6 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 		if mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
-		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		sig := &builtinArithmeticPlusIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusInt)
 		return sig, nil
@@ -296,7 +292,7 @@ func (s *builtinArithmeticPlusRealSig) evalReal(row chunk.Row) (float64, bool, e
 	if isLHSNull || isRHSNull {
 		return 0, true, nil
 	}
-	if (a > 0 && b > math.MaxFloat64-a) || (a < 0 && b < -math.MaxFloat64-a) {
+	if !math2.IsFinite(a + b) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return a + b, false, nil
@@ -336,7 +332,6 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		if (mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag)) && !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode() {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
@@ -365,7 +360,7 @@ func (s *builtinArithmeticMinusRealSig) evalReal(row chunk.Row) (float64, bool, 
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	if (a > 0 && -b > math.MaxFloat64-a) || (a < 0 && -b < -math.MaxFloat64-a) {
+	if !math2.IsFinite(a - b) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return a - b, false, nil
@@ -521,12 +516,10 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx sessionctx.Context, ar
 		}
 		if mysql.HasUnsignedFlag(lhsTp.Flag) || mysql.HasUnsignedFlag(rhsTp.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
-			setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 			sig := &builtinArithmeticMultiplyIntUnsignedSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_MultiplyIntUnsigned)
 			return sig, nil
 		}
-		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		sig := &builtinArithmeticMultiplyIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyInt)
 		return sig, nil
@@ -626,7 +619,7 @@ func (s *builtinArithmeticMultiplyIntSig) evalInt(row chunk.Row) (val int64, isN
 		return 0, isNull, err
 	}
 	result := a * b
-	if a != 0 && result/a != b {
+	if (a != 0 && result/a != b) || (result == math.MinInt64 && a == -1) {
 		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s * %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return result, false, nil
@@ -780,18 +773,17 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row chunk.Row) (int64, bool, 
 }
 
 func (s *builtinArithmeticIntDivideIntSig) evalIntWithCtx(sctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
-	b, isNull, err := s.args[1].EvalInt(sctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	b, bIsNull, err := s.args[1].EvalInt(sctx, row)
+	if bIsNull || err != nil {
+		return 0, bIsNull, err
+	}
+	a, aIsNull, err := s.args[0].EvalInt(sctx, row)
+	if aIsNull || err != nil {
+		return 0, aIsNull, err
 	}
 
 	if b == 0 {
 		return 0, true, handleDivisionByZeroError(sctx)
-	}
-
-	a, isNull, err := s.args[0].EvalInt(sctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
 	}
 
 	var (

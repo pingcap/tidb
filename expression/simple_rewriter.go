@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -122,12 +123,18 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, name := range names {
-		if (dbName.L == "" || dbName.L == name.DBName.L) &&
+		if !name.NotExplicitUsable && (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
 			(colName.L == name.ColName.L) {
 			if idx == -1 {
 				idx = i
 			} else {
+				if names[idx].Redundant || name.Redundant {
+					if !name.Redundant {
+						idx = i
+					}
+					continue
+				}
 				return -1, errNonUniq.GenWithStackByArgs(astCol.String(), "field list")
 			}
 		}

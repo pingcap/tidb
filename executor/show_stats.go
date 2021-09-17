@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func (e *ShowExec) fetchShowStatsExtended() error {
@@ -56,21 +56,26 @@ func (e *ShowExec) appendTableForStatsExtended(dbName string, tbl *model.TableIn
 	}
 	var sb strings.Builder
 	for statsName, item := range statsTbl.ExtendedStats.Stats {
+		sb.Reset()
 		sb.WriteString("[")
+		allColsExist := true
 		for i, colID := range item.ColIDs {
 			name, ok := colID2Name[colID]
-			if ok {
-				sb.WriteString(name)
-			} else {
-				sb.WriteString("?")
+			if !ok {
+				allColsExist = false
+				break
 			}
+			sb.WriteString(name)
 			if i != len(item.ColIDs)-1 {
 				sb.WriteString(",")
 			}
 		}
+		// The column may have been dropped, while the extended stats have not been removed by GC yet.
+		if !allColsExist {
+			continue
+		}
 		sb.WriteString("]")
 		colNames := sb.String()
-		sb.Reset()
 		var statsType, statsVal string
 		switch item.Tp {
 		case ast.StatsTypeCorrelation:
@@ -198,7 +203,7 @@ func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string
 }
 
 func (e *ShowExec) versionToTime(version uint64) types.Time {
-	t := time.Unix(0, oracle.ExtractPhysical(version)*int64(time.Millisecond))
+	t := oracle.GetTimeFromTS(version)
 	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, 0)
 }
 

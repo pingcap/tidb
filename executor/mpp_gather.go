@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -30,7 +31,7 @@ import (
 )
 
 func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
-	if !ctx.GetSessionVars().AllowMPPExecution {
+	if !ctx.GetSessionVars().IsMPPAllowed() {
 		return false
 	}
 	_, ok := tr.GetTablePlan().(*plannercore.PhysicalExchangeSender)
@@ -45,13 +46,12 @@ type MPPGather struct {
 	originalPlan plannercore.PhysicalPlan
 	startTS      uint64
 
-	allocTaskID *int64
-	mppReqs     []*kv.MPPDispatchRequest
+	mppReqs []*kv.MPPDispatchRequest
 
 	respIter distsql.SelectResult
 }
 
-func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.MPPTask, isRoot bool) error {
+func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 	dagReq, _, err := constructDAGReq(e.ctx, []plannercore.PhysicalPlan{pf.ExchangeSender}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
@@ -59,12 +59,12 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 	for i := range pf.ExchangeSender.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	if !isRoot {
+	if !pf.IsRoot {
 		dagReq.EncodeType = tipb.EncodeType_TypeCHBlock
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
-	for _, mppTask := range tasks {
+	for _, mppTask := range pf.ExchangeSender.Tasks {
 		err := updateExecutorTableID(context.Background(), dagReq.RootExecutor, mppTask.TableID, true)
 		if err != nil {
 			return errors.Trace(err)
@@ -78,19 +78,13 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 			Data:      pbData,
 			Meta:      mppTask.Meta,
 			ID:        mppTask.ID,
-			IsRoot:    isRoot,
+			IsRoot:    pf.IsRoot,
 			Timeout:   10,
 			SchemaVar: e.is.SchemaMetaVersion(),
 			StartTs:   e.startTS,
 			State:     kv.MppTaskReady,
 		}
 		e.mppReqs = append(e.mppReqs, req)
-	}
-	for _, r := range pf.ExchangeReceivers {
-		err = e.appendMPPDispatchReq(r.GetExchangeSender().Fragment, r.Tasks, false)
-		if err != nil {
-			return errors.Trace(err)
-		}
 	}
 	return nil
 }
@@ -109,13 +103,15 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := e.originalPlan.(*plannercore.PhysicalExchangeSender)
 	planIDs := collectPlanIDS(e.originalPlan, nil)
-	rootTasks, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.allocTaskID, e.is)
+	frags, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.appendMPPDispatchReq(sender.Fragment, rootTasks, true)
-	if err != nil {
-		return errors.Trace(err)
+	for _, frag := range frags {
+		err = e.appendMPPDispatchReq(frag)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	failpoint.Inject("checkTotalMPPTasks", func(val failpoint.Value) {
 		if val.(int) != len(e.mppReqs) {
@@ -126,7 +122,6 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.respIter.Fetch(ctx)
 	return nil
 }
 

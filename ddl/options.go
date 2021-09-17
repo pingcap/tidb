@@ -4,10 +4,11 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://wwm.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -26,11 +27,11 @@ type Option func(*Options)
 
 // Options represents all the options of the DDL module needs
 type Options struct {
-	EtcdCli    *clientv3.Client
-	Store      kv.Storage
-	InfoHandle *infoschema.Handle
-	Hook       Callback
-	Lease      time.Duration
+	EtcdCli   *clientv3.Client
+	Store     kv.Storage
+	InfoCache *infoschema.InfoCache
+	Hook      Callback
+	Lease     time.Duration
 }
 
 // WithEtcdClient specifies the `clientv3.Client` of DDL used to request the etcd service
@@ -47,10 +48,10 @@ func WithStore(store kv.Storage) Option {
 	}
 }
 
-// WithInfoHandle specifies the `infoschema.Handle`
-func WithInfoHandle(ih *infoschema.Handle) Option {
+// WithInfoCache specifies the `infoschema.InfoCache`
+func WithInfoCache(ic *infoschema.InfoCache) Option {
 	return func(options *Options) {
-		options.InfoHandle = ih
+		options.InfoCache = ic
 	}
 }
 

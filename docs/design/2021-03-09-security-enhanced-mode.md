@@ -1,7 +1,7 @@
 # Proposal:
 
 - Author(s):     [morgo](https://github.com/morgo)
-- Last updated:  March 9, 2021
+- Last updated:  May 04, 2021
 - Discussion at: N/A
 
 ## Table of Contents
@@ -49,7 +49,7 @@ A boolean option called `EnableEnhancedSecurity` (default `FALSE`) will be added
 
 ### System Variables
 
-The following system variables will be hidden:
+The following system variables will be hidden unless the user has the `RESTRICTED_VARIABLES_ADMIN` privilege:
 
 * variable.TiDBDDLSlowOprThreshold,
 * variable.TiDBAllowRemoveAutoInc,
@@ -78,13 +78,13 @@ The following system variables will be reset to defaults:
 
 ### Status Variables
 
-The following status variables will be hidden:
+The following status variables will be hidden unless the user has the `RESTRICTED_STATUS_ADMIN` privilege:
 
 * tidb_gc_leader_desc
 
 ### Information Schema Tables
 
-The following tables will be hidden:
+The following tables will be hidden unless the user has the `RESTRICTED_TABLES_ADMIN` privilege:
 
 * cluster_config
 * cluster_hardware
@@ -99,7 +99,7 @@ The following tables will be hidden:
 * metrics_tables
 * tidb_hot_regions
 
-The following tables will be modified to hide columns:
+The following tables will be modified to hide columns unless the user has the `RESTRICTED_TABLES_ADMIN` privilege:
 
 * tikv_store_status
     * The address, capacity, available, start_ts and uptime columns will return NULL.
@@ -110,7 +110,7 @@ The following tables will be modified to hide columns:
 
 ### Performance Schema Tables
 
-The following tables will be hidden:
+The following tables will be hidden unless the user has the `RESTRICTED_TABLES_ADMIN` privilege:
 
  * pd_profile_allocs
  * pd_profile_block
@@ -128,7 +128,7 @@ The following tables will be hidden:
 
 ### System (mysql) Tables
 
-The following tables will be hidden:
+The following tables will be hidden unless the user has the `RESTRICTED_TABLES_ADMIN` privilege:
 
 * expr_pushdown_blacklist
 * gc_delete_range
@@ -137,13 +137,15 @@ The following tables will be hidden:
 * tidb
 * global_variables
 
+The remaining system tables will be limited to read-only operations and can not create new tables.
+
 ### Metrics Schema
 
-All tables will be hidden, including the schema itself.
+All tables will be hidden, including the schema itself unless the user has the `RESTRICTED_TABLES_ADMIN` privilege.
 
 ### Commands
 
-* `SHOW CONFIG` is disabled.
+* `SHOW CONFIG` is changed to require the `CONFIG` privilege (with or without SEM enabled).
 * `SET CONFIG` is disabled by the `CONFIG` Privilege (no change necessary)
 * The `BACKUP` and `RESTORE` commands prevent local backups and restores.
 * The statement `SELECT .. INTO OUTFILE` is disabled (this is the only current usage of the `FILE` privilege, effectively disabling `FILE`. For compatibility `GRANT` and `REVOKE` of `FILE` will not be affected.)

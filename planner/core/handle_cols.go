@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -34,6 +35,7 @@ type HandleCols interface {
 	// BuildHandleByDatums builds a Handle from a datum slice.
 	BuildHandleByDatums(row []types.Datum) (kv.Handle, error)
 	// BuildHandleFromIndexRow builds a Handle from index row data.
+	// The last column(s) of `row` must be the handle column(s).
 	BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error)
 	// ResolveIndices resolves handle column indices.
 	ResolveIndices(schema *expression.Schema) (HandleCols, error)
@@ -47,7 +49,7 @@ type HandleCols interface {
 	NumCols() int
 	// Compare compares two datum rows by handle order.
 	Compare(a, b []types.Datum) (int, error)
-	// GetFieldTypes return field types of columns
+	// GetFieldTypes return field types of columns.
 	GetFieldsTypes() []*types.FieldType
 }
 

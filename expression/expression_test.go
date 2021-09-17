@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -35,7 +36,7 @@ func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
-	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong).add("col1", mysql.TypeLonglong).build()
+	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).add("col1", mysql.TypeLonglong, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
 	col1 := schema.Columns[1]
@@ -142,15 +143,17 @@ type testTableBuilder struct {
 	tableName   string
 	columnNames []string
 	tps         []byte
+	flags       []uint
 }
 
 func newTestTableBuilder(tableName string) *testTableBuilder {
 	return &testTableBuilder{tableName: tableName}
 }
 
-func (builder *testTableBuilder) add(name string, tp byte) *testTableBuilder {
+func (builder *testTableBuilder) add(name string, tp byte, flag uint) *testTableBuilder {
 	builder.columnNames = append(builder.columnNames, name)
 	builder.tps = append(builder.tps, tp)
+	builder.flags = append(builder.flags, flag)
 	return builder
 }
 
@@ -165,6 +168,7 @@ func (builder *testTableBuilder) build() *model.TableInfo {
 		fieldType := types.NewFieldType(tp)
 		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
 		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
+		fieldType.Flag = builder.flags[i]
 		ti.Columns = append(ti.Columns, &model.ColumnInfo{
 			ID:        int64(i + 1),
 			Name:      model.NewCIStr(colName),

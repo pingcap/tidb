@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
@@ -51,7 +53,7 @@ const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv |
 const (
 	sqlLoadRoleGraph        = "SELECT HIGH_PRIORITY FROM_USER, FROM_HOST, TO_USER, TO_HOST FROM mysql.role_edges"
 	sqlLoadGlobalPrivTable  = "SELECT HIGH_PRIORITY Host,User,Priv FROM mysql.global_priv"
-	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv FROM mysql.db ORDER BY host, db, user"
+	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,References_priv,Lock_tables_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv FROM mysql.db ORDER BY host, db, user"
 	sqlLoadTablePrivTable   = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv FROM mysql.tables_priv"
 	sqlLoadColumnsPrivTable = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Column_name,Timestamp,Column_priv FROM mysql.columns_priv"
 	sqlLoadDefaultRoles     = "SELECT HIGH_PRIORITY HOST, USER, DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER FROM mysql.default_roles"
@@ -62,7 +64,8 @@ const (
 	References_priv,Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,
 	Create_role_priv,Drop_role_priv,Create_tmp_table_priv,Lock_tables_priv,Create_routine_priv,
 	Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,Repl_client_priv,Repl_slave_priv,
-	account_locked FROM mysql.user`
+	account_locked,plugin FROM mysql.user`
+	sqlLoadGlobalGrantsTable = `SELECT HIGH_PRIORITY Host,User,Priv,With_Grant_Option FROM mysql.global_grants`
 )
 
 func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
@@ -94,6 +97,7 @@ type UserRecord struct {
 	AuthenticationString string
 	Privileges           mysql.PrivilegeType
 	AccountLocked        bool // A role record when this field is true
+	AuthPlugin           string
 }
 
 // NewUserRecord return a UserRecord, only use for unit test.
@@ -111,6 +115,13 @@ type globalPrivRecord struct {
 
 	Priv   GlobalPrivValue
 	Broken bool
+}
+
+type dynamicPrivRecord struct {
+	baseRecord
+
+	PrivilegeName string
+	GrantOption   bool
 }
 
 // SSLType is enum value for GlobalPrivValue.SSLType.
@@ -247,6 +258,7 @@ type MySQLPrivilege struct {
 	User          []UserRecord
 	UserMap       map[string][]UserRecord // Accelerate User searching
 	Global        map[string][]globalPrivRecord
+	Dynamic       map[string][]dynamicPrivRecord
 	DB            []dbRecord
 	DBMap         map[string][]dbRecord // Accelerate DB searching
 	TablesPriv    []tablesPrivRecord
@@ -301,6 +313,11 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	}
 
 	err = p.LoadGlobalPrivTable(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = p.LoadGlobalGrantsTable(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -483,6 +500,11 @@ func (p *MySQLPrivilege) LoadGlobalPrivTable(ctx sessionctx.Context) error {
 	return p.loadTable(ctx, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow)
 }
 
+// LoadGlobalGrantsTable loads the mysql.global_priv table from database.
+func (p *MySQLPrivilege) LoadGlobalGrantsTable(ctx sessionctx.Context) error {
+	return p.loadTable(ctx, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow)
+}
+
 // LoadDBTable loads the mysql.db table from database.
 func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
 	err := p.loadTable(ctx, sqlLoadDBTable, p.decodeDBTableRow)
@@ -612,6 +634,12 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			if row.GetEnum(i).String() == "Y" {
 				value.AccountLocked = true
 			}
+		case f.ColumnAsName.L == "plugin":
+			if row.GetString(i) != "" {
+				value.AuthPlugin = row.GetString(i)
+			} else {
+				value.AuthPlugin = mysql.AuthNativePassword
+			}
 		case f.Column.Tp == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
@@ -664,6 +692,25 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.Resul
 		p.Global = make(map[string][]globalPrivRecord)
 	}
 	p.Global[value.User] = append(p.Global[value.User], value)
+	return nil
+}
+
+func (p *MySQLPrivilege) decodeGlobalGrantsTableRow(row chunk.Row, fs []*ast.ResultField) error {
+	var value dynamicPrivRecord
+	for i, f := range fs {
+		switch {
+		case f.ColumnAsName.L == "priv":
+			value.PrivilegeName = strings.ToUpper(row.GetString(i))
+		case f.ColumnAsName.L == "with_grant_option":
+			value.GrantOption = row.GetEnum(i).String() == "Y"
+		default:
+			value.assignUserOrHost(row, i, f)
+		}
+	}
+	if p.Dynamic == nil {
+		p.Dynamic = make(map[string][]dynamicPrivRecord)
+	}
+	p.Dynamic[value.User] = append(p.Dynamic[value.User], value)
 	return nil
 }
 
@@ -917,6 +964,52 @@ func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *col
 	return nil
 }
 
+// HasExplicitlyGrantedDynamicPrivilege checks if a user has a DYNAMIC privilege
+// without accepting SUPER privilege as a fallback.
+func (p *MySQLPrivilege) HasExplicitlyGrantedDynamicPrivilege(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
+	privName = strings.ToUpper(privName)
+	roleList := p.FindAllRole(activeRoles)
+	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
+	// Loop through each of the roles and return on first match
+	// If grantable is required, ensure the record has the GrantOption set.
+	for _, r := range roleList {
+		u := r.Username
+		h := r.Hostname
+		for _, record := range p.Dynamic[u] {
+			if record.match(u, h) {
+				if withGrant && !record.GrantOption {
+					continue
+				}
+				if record.PrivilegeName == privName {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// RequestDynamicVerification checks all roles for a specific DYNAMIC privilege.
+func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
+	privName = strings.ToUpper(privName)
+	if p.HasExplicitlyGrantedDynamicPrivilege(activeRoles, user, host, privName, withGrant) {
+		return true
+	}
+	// If SEM is enabled, and the privilege is of type restricted, do not fall through
+	// To using SUPER as a replacement privilege.
+	if sem.IsEnabled() && sem.IsRestrictedPrivilege(privName) {
+		return false
+	}
+	// For compatibility reasons, the SUPER privilege also has all DYNAMIC privileges granted to it (dynamic privs are a super replacement)
+	// This may be changed in future, but will require a bootstrap task to assign all dynamic privileges
+	// to users with SUPER, otherwise tasks such as BACKUP and ROLE_ADMIN will start to fail.
+	// The visitInfo system will also need modification to support OR conditions.
+	if withGrant && !p.RequestVerification(activeRoles, user, host, "", "", "", mysql.GrantPriv) {
+		return false
+	}
+	return p.RequestVerification(activeRoles, user, host, "", "", "", mysql.SuperPriv)
+}
+
 // RequestVerification checks whether the user have sufficient privileges to do the operation.
 func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, user, host, db, table, column string, priv mysql.PrivilegeType) bool {
 	if priv == mysql.UsagePriv {
@@ -980,6 +1073,10 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 		if record.Privileges&globalDBVisible > 0 {
 			return true
 		}
+		// For metrics_schema, `PROCESS` can also work.
+		if record.Privileges&mysql.ProcessPriv > 0 && strings.EqualFold(db, util.MetricSchemaName.O) {
+			return true
+		}
 	}
 
 	// INFORMATION_SCHEMA is visible to all users.
@@ -1016,13 +1113,14 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 
 func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentity) []string {
 	var gs []string
+	var sortFromIdx int
 	var hasGlobalGrant = false
 	// Some privileges may granted from role inheritance.
 	// We should find these inheritance relationship.
 	allRoles := p.FindAllRole(roles)
 	// Show global grants.
 	var currentPriv mysql.PrivilegeType
-	var hasGrantOptionPriv, userExists = false, false
+	var userExists = false
 	// Check whether user exists.
 	if userList, ok := p.UserMap[user]; ok {
 		for _, record := range userList {
@@ -1039,21 +1137,11 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	for _, record := range p.User {
 		if record.fullyMatch(user, host) {
 			hasGlobalGrant = true
-			if (record.Privileges & mysql.GrantPriv) > 0 {
-				hasGrantOptionPriv = true
-				currentPriv |= (record.Privileges & ^mysql.GrantPriv)
-				continue
-			}
 			currentPriv |= record.Privileges
 		} else {
 			for _, r := range allRoles {
 				if record.baseRecord.match(r.Username, r.Hostname) {
 					hasGlobalGrant = true
-					if (record.Privileges & mysql.GrantPriv) > 0 {
-						hasGrantOptionPriv = true
-						currentPriv |= (record.Privileges & ^mysql.GrantPriv)
-						continue
-					}
 					currentPriv |= record.Privileges
 				}
 			}
@@ -1062,9 +1150,8 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	g = userPrivToString(currentPriv)
 	if len(g) > 0 {
 		var s string
-		if hasGrantOptionPriv {
+		if (currentPriv & mysql.GrantPriv) > 0 {
 			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION`, g, user, host)
-
 		} else {
 			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, user, host)
 
@@ -1075,7 +1162,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	// This is a mysql convention.
 	if len(gs) == 0 && hasGlobalGrant {
 		var s string
-		if hasGrantOptionPriv {
+		if (currentPriv & mysql.GrantPriv) > 0 {
 			s = fmt.Sprintf("GRANT USAGE ON *.* TO '%s'@'%s' WITH GRANT OPTION", user, host)
 		} else {
 			s = fmt.Sprintf("GRANT USAGE ON *.* TO '%s'@'%s'", user, host)
@@ -1084,40 +1171,21 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	}
 
 	// Show db scope grants.
+	sortFromIdx = len(gs)
 	dbPrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.DB {
 		if record.fullyMatch(user, host) {
 			if _, ok := dbPrivTable[record.DB]; ok {
-				if (record.Privileges & mysql.GrantPriv) > 0 {
-					hasGrantOptionPriv = true
-					dbPrivTable[record.DB] |= (record.Privileges & ^mysql.GrantPriv)
-					continue
-				}
 				dbPrivTable[record.DB] |= record.Privileges
 			} else {
-				if (record.Privileges & mysql.GrantPriv) > 0 {
-					hasGrantOptionPriv = true
-					dbPrivTable[record.DB] = (record.Privileges & ^mysql.GrantPriv)
-					continue
-				}
 				dbPrivTable[record.DB] = record.Privileges
 			}
 		} else {
 			for _, r := range allRoles {
 				if record.baseRecord.match(r.Username, r.Hostname) {
 					if _, ok := dbPrivTable[record.DB]; ok {
-						if (record.Privileges & mysql.GrantPriv) > 0 {
-							hasGrantOptionPriv = true
-							dbPrivTable[record.DB] |= (record.Privileges & ^mysql.GrantPriv)
-							continue
-						}
 						dbPrivTable[record.DB] |= record.Privileges
 					} else {
-						if (record.Privileges & mysql.GrantPriv) > 0 {
-							hasGrantOptionPriv = true
-							dbPrivTable[record.DB] = (record.Privileges & ^mysql.GrantPriv)
-							continue
-						}
 						dbPrivTable[record.DB] = record.Privileges
 					}
 				}
@@ -1128,53 +1196,38 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		g := dbPrivToString(priv)
 		if len(g) > 0 {
 			var s string
-			if hasGrantOptionPriv {
+			if (priv & mysql.GrantPriv) > 0 {
 				s = fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s' WITH GRANT OPTION`, g, dbName, user, host)
-
 			} else {
 				s = fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s'`, g, dbName, user, host)
-
 			}
+			gs = append(gs, s)
+		} else if len(g) == 0 && (priv&mysql.GrantPriv) > 0 {
+			// We have GRANT OPTION on the db, but no privilege granted.
+			// Wo we need to print a special USAGE line.
+			s := fmt.Sprintf(`GRANT USAGE ON %s.* TO '%s'@'%s' WITH GRANT OPTION`, dbName, user, host)
 			gs = append(gs, s)
 		}
 	}
+	sort.Strings(gs[sortFromIdx:])
 
 	// Show table scope grants.
+	sortFromIdx = len(gs)
 	tablePrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.TablesPriv {
 		recordKey := record.DB + "." + record.TableName
 		if user == record.User && host == record.Host {
 			if _, ok := dbPrivTable[record.DB]; ok {
-				if (record.TablePriv & mysql.GrantPriv) > 0 {
-					hasGrantOptionPriv = true
-					tablePrivTable[recordKey] |= (record.TablePriv & ^mysql.GrantPriv)
-					continue
-				}
 				tablePrivTable[recordKey] |= record.TablePriv
 			} else {
-				if (record.TablePriv & mysql.GrantPriv) > 0 {
-					hasGrantOptionPriv = true
-					tablePrivTable[recordKey] = (record.TablePriv & ^mysql.GrantPriv)
-					continue
-				}
 				tablePrivTable[recordKey] = record.TablePriv
 			}
 		} else {
 			for _, r := range allRoles {
 				if record.baseRecord.match(r.Username, r.Hostname) {
 					if _, ok := dbPrivTable[record.DB]; ok {
-						if (record.TablePriv & mysql.GrantPriv) > 0 {
-							hasGrantOptionPriv = true
-							tablePrivTable[recordKey] |= (record.TablePriv & ^mysql.GrantPriv)
-							continue
-						}
 						tablePrivTable[recordKey] |= record.TablePriv
 					} else {
-						if (record.TablePriv & mysql.GrantPriv) > 0 {
-							hasGrantOptionPriv = true
-							tablePrivTable[recordKey] = (record.TablePriv & ^mysql.GrantPriv)
-							continue
-						}
 						tablePrivTable[recordKey] = record.TablePriv
 					}
 				}
@@ -1185,17 +1238,24 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		g := tablePrivToString(priv)
 		if len(g) > 0 {
 			var s string
-			if hasGrantOptionPriv {
+			if (priv & mysql.GrantPriv) > 0 {
 				s = fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s' WITH GRANT OPTION`, g, k, user, host)
 			} else {
 				s = fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, g, k, user, host)
 			}
 			gs = append(gs, s)
+		} else if len(g) == 0 && (priv&mysql.GrantPriv) > 0 {
+			// We have GRANT OPTION on the table, but no privilege granted.
+			// Wo we need to print a special USAGE line.
+			s := fmt.Sprintf(`GRANT USAGE ON %s TO '%s'@'%s' WITH GRANT OPTION`, k, user, host)
+			gs = append(gs, s)
 		}
 	}
+	sort.Strings(gs[sortFromIdx:])
 
 	// Show column scope grants, column and table are combined.
 	// A map of "DB.Table" => Priv(col1, col2 ...)
+	sortFromIdx = len(gs)
 	columnPrivTable := make(map[string]privOnColumns)
 	for _, record := range p.ColumnsPriv {
 		if !collectColumnGrant(&record, user, host, columnPrivTable) {
@@ -1209,6 +1269,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
 		gs = append(gs, s)
 	}
+	sort.Strings(gs[sortFromIdx:])
 
 	// Show role grants.
 	graphKey := user + "@" + host
@@ -1232,6 +1293,51 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		s := fmt.Sprintf(`GRANT %s TO '%s'@'%s'`, g, user, host)
 		gs = append(gs, s)
 	}
+
+	// If the SHOW GRANTS is for the current user, there might be activeRoles (allRoles)
+	// The convention is to merge the Dynamic privileges assigned to the user with
+	// inherited dynamic privileges from those roles
+	dynamicPrivsMap := make(map[string]bool) // privName, grantable
+	for _, record := range p.Dynamic[user] {
+		if record.fullyMatch(user, host) {
+			dynamicPrivsMap[record.PrivilegeName] = record.GrantOption
+		}
+	}
+	for _, r := range allRoles {
+		for _, record := range p.Dynamic[r.Username] {
+			if record.fullyMatch(r.Username, r.Hostname) {
+				// If the record already exists in the map and it's grantable
+				// skip doing anything, because we might inherit a non-grantable permission
+				// from a role, and don't want to clobber the existing privilege.
+				if grantable, ok := dynamicPrivsMap[record.PrivilegeName]; ok && grantable {
+					continue
+				}
+				dynamicPrivsMap[record.PrivilegeName] = record.GrantOption
+			}
+		}
+	}
+
+	// Convert the map to a slice so it can be sorted to be deterministic and joined
+	var dynamicPrivs, grantableDynamicPrivs []string
+	for privName, grantable := range dynamicPrivsMap {
+		if grantable {
+			grantableDynamicPrivs = append(grantableDynamicPrivs, privName)
+		} else {
+			dynamicPrivs = append(dynamicPrivs, privName)
+		}
+	}
+
+	// Merge the DYNAMIC privs into a line for non-grantable and then grantable.
+	if len(dynamicPrivs) > 0 {
+		sort.Strings(dynamicPrivs)
+		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s'", strings.Join(dynamicPrivs, ","), user, host)
+		gs = append(gs, s)
+	}
+	if len(grantableDynamicPrivs) > 0 {
+		sort.Strings(grantableDynamicPrivs)
+		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION", strings.Join(grantableDynamicPrivs, ","), user, host)
+		gs = append(gs, s)
+	}
 	return gs
 }
 
@@ -1251,7 +1357,8 @@ func privOnColumnsToString(p privOnColumns) string {
 		if idx > 0 {
 			buf.WriteString(", ")
 		}
-		fmt.Fprintf(&buf, "%s(", mysql.Priv2Str[priv])
+		privStr := privToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)
+		fmt.Fprintf(&buf, "%s(", privStr)
 		for i, col := range v {
 			if i > 0 {
 				fmt.Fprintf(&buf, ", ")
@@ -1285,21 +1392,21 @@ func collectColumnGrant(record *columnsPrivRecord, user, host string, columnPriv
 }
 
 func userPrivToString(privs mysql.PrivilegeType) string {
-	if privs == userTablePrivilegeMask {
+	if (privs & ^mysql.GrantPriv) == userTablePrivilegeMask {
 		return mysql.AllPrivilegeLiteral
 	}
 	return privToString(privs, mysql.AllGlobalPrivs, mysql.Priv2Str)
 }
 
 func dbPrivToString(privs mysql.PrivilegeType) string {
-	if privs == dbTablePrivilegeMask {
+	if (privs & ^mysql.GrantPriv) == dbTablePrivilegeMask {
 		return mysql.AllPrivilegeLiteral
 	}
 	return privToString(privs, mysql.AllDBPrivs, mysql.Priv2SetStr)
 }
 
 func tablePrivToString(privs mysql.PrivilegeType) string {
-	if privs == tablePrivMask {
+	if (privs & ^mysql.GrantPriv) == tablePrivMask {
 		return mysql.AllPrivilegeLiteral
 	}
 	return privToString(privs, mysql.AllTablePrivs, mysql.Priv2Str)
@@ -1311,19 +1418,42 @@ func privToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allP
 		if priv&p == 0 {
 			continue
 		}
-		s := allPrivNames[p]
+		s := strings.ToUpper(allPrivNames[p])
 		pstrs = append(pstrs, s)
 	}
 	return strings.Join(pstrs, ",")
 }
 
-// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGE table.
-func (p *MySQLPrivilege) UserPrivilegesTable() [][]types.Datum {
+// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGES table.
+func (p *MySQLPrivilege) UserPrivilegesTable(activeRoles []*auth.RoleIdentity, user, host string) [][]types.Datum {
+	// Seeing all users requires SELECT ON * FROM mysql.*
+	// The SUPER privilege (or any other dynamic privilege) doesn't help here.
+	// This is verified against MySQL.
+	showOtherUsers := p.RequestVerification(activeRoles, user, host, mysql.SystemDB, "", "", mysql.SelectPriv)
 	var rows [][]types.Datum
-	for _, user := range p.User {
-		rows = appendUserPrivilegesTableRow(rows, user)
+	for _, u := range p.User {
+		if showOtherUsers || u.match(user, host) {
+			rows = appendUserPrivilegesTableRow(rows, u)
+		}
+	}
+	for _, dynamicPrivs := range p.Dynamic {
+		for _, dynamicPriv := range dynamicPrivs {
+			if showOtherUsers || dynamicPriv.match(user, host) {
+				rows = appendDynamicPrivRecord(rows, dynamicPriv)
+			}
+		}
 	}
 	return rows
+}
+
+func appendDynamicPrivRecord(rows [][]types.Datum, user dynamicPrivRecord) [][]types.Datum {
+	isGrantable := "NO"
+	if user.GrantOption {
+		isGrantable = "YES"
+	}
+	grantee := fmt.Sprintf("'%s'@'%s'", user.User, user.Host)
+	record := types.MakeDatums(grantee, "def", user.PrivilegeName, isGrantable)
+	return append(rows, record)
 }
 
 func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]types.Datum {
@@ -1333,16 +1463,21 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]typ
 	} else {
 		isGrantable = "NO"
 	}
-	guarantee := fmt.Sprintf("'%s'@'%s'", user.User, user.Host)
-
+	grantee := fmt.Sprintf("'%s'@'%s'", user.User, user.Host)
+	if user.Privileges <= 1 {
+		// The "USAGE" row only appears if the user has no non-DYNAMIC privileges.
+		// This behavior was observed in MySQL.
+		record := types.MakeDatums(grantee, "def", "USAGE", "NO")
+		return append(rows, record)
+	}
 	for _, priv := range mysql.AllGlobalPrivs {
 		if user.Privileges&priv > 0 {
-			privilegeType := mysql.Priv2Str[priv]
+			privilegeType := strings.ToUpper(mysql.Priv2Str[priv])
 			// +---------------------------+---------------+-------------------------+--------------+
 			// | GRANTEE                   | TABLE_CATALOG | PRIVILEGE_TYPE          | IS_GRANTABLE |
 			// +---------------------------+---------------+-------------------------+--------------+
 			// | 'root'@'localhost'        | def           | SELECT                  | YES          |
-			record := types.MakeDatums(guarantee, "def", privilegeType, isGrantable)
+			record := types.MakeDatums(grantee, "def", privilegeType, isGrantable)
 			rows = append(rows, record)
 		}
 	}

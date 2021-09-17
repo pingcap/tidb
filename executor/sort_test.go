@@ -8,12 +8,14 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package executor_test
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strings"
@@ -64,11 +66,17 @@ func (s *testSerialSuite1) testSortInDisk(c *C, removeDir bool) {
 	tk.MustExec("set @@tidb_max_chunk_size=32;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int, c2 int, c3 int)")
+	var buf bytes.Buffer
+	buf.WriteString("insert into t values ")
 	for i := 0; i < 5; i++ {
 		for j := i; j < 1024; j += 5 {
-			tk.MustExec(fmt.Sprintf("insert into t values(%v, %v, %v)", j, j, j))
+			if j > 0 {
+				buf.WriteString(", ")
+			}
+			buf.WriteString(fmt.Sprintf("(%v, %v, %v)", j, j, j))
 		}
 	}
+	tk.MustExec(buf.String())
 	result := tk.MustQuery("select * from t order by c1")
 	for i := 0; i < 1024; i++ {
 		c.Assert(result.Rows()[i][0].(string), Equals, fmt.Sprint(i))

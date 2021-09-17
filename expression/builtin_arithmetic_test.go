@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -90,31 +91,6 @@ func (s *testEvaluatorSuite) TestSetFlenDecimal4RealOrDecimal(c *C) {
 	c.Assert(ret.Flen, Equals, types.UnspecifiedLength)
 }
 
-func (s *testEvaluatorSuite) TestSetFlenDecimal4Int(c *C) {
-	ret := &types.FieldType{}
-	a := &types.FieldType{
-		Decimal: 1,
-		Flen:    3,
-	}
-	b := &types.FieldType{
-		Decimal: 0,
-		Flen:    2,
-	}
-	setFlenDecimal4Int(ret, a, b)
-	c.Assert(ret.Decimal, Equals, 0)
-	c.Assert(ret.Flen, Equals, mysql.MaxIntWidth)
-
-	b.Flen = mysql.MaxIntWidth + 1
-	setFlenDecimal4Int(ret, a, b)
-	c.Assert(ret.Decimal, Equals, 0)
-	c.Assert(ret.Flen, Equals, mysql.MaxIntWidth)
-
-	b.Flen = types.UnspecifiedLength
-	setFlenDecimal4Int(ret, a, b)
-	c.Assert(ret.Decimal, Equals, 0)
-	c.Assert(ret.Flen, Equals, mysql.MaxIntWidth)
-}
-
 func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	// case: 1
 	args := []interface{}{int64(12), int64(1)}
@@ -191,6 +167,23 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	intResult, _, err = intSig.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(intResult, Equals, int64(9007199254740993))
+
+	bitStr, err := types.NewBitLiteral("0b00011")
+	c.Assert(err, IsNil)
+	args = []interface{}{bitStr, int64(1)}
+
+	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+
+	//check the result type is int
+	intSig, ok = bf.(*builtinArithmeticPlusIntSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(intSig, NotNil)
+
+	intResult, _, err = intSig.evalInt(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(intResult, Equals, int64(4))
 }
 
 func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
@@ -273,32 +266,40 @@ func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
 func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
 	testCases := []struct {
 		args   []interface{}
-		expect interface{}
+		expect []interface{}
 		err    error
 	}{
 		{
 			args:   []interface{}{int64(11), int64(11)},
-			expect: int64(121),
+			expect: []interface{}{int64(121), nil},
+		},
+		{
+			args:   []interface{}{int64(-1), int64(math.MinInt64)},
+			expect: []interface{}{nil, "*BIGINT value is out of range in '\\(-1 \\* -9223372036854775808\\)'"},
+		},
+		{
+			args:   []interface{}{int64(math.MinInt64), int64(-1)},
+			expect: []interface{}{nil, "*BIGINT value is out of range in '\\(-9223372036854775808 \\* -1\\)'"},
 		},
 		{
 			args:   []interface{}{uint64(11), uint64(11)},
-			expect: int64(121),
+			expect: []interface{}{int64(121), nil},
 		},
 		{
 			args:   []interface{}{float64(11), float64(11)},
-			expect: float64(121),
+			expect: []interface{}{float64(121), nil},
 		},
 		{
 			args:   []interface{}{nil, float64(-0.11101)},
-			expect: nil,
+			expect: []interface{}{nil, nil},
 		},
 		{
 			args:   []interface{}{float64(1.01), nil},
-			expect: nil,
+			expect: []interface{}{nil, nil},
 		},
 		{
 			args:   []interface{}{nil, nil},
-			expect: nil,
+			expect: []interface{}{nil, nil},
 		},
 	}
 
@@ -307,8 +308,12 @@ func (s *testEvaluatorSuite) TestArithmeticMultiply(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(sig, NotNil)
 		val, err := evalBuiltinFunc(sig, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
+		if tc.expect[1] == nil {
+			c.Assert(err, IsNil)
+			c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect[0]))
+		} else {
+			c.Assert(err, ErrorMatches, tc.expect[1])
+		}
 	}
 }
 

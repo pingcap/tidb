@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,8 +17,11 @@ package kv
 import (
 	"context"
 
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
@@ -46,10 +50,6 @@ func (t *mockTxn) LockKeys(_ context.Context, _ *LockCtx, _ ...Key) error {
 
 func (t *mockTxn) SetOption(opt int, val interface{}) {
 	t.opts[opt] = val
-}
-
-func (t *mockTxn) DelOption(opt int) {
-	delete(t.opts, opt)
 }
 
 func (t *mockTxn) GetOption(opt int) interface{} {
@@ -106,10 +106,6 @@ func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
 
-func (t *mockTxn) GetUnionStore() UnionStore {
-	return nil
-}
-
 func (t *mockTxn) NewStagingBuffer() MemBuffer {
 	return nil
 }
@@ -126,11 +122,11 @@ func (t *mockTxn) Reset() {
 	t.valid = false
 }
 
-func (t *mockTxn) SetVars(vars *Variables) {
+func (t *mockTxn) SetVars(vars interface{}) {
 
 }
 
-func (t *mockTxn) GetVars() *Variables {
+func (t *mockTxn) GetVars() interface{} {
 	return nil
 }
 
@@ -140,6 +136,14 @@ func (t *mockTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 
 func (t *mockTxn) GetTableInfo(id int64) *model.TableInfo {
 	return nil
+}
+
+func (t *mockTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	//TODO nothing
+}
+
+func (t *mockTxn) ClearDiskFullOpt() {
+	//TODO nothing
 }
 
 // newMockTxn new a mockTxn.
@@ -158,7 +162,7 @@ func (s *mockStorage) Begin() (Transaction, error) {
 	return newMockTxn(), nil
 }
 
-func (s *mockStorage) BeginWithOption(option TransactionOption) (Transaction, error) {
+func (s *mockStorage) BeginWithOption(option tikv.StartTSOption) (Transaction, error) {
 	return newMockTxn(), nil
 }
 
@@ -217,6 +221,14 @@ func (s *mockStorage) GetMemCache() MemManager {
 	return nil
 }
 
+func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
+	return nil, nil
+}
+
+func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
+	return 0
+}
+
 // newMockStorage creates a new mockStorage.
 func newMockStorage() Storage {
 	return &mockStorage{}
@@ -258,4 +270,7 @@ func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
 }
 
 func (s *mockSnapshot) SetOption(opt int, val interface{}) {}
-func (s *mockSnapshot) DelOption(opt int)                  {}
+
+func (s *mockSnapshot) GetLockWaits() []deadlockpb.WaitForEntry {
+	return nil
+}

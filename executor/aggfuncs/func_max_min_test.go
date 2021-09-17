@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -257,6 +258,12 @@ func (s *testSuite) TestMaxSlidingWindow(c *C) {
 			orderByExpect: []string{"1", "2", "3"},
 		},
 		{
+			rowType:       "int unsigned",
+			insertValue:   "(1), (3), (2)",
+			expect:        []string{"3", "3", "3"},
+			orderByExpect: []string{"1", "2", "3"},
+		},
+		{
 			rowType:       "float",
 			insertValue:   "(1.1), (3.3), (2.2)",
 			expect:        []string{"3.3", "3.3", "3.3"},
@@ -311,5 +318,50 @@ func (s *testSuite) TestMaxSlidingWindow(c *C) {
 				testMaxSlidingWindow(tk, tc)
 			}
 		}
+	}
+}
+
+func (s *testSuite) TestDequeReset(c *C) {
+	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
+		return types.CompareInt64(i.(int64), j.(int64))
+	})
+	deque.PushBack(0, 12)
+	deque.Reset()
+	c.Assert(len(deque.Items), Equals, 0)
+	c.Assert(deque.IsMax, Equals, true)
+}
+
+func (s *testSuite) TestDequePushPop(c *C) {
+	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
+		return types.CompareInt64(i.(int64), j.(int64))
+	})
+	times := 15
+	// pushes element from back of deque
+	for i := 0; i < times; i++ {
+		if i != 0 {
+			front, isEnd := deque.Front()
+			c.Assert(isEnd, Equals, false)
+			c.Assert(front.Item, Equals, 0)
+			c.Assert(front.Idx, Equals, uint64(0))
+		}
+		deque.PushBack(uint64(i), i)
+		back, isEnd := deque.Back()
+		c.Assert(isEnd, Equals, false)
+		c.Assert(back.Item, Equals, i)
+		c.Assert(back.Idx, Equals, uint64(i))
+	}
+
+	// pops element from back of deque
+	for i := 0; i < times; i++ {
+		pair, isEnd := deque.Back()
+		c.Assert(isEnd, Equals, false)
+		c.Assert(pair.Item, Equals, times-i-1)
+		c.Assert(pair.Idx, Equals, uint64(times-i-1))
+		front, isEnd := deque.Front()
+		c.Assert(isEnd, Equals, false)
+		c.Assert(front.Item, Equals, 0)
+		c.Assert(front.Idx, Equals, uint64(0))
+		err := deque.PopBack()
+		c.Assert(err, IsNil)
 	}
 }

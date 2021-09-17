@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -93,7 +94,7 @@ func convertPoint(sc *stmtctx.StatementContext, point *point, tp *types.FieldTyp
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
-		if tp.Tp == mysql.TypeYear && terror.ErrorEqual(err, types.ErrInvalidYear) {
+		if tp.Tp == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year
 		} else if tp.Tp == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
@@ -101,6 +102,16 @@ func convertPoint(sc *stmtctx.StatementContext, point *point, tp *types.FieldTyp
 			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
+		} else if tp.Tp == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
+			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
+			// We should cover Enum upper overflow, and convert to the biggest value.
+			if point.value.GetInt64() > 0 {
+				upperEnum, err := types.ParseEnumValue(tp.Elems, uint64(len(tp.Elems)))
+				if err != nil {
+					return nil, err
+				}
+				casted.SetMysqlEnum(upperEnum, tp.Collate)
+			}
 		} else {
 			return point, errors.Trace(err)
 		}
@@ -464,7 +475,7 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 	for _, ran := range ranges {
 		lowTail := len(ran.LowVal) - 1
 		for i := 0; i < lowTail; i++ {
-			CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i])
+			hasCut = CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i]) || hasCut
 		}
 		lowCut := CutDatumByPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
 		// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
@@ -475,38 +486,38 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 		}
 		highTail := len(ran.HighVal) - 1
 		for i := 0; i < highTail; i++ {
-			CutDatumByPrefixLen(&ran.HighVal[i], lengths[i], tp[i])
+			hasCut = CutDatumByPrefixLen(&ran.HighVal[i], lengths[i], tp[i]) || hasCut
 		}
 		highCut := CutDatumByPrefixLen(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
 		if highCut {
 			ran.HighExclude = false
 		}
-		hasCut = lowCut || highCut
+		hasCut = hasCut || lowCut || highCut
 	}
 	return hasCut
 }
 
 // CutDatumByPrefixLen cuts the datum according to the prefix length.
-// If it's UTF8 encoded, we will cut it by characters rather than bytes.
+// If it's binary or ascii encoded, we will cut it by bytes rather than characters.
 func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
-	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+	if (v.Kind() == types.KindString || v.Kind() == types.KindBytes) && length != types.UnspecifiedLength {
 		colCharset := tp.Charset
 		colValue := v.GetBytes()
-		isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
-		if isUTF8Charset {
-			if length != types.UnspecifiedLength && utf8.RuneCount(colValue) > length {
-				rs := bytes.Runes(colValue)
-				truncateStr := string(rs[:length])
+		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
+			if len(colValue) > length {
 				// truncate value and limit its length
-				v.SetString(truncateStr, tp.Collate)
+				if v.Kind() == types.KindBytes {
+					v.SetBytes(colValue[:length])
+				} else {
+					v.SetString(v.GetString()[:length], tp.Collate)
+				}
 				return true
 			}
-		} else if length != types.UnspecifiedLength && len(colValue) > length {
+		} else if utf8.RuneCount(colValue) > length {
+			rs := bytes.Runes(colValue)
+			truncateStr := string(rs[:length])
 			// truncate value and limit its length
-			v.SetBytes(colValue[:length])
-			if v.Kind() == types.KindString {
-				v.SetString(v.GetString(), tp.Collate)
-			}
+			v.SetString(truncateStr, tp.Collate)
 			return true
 		}
 	}
@@ -515,14 +526,13 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 
 // ReachPrefixLen checks whether the length of v is equal to the prefix length.
 func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
-	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+	if (v.Kind() == types.KindString || v.Kind() == types.KindBytes) && length != types.UnspecifiedLength {
 		colCharset := tp.Charset
 		colValue := v.GetBytes()
-		isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
-		if isUTF8Charset {
-			return length != types.UnspecifiedLength && utf8.RuneCount(colValue) == length
+		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
+			return len(colValue) == length
 		}
-		return length != types.UnspecifiedLength && len(colValue) == length
+		return utf8.RuneCount(colValue) == length
 	}
 	return false
 }

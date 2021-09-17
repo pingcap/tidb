@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -58,6 +59,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildVarPop(aggFuncDesc, ordinal)
 	case ast.AggFuncStddevPop:
 		return buildStdDevPop(aggFuncDesc, ordinal)
+	case ast.AggFuncJsonArrayagg:
+		return buildJSONArrayagg(aggFuncDesc, ordinal)
 	case ast.AggFuncJsonObjectAgg:
 		return buildJSONObjectAgg(aggFuncDesc, ordinal)
 	case ast.AggFuncApproxCountDistinct:
@@ -155,9 +158,13 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 
 	base := basePercentile{percent: int(percent), baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
 
+	evalType := aggFuncDesc.Args[0].GetType().EvalType()
+	if aggFuncDesc.Args[0].GetType().Tp == mysql.TypeBit {
+		evalType = types.ETString // same as other aggregate function
+	}
 	switch aggFuncDesc.Mode {
 	case aggregation.CompleteMode, aggregation.Partial1Mode, aggregation.FinalMode:
-		switch aggFuncDesc.Args[0].GetType().EvalType() {
+		switch evalType {
 		case types.ETInt:
 			return &percentileOriginal4Int{base}
 		case types.ETReal:
@@ -442,21 +449,21 @@ func buildMaxMinInWindowFunction(aggFuncDesc *aggregation.AggFuncDesc, ordinal i
 	// build max/min aggFunc for window function using sliding window
 	switch baseAggFunc := base.(type) {
 	case *maxMin4Int:
-		return &maxMin4IntSliding{*baseAggFunc}
+		return &maxMin4IntSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Uint:
-		return &maxMin4UintSliding{*baseAggFunc}
+		return &maxMin4UintSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Float32:
-		return &maxMin4Float32Sliding{*baseAggFunc}
+		return &maxMin4Float32Sliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Float64:
-		return &maxMin4Float64Sliding{*baseAggFunc}
+		return &maxMin4Float64Sliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Decimal:
-		return &maxMin4DecimalSliding{*baseAggFunc}
+		return &maxMin4DecimalSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4String:
-		return &maxMin4StringSliding{*baseAggFunc}
+		return &maxMin4StringSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Time:
-		return &maxMin4TimeSliding{*baseAggFunc}
+		return &maxMin4TimeSliding{*baseAggFunc, windowInfo{}}
 	case *maxMin4Duration:
-		return &maxMin4DurationSliding{*baseAggFunc}
+		return &maxMin4DurationSliding{*baseAggFunc, windowInfo{}}
 	}
 	return base
 }
@@ -475,7 +482,7 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", err.Error()))
 		}
 		var s string
-		s, err = variable.GetSessionSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
+		s, err = variable.GetSessionOrGlobalSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
 		}
@@ -608,6 +615,20 @@ func buildStddevSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc 
 			return &stddevSamp4DistinctFloat64{varPop4DistinctFloat64{base}}
 		}
 		return &stddevSamp4Float64{varPop4Float64{base}}
+	}
+}
+
+// buildJSONArrayagg builds the AggFunc implementation for function "json_arrayagg".
+func buildJSONArrayagg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		return &jsonArrayagg{base}
 	}
 }
 

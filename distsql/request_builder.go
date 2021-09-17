@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,6 +20,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -27,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -41,14 +41,31 @@ import (
 // It is called before we issue a kv request by "Select".
 type RequestBuilder struct {
 	kv.Request
-	// txnScope indicates the value of txn_scope
-	txnScope string
-	is       infoschema.InfoSchema
-	err      error
+	is  infoschema.InfoSchema
+	err error
 }
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
+	if builder.ReadReplicaScope == "" {
+		builder.ReadReplicaScope = kv.GlobalReplicaScope
+	}
+	if builder.ReplicaRead.IsClosestRead() && builder.ReadReplicaScope != kv.GlobalReplicaScope {
+		builder.MatchStoreLabels = []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: builder.ReadReplicaScope,
+			},
+		}
+	}
+	failpoint.Inject("assertRequestBuilderStalenessOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if len(assertScope) > 0 {
+			if builder.IsStaleness && assertScope != builder.ReadReplicaScope {
+				panic("request builder get staleness option fail")
+			}
+		}
+	})
 	err := builder.verifyTxnScope()
 	if err != nil {
 		builder.err = err
@@ -145,8 +162,8 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 		builder.Request.Tp = kv.ReqTypeAnalyze
 		builder.Request.Data, builder.err = ana.Marshal()
 		builder.Request.NotFillCache = true
-		builder.Request.IsolationLevel = tikvstore.RC
-		builder.Request.Priority = tikvstore.PriorityLow
+		builder.Request.IsolationLevel = kv.RC
+		builder.Request.Priority = kv.PriorityLow
 	}
 
 	return builder
@@ -199,24 +216,24 @@ func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 	return builder
 }
 
-func (builder *RequestBuilder) getIsolationLevel() tikvstore.IsoLevel {
+func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:
-		return tikvstore.RC
+		return kv.RC
 	}
-	return tikvstore.SI
+	return kv.SI
 }
 
 func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 	switch sv.StmtCtx.Priority {
 	case mysql.NoPriority, mysql.DelayedPriority:
-		return tikvstore.PriorityNormal
+		return kv.PriorityNormal
 	case mysql.LowPriority:
-		return tikvstore.PriorityLow
+		return kv.PriorityLow
 	case mysql.HighPriority:
-		return tikvstore.PriorityHigh
+		return kv.PriorityHigh
 	}
-	return tikvstore.PriorityNormal
+	return kv.PriorityNormal
 }
 
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
@@ -231,21 +248,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	if sv.SnapshotInfoschema != nil {
-		builder.Request.SchemaVar = infoschema.GetInfoSchemaBySessionVars(sv).SchemaMetaVersion()
-	} else {
-		builder.Request.SchemaVar = sv.TxnCtx.SchemaVersion
-	}
-	builder.txnScope = sv.TxnCtx.TxnScope
-	builder.IsStaleness = sv.TxnCtx.IsStaleness
-	if builder.IsStaleness && builder.txnScope != oracle.GlobalTxnScope {
-		builder.MatchStoreLabels = []*metapb.StoreLabel{
-			{
-				Key:   placement.DCLabelKey,
-				Value: builder.txnScope,
-			},
-		}
-	}
+	builder.SetResourceGroupTag(sv.StmtCtx)
 	return builder
 }
 
@@ -271,19 +274,29 @@ func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder 
 
 // SetFromInfoSchema sets the following fields from infoSchema:
 // "bundles"
-func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *RequestBuilder {
-	if is == nil {
+func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilder {
+	is, ok := pis.(infoschema.InfoSchema)
+	if !ok {
 		return builder
 	}
 	builder.is = is
+	builder.Request.SchemaVar = is.SchemaMetaVersion()
+	return builder
+}
+
+// SetResourceGroupTag sets the request resource group tag.
+func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext) *RequestBuilder {
+	if variable.TopSQLEnabled() {
+		builder.Request.ResourceGroupTag = sc.GetResourceGroupTag()
+	}
 	return builder
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
-	if builder.txnScope == "" {
-		builder.txnScope = oracle.GlobalTxnScope
+	if builder.ReadReplicaScope == "" {
+		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}
-	if builder.txnScope == oracle.GlobalTxnScope || builder.is == nil {
+	if builder.ReadReplicaScope == kv.GlobalReplicaScope || builder.is == nil {
 		return nil
 	}
 	visitPhysicalTableID := make(map[int64]struct{})
@@ -297,7 +310,7 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	}
 
 	for phyTableID := range visitPhysicalTableID {
-		valid := VerifyTxnScope(builder.txnScope, phyTableID, builder.is)
+		valid := VerifyTxnScope(builder.ReadReplicaScope, phyTableID, builder.is)
 		if !valid {
 			var tblName string
 			var partName string
@@ -309,15 +322,27 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 				tblInfo, _ = builder.is.TableByID(phyTableID)
 				tblName = tblInfo.Meta().Name.String()
 			}
-			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.txnScope)
+			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.ReadReplicaScope)
 			if len(partName) > 0 {
 				err = fmt.Errorf("table %v's partition %v can not be read by %v txn_scope",
-					tblName, partName, builder.txnScope)
+					tblName, partName, builder.ReadReplicaScope)
 			}
 			return err
 		}
 	}
 	return nil
+}
+
+// SetReadReplicaScope sets request readReplicaScope
+func (builder *RequestBuilder) SetReadReplicaScope(scope string) *RequestBuilder {
+	builder.ReadReplicaScope = scope
+	return builder
+}
+
+// SetIsStaleness sets request IsStaleness
+func (builder *RequestBuilder) SetIsStaleness(is bool) *RequestBuilder {
+	builder.IsStaleness = is
+	return builder
 }
 
 // TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
@@ -393,17 +418,21 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 	return low, high
 }
 
-// SplitRangesBySign split the ranges into two parts:
-// 1. signedRanges is less or equal than maxInt64
-// 2. unsignedRanges is greater than maxInt64
-// We do that because the encoding of tikv key takes every key as a int. As a result MaxUInt64 is indeed
-// small than zero. So we must
-// 1. pick the range that straddles the MaxInt64
-// 2. split that range into two parts : smaller than max int64 and greater than it.
-// 3. if the ascent order is required, return signed first, vice versa.
-// 4. if no order is required, is better to return the unsigned one. That's because it's the normal order
-// of tikv scan.
-func SplitRangesBySign(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
+// SplitRangesAcrossInt64Boundary split the ranges into two groups:
+// 1. signedRanges is less or equal than MaxInt64
+// 2. unsignedRanges is greater than MaxInt64
+//
+// We do this because every key of tikv is encoded as an int64. As a result, MaxUInt64 is small than zero when
+// interpreted as an int64 variable.
+//
+// This function does the following:
+// 1. split ranges into two groups as described above.
+// 2. if there's a range that straddles the int64 boundary, split it into two ranges, which results in one smaller and
+//    one greater than MaxInt64.
+//
+// if `KeepOrder` is false, we merge the two groups of ranges into one group, to save an rpc call later
+// if `desc` is false, return signed ranges first, vice versa.
+func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
 	if isCommonHandle || len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
 		return ranges, nil
 	}
@@ -422,6 +451,7 @@ func SplitRangesBySign(ranges []*ranger.Range, keepOrder bool, desc bool, isComm
 		}
 		return signedRanges, unsignedRanges
 	}
+	// need to split the range that straddles the int64 boundary
 	signedRanges := make([]*ranger.Range, 0, idx+1)
 	unsignedRanges := make([]*ranger.Range, 0, len(ranges)-idx)
 	signedRanges = append(signedRanges, ranges[0:idx]...)
@@ -597,14 +627,14 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 
 // VerifyTxnScope verify whether the txnScope and visited physical table break the leader rule's dcLocation.
 func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSchema) bool {
-	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
+	if txnScope == "" || txnScope == kv.GlobalTxnScope {
 		return true
 	}
 	bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
 	if !ok {
 		return true
 	}
-	leaderDC, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+	leaderDC, ok := bundle.GetLeaderDC(placement.DCLabelKey)
 	if !ok {
 		return true
 	}

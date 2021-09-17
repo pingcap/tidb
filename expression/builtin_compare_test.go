@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -27,7 +28,7 @@ import (
 )
 
 func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
-	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong).build()
+	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong, mysql.NotNullFlag).build()
 	tests := []struct {
 		exprStr string
 		result  string

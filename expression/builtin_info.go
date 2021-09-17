@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,14 +8,22 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package expression
 
 import (
+	"context"
+	"encoding/json"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -52,6 +56,7 @@ var (
 	_ functionClass = &tidbIsDDLOwnerFunctionClass{}
 	_ functionClass = &tidbDecodePlanFunctionClass{}
 	_ functionClass = &tidbDecodeKeyFunctionClass{}
+	_ functionClass = &tidbDecodeSQLDigestsFunctionClass{}
 	_ functionClass = &nextValFunctionClass{}
 	_ functionClass = &lastValFunctionClass{}
 	_ functionClass = &setValFunctionClass{}
@@ -71,6 +76,7 @@ var (
 	_ builtinFunc = &builtinTiDBVersionSig{}
 	_ builtinFunc = &builtinRowCountSig{}
 	_ builtinFunc = &builtinTiDBDecodeKeySig{}
+	_ builtinFunc = &builtinTiDBDecodeSQLDigestsSig{}
 	_ builtinFunc = &builtinNextValSig{}
 	_ builtinFunc = &builtinLastValSig{}
 	_ builtinFunc = &builtinSetValSig{}
@@ -218,16 +224,15 @@ func (b *builtinCurrentRoleSig) Clone() builtinFunc {
 }
 
 // evalString evals a builtinCurrentUserSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
-func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (string, bool, error) {
+// See https://dev.mysql.com/doc/refman/8.0/en/information-functions.html#function_current-role
+func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil || data.ActiveRoles == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
 	if len(data.ActiveRoles) == 0 {
-		return "", false, nil
+		return "NONE", false, nil
 	}
-	res := ""
 	sortedRes := make([]string, 0, 10)
 	for _, r := range data.ActiveRoles {
 		sortedRes = append(sortedRes, r.String())
@@ -772,6 +777,131 @@ func (k TiDBDecodeKeyFunctionKeyType) String() string {
 // TiDBDecodeKeyFunctionKey is used to identify the decoder function in context.
 const TiDBDecodeKeyFunctionKey TiDBDecodeKeyFunctionKeyType = 0
 
+type tidbDecodeSQLDigestsFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	pm := privilege.GetPrivilegeManager(ctx)
+	if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+		return nil, errSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+
+	var argTps []types.EvalType
+	if len(args) > 1 {
+		argTps = []types.EvalType{types.ETString, types.ETInt}
+	} else {
+		argTps = []types.EvalType{types.ETString}
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinTiDBDecodeSQLDigestsSig{bf}
+	return sig, nil
+}
+
+type builtinTiDBDecodeSQLDigestsSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBDecodeSQLDigestsSig) Clone() builtinFunc {
+	newSig := &builtinTiDBDecodeSQLDigestsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool, error) {
+	args := b.getArgs()
+	digestsStr, isNull, err := args[0].EvalString(b.ctx, row)
+	if err != nil {
+		return "", true, err
+	}
+	if isNull {
+		return "", true, nil
+	}
+
+	stmtTruncateLength := int64(0)
+	if len(args) > 1 {
+		stmtTruncateLength, isNull, err = args[1].EvalInt(b.ctx, row)
+		if err != nil {
+			return "", true, err
+		}
+		if isNull {
+			stmtTruncateLength = 0
+		}
+	}
+
+	var digests []interface{}
+	err = json.Unmarshal([]byte(digestsStr), &digests)
+	if err != nil {
+		const errMsgMaxLength = 32
+		if len(digestsStr) > errMsgMaxLength {
+			digestsStr = digestsStr[:errMsgMaxLength] + "..."
+		}
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errIncorrectArgs.GenWithStack("The argument can't be unmarshalled as JSON array: '%s'", digestsStr))
+		return "", true, nil
+	}
+
+	// Query the SQL Statements by digests.
+	retriever := NewSQLDigestTextRetriever()
+	for _, item := range digests {
+		if item != nil {
+			digest, ok := item.(string)
+			if ok {
+				retriever.SQLDigestsMap[digest] = ""
+			}
+		}
+	}
+
+	// Querying may take some time and it takes a context.Context as argument, which is not available here.
+	// We simply create a context with a timeout here.
+	timeout := time.Duration(b.ctx.GetSessionVars().MaxExecutionTime) * time.Millisecond
+	if timeout == 0 || timeout > 20*time.Second {
+		timeout = 20 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	err = retriever.RetrieveGlobal(ctx, b.ctx)
+	if err != nil {
+		if errors.Cause(err) == context.DeadlineExceeded || errors.Cause(err) == context.Canceled {
+			return "", true, errUnknown.GenWithStack("Retrieving cancelled internally with error: %v", err)
+		}
+
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.GenWithStack("Retrieving statements information failed with error: %v", err))
+		return "", true, nil
+	}
+
+	// Collect the result.
+	result := make([]interface{}, len(digests))
+	for i, item := range digests {
+		if item == nil {
+			continue
+		}
+		if digest, ok := item.(string); ok {
+			if stmt, ok := retriever.SQLDigestsMap[digest]; ok && len(stmt) > 0 {
+				// Truncate too-long statements if necessary.
+				if stmtTruncateLength > 0 && int64(len(stmt)) > stmtTruncateLength {
+					stmt = stmt[:stmtTruncateLength] + "..."
+				}
+				result[i] = stmt
+			}
+		}
+	}
+
+	resultStr, err := json.Marshal(result)
+	if err != nil {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.GenWithStack("Marshalling result as JSON failed with error: %v", err))
+		return "", true, nil
+	}
+
+	return string(resultStr), false, nil
+}
+
 type tidbDecodePlanFunctionClass struct {
 	baseFunctionClass
 }
@@ -847,7 +977,7 @@ func (b *builtinNextValSig) evalInt(row chunk.Row) (int64, bool, error) {
 		db = b.ctx.GetSessionVars().CurrentDB
 	}
 	// Check the tableName valid.
-	sequence, err := b.ctx.GetSessionVars().TxnCtx.InfoSchema.(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := b.ctx.GetInfoSchema().(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
 	if err != nil {
 		return 0, false, err
 	}
@@ -903,7 +1033,7 @@ func (b *builtinLastValSig) evalInt(row chunk.Row) (int64, bool, error) {
 		db = b.ctx.GetSessionVars().CurrentDB
 	}
 	// Check the tableName valid.
-	sequence, err := b.ctx.GetSessionVars().TxnCtx.InfoSchema.(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := b.ctx.GetInfoSchema().(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
 	if err != nil {
 		return 0, false, err
 	}
@@ -953,7 +1083,7 @@ func (b *builtinSetValSig) evalInt(row chunk.Row) (int64, bool, error) {
 		db = b.ctx.GetSessionVars().CurrentDB
 	}
 	// Check the tableName valid.
-	sequence, err := b.ctx.GetSessionVars().TxnCtx.InfoSchema.(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := b.ctx.GetInfoSchema().(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
 	if err != nil {
 		return 0, false, err
 	}

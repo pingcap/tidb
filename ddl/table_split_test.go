@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type testDDLTableSplitSuite struct{}
@@ -82,5 +83,5 @@ func checkRegionStartWithTableID(c *C, id int64, store kvStore) {
 	c.Assert(err, IsNil)
 	// Region cache may be out of date, so we need to drop this expired region and load it again.
 	cache.InvalidateCachedRegion(loc.Region)
-	c.Assert([]byte(loc.StartKey), BytesEquals, []byte(regionStartKey))
+	c.Assert(loc.StartKey, BytesEquals, []byte(regionStartKey))
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,6 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -332,7 +332,7 @@ func driveRunCmd() {
 	for i := 0; i < keySize; i++ {
 		byDesc[i] = false
 	}
-	dir, err = ioutil.TempDir(tmpDir, "benchfilesort_test")
+	dir, err = os.MkdirTemp(tmpDir, "benchfilesort_test")
 	terror.MustNil(err)
 	fs, err = fsBuilder.SetSC(sc).SetSchema(keySize, valSize).SetBuf(bufSize).SetWorkers(nWorkers).SetDesc(byDesc).SetDir(dir).Build()
 	terror.MustNil(err)
@@ -382,7 +382,7 @@ func driveRunCmd() {
 }
 
 func init() {
-	err := logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
 	cwd, err1 := os.Getwd()
 	terror.MustNil(err1)

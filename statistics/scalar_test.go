@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,7 +26,10 @@ const eps = 1e-9
 
 func getDecimal(value float64) *types.MyDecimal {
 	dec := &types.MyDecimal{}
-	dec.FromFloat64(value)
+	err := dec.FromFloat64(value)
+	if err != nil {
+		panic(err)
+	}
 	return dec
 }
 
@@ -241,6 +245,13 @@ func (s *testStatisticsSuite) TestEnumRangeValues(c *C) {
 			high:        types.NewIntDatum(0),
 			lowExclude:  false,
 			highExclude: false,
+			res:         "",
+		},
+		{
+			low:         types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDate)),
+			high:        types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDate)),
+			lowExclude:  true,
+			highExclude: true,
 			res:         "",
 		},
 	}

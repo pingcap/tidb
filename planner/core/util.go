@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -291,7 +292,7 @@ func extractStringFromStringSet(set set.StringSet) string {
 		l = append(l, fmt.Sprintf(`"%s"`, k))
 	}
 	sort.Strings(l)
-	return fmt.Sprintf("%s", strings.Join(l, ","))
+	return strings.Join(l, ",")
 }
 
 func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bool {

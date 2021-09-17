@@ -10,12 +10,6 @@
 [![Coverage Status](https://codecov.io/gh/pingcap/tidb/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/tidb)
 [![GoDoc](https://img.shields.io/badge/Godoc-reference-blue.svg)](https://godoc.org/github.com/pingcap/tidb)
 
-- [**Slack Channel**](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb)
-- **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
-- [**Reddit**](https://www.reddit.com/r/TiDB/)
-- **Mailing list**: [lists.tidb.io](https://lists.tidb.io/g/main/subgroups)
-- [**For support, please contact PingCAP**](http://bit.ly/contact_us_via_github)
-
 ## What is TiDB?
 
 TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports Hybrid Transactional and Analytical Processing (HTAP) workloads. It is MySQL compatible and features horizontal scalability, strong consistency, and high availability.
@@ -48,17 +42,39 @@ TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports 
 
 For more details and latest updates, see [TiDB docs](https://docs.pingcap.com/tidb/stable) and [release notes](https://docs.pingcap.com/tidb/dev/release-notes).
 
+## Community
+
+You can join these groups and chats to discuss and ask TiDB related questions:
+
+- [TiDB Internals Forum](https://internals.tidb.io/)
+- [Slack Channel](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb)
+- [TiDB User Group Forum (Chinese)](https://asktug.com)
+
+In addition, you may enjoy following:
+
+- [@PingCAP](https://twitter.com/PingCAP) on Twitter
+- Question tagged [#tidb on StackOverflow](https://stackoverflow.com/questions/tagged/tidb)
+- The PingCAP Team [English Blog](https://en.pingcap.com/blog) and [Chinese Blog](https://pingcap.com/blog-cn/)
+
+For support, please contact [PingCAP](http://bit.ly/contact_us_via_github).
+
 ## Quick start
 
-See [Quick Start Guide](https://pingcap.com/docs/stable/quick-start-with-tidb/ ), which includes deployment methods using TiUP, Ansible, Docker, and Kubernetes.
+### To start using TiDB
+
+See [Quick Start Guide](https://pingcap.com/docs/stable/quick-start-with-tidb/).
 
 ### To start developing TiDB
 
-The [community repository](https://github.com/pingcap/community) hosts all information about the TiDB community, including how to contribute to TiDB, how TiDB community is governed,  how special interest groups are organized, etc.
+See [Get Started](https://pingcap.github.io/tidb-dev-guide/get-started/introduction.html) chapter of [TiDB Dev Guide](https://pingcap.github.io/tidb-dev-guide/index.html).
+
+## Contributing
+
+The [community repository](https://github.com/pingcap/community) hosts all information about the TiDB community, including how to contribute to TiDB, how TiDB community is governed, how special interest groups are organized, etc.
 
 [<img src="docs/contribution-map.png" alt="contribution-map" width="180">](https://github.com/pingcap/tidb-map/blob/master/maps/contribution-map.md#tidb-is-an-open-source-distributed-htap-database-compatible-with-the-mysql-protocol)
 
-Contributions are welcomed and greatly appreciated. See [Contribution Guide](https://github.com/pingcap/community/blob/master/contributors/README.md) for details on submitting patches and the contribution workflow. For more contributing information, click on the contributor icon above.
+Contributions are welcomed and greatly appreciated. See [Contribution to TiDB](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/introduction.html) for details on typical contribution workflows. For more contributing information, click on the contributor icon above.
 
 ## Adopters
 
@@ -68,29 +84,6 @@ View the current list of in-production TiDB adopters [here](https://docs.pingcap
 
 - [English](https://pingcap.com/case-studies)
 - [简体中文](https://pingcap.com/cases-cn/)
-
-## Roadmap
-
-Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
-
-## Getting help
-
-- [**Stack Overflow**](https://stackoverflow.com/questions/tagged/tidb)
-- [**User Group (Chinese)**](https://asktug.com)
-
-## Documentation
-
-+ [English](https://pingcap.com/docs)
-+ [简体中文](https://pingcap.com/docs-cn)
-
-## Blog
-
-- [English](https://www.pingcap.com/blog/)
-- [简体中文](https://pingcap.com/blog-cn/)
-
-## TiDB Monthly
-
-[TiDB Monthly](https://pingcap.com/weekly/)
 
 ## Architecture
 

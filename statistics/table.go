@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -62,6 +63,12 @@ type Table struct {
 	Version       uint64
 	Name          string
 	ExtendedStats *ExtendedStatsColl
+	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
+	// It is the schema version of the corresponding table. It is used to skip redundant
+	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
+	// and the schema of the table does not change, we don't need to load the stats for this
+	// table again.
+	TblInfoUpdateTS uint64
 }
 
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
@@ -136,9 +143,10 @@ func (t *Table) Copy() *Table {
 		newHistColl.Indices[id] = idx
 	}
 	nt := &Table{
-		HistColl: newHistColl,
-		Version:  t.Version,
-		Name:     t.Name,
+		HistColl:        newHistColl,
+		Version:         t.Version,
+		Name:            t.Name,
+		TblInfoUpdateTS: t.TblInfoUpdateTS,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -201,10 +209,22 @@ func (t *Table) ColumnByName(colName string) *Column {
 func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSketch, *TopN, *FMSketch) {
 	if isIndex {
 		idxStatsInfo := t.Indices[ID]
-		return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), nil
+		return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy()
 	}
 	colStatsInfo := t.Columns[ID]
 	return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
+}
+
+// GetColRowCount tries to get the row count of the a column if possible.
+// This method is useful because this row count doesn't consider the modify count.
+func (t *Table) GetColRowCount() float64 {
+	for _, col := range t.Columns {
+		// need to make sure stats on this column is loaded.
+		if col != nil && !(col.Histogram.NDV > 0 && col.notNullCount() == 0) && col.TotalRowCount() != 0 {
+			return col.TotalRowCount()
+		}
+	}
+	return -1
 }
 
 type tableColumnID struct {
@@ -245,7 +265,11 @@ var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
 
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
-	if t.Count > 0 && float64(t.ModifyCount)/float64(t.Count) > RatioOfPseudoEstimate.Load() {
+	rowcount := t.GetColRowCount()
+	if rowcount < 0 {
+		rowcount = float64(t.Count)
+	}
+	if rowcount > 0 && float64(t.ModifyCount)/rowcount > RatioOfPseudoEstimate.Load() {
 		return true
 	}
 	return false
@@ -270,19 +294,24 @@ func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Dat
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) float64 {
+func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) (float64, error) {
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
-		return float64(t.Count) / pseudoBetweenRate
+		return float64(t.Count) / pseudoBetweenRate, nil
 	}
-	count, err := c.BetweenRowCount(sc, a, b)
+	aEncoded, err := codec.EncodeKey(sc, nil, a)
 	if err != nil {
-		return 0
+		return 0, err
 	}
+	bEncoded, err := codec.EncodeKey(sc, nil, b)
+	if err != nil {
+		return 0, err
+	}
+	count := c.BetweenRowCount(sc, a, b, aEncoded, bEncoded)
 	if a.IsNull() {
 		count += float64(c.NullCount)
 	}
-	return count * c.GetIncreaseFactor(t.Count)
+	return count * c.GetIncreaseFactor(t.Count), nil
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
@@ -291,7 +320,11 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
-	result, err := c.equalRowCount(sc, value, t.ModifyCount)
+	encodedVal, err := codec.EncodeKey(sc, nil, value)
+	if err != nil {
+		return 0, err
+	}
+	result, err := c.equalRowCount(sc, value, encodedVal, t.ModifyCount)
 	result *= c.GetIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
@@ -308,8 +341,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 		}
 		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count)), nil
 	}
-	result, err := c.GetColumnRowCount(sc, intRanges, coll.ModifyCount, true)
-	result *= c.GetIncreaseFactor(coll.Count)
+	result, err := c.GetColumnRowCount(sc, intRanges, coll.Count, true)
 	return result, errors.Trace(err)
 }
 
@@ -319,8 +351,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 	if !ok || c.IsInvalid(sc, coll.Pseudo) {
 		return GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 	}
-	result, err := c.GetColumnRowCount(sc, colRanges, coll.ModifyCount, false)
-	result *= c.GetIncreaseFactor(coll.Count)
+	result, err := c.GetColumnRowCount(sc, colRanges, coll.Count, false)
 	return result, errors.Trace(err)
 }
 
@@ -339,9 +370,8 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	if idx.CMSketch != nil && idx.StatsVer == Version1 {
 		result, err = coll.getIndexRowCount(sc, idxID, indexRanges)
 	} else {
-		result, err = idx.GetRowCount(sc, coll, indexRanges, coll.ModifyCount)
+		result, err = idx.GetRowCount(sc, coll, indexRanges, coll.Count)
 	}
-	result *= idx.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
 
@@ -457,16 +487,17 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 // It assumes all modifications are insertions and all new-inserted rows are uniformly distributed
 // and has the same distribution with analyzed rows, which means each unique value should have the
 // same number of rows(Tot/NDV) of it.
-func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
-	if modifyRows == 0 {
+func outOfRangeEQSelectivity(ndv, realtimeRowCount, columnRowCount int64) float64 {
+	increaseRowCount := realtimeRowCount - columnRowCount
+	if increaseRowCount <= 0 {
 		return 0 // it must be 0 since the histogram contains the whole data
 	}
 	if ndv < outOfRangeBetweenRate {
 		ndv = outOfRangeBetweenRate // avoid inaccurate selectivity caused by small NDV
 	}
-	selectivity := 1 / float64(ndv) // TODO: After extracting TopN from histograms, we can minus the TopN fraction here.
-	if selectivity*float64(totalRows) > float64(modifyRows) {
-		selectivity = float64(modifyRows) / float64(totalRows)
+	selectivity := 1 / float64(ndv)
+	if selectivity*float64(columnRowCount) > float64(increaseRowCount) {
+		selectivity = float64(increaseRowCount) / float64(columnRowCount)
 	}
 	return selectivity
 }
@@ -504,7 +535,7 @@ func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, i
 				HighExclude: highExclude,
 			}
 
-			rowCount, err := col.GetColumnRowCount(sc, []*ranger.Range{&rang}, coll.ModifyCount, col.IsHandle)
+			rowCount, err := col.GetColumnRowCount(sc, []*ranger.Range{&rang}, coll.Count, col.IsHandle)
 			if err != nil {
 				return 0, 0, err
 			}
@@ -530,7 +561,7 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 		// When the value is out of range, we could not found this value in the CM Sketch,
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {
-			return outOfRangeEQSelectivity(idx.NDV, coll.ModifyCount, int64(idx.TotalRowCount())), nil
+			return outOfRangeEQSelectivity(idx.NDV, coll.Count, int64(idx.TotalRowCount())), nil
 		}
 		// The equal condition only uses prefix columns of the index.
 		colIDs := coll.Idx2ColumnIDs[idx.ID]
@@ -543,7 +574,7 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 				ndv = mathutil.MaxInt64(ndv, col.Histogram.NDV)
 			}
 		}
-		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
+		return outOfRangeEQSelectivity(ndv, coll.Count, int64(idx.TotalRowCount())), nil
 	}
 
 	minRowCount, crossValidationSelectivity, err := coll.crossValidationSelectivity(sc, idx, usedColsLen, idxPointRange)
@@ -575,7 +606,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
-			count, err := idx.GetRowCount(sc, nil, []*ranger.Range{ran}, coll.ModifyCount)
+			count, err := idx.GetRowCount(sc, nil, []*ranger.Range{ran}, coll.Count)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}

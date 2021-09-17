@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,9 +17,10 @@ package session
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -56,15 +58,19 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsFalse)
 	datums := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(c, datums, `%`, "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, datums, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
-	mustExecSQL(c, se, "SELECT * from mysql.global_priv;")
-	mustExecSQL(c, se, "SELECT * from mysql.db;")
-	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
-	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
+	rs := mustExecSQL(c, se, "SELECT * from mysql.global_priv;")
+	c.Assert(rs.Close(), IsNil)
+	rs = mustExecSQL(c, se, "SELECT * from mysql.db;")
+	c.Assert(rs.Close(), IsNil)
+	rs = mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
+	c.Assert(rs.Close(), IsNil)
+	rs = mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
+	c.Assert(rs.Close(), IsNil)
 	// Check privilege tables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	c.Assert(r, NotNil)
@@ -118,7 +124,6 @@ func globalVarsCount() int64 {
 func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	ss := &session{
 		store:       store,
-		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
 	ss.txn.init()
@@ -161,7 +166,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	c.Assert(req.NumRows() == 0, IsFalse)
 	row := req.GetRow(0)
 	datums := statistics.RowToDatums(row, r.Fields())
-	match(c, datums, `%`, "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(c, datums, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	c.Assert(r.Close(), IsNil)
 
 	mustExecSQL(c, se, "USE test;")
@@ -591,20 +596,80 @@ func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
 	// The latest one.
 	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 
+	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t use index(idx) where a < 1', 'test', 'deleted', '2021-06-04 17:04:43.333', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t ignore index(idx) where a < 1', 'test', 'using', '2021-06-04 17:04:43.335', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t use index(idx) where a <= 1', '', 'deleted', '2021-06-04 17:04:43.345', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t ignore index(idx) where a <= 1', '', 'using', '2021-06-04 17:04:45.334', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
+
 	upgradeToVer67(se, version66)
 
-	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin'`)
+	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin' order by create_time`)
 	req := r.NewChunk()
 	c.Assert(r.Next(ctx, req), IsNil)
-	c.Assert(req.NumRows(), Equals, 1)
+	c.Assert(req.NumRows(), Equals, 3)
 	row := req.GetRow(0)
 	c.Assert(row.GetString(0), Equals, "select * from `test` . `t`")
 	c.Assert(row.GetString(1), Equals, "SELECT /*+ use_index(`t` `idx_b`)*/ * FROM `test`.`t`")
 	c.Assert(row.GetString(2), Equals, "")
 	c.Assert(row.GetString(3), Equals, "using")
 	c.Assert(row.GetTime(4).String(), Equals, "2021-01-04 14:50:58.257")
+	row = req.GetRow(1)
+	c.Assert(row.GetString(0), Equals, "select * from `test` . `t` where `a` < ?")
+	c.Assert(row.GetString(1), Equals, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` < 1")
+	c.Assert(row.GetString(2), Equals, "")
+	c.Assert(row.GetString(3), Equals, "using")
+	c.Assert(row.GetTime(4).String(), Equals, "2021-06-04 17:04:43.335")
+	row = req.GetRow(2)
+	c.Assert(row.GetString(0), Equals, "select * from `test` . `t` where `a` <= ?")
+	c.Assert(row.GetString(1), Equals, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` <= 1")
+	c.Assert(row.GetString(2), Equals, "")
+	c.Assert(row.GetString(3), Equals, "using")
+	c.Assert(row.GetTime(4).String(), Equals, "2021-06-04 17:04:45.334")
+
 	c.Assert(r.Close(), IsNil)
 	mustExecSQL(c, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
+}
+
+func (s *testBootstrapSuite) TestUpgradeClusteredIndexDefaultValue(c *C) {
+	var err error
+	defer testleak.AfterTest(c)()
+	store, _ := newStoreWithBootstrap(c, s.dbName)
+	defer func() {
+		c.Assert(store.Close(), IsNil)
+	}()
+
+	seV67 := newSession(c, store, s.dbName)
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(67))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	mustExecSQL(c, seV67, "update mysql.tidb set variable_value='67' where variable_name='tidb_server_version'")
+	mustExecSQL(c, seV67, "UPDATE mysql.global_variables SET VARIABLE_VALUE = 'OFF' where VARIABLE_NAME = 'tidb_enable_clustered_index'")
+	c.Assert(seV67.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(1))
+	mustExecSQL(c, seV67, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV67)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(67))
+
+	domV68, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer domV68.Close()
+	seV68 := newSession(c, store, s.dbName)
+	ver, err = getBootstrapVersion(seV68)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, currentBootstrapVersion)
+
+	r := mustExecSQL(c, seV68, `select @@global.tidb_enable_clustered_index, @@session.tidb_enable_clustered_index`)
+	req := r.NewChunk()
+	c.Assert(r.Next(context.Background(), req), IsNil)
+	c.Assert(req.NumRows(), Equals, 1)
+	row := req.GetRow(0)
+	c.Assert(row.GetString(0), Equals, "INT_ONLY")
+	c.Assert(row.GetString(1), Equals, "INT_ONLY")
 }
 
 func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
@@ -646,6 +711,106 @@ func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
 	row := req.GetRow(0)
 	c.Assert(row.GetInt64(0), Equals, int64(1))
 	c.Assert(row.GetInt64(1), Equals, int64(1))
+}
+
+func (s *testBootstrapSuite) TestUpgradeVersion74(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+
+	cases := []struct {
+		oldValue int
+		newValue int
+	}{
+		{200, 3000},
+		{3000, 3000},
+		{3001, 3001},
+	}
+
+	for _, ca := range cases {
+		store, _ := newStoreWithBootstrap(c, s.dbName)
+		defer func() {
+			c.Assert(store.Close(), IsNil)
+		}()
+
+		seV73 := newSession(c, store, s.dbName)
+		txn, err := store.Begin()
+		c.Assert(err, IsNil)
+		m := meta.NewMeta(txn)
+		err = m.FinishBootstrap(int64(73))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+		mustExecSQL(c, seV73, "update mysql.tidb set variable_value='72' where variable_name='tidb_server_version'")
+		mustExecSQL(c, seV73, "set @@global.tidb_stmt_summary_max_stmt_count = "+strconv.Itoa(ca.oldValue))
+		mustExecSQL(c, seV73, "commit")
+		unsetStoreBootstrapped(store.UUID())
+		ver, err := getBootstrapVersion(seV73)
+		c.Assert(err, IsNil)
+		c.Assert(ver, Equals, int64(72))
+
+		domV74, err := BootstrapSession(store)
+		c.Assert(err, IsNil)
+		defer domV74.Close()
+		seV74 := newSession(c, store, s.dbName)
+		ver, err = getBootstrapVersion(seV74)
+		c.Assert(err, IsNil)
+		c.Assert(ver, Equals, currentBootstrapVersion)
+		r := mustExecSQL(c, seV74, `select @@global.tidb_stmt_summary_max_stmt_count, @@session.tidb_stmt_summary_max_stmt_count`)
+		req := r.NewChunk()
+		c.Assert(r.Next(ctx, req), IsNil)
+		c.Assert(req.NumRows(), Equals, 1)
+		row := req.GetRow(0)
+		c.Assert(row.GetString(0), Equals, strconv.Itoa(ca.newValue))
+		c.Assert(row.GetString(1), Equals, strconv.Itoa(ca.newValue))
+	}
+}
+
+func (s *testBootstrapSuite) TestUpgradeVersion75(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+
+	store, _ := newStoreWithBootstrap(c, s.dbName)
+	defer func() {
+		c.Assert(store.Close(), IsNil)
+	}()
+
+	seV74 := newSession(c, store, s.dbName)
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(74))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	mustExecSQL(c, seV74, "update mysql.tidb set variable_value='74' where variable_name='tidb_server_version'")
+	mustExecSQL(c, seV74, "commit")
+	mustExecSQL(c, seV74, "ALTER TABLE mysql.user DROP PRIMARY KEY")
+	mustExecSQL(c, seV74, "ALTER TABLE mysql.user MODIFY COLUMN Host CHAR(64)")
+	mustExecSQL(c, seV74, "ALTER TABLE mysql.user ADD PRIMARY KEY(Host, User)")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV74)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(74))
+	r := mustExecSQL(c, seV74, `desc mysql.user`)
+	req := r.NewChunk()
+	row := req.GetRow(0)
+	c.Assert(r.Next(ctx, req), IsNil)
+	c.Assert(strings.ToLower(row.GetString(0)), Equals, "host")
+	c.Assert(strings.ToLower(row.GetString(1)), Equals, "char(64)")
+
+	domV75, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer domV75.Close()
+	seV75 := newSession(c, store, s.dbName)
+	ver, err = getBootstrapVersion(seV75)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, currentBootstrapVersion)
+	r = mustExecSQL(c, seV75, `desc mysql.user`)
+	req = r.NewChunk()
+	row = req.GetRow(0)
+	c.Assert(r.Next(ctx, req), IsNil)
+	c.Assert(strings.ToLower(row.GetString(0)), Equals, "host")
+	c.Assert(strings.ToLower(row.GetString(1)), Equals, "char(255)")
 }
 
 func (s *testBootstrapSuite) TestForIssue23387(c *C) {

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,7 +25,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/tikv/client-go/v2/config"
 )
 
 type coprCache struct {
@@ -61,7 +62,7 @@ func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 		return nil, nil
 	}
 	capacityInBytes := int64(config.CapacityMB * 1024.0 * 1024.0)
-	if capacityInBytes == 0 {
+	if capacityInBytes <= 0 {
 		return nil, errors.New("Capacity must be > 0 to enable the cache")
 	}
 	maxEntityInBytes := int64(config.AdmissionMaxResultMB * 1024.0 * 1024.0)

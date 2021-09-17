@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -42,11 +43,12 @@ var checksumReaderBufPool = sync.Pool{
 // | --    4B    -- | --  1020B  -- || --    4B    -- | --  1020B  -- || --    4B    -- | --   60B   -- |
 // | -- checksum -- | -- payload -- || -- checksum -- | -- payload -- || -- checksum -- | -- payload -- |
 type Writer struct {
-	err         error
-	w           io.WriteCloser
-	buf         []byte
-	payload     []byte
-	payloadUsed int
+	err                error
+	w                  io.WriteCloser
+	buf                []byte
+	payload            []byte
+	payloadUsed        int
+	flushedUserDataCnt int64
 }
 
 // NewWriter returns a new Writer which calculates and stores a CRC-32 checksum for the payload before
@@ -104,8 +106,19 @@ func (w *Writer) Flush() error {
 		w.err = err
 		return err
 	}
+	w.flushedUserDataCnt += int64(w.payloadUsed)
 	w.payloadUsed = 0
 	return nil
+}
+
+// GetCache returns the byte slice that holds the data not flushed to disk.
+func (w *Writer) GetCache() []byte {
+	return w.payload[:w.payloadUsed]
+}
+
+// GetCacheDataOffset return the user data offset in cache.
+func (w *Writer) GetCacheDataOffset() int64 {
+	return w.flushedUserDataCnt
 }
 
 // Close implements the io.Closer interface.

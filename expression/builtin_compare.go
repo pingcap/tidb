@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -399,6 +400,11 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 			}
 		}
 	}
+	if (args[0].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[0])) &&
+		(args[1].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[1])) &&
+		(args[2].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[2])) {
+		return types.ETInt
+	}
 
 	return cmpTp
 }
@@ -485,7 +491,21 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinGreatestTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
 	}
+	sig.getRetTp().Flen, sig.getRetTp().Decimal = fixFlenAndDecimalForGreatestAndLeast(args)
 	return sig, nil
+}
+
+func fixFlenAndDecimalForGreatestAndLeast(args []Expression) (flen, decimal int) {
+	for _, arg := range args {
+		argFlen, argDecimal := arg.GetType().Flen, arg.GetType().Decimal
+		if argFlen > flen {
+			flen = argFlen
+		}
+		if argDecimal > decimal {
+			decimal = argDecimal
+		}
+	}
+	return flen, decimal
 }
 
 type builtinGreatestIntSig struct {
@@ -702,6 +722,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLeastTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
 	}
+	sig.getRetTp().Flen, sig.getRetTp().Decimal = fixFlenAndDecimalForGreatestAndLeast(args)
 	return sig, nil
 }
 
@@ -1087,6 +1108,12 @@ type compareFunctionClass struct {
 	op opcode.Op
 }
 
+func (c *compareFunctionClass) getDisplayName() string {
+	var nameBuilder strings.Builder
+	c.op.Format(&nameBuilder)
+	return nameBuilder.String()
+}
+
 // getBaseCmpType gets the EvalType that the two args will be treated as when comparing.
 func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
 	if lft != nil && rft != nil && (lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified) {
@@ -1353,7 +1380,15 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
-		finalArg1 = arg1
+		// Why check not null flag
+		// eg: int_col > const_val(which is less than min_int32)
+		// If int_col got null, compare result cannot be true
+		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg0Type.Flag)) {
+			finalArg1 = arg1
+		}
+		// TODO if the plan doesn't care about whether the result of the function is null or false, we don't need
+		// to check the NotNullFlag, then more optimizations can be enabled.
+		isExceptional = isExceptional && mysql.HasNotNullFlag(arg0Type.Flag)
 		if isExceptional && arg1.GetType().EvalType() == types.ETInt {
 			// Judge it is inf or -inf
 			// For int:
@@ -1372,7 +1407,12 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
-		finalArg0 = arg0
+		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.Flag)) {
+			finalArg0 = arg0
+		}
+		// TODO if the plan doesn't care about whether the result of the function is null or false, we don't need
+		// to check the NotNullFlag, then more optimizations can be enabled.
+		isExceptional = isExceptional && mysql.HasNotNullFlag(arg1Type.Flag)
 		if isExceptional && arg0.GetType().EvalType() == types.ETInt {
 			if arg0.Value.GetInt64()&1 == 1 {
 				isNegativeInfinite = true

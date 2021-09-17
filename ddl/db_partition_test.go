@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -33,19 +34,24 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"go.uber.org/zap"
 )
 
 func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
@@ -244,7 +250,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 		  c varchar(30))
 		  partition by range columns (a, b)
 		  (partition p0 values less than (10, 10.0))`)
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type, treat as normal table"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type RANGE, treat as normal table"))
 
 	tk.MustGetErrCode(`create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
 	tk.MustGetErrCode(`create table t32 (a int not null) partition by range columns( a );`, tmysql.ErrPartitionsMustBeDefined)
@@ -358,7 +364,7 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 	tk.MustExec("create table t4 (a int, b int) partition by hash(floor(a-b)) partitions 10")
 }
 
-func (s *testIntegrationSuite7) TestCreateTableWithRangeColumnPartition(c *C) {
+func (s *testSerialDBSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
@@ -583,9 +589,18 @@ create table log_message_1 (
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t(a int) partition by range (a) (partition p0 values less than (18446744073709551615));`)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(a binary) partition by range columns (a) (partition p0 values less than (X'0C'));`)
+	tk.MustExec(`alter table t add partition (partition p1 values less than (X'0D'), partition p2 values less than (X'0E'));`)
+	tk.MustExec(`insert into t values (X'0B'), (X'0C'), (X'0D')`)
+	tk.MustQuery(`select * from t where a < X'0D' order by a`).Check(testkit.Rows("\x0B", "\x0C"))
 }
 
 func (s *testIntegrationSuite1) TestDisableTablePartition(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	for _, v := range []string{"'AUTO'", "'OFF'", "0", "'ON'"} {
@@ -743,6 +758,7 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		"create table t (a bigint) partition by list (a) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
 		"create table t (a datetime) partition by list (to_seconds(a)) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
 		"create table t (a int, b int generated always as (a+1) virtual) partition by list (b + 1) (partition p0 values in (1));",
+		"create table t(a binary) partition by list columns (a) (partition p0 values in (X'0C'));",
 		s.generatePartitionTableByNum(ddl.PartitionCountLimit),
 	}
 
@@ -1595,7 +1611,7 @@ func (s *testIntegrationSuite5) TestMultiPartitionDropAndTruncate(c *C) {
 	result.Check(testkit.Rows(`2010`))
 }
 
-func (s *testIntegrationSuite7) TestDropPartitionWithGlobalIndex(c *C) {
+func (s *testSerialDBSuite1) TestDropPartitionWithGlobalIndex(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
 	})
@@ -1633,7 +1649,7 @@ func (s *testIntegrationSuite7) TestDropPartitionWithGlobalIndex(c *C) {
 	})
 }
 
-func (s *testIntegrationSuite7) TestAlterTableExchangePartition(c *C) {
+func (s *testSerialDBSuite1) TestAlterTableExchangePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists e")
@@ -2068,10 +2084,7 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
+func (s *testSerialDBSuite1) TestExchangePartitionExpressIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
@@ -2220,10 +2233,12 @@ func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
 	c.Assert(err, IsNil)
 	// Only one partition id test is taken here.
 	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
+	startTime := time.Now()
 	tk.MustExec("truncate table t3;")
 	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
+	logutil.BgLogger().Info("truncate partition table", zap.Stringer("key", partitionPrefix))
 	hasOldPartitionData := checkPartitionDelRangeDone(c, s.testIntegrationSuite, partitionPrefix)
-	c.Assert(hasOldPartitionData, IsFalse)
+	c.Assert(hasOldPartitionData, IsFalse, Commentf("take time %v", time.Since(startTime)))
 
 	// Test drop table partition.
 	tk.MustExec("drop table if exists t4;")
@@ -2620,7 +2635,7 @@ func testPartitionDropIndex(c *C, store kv.Storage, lease time.Duration, idxName
 	}
 	c.Assert(idx1, NotNil)
 
-	testutil.SessionExecInGoroutine(c, store, dropIdxSQL, done)
+	testutil.SessionExecInGoroutine(store, dropIdxSQL, done)
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 LOOP:
@@ -2980,7 +2995,7 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 	info := tbl.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {
 		pid := def.ID
-		partition := tbl.(table.PartitionedTable).GetPartition(pid)
+		partition := tbl.GetPartition(pid)
 		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		err := tables.IterRecords(partition, ctx, partition.Cols(),
 			func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -3197,7 +3212,7 @@ func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
 	c.Assert(err, ErrorMatches, ".*alter table partition is unsupported")
 }
 
-func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
+func (s *testSerialDBSuite1) TestCommitWhenSchemaChange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table schema_change (a int, b timestamp)
@@ -3262,7 +3277,7 @@ func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
 	tk.MustQuery("select * from nt").Check(testkit.Rows())
 }
 
-func (s *testIntegrationSuite7) TestCreatePartitionTableWithWrongType(c *C) {
+func (s *testSerialDBSuite1) TestCreatePartitionTableWithWrongType(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -3303,7 +3318,7 @@ func (s *testIntegrationSuite7) TestCreatePartitionTableWithWrongType(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testIntegrationSuite7) TestAddPartitionForTableWithWrongType(c *C) {
+func (s *testSerialDBSuite1) TestAddPartitionForTableWithWrongType(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop tables if exists t_int, t_char, t_date")
@@ -3334,7 +3349,7 @@ func (s *testIntegrationSuite7) TestAddPartitionForTableWithWrongType(c *C) {
 
 	_, err = tk.Exec("alter table t_char add partition (partition p1 values less than (0x20))")
 	c.Assert(err, NotNil)
-	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+	c.Assert(ddl.ErrRangeNotIncreasing.Equal(err), IsTrue)
 
 	_, err = tk.Exec("alter table t_char add partition (partition p1 values less than (10))")
 	c.Assert(err, NotNil)
@@ -3353,7 +3368,7 @@ func (s *testIntegrationSuite7) TestAddPartitionForTableWithWrongType(c *C) {
 	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
 }
 
-func (s *testIntegrationSuite7) TestPartitionListWithTimeType(c *C) {
+func (s *testSerialDBSuite1) TestPartitionListWithTimeType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3362,7 +3377,7 @@ func (s *testIntegrationSuite7) TestPartitionListWithTimeType(c *C) {
 	tk.MustQuery(`select * from t_list1 partition (p0);`).Check(testkit.Rows("2018-02-03"))
 }
 
-func (s *testIntegrationSuite7) TestPartitionListWithNewCollation(c *C) {
+func (s *testSerialDBSuite1) TestPartitionListWithNewCollation(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -3377,4 +3392,136 @@ func (s *testIntegrationSuite7) TestPartitionListWithNewCollation(c *C) {
 	tk.MustQuery(`select * from t11 partition (p1);`).Check(testkit.Rows("c", "C", "d"))
 	str := tk.MustQuery(`desc select * from t11 where a = 'b';`).Rows()[0][3].(string)
 	c.Assert(strings.Contains(str, "partition:p0"), IsTrue)
+}
+
+func (s *testSerialDBSuite1) TestAddTableWithPartition(c *C) {
+	// for global temporary table
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists global_partition_table;")
+	tk.MustGetErrCode("create global temporary table global_partition_table (a int, b int) partition by hash(a) partitions 3 ON COMMIT DELETE ROWS;", errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists global_partition_table;")
+	tk.MustExec("drop table if exists partition_table;")
+	_, err := tk.Exec("create table partition_table (a int, b int) partition by hash(a) partitions 3;")
+	c.Assert(err, IsNil)
+	tk.MustExec("drop table if exists partition_table;")
+	tk.MustExec("drop table if exists partition_range_table;")
+	tk.MustGetErrCode(`create global temporary table partition_range_table (c1 smallint(6) not null, c2 char(5) default null) partition by range ( c1 ) (
+			partition p0 values less than (10),
+			partition p1 values less than (20),
+			partition p2 values less than (30),
+			partition p3 values less than (MAXVALUE)
+	) ON COMMIT DELETE ROWS;`, errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists partition_range_table;")
+	tk.MustExec("drop table if exists partition_list_table;")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustGetErrCode(`create global temporary table partition_list_table (id int) partition by list  (id) (
+	    partition p0 values in (1,2),
+	    partition p1 values in (3,4),
+	    partition p3 values in (5,null)
+	) ON COMMIT DELETE ROWS;`, errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists partition_list_table;")
+
+	// for local temporary table
+	tk.MustExec("set tidb_enable_noop_functions=1")
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists local_partition_table;")
+	tk.MustGetErrCode("create temporary table local_partition_table (a int, b int) partition by hash(a) partitions 3;", errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists local_partition_table;")
+	tk.MustExec("drop table if exists partition_table;")
+	_, err = tk.Exec("create table partition_table (a int, b int) partition by hash(a) partitions 3;")
+	c.Assert(err, IsNil)
+	tk.MustExec("drop table if exists partition_table;")
+	tk.MustExec("drop table if exists local_partition_range_table;")
+	tk.MustGetErrCode(`create temporary table local_partition_range_table (c1 smallint(6) not null, c2 char(5) default null) partition by range ( c1 ) (
+			partition p0 values less than (10),
+			partition p1 values less than (20),
+			partition p2 values less than (30),
+			partition p3 values less than (MAXVALUE)
+	);`, errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists local_partition_range_table;")
+	tk.MustExec("drop table if exists local_partition_list_table;")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustGetErrCode(`create temporary table local_partition_list_table (id int) partition by list  (id) (
+	    partition p0 values in (1,2),
+	    partition p1 values in (3,4),
+	    partition p3 values in (5,null)
+	);`, errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists local_partition_list_table;")
+}
+
+func (s *testSerialDBSuite1) TestTruncatePartitionMultipleTimes(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists test.t;")
+	tk.MustExec(`create table test.t (a int primary key) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (maxvalue));`)
+	dom := domain.GetDomain(tk.Se)
+	originHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originHook)
+	hook := &ddl.TestDDLCallback{}
+	dom.DDL().SetHook(hook)
+	injected := false
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionTruncateTablePartition && job.SnapshotVer == 0 && !injected {
+			injected = true
+			time.Sleep(30 * time.Millisecond)
+		}
+	}
+	var errCount int32
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
+			atomic.AddInt32(&errCount, 1)
+		}
+	}
+	done1 := make(chan error, 1)
+	go backgroundExec(s.store, "alter table test.t truncate partition p0;", done1)
+	done2 := make(chan error, 1)
+	go backgroundExec(s.store, "alter table test.t truncate partition p0;", done2)
+	<-done1
+	<-done2
+	c.Assert(errCount, LessEqual, int32(1))
+}
+
+func (s *testSerialDBSuite1) TestAddPartitionReplicaBiggerThanTiFlashStores(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_partition2")
+	tk.MustExec("use test_partition2")
+	tk.MustExec("drop table if exists t1")
+	// Build a tableInfo with replica count = 1 while there is no real tiFlash store.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	tk.MustExec(`create table t1 (c int) partition by range(c) (
+			partition p0 values less than (100),
+			partition p1 values less than (200))`)
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"), IsNil)
+	// Mock partitions replica as available.
+	t1 := testGetTableByName(c, s.s, "test_partition2", "t1")
+	partition := t1.Meta().Partition
+	c.Assert(len(partition.Definitions), Equals, 2)
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[1].ID, true)
+	c.Assert(err, IsNil)
+	t1 = testGetTableByName(c, s.s, "test_partition2", "t1")
+	c.Assert(t1.Meta().TiFlashReplica.Available, IsTrue)
+	// Since there is no real TiFlash store (less than replica count), adding a partition will error here.
+	err = tk.ExecToErr("alter table t1 add partition (partition p2 values less than (300));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1][ddl] the tiflash replica count: 1 should be less than the total tiflash server count: 0")
+	// Test `add partition` waiting TiFlash replica can exit when its retry count is beyond the limitation.
+	originErrCountLimit := variable.GetDDLErrorCountLimit()
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", originErrCountLimit))
+	}()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplica", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplica"), IsNil)
+	}()
+	c.Assert(t1.Meta().TiFlashReplica.Available, IsTrue)
+	err = tk.ExecToErr("alter table t1 add partition (partition p3 values less than (300));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: [ddl] add partition wait for tiflash replica to complete")
 }

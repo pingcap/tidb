@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,11 +23,13 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -137,6 +140,31 @@ func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
 	return tk
 }
 
+// MockGC is used to make GC work in the test environment.
+func MockGC(tk *TestKit) (string, string, string, func()) {
+	originGC := ddl.IsEmulatorGCEnable()
+	resetGC := func() {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
+	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	// clear GC variables first.
+	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
+}
+
 var connectionID uint64
 
 // GetConnectionID get the connection ID for tk.Se
@@ -220,6 +248,17 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	}
 }
 
+// HasPseudoStats checks if the plan for this SQL used pseudo stats.
+func (tk *TestKit) HasPseudoStats(sql string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][4], "stats:pseudo") {
+			return true
+		}
+	}
+	return false
+}
+
 // HasPlan checks if the result execution plan contains specific plan.
 func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
@@ -253,6 +292,37 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 		return false
 	}
 	return true
+}
+
+// MustPartition checks if the result execution plan must read specific partitions.
+func (tk *TestKit) MustPartition(sql string, partitions string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	ok := len(partitions) == 0
+	for i := range rs.rows {
+		if len(partitions) == 0 && strings.Contains(rs.rows[i][3], "partition:") {
+			ok = false
+		}
+		if len(partitions) != 0 && strings.Compare(rs.rows[i][3], "partition:"+partitions) == 0 {
+			ok = true
+		}
+	}
+	tk.c.Assert(ok, check.IsTrue)
+	return tk.MustQuery(sql, args...)
+}
+
+// UsedPartitions returns the partition names that will be used or all/dual.
+func (tk *TestKit) UsedPartitions(sql string, args ...interface{}) *Result {
+	rs := tk.MustQuery("explain "+sql, args...)
+	var usedPartitions [][]string
+	for i := range rs.rows {
+		index := strings.Index(rs.rows[i][3], "partition:")
+		if index != -1 {
+			p := rs.rows[i][3][index+len("partition:"):]
+			partitions := strings.Split(strings.SplitN(p, " ", 2)[0], ",")
+			usedPartitions = append(usedPartitions, partitions)
+		}
+	}
+	return &Result{rows: usedPartitions, c: tk.c, comment: check.Commentf("sql:%s, args:%v", sql, args)}
 }
 
 // MustUseIndex checks if the result execution plan contains specific index(es).
@@ -293,6 +363,19 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	rs, err := tk.Exec(sql, args...)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	tk.c.Assert(rs, check.NotNil, comment)
+	return tk.ResultSetToResult(rs, comment)
+}
+
+// MayQuery query the statements and returns result rows if result set is returned.
+// If expected result is set it asserts the query result equals expected result.
+func (tk *TestKit) MayQuery(sql string, args ...interface{}) *Result {
+	comment := check.Commentf("sql:%s, args:%v", sql, args)
+	rs, err := tk.Exec(sql, args...)
+	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	if rs == nil {
+		var emptyStringAoA [][]string
+		return &Result{rows: emptyStringAoA, c: tk.c, comment: comment}
+	}
 	return tk.ResultSetToResult(rs, comment)
 }
 

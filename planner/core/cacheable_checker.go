@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -133,7 +134,7 @@ func (checker *cacheableChecker) isPartitionTable(tn *ast.TableName) bool {
 		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
 		return false
 	}
-	if tb.Meta().Partition != nil {
+	if tb.Meta().GetPartitionInfo() != nil {
 		return true
 	}
 	return false

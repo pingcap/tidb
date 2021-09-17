@@ -8,6 +8,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -287,14 +288,6 @@ task ExplainTest -If (-not ((Get-Content cmd\explaintest\r\explain.result -Raw) 
     }
 }
 
-# Synopsis: Check dependency.
-task CheckDep {
-    $list = go list -json github.com/pingcap/tidb/store/tikv | ConvertFrom-Json
-    if ($list.Imports | Where-Object { Select-String -Pattern '^github.com/pingcap/parser$' -InputObject $_ }) {
-        throw 'incorrect import of github.com/pingcap/parser'
-    }
-}
-
 # Synopsis: Run unit tests.
 task GoTest BuildFailPoint, {
     Enable-FailPoint
@@ -343,14 +336,6 @@ task GoLeakTest BuildFailPoint, {
     $env:TZ = $Task.Data.tz
 }
 
-# Synopsis: Run some tests with real TiKV.
-task TiKVIntegrationTest BuildFailPoint, {
-    Enable-FailPoint
-    { & $GO test -p $P github.com/pingcap/tidb/store/tikv -with-tikv=true }
-} -Done {
-    Disable-FailPoint
-}
-
 # Synopsis: Ensure generated code is up to date.
 task GoGenerate {
     exec { & $GO generate ./... }
@@ -361,7 +346,7 @@ task GoGenerate {
 }
 
 # Synopsis: Run common tests.
-task Test ExplainTest, CheckDep, GoTest, GoGenerate
+task Test ExplainTest, GoTest, GoGenerate
 
 # Synopsis: Check and Test.
 task Dev Check, Test

@@ -67,6 +67,21 @@
     ]
   },
   {
+    "name": "TestTopNOutOfHist",
+    "cases": [
+      "show stats_topn",
+      "show stats_buckets",
+      "explain select * from topn_before_hist where a = 1",
+      "explain select * from topn_before_hist where a = 2",
+      "explain select * from topn_after_hist where a = 7",
+      "explain select * from topn_after_hist where a = 6",
+      "explain select * from topn_after_hist_no_index where a = 7",
+      "explain select * from topn_after_hist_no_index where a = 6",
+      "explain select * from topn_before_hist_no_index where a = 1",
+      "explain select * from topn_before_hist_no_index where a = 2"
+    ]
+  },
+  {
     "name": "TestColumnIndexNullEstimation",
     "cases": [
       "explain select b from t where b is null",
@@ -109,7 +124,7 @@
   {
     "name": "TestCollationColumnEstimate",
     "cases": [
-      "show stats_buckets",
+      "show stats_topn",
       "explain select * from t where a='aÄa'",
       "explain select * from t where a > 'aÄa'"
     ]
@@ -121,6 +136,128 @@
       "select * from t where d < 5 or b > 6",
       "select * from t where a > 8 or d < 4 or c > 7 or b < 5",
       "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2"
+    ]
+  },
+  {
+    "Name": "TestSmallRangeEstimation",
+    "Cases": [
+      {
+        "Start": 5,
+        "End": 5
+      },
+      {
+        "Start": 5,
+        "End": 6
+      },
+      {
+        "Start": 5,
+        "End": 10
+      },
+      {
+        "Start": 5,
+        "End": 15
+      },
+      {
+        "Start": 10,
+        "End": 15
+      },
+      {
+        "Start": 5,
+        "End": 25
+      },
+      {
+        "Start": 25,
+        "End": 25
+      }
+    ]
+  },
+  {
+    "Name": "TestOutOfRangeEstimation",
+    "Cases": [
+      {
+        "Start": 800,
+        "End": 900
+      },
+      {
+        "Start": 900,
+        "End": 950
+      },
+      {
+        "Start": 950,
+        "End": 1000
+      },
+      {
+        "Start": 1000,
+        "End": 1050
+      },
+      {
+        "Start": 1050,
+        "End": 1100
+      },
+      {
+        "Start": 1150,
+        "End": 1200
+      },
+      {
+        "Start": 1200,
+        "End": 1300
+      },
+      {
+        "Start": 1300,
+        "End": 1400
+      },
+      {
+        "Start": 1400,
+        "End": 1500
+      },
+      {
+        "Start": 1500,
+        "End": 1600
+      },
+      {
+        "Start": 300,
+        "End": 899
+      },
+      {
+        "Start": 800,
+        "End": 1000
+      },
+      {
+        "Start": 900,
+        "End": 1500
+      },
+      {
+        "Start": 300,
+        "End": 1500
+      },
+      {
+        "Start": 200,
+        "End": 300
+      },
+      {
+        "Start": 100,
+        "End": 200
+      },
+      {
+        "Start": 200,
+        "End": 400
+      },
+      {
+        "Start": 200,
+        "End": 1000
+      },
+      {
+        "Start": 0,
+        "End": 100
+      },
+      {
+        "Start": -100,
+        "End": 100
+      },
+      {
+        "Start": -100,
+        "End": 0
+      }
     ]
   }
 ]

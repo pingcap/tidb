@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	. "github.com/pingcap/tidb/ddl"
 	. "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/store/mockstore"
 	"go.etcd.io/etcd/clientv3"
@@ -69,11 +71,14 @@ func TestSyncerSimple(t *testing.T) {
 	defer clus.Terminate(t)
 	cli := clus.RandClient()
 	ctx := goctx.Background()
+	ic := infoschema.NewCache(2)
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d := NewDDL(
 		ctx,
 		WithEtcdClient(cli),
 		WithStore(store),
 		WithLease(testLease),
+		WithInfoCache(ic),
 	)
 	err = d.Start(nil)
 	if err != nil {
@@ -110,11 +115,14 @@ func TestSyncerSimple(t *testing.T) {
 		t.Fatalf("client get global version result not match, err %v", err)
 	}
 
+	ic2 := infoschema.NewCache(2)
+	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d1 := NewDDL(
 		ctx,
 		WithEtcdClient(cli),
 		WithStore(store),
 		WithLease(testLease),
+		WithInfoCache(ic2),
 	)
 	err = d1.Start(nil)
 	if err != nil {

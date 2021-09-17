@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -91,10 +92,14 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			return nil, err
 		}
 		schemaChanged := false
-		for i, col := range p.Schema().Columns {
-			if !col.Equal(nil, originalSchema.Columns[i]) {
-				schemaChanged = true
-				break
+		if len(p.Schema().Columns) != len(originalSchema.Columns) {
+			schemaChanged = true
+		} else {
+			for i, col := range p.Schema().Columns {
+				if !col.Equal(nil, originalSchema.Columns[i]) {
+					schemaChanged = true
+					break
+				}
 			}
 		}
 		if schemaChanged {

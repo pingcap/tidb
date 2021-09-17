@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -42,12 +43,13 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		{"bb", "b_%b", 0},
 		{"bb", "b%_b", 0},
 		{"baabccc", "b_%b%", 1},
+		{"a", `\a`, 1},
 	}
 
 	for _, tt := range tests {
 		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
 		fc := funcs[ast.Like]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, int('\\'))))
 		c.Assert(err, IsNil, commentf)
 		r, err := evalBuiltinFuncConcurrent(f, chunk.Row{})
 		c.Assert(err, IsNil, commentf)

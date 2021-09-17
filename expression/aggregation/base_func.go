@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -115,6 +116,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4LeadLag(ctx)
 	case ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncVarSamp, ast.AggFuncStddevSamp:
 		a.typeInfer4PopOrSamp(ctx)
+	case ast.AggFuncJsonArrayagg:
+		a.typeInfer4JsonFuncs(ctx)
 	case ast.AggFuncJsonObjectAgg:
 		a.typeInfer4JsonFuncs(ctx)
 	default:
@@ -362,6 +365,7 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncMin:                 {},
 	ast.AggFuncFirstRow:            {},
 	ast.WindowFuncNtile:            {},
+	ast.AggFuncJsonArrayagg:        {},
 	ast.AggFuncJsonObjectAgg:       {},
 }
 
@@ -411,6 +415,9 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if i == 1 && (a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag || a.Name == ast.WindowFuncNthValue) {
 			continue
 		}
+		if a.Args[i].GetType().Tp == mysql.TypeNull {
+			continue
+		}
 		a.Args[i] = castFunc(ctx, a.Args[i])
 		if a.Name != ast.AggFuncAvg && a.Name != ast.AggFuncSum {
 			continue
@@ -428,7 +435,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if col, ok := a.Args[i].(*expression.Column); ok {
 			col.RetType = types.NewFieldType(col.RetType.Tp)
 		}
-		// originTp is used when the the `Tp` of column is TypeFloat32 while
+		// originTp is used when the `Tp` of column is TypeFloat32 while
 		// the type of the aggregation function is TypeFloat64.
 		originTp := a.Args[i].GetType().Tp
 		*(a.Args[i].GetType()) = *(a.RetTp)

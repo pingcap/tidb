@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -24,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
+	"go.uber.org/zap"
 )
 
 const (
@@ -127,6 +131,7 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 	}
 
 	req.Header.Add("Content-Type", "application/json")
+	logutil.BgLogger().Info(fmt.Sprintf("Uploading telemetry data to %s", apiEndpoint))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -158,4 +163,14 @@ func ReportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) error 
 	}
 
 	return updateTelemetryStatus(s, etcdClient)
+}
+
+// InitialRun reports the Telmetry configuration and trigger an initial run
+func InitialRun(ctx sessionctx.Context, etcdClient *clientv3.Client) error {
+	enabled, err := IsTelemetryEnabled(ctx)
+	if err != nil {
+		return err
+	}
+	logutil.BgLogger().Info("Telemetry configuration", zap.String("endpoint", apiEndpoint), zap.Duration("report_interval", ReportInterval), zap.Bool("enabled", enabled))
+	return ReportUsageData(ctx, etcdClient)
 }

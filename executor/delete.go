@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -188,10 +189,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 		var err error
 		rowMap.Range(func(h kv.Handle, val interface{}) bool {
 			err = e.removeRow(e.ctx, e.tblID2Table[id], h, val.([]types.Datum))
-			if err != nil {
-				return false
-			}
-			return true
+			return err == nil
 		})
 		if err != nil {
 			return err

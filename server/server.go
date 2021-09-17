@@ -23,6 +23,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -33,19 +34,18 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
-	"io"
 	"math/rand"
 	"net"
 	"net/http"
-	"unsafe"
 
 	// For pprof
-	_ "net/http/pprof"
+	_ "net/http/pprof" // #nosec G108
 	"os"
 	"os/user"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
@@ -54,10 +54,11 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
@@ -99,6 +100,7 @@ var (
 	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
 	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
 	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
+	errNewAbortingConnection   = dbterror.ClassServer.NewStd(errno.ErrNewAbortingConnection)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -182,44 +184,6 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	return cc
 }
 
-// isUnixSocket should ideally be a function of clientConnection!
-// But currently since unix-socket connections are forwarded to TCP when the server listens on both, it can really only be accurate on a server-level.
-// If the server is listening on both, it *must* return FALSE for remote-host authentication to be performed correctly. See #23460.
-func (s *Server) isUnixSocket() bool {
-	return s.cfg.Socket != "" && s.cfg.Port == 0
-}
-
-func (s *Server) forwardUnixSocketToTCP() {
-	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
-	for {
-		if s.listener == nil {
-			return // server shutdown has started
-		}
-		if uconn, err := s.socket.Accept(); err == nil {
-			logutil.BgLogger().Info("server socket forwarding", zap.String("from", s.cfg.Socket), zap.String("to", addr))
-			go s.handleForwardedConnection(uconn, addr)
-		} else if s.listener != nil {
-			logutil.BgLogger().Error("server failed to forward", zap.String("from", s.cfg.Socket), zap.String("to", addr), zap.Error(err))
-		}
-	}
-}
-
-func (s *Server) handleForwardedConnection(uconn net.Conn, addr string) {
-	defer terror.Call(uconn.Close)
-	if tconn, err := net.Dial("tcp", addr); err == nil {
-		go func() {
-			if _, err := io.Copy(uconn, tconn); err != nil {
-				logutil.BgLogger().Warn("copy server to socket failed", zap.Error(err))
-			}
-		}()
-		if _, err := io.Copy(tconn, uconn); err != nil {
-			logutil.BgLogger().Warn("socket forward copy failed", zap.Error(err))
-		}
-	} else {
-		logutil.BgLogger().Warn("socket forward failed: could not connect", zap.String("addr", addr), zap.Error(err))
-	}
-}
-
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
@@ -229,8 +193,31 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
 	}
+	s.capability = defaultCapability
 	setTxnScope()
-	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+	setSystemTimeZoneVariable()
+
+	tlsConfig, autoReload, err := util.LoadTLSCertificates(
+		s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
+		s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
+
+	// Automatically reload auto-generated certificates.
+	// The certificates are re-created every 30 days and are valid for 90 days.
+	if autoReload {
+		go func() {
+			for range time.Tick(time.Hour * 24 * 30) { // 30 days
+				logutil.BgLogger().Info("Rotating automatically created TLS Certificates")
+				tlsConfig, _, err = util.LoadTLSCertificates(
+					s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
+					s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
+				if err != nil {
+					logutil.BgLogger().Warn("TLS Certificate rotation failed", zap.Error(err))
+				}
+				atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+			}
+		}()
+	}
+
 	if err != nil {
 		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
 	}
@@ -242,9 +229,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		return nil, errSecureTransportRequired.FastGenByArgs()
 	}
 
-	setSystemTimeZoneVariable()
-
-	s.capability = defaultCapability
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
@@ -255,47 +239,90 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		if s.cfg.EnableTCP4Only {
 			tcpProto = "tcp4"
 		}
-		if s.listener, err = net.Listen(tcpProto, addr); err == nil {
-			logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
-			if cfg.Socket != "" {
-				if s.socket, err = net.Listen("unix", s.cfg.Socket); err == nil {
-					logutil.BgLogger().Info("server redirecting", zap.String("from", s.cfg.Socket), zap.String("to", addr))
-					go s.forwardUnixSocketToTCP()
-				}
-			}
-			if runInGoTest && s.cfg.Port == 0 {
-				s.cfg.Port = uint(s.listener.Addr().(*net.TCPAddr).Port)
-			}
+		if s.listener, err = net.Listen(tcpProto, addr); err != nil {
+			return nil, errors.Trace(err)
 		}
-	} else if cfg.Socket != "" {
-		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
-			logutil.BgLogger().Info("server is running MySQL protocol", zap.String("socket", cfg.Socket))
+		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
+		if runInGoTest && s.cfg.Port == 0 {
+			s.cfg.Port = uint(s.listener.Addr().(*net.TCPAddr).Port)
 		}
-	} else {
+	}
+
+	if s.cfg.Socket != "" {
+
+		err := cleanupStaleSocket(s.cfg.Socket)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		if s.socket, err = net.Listen("unix", s.cfg.Socket); err != nil {
+			return nil, errors.Trace(err)
+		}
+		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("socket", s.cfg.Socket))
+	}
+
+	if s.socket == nil && s.listener == nil {
 		err = errors.New("Server not configured to listen on either -socket or -host and -port")
-	}
-
-	if cfg.ProxyProtocol.Networks != "" {
-		pplistener, errProxy := proxyprotocol.NewListener(s.listener, cfg.ProxyProtocol.Networks,
-			int(cfg.ProxyProtocol.HeaderTimeout))
-		if errProxy != nil {
-			logutil.BgLogger().Error("ProxyProtocol networks parameter invalid")
-			return nil, errors.Trace(errProxy)
-		}
-		logutil.BgLogger().Info("server is running MySQL protocol (through PROXY protocol)", zap.String("host", s.cfg.Host))
-		s.listener = pplistener
-	}
-
-	if s.cfg.Status.ReportStatus && err == nil {
-		err = s.listenStatusHTTPServer()
-	}
-	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if s.cfg.ProxyProtocol.Networks != "" {
+		proxyTarget := s.listener
+		if proxyTarget == nil {
+			proxyTarget = s.socket
+		}
+		pplistener, err := proxyprotocol.NewListener(proxyTarget, s.cfg.ProxyProtocol.Networks,
+			int(s.cfg.ProxyProtocol.HeaderTimeout))
+		if err != nil {
+			logutil.BgLogger().Error("ProxyProtocol networks parameter invalid")
+			return nil, errors.Trace(err)
+		}
+		if s.listener != nil {
+			s.listener = pplistener
+			logutil.BgLogger().Info("server is running MySQL protocol (through PROXY protocol)", zap.String("host", s.cfg.Host))
+		} else {
+			s.socket = pplistener
+			logutil.BgLogger().Info("server is running MySQL protocol (through PROXY protocol)", zap.String("socket", s.cfg.Socket))
+		}
+	}
+
+	if s.cfg.Status.ReportStatus {
+		err = s.listenStatusHTTPServer()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
+
+	variable.RegisterStatistics(s)
+
 	return s, nil
+}
+
+func cleanupStaleSocket(socket string) error {
+	sockStat, err := os.Stat(socket)
+	if err == nil {
+		if sockStat.Mode().Type() != os.ModeSocket {
+			return fmt.Errorf(
+				"the specified socket file %s is a %s instead of a socket file",
+				socket, sockStat.Mode().String())
+		}
+
+		_, err = net.Dial("unix", socket)
+		if err != nil {
+			logutil.BgLogger().Warn("Unix socket exists and is nonfunctional, removing it",
+				zap.String("socket", socket), zap.Error(err))
+			err = os.Remove(socket)
+			if err != nil {
+				return fmt.Errorf("failed to remove socket file %s", socket)
+			}
+		} else {
+			return fmt.Errorf("unix socket %s exists and is functional, not removing it", socket)
+		}
+	}
+	return nil
 }
 
 func setSSLVariable(ca, key, cert string) {
@@ -307,11 +334,14 @@ func setSSLVariable(ca, key, cert string) {
 }
 
 func setTxnScope() {
-	variable.SetSysVar("txn_scope", func() string {
-		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
-			return oracle.GlobalTxnScope
+	variable.SetSysVar(variable.TiDBTxnScope, func() string {
+		if !variable.EnableLocalTxn.Load() {
+			return kv.GlobalTxnScope
 		}
-		return oracle.LocalTxnScope
+		if txnScope := config.GetTxnScopeFromConfig(); txnScope == kv.GlobalTxnScope {
+			return kv.GlobalTxnScope
+		}
+		return kv.LocalTxnScope
 	}())
 }
 
@@ -331,12 +361,34 @@ func (s *Server) Run() error {
 	if s.cfg.Status.ReportStatus {
 		s.startStatusHTTP()
 	}
+	// If error should be reported and exit the server it can be sent on this
+	// channel. Otherwise end with sending a nil error to signal "done"
+	errChan := make(chan error)
+	go s.startNetworkListener(s.listener, false, errChan)
+	go s.startNetworkListener(s.socket, true, errChan)
+	err := <-errChan
+	if err != nil {
+		return err
+	}
+	return <-errChan
+}
+
+func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, errChan chan error) {
+	if listener == nil {
+		errChan <- nil
+		return
+	}
 	for {
-		conn, err := s.listener.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
 			if opErr, ok := err.(*net.OpError); ok {
 				if opErr.Err.Error() == "use of closed network connection" {
-					return nil
+					if s.inShutdownMode {
+						errChan <- nil
+					} else {
+						errChan <- err
+					}
+					return
 				}
 			}
 
@@ -347,10 +399,14 @@ func (s *Server) Run() error {
 			}
 
 			logutil.BgLogger().Error("accept failed", zap.Error(err))
-			return errors.Trace(err)
+			errChan <- err
+			return
 		}
 
 		clientConn := s.newConn(conn)
+		if isUnixSocket {
+			clientConn.isUnixSocket = true
+		}
 
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
@@ -445,8 +501,8 @@ func (s *Server) onConn(conn *clientConn) {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
-		err = conn.Close()
 		terror.Log(errors.Trace(err))
+		terror.Log(errors.Trace(conn.Close()))
 		return
 	}
 
@@ -480,6 +536,10 @@ func (s *Server) onConn(conn *clientConn) {
 	conn.Run(ctx)
 
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		// Audit plugin may be disabled before a conn is created, leading no connectionInfo in sessionVars.
+		if sessionVars.ConnectionInfo == nil {
+			sessionVars.ConnectionInfo = conn.connectInfo()
+		}
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
@@ -497,7 +557,7 @@ func (s *Server) onConn(conn *clientConn) {
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 	connType := "Socket"
-	if cc.server.isUnixSocket() {
+	if cc.isUnixSocket {
 		connType = "UnixSocket"
 	} else if cc.tlsConn != nil {
 		connType = "SSL/TLS"
@@ -547,6 +607,22 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	for _, client := range s.clients {
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
+		}
+	}
+	return rs
+}
+
+// ShowTxnList shows all txn info for displaying in `TIDB_TRX`
+func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	rs := make([]*txninfo.TxnInfo, 0, len(s.clients))
+	for _, client := range s.clients {
+		if client.ctx.Session != nil {
+			info := client.ctx.Session.TxnInfo()
+			if info != nil {
+				rs = append(rs, info)
+			}
 		}
 	}
 	return rs

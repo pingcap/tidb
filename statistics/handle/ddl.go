@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -74,7 +75,7 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	// We need to merge the partition-level stats to global-stats when we drop table partition in dynamic mode.
 	tableID := tblInfo.ID
-	is := infoschema.GetInfoSchema(h.mu.ctx)
+	is := h.mu.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	globalStats, err := h.TableStatsFromStorage(tblInfo, tableID, true, 0)
 	if err != nil {
 		return err
@@ -112,7 +113,8 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	}
 	for i := 0; i < newColGlobalStats.Num; i++ {
 		hg, cms, topN, fms := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i], newColGlobalStats.Fms[i]
-		err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, 0, hg, cms, topN, fms, 2, 1)
+		// fms for global stats doesn't need to dump to kv.
+		err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, 0, hg, cms, topN, fms, 2, 1, false)
 		if err != nil {
 			return err
 		}
@@ -141,7 +143,8 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		}
 		for i := 0; i < newIndexGlobalStats.Num; i++ {
 			hg, cms, topN, fms := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i], newIndexGlobalStats.Fms[i]
-			err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, 1, hg, cms, topN, fms, 2, 1)
+			// fms for global stats doesn't need to dump to kv.
+			err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, 1, hg, cms, topN, fms, 2, 1, false)
 			if err != nil {
 				return err
 			}
