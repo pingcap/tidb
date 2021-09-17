@@ -238,14 +238,6 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 			physicalTableIDs = append(physicalTableIDs, p.ID)
 		}
 	}
-	syncPlacementRules := func() error {
-		err = dropRuleBundles(d, physicalTableIDs)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
-		return nil
-	}
 
 	originalState := job.SchemaState
 	switch tblInfo.State {
@@ -270,10 +262,6 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		oldIDs := getPartitionIDs(tblInfo)
 		ruleIDs := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
 		job.CtxVars = []interface{}{oldIDs}
-		if tblInfo.PlacementPolicyRef != nil {
-			// This diff parameter is used to unlink dependency with policy in information schema.
-			job.CtxVars = append(job.CtxVars, tblInfo.PlacementPolicyRef.ID)
-		}
 
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
@@ -292,8 +280,10 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 			}
 		}
 		// Clean the placement bundle to PD.
-		if err = syncPlacementRules(); err != nil {
-			return ver, errors.Trace(err)
+		err = dropRuleBundles(d, physicalTableIDs)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
 		// Finish this job.

@@ -586,13 +586,12 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.
 	for _, bundle := range bundles {
 		info.SetBundle(bundle)
 	}
-	// build the policies in advance of policy dependency.
+	// build the policies.
 	for _, policy := range policies {
 		info.SetPolicy(policy)
 	}
 
 	for _, di := range dbInfos {
-		// todo: construct dbInfo's policy dependency.
 		err := b.createSchemaTablesForDB(di, tables.TableFromMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
