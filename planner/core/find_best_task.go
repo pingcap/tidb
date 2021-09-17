@@ -812,9 +812,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			}, cntPlan, nil
 		}
 		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema() &&
-			// don't generate PointGet for plan cache since it may be over-optimized, for example,
-			// `pk>=$a and pk<=$b` can be optimized to a PointGet when `$a==$b`, and if we cache this plan it can
-			// return wrong results when `$a!=$b`.
+			// to avoid the over-optimized risk, do not generate PointGet for plan cache, for example,
+			// `pk>=$a and pk<=$b` can be optimized to a PointGet when `$a==$b`, but it can cause wrong results when `$a!=$b`.
 			!ds.ctx.GetSessionVars().StmtCtx.UseCache
 		if canConvertPointGet && !path.IsIntHandlePath {
 			// We simply do not build [batch] point get for prefix indexes. This can be optimized.
