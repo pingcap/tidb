@@ -230,8 +230,10 @@ func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 
-	is := d.infoCache.GetLatest()
-	ids := is.(infoschema.InfoSchema).DismissPolicyDependencies(oldPolicy.Name.L)
+	ids, err := getPlacementPolicyDependedObjectsIDs(t, oldPolicy)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	if len(ids) != 0 {
 		// build bundle from new placement policy.
 		bundle, err := placement.NewBundleFromOptions(newPolicyInfo.PlacementSettings)
@@ -243,15 +245,15 @@ func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 			return ver, errors.Trace(err)
 		}
 		// Do the http request only when the rules is existed.
-		if len(bundle.Rules) > 0 {
-			for _, id := range ids {
-				bundle.Reset(id)
-				err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
-				if err != nil {
-					job.State = model.JobStateCancelled
-					return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-				}
-			}
+		bundles := make([]*placement.Bundle, 0, len(ids))
+		for _, id := range ids {
+			cp := bundle.Clone()
+			bundles = append(bundles, cp.Reset(id))
+		}
+		err = infosync.PutRuleBundles(context.TODO(), bundles)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 	}
 
@@ -290,6 +292,36 @@ func checkPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy
 		}
 	}
 	return nil
+}
+
+func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo) ([]int64, error) {
+	schemas, err := t.ListDatabases()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(schemas))
+	for _, dbInfo := range schemas {
+		if dbInfo.PlacementPolicyRef != nil && dbInfo.PlacementPolicyRef.ID == policy.ID {
+			ids = append(ids, dbInfo.ID)
+		}
+		tables, err := t.ListTables(dbInfo.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, tblInfo := range tables {
+			if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
+				ids = append(ids, tblInfo.ID)
+			}
+			if tblInfo.Partition != nil {
+				for _, part := range tblInfo.Partition.Definitions {
+					if part.PlacementPolicyRef != nil && part.PlacementPolicyRef.ID == part.ID {
+						ids = append(ids, part.ID)
+					}
+				}
+			}
+		}
+	}
+	return ids, nil
 }
 
 func checkPlacementPolicyNotInUseFromMeta(t *meta.Meta, policy *model.PolicyInfo) error {

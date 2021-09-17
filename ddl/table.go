@@ -103,18 +103,19 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 	// Do the http request only when the rules is existed.
 	syncPlacementRules := func() error {
+		if bundle.Rules == nil {
+			return nil
+		}
 		err = bundle.Tidy()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if len(bundle.Rules) > 0 {
-			// todo: partitions should use the default table level placement rules or it's specified one.
-			bundle.Reset(tbInfo.ID)
-			err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return errors.Wrapf(err, "failed to notify PD the placement rules")
-			}
+		// todo: partitions should use the default table level placement rules or it's specified one.
+		bundle.Reset(tbInfo.ID)
+		err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 		return nil
 	}

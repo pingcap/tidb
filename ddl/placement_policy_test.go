@@ -376,7 +376,6 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	tk.MustExec("drop placement policy if exists x")
 }
 
-<<<<<<< HEAD
 func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -427,7 +426,8 @@ func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 		err = tk.ExecToErr(fmt.Sprintf("drop placement policy if exists %s", policyName))
 		c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:8241]Placement policy '%s' is still in use", policyName))
 	}
-=======
+}
+
 func testGetPolicyByName(c *C, ctx sessionctx.Context, name string, mustExist bool) *model.PolicyInfo {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
@@ -440,12 +440,31 @@ func testGetPolicyByName(c *C, ctx sessionctx.Context, name string, mustExist bo
 	return po
 }
 
-func testGetPolicyDependency(c *C, ctx sessionctx.Context, name string) []int64 {
-	dom := domain.GetDomain(ctx)
-	// Make sure the table schema is the new schema.
-	err := dom.Reload()
-	c.Assert(err, IsNil)
-	return dom.InfoSchema().DismissPolicyDependencies(name)
+func testGetPolicyDependency(storage kv.Storage, name string) []int64 {
+	ids := make([]int64, 0, 32)
+	err1 := kv.RunInNewTxn(context.Background(), storage, false, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		dbs, err := t.ListDatabases()
+		if err != nil {
+			return err
+		}
+		for _, db := range dbs {
+			tbls, err := t.ListTables(db.ID)
+			if err != nil {
+				return err
+			}
+			for _, tbl := range tbls {
+				if tbl.PlacementPolicyRef != nil && tbl.PlacementPolicyRef.Name.L == name {
+					ids = append(ids, tbl.ID)
+				}
+			}
+		}
+		return nil
+	})
+	if err1 != nil {
+		return []int64{}
+	}
+	return ids
 }
 
 func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
@@ -464,7 +483,7 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
 
 	// Test policy dependency cache.
-	dependencies := testGetPolicyDependency(c, tk.Se, "x")
+	dependencies := testGetPolicyDependency(s.store, "x")
 	c.Assert(dependencies, NotNil)
 	c.Assert(len(dependencies), Equals, 1)
 	c.Assert(dependencies[0], Equals, tbl.Meta().ID)
@@ -473,7 +492,7 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
 	tk.MustExec("create table t2 (a int) placement policy \"x\"")
 	tbl2 := testGetTableByName(c, tk.Se, "test", "t2")
 
-	dependencies = testGetPolicyDependency(c, tk.Se, "x")
+	dependencies = testGetPolicyDependency(s.store, "x")
 	c.Assert(dependencies, NotNil)
 	c.Assert(len(dependencies), Equals, 2)
 	in := func() bool {
@@ -489,22 +508,22 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
 	// Test drop policy can't succeed cause there are still some table depend on them.
 	_, err := tk.Exec("drop placement policy x")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]policy is still in used by other objects")
+	c.Assert(err.Error(), Equals, "[ddl:8241]Placement policy 'x' is still in use")
 
 	// Drop depended table t firstly.
 	tk.MustExec("drop table if exists t")
-	dependencies = testGetPolicyDependency(c, tk.Se, "x")
+	dependencies = testGetPolicyDependency(s.store, "x")
 	c.Assert(dependencies, NotNil)
 	c.Assert(len(dependencies), Equals, 1)
 	c.Assert(dependencies[0], Equals, tbl2.Meta().ID)
 
 	_, err = tk.Exec("drop placement policy x")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]policy is still in used by other objects")
+	c.Assert(err.Error(), Equals, "[ddl:8241]Placement policy 'x' is still in use")
 
 	// Drop depended table t2 secondly.
 	tk.MustExec("drop table if exists t2")
-	dependencies = testGetPolicyDependency(c, tk.Se, "x")
+	dependencies = testGetPolicyDependency(s.store, "x")
 	c.Assert(dependencies, NotNil)
 	c.Assert(len(dependencies), Equals, 0)
 
@@ -515,8 +534,7 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
 
 	po = testGetPolicyByName(c, tk.Se, "x", false)
 	c.Assert(po, IsNil)
-	dependencies = testGetPolicyDependency(c, tk.Se, "x")
+	dependencies = testGetPolicyDependency(s.store, "x")
 	c.Assert(dependencies, NotNil)
 	c.Assert(len(dependencies), Equals, 0)
->>>>>>> 2b6014067 (add test)
 }

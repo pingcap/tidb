@@ -538,7 +538,6 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
 	b.copyPoliciesMap(oldIS)
-	b.copyPolicyDependenciesMap(oldIS)
 
 	copy(b.is.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return b
@@ -634,16 +633,6 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		schTbls.tables[t.Name.L] = tbl
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
 		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
-
-		// build table's policy dependency.
-		if t.PlacementPolicyRef != nil {
-			// check the policy existence.
-			if _, ok := b.is.PolicyByName(t.PlacementPolicyRef.Name); !ok {
-				return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` 's policy `%s` dependency failed", di.Name.O, t.Name.O, t.PlacementPolicyRef.Name.O))
-			}
-			b.is.AttachPolicyDependency(t.PlacementPolicyRef.Name.L, []int64{t.ID})
-		}
-		// todo: build partition's policy dependency.
 	}
 	return nil
 }

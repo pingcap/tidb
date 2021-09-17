@@ -151,7 +151,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	policies, err := do.fetchPoliciesWithTables(m)
+	policies, err := do.fetchPolicies(m)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -170,7 +170,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	return is, false, currentSchemaVersion, nil, nil
 }
 
-func (do *Domain) fetchPoliciesWithTables(m *meta.Meta) ([]*model.PolicyInfo, error) {
+func (do *Domain) fetchPolicies(m *meta.Meta) ([]*model.PolicyInfo, error) {
 	allPolicies, err := m.ListPolicies()
 	if err != nil {
 		return nil, err
