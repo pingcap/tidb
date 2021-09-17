@@ -1480,29 +1480,31 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			gPutRCDone:  &v.PutRCDone,
 			gPutHTDone:  &v.PutHTDone,
 		}
-		if v.CurWorkerID == 0 {
-			buildKeyColIdx := make([]int, len(e.buildKeys))
-			for i := range e.buildKeys {
-				buildKeyColIdx[i] = e.buildKeys[i].Index
+		if v.IsBroadcast {
+			if v.CurWorkerID == 0 {
+				buildKeyColIdx := make([]int, len(e.buildKeys))
+				for i := range e.buildKeys {
+					buildKeyColIdx[i] = e.buildKeys[i].Index
+				}
+				hCtx := &hashContext{
+					allTypes:  e.buildTypes,
+					keyColIdx: buildKeyColIdx,
+				}
+				rc := newHashRowContainerMultiple(b.ctx, 0, hCtx, v.WorkerCnt)
+				res.rowContainer = rc
+				v.Rc = rc
+				v.GWg.Add(v.WorkerCnt)
+				v.PutRCDone.Add(1)
+				v.PutHTDone.Add(v.WorkerCnt)
+			} else {
+				var ok bool
+				res.rowContainer, ok = v.Rc.(*HashRowContainer)
+				if !ok {
+					panic("must be RC")
+				}
 			}
-			hCtx := &hashContext{
-				allTypes:  e.buildTypes,
-				keyColIdx: buildKeyColIdx,
-			}
-			rc := newHashRowContainerMultiple(b.ctx, 0, hCtx, v.WorkerCnt)
-			res.rowContainer = rc
-			v.Rc = rc
-			v.GWg.Add(v.WorkerCnt)
-			v.PutRCDone.Add(1)
-			v.PutHTDone.Add(v.WorkerCnt)
-		} else {
-			var ok bool
-			res.rowContainer, ok = v.Rc.(*HashRowContainer)
-			if !ok {
-				panic("must be RC")
-			}
+			v.CurWorkerID++
 		}
-		v.CurWorkerID++
 		return res
 	}
 	return e

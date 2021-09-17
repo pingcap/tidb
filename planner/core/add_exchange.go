@@ -173,11 +173,11 @@ func findBestXchgTask(ctx sessionctx.Context, root PhysicalPlan) (task, error) {
 }
 
 func (p *PointGetPlan) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (task, error) {
-	return nil, errors.Errorf("FindBestXchgTask not implemented yet for PointGet")
+	return findBestXchgTaskForDataSource(ctx, p, reqProp)
 }
 
 func (p *BatchPointGetPlan) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (task, error) {
-	return nil, errors.Errorf("FindBestXchgTask not implemented yet for BatchPointGet")
+	return findBestXchgTaskForDataSource(ctx, p, reqProp)
 }
 
 func (p *basePhysicalPlan) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (task, error) {
@@ -235,6 +235,10 @@ func (p *PhysicalXchg) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgPro
 }
 
 func (p *PhysicalTableReader) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (res task, err error) {
+	return findBestXchgTaskForDataSource(ctx, p, reqProp)
+}
+
+func findBestXchgTaskForDataSource(ctx sessionctx.Context, p PhysicalPlan, reqProp *XchgProperty) (res task, err error) {
 	possiblePlans, err := p.TryAddXchg(ctx, reqProp)
 	if err != nil {
 		return nil, err
@@ -321,12 +325,18 @@ func (p *basePhysicalPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPrope
 	return nil, errors.Errorf("TryAddXchg not implemented yet: %v", p.TP())
 }
 
-func (p *PointGetPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) ([]PhysicalPlan, error) {
-	return nil, errors.Errorf("TryAddXchg not implemented yet for PointGet")
+func (p *PointGetPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
+	if res, err = tryAddXchgPreWork(p, reqProp, res); err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
-func (p *BatchPointGetPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) ([]PhysicalPlan, error) {
-	return nil, errors.Errorf("TryAddXchg not implemented yet for BatchPointGet")
+func (p *BatchPointGetPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
+	if res, err = tryAddXchgPreWork(p, reqProp, res); err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 func (p *PhysicalLimit) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
@@ -441,6 +451,12 @@ func (p *PhysicalHashJoin) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPrope
 
 	if res, err = tryAddXchgPreWork(p, reqProp, res); err != nil {
 		return nil, err
+	}
+	// TODO: maybe a general property is better?
+	_, ok1 := p.children[0].(*PointGetPlan)
+	_, ok2 := p.children[1].(*BatchPointGetPlan)
+	if ok1 || ok2 {
+		return res, nil
 	}
 	if reqProp.output != 1 {
 		// If parent of HashJoin already requires parallel, build child have to enforce BroadcastHT.
