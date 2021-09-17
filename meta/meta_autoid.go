@@ -95,7 +95,7 @@ type AccessorPicker interface {
 	IncrementID(tableVersion uint16) AutoIDAccessor
 
 	SequenceValue() AutoIDAccessor
-	SequenceCircle() AutoIDAccessor
+	SequenceCycle() AutoIDAccessor
 }
 
 type autoIDAccessors struct {
@@ -170,7 +170,7 @@ func (a *autoIDAccessors) SequenceValue() AutoIDAccessor {
 }
 
 // SequenceCircle is used to get the sequence circle key-value accessor.
-func (a *autoIDAccessors) SequenceCircle() AutoIDAccessor {
+func (a *autoIDAccessors) SequenceCycle() AutoIDAccessor {
 	a.access.idEncodeFn = a.access.m.sequenceCycleKey
 	return &a.access
 }

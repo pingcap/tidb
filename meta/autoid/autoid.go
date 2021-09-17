@@ -870,7 +870,7 @@ func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err
 		// round is used to count cycle times in sequence with cycle option.
 		if alloc.sequence.Cycle {
 			// GetSequenceCycle is used to get the flag `round`, which indicates whether the sequence is already in cycle.
-			round, err1 = acc.SequenceValue().Get()
+			round, err1 = acc.SequenceCycle().Get()
 			if err1 != nil {
 				return err1
 			}
@@ -914,7 +914,7 @@ func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err
 			// SetSequenceCycle is used to store the flag `round` which indicates whether the sequence is already in cycle.
 			// round > 0 means the sequence is already in cycle, so the offset should be minvalue / maxvalue rather than sequence.start.
 			// TiDB is a stateless node, it should know whether the sequence is already in cycle when restart.
-			err1 = acc.SequenceCircle().Put(round)
+			err1 = acc.SequenceCycle().Put(round)
 			if err1 != nil {
 				return err1
 			}
