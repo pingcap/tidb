@@ -57,7 +57,7 @@ type Rule struct {
 	Index    int           `json:"index"`
 	Labels   Labels        `json:"labels"`
 	RuleType string        `json:"rule_type"`
-	Rules    []interface{} `json:"rules"`
+	Rules    []interface{} `json:"rule"`
 }
 
 // NewRule creates a rule.

@@ -134,6 +134,24 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows1[1][0], Equals, "schema/test/t1/p0")
 	c.Assert(rows1[1][2], Equals, `"key1=value1"`)
 	c.Assert(rows1[1][3], Not(Equals), rows[1][3])
+
+	// test only table
+	tk.MustExec(`create table t2 (c int);`)
+
+	// add rule
+	_, err = tk.Exec(`alter table t2 attributes="key=value";`)
+	c.Assert(err, IsNil)
+	rows2 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
+	c.Assert(len(rows2), Equals, 3)
+	// truncate table
+	_, err = tk.Exec(`truncate table t2;`)
+	c.Assert(err, IsNil)
+	rows3 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
+	c.Assert(len(rows3), Equals, 3)
+	// check table t1's rule
+	c.Assert(rows3[2][0], Equals, "schema/test/t2")
+	c.Assert(rows3[2][2], Equals, `"key=value"`)
+	c.Assert(rows3[2][3], Not(Equals), rows2[2][3])
 }
 
 func (s *testDBSuite8) TestRenameTable(c *C) {
@@ -166,7 +184,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(err, IsNil)
 	rows1 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
 	c.Assert(len(rows1), Equals, 2)
-	// check table t1's rule
+	// check table t2's rule
 	c.Assert(rows1[0][0], Equals, "schema/test/t2")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
 	c.Assert(rows1[0][3], Equals, rows[0][3])
@@ -174,6 +192,24 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows1[1][0], Equals, "schema/test/t2/p0")
 	c.Assert(rows1[1][2], Equals, `"key1=value1"`)
 	c.Assert(rows1[1][3], Equals, rows[1][3])
+
+	// test only table
+	tk.MustExec(`create table t3 (c int);`)
+
+	// add rule
+	_, err = tk.Exec(`alter table t3 attributes="key=value";`)
+	c.Assert(err, IsNil)
+	rows2 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
+	c.Assert(len(rows2), Equals, 3)
+	// rename table
+	_, err = tk.Exec(`rename table t3 to t4;`)
+	c.Assert(err, IsNil)
+	rows3 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
+	c.Assert(len(rows3), Equals, 3)
+	// check table t4's rule
+	c.Assert(rows3[2][0], Equals, "schema/test/t4")
+	c.Assert(rows3[2][2], Equals, `"key=value"`)
+	c.Assert(rows3[2][3], Equals, rows2[2][3])
 }
 
 func (s *testDBSuite8) TestRecoverTable(c *C) {

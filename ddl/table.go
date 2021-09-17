@@ -618,7 +618,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return 0, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 
-	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, nil, newTableID)
+	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, []string{}, newTableID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to update the label rule to PD")
@@ -1325,8 +1325,8 @@ func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[str
 			for _, def := range tblInfo.GetPartitionInfo().Definitions {
 				ids = append(ids, def.ID)
 			}
-			newRules = append(newRules, r.Clone().Reset(ids, job.SchemaName, tblInfo.Name.L))
 		}
+		newRules = append(newRules, r.Clone().Reset(ids, job.SchemaName, tblInfo.Name.L))
 	}
 
 	patch := label.NewRulePatch(newRules, oldRuleIDs)
