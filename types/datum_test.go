@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testDatumSuite{})
@@ -34,7 +35,8 @@ var _ = Suite(&testDatumSuite{})
 type testDatumSuite struct {
 }
 
-func (ts *testDatumSuite) TestDatum(c *C) {
+func TestDatum(t *testing.T) {
+	t.Parallel()
 	values := []interface{}{
 		int64(1),
 		uint64(1),
@@ -48,9 +50,9 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 		d.SetMinNotNull()
 		d.SetValueWithDefaultCollation(val)
 		x := d.GetValue()
-		c.Assert(x, DeepEquals, val)
-		c.Assert(d.Length(), Equals, int(d.length))
-		c.Assert(fmt.Sprint(d), Equals, d.String())
+		require.Equal(t, val, x)
+		require.Equal(t, int(d.length), d.Length())
+		require.Equal(t, d.String(), fmt.Sprint(d))
 	}
 }
 
