@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,24 +17,15 @@ package statistics
 import (
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestMoveToHistory(t *testing.T) {
-	ClearHistoryJobs()
-	numJobs := numMaxHistoryJobs*2 + 1
-	jobs := make([]*AnalyzeJob, 0, numJobs)
-	for i := 0; i < numJobs; i++ {
-		job := &AnalyzeJob{}
-		AddNewAnalyzeJob(job)
-		jobs = append(jobs, job)
+func TestMain(m *testing.M) {
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	MoveToHistory(jobs[0])
-	require.Len(t, GetAllAnalyzeJobs(), numJobs)
-	for i := 1; i < numJobs; i++ {
-		MoveToHistory(jobs[i])
-	}
-	require.Len(t, GetAllAnalyzeJobs(), numMaxHistoryJobs)
-	ClearHistoryJobs()
-	require.Len(t, GetAllAnalyzeJobs(), 0)
+	testbridge.WorkaroundGoCheckFlags()
+	goleak.VerifyTestMain(m, opts...)
 }
