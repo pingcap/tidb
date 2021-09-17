@@ -208,6 +208,9 @@ const (
 
 	// TiDBTxnReadTS indicates the next transaction should be staleness transaction and provide the startTS
 	TiDBTxnReadTS = "tx_read_ts"
+
+	// TiDBReadStaleness indicates the staleness duration for following statement
+	TiDBReadStaleness = "tidb_read_staleness"
 )
 
 // TiDB system variable names that both in session and global scope.
