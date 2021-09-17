@@ -762,10 +762,14 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		s.generatePartitionTableByNum(ddl.PartitionCountLimit),
 	}
 
-	for _, sql := range validCases {
+	for id, sql := range validCases {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(sql)
-		tbl := testGetTableByName(c, s.ctx, "test", "t")
+		tblName := "t"
+		if id == len(validCases)-1 {
+			tblName = "gen_t"
+		}
+		tbl := testGetTableByName(c, s.ctx, "test", tblName)
 		tblInfo := tbl.Meta()
 		c.Assert(tblInfo.Partition, NotNil)
 		c.Assert(tblInfo.Partition.Enable, Equals, true)
