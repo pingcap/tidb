@@ -118,42 +118,43 @@ func TestToBool(t *testing.T) {
 	require.Error(t, err)
 }
 
-func testDatumToInt64(c *C, val interface{}, expect int64) {
+func testDatumToInt64(t *testing.T, val interface{}, expect int64) {
 	d := NewDatum(val)
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	b, err := d.ToInt64(sc)
-	c.Assert(err, IsNil)
-	c.Assert(b, Equals, expect)
+	require.NoError(t, err)
+	require.Equal(t, expect, b)
 }
 
-func (ts *testTypeConvertSuite) TestToInt64(c *C) {
-	testDatumToInt64(c, "0", int64(0))
-	testDatumToInt64(c, 0, int64(0))
-	testDatumToInt64(c, int64(0), int64(0))
-	testDatumToInt64(c, uint64(0), int64(0))
-	testDatumToInt64(c, float32(3.1), int64(3))
-	testDatumToInt64(c, float64(3.1), int64(3))
-	testDatumToInt64(c, NewBinaryLiteralFromUint(100, -1), int64(100))
-	testDatumToInt64(c, Enum{Name: "a", Value: 1}, int64(1))
-	testDatumToInt64(c, Set{Name: "a", Value: 1}, int64(1))
-	testDatumToInt64(c, json.CreateBinary(int64(3)), int64(3))
+func TestToInt64(t *testing.T) {
+	t.Parallel()
+	testDatumToInt64(t, "0", int64(0))
+	testDatumToInt64(t, 0, int64(0))
+	testDatumToInt64(t, int64(0), int64(0))
+	testDatumToInt64(t, uint64(0), int64(0))
+	testDatumToInt64(t, float32(3.1), int64(3))
+	testDatumToInt64(t, float64(3.1), int64(3))
+	testDatumToInt64(t, NewBinaryLiteralFromUint(100, -1), int64(100))
+	testDatumToInt64(t, Enum{Name: "a", Value: 1}, int64(1))
+	testDatumToInt64(t, Set{Name: "a", Value: 1}, int64(1))
+	testDatumToInt64(t, json.CreateBinary(int64(3)), int64(3))
 
-	t, err := ParseTime(&stmtctx.StatementContext{
+	t1, err := ParseTime(&stmtctx.StatementContext{
 		TimeZone: time.UTC,
 	}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 0)
-	c.Assert(err, IsNil)
-	testDatumToInt64(c, t, int64(20111110111112))
+	require.NoError(t, err)
+	testDatumToInt64(t, t1, int64(20111110111112))
 
 	td, err := ParseDuration(nil, "11:11:11.999999", 6)
-	c.Assert(err, IsNil)
-	testDatumToInt64(c, td, int64(111112))
+	require.NoError(t, err)
+	testDatumToInt64(t, td, int64(111112))
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
-	c.Assert(err, IsNil)
-	testDatumToInt64(c, v, int64(3))
+	require.NoError(t, err)
+	testDatumToInt64(t, v, int64(3))
 }
 
 func (ts *testTypeConvertSuite) TestToFloat32(c *C) {
