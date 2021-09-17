@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -90,6 +92,7 @@ var _ = Suite(&testClusteredSuite{})
 var _ = SerialSuites(&testClusteredSerialSuite{})
 var _ = SerialSuites(&testTxnStateSerialSuite{})
 var _ = SerialSuites(&testStatisticsSuite{})
+var _ = SerialSuites(&testTiDBAsLibrary{})
 
 type testSessionSuiteBase struct {
 	cluster testutils.Cluster
@@ -123,6 +126,8 @@ type testBackupRestoreSuite struct {
 type testStatisticsSuite struct {
 	testSessionSuiteBase
 }
+
+type testTiDBAsLibrary struct{}
 
 func clearStorage(store kv.Storage) error {
 	txn, err := store.Begin()
@@ -2851,6 +2856,17 @@ func (s *testSessionSuite2) TestDBUserNameLength(c *C) {
 	tk.MustExec(`CREATE USER 'abcddfjakldfjaldddds'@'%' identified by ''`)
 	tk.MustExec(`grant all privileges on test.* to 'abcddfjakldfjaldddds'@'%'`)
 	tk.MustExec(`grant all privileges on test.t to 'abcddfjakldfjaldddds'@'%'`)
+}
+
+func (s *testSessionSuite2) TestHostLengthMax(c *C) {
+	host1 := strings.Repeat("a", 65)
+	host2 := strings.Repeat("a", 256)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host1))
+
+	err := tk.ExecToErr(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host2))
+	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'Host' at row 1")
 }
 
 func (s *testSessionSerialSuite) TestKVVars(c *C) {
@@ -5642,4 +5658,40 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		tk.MustExec("delete from tmp1")
 		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
 	}
+}
+
+func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
+	initAndCloseTiDB := func() {
+		store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+		c.Assert(err, IsNil)
+		defer store.Close()
+
+		dom, err := session.BootstrapSession(store)
+		//nolint:staticcheck
+		defer dom.Close()
+		c.Assert(err, IsNil)
+	}
+
+	runtime.GC()
+	memStat := runtime.MemStats{}
+	runtime.ReadMemStats(&memStat)
+	oldHeapInUse := memStat.HeapInuse
+
+	for i := 0; i < 10; i++ {
+		initAndCloseTiDB()
+	}
+
+	runtime.GC()
+	runtime.ReadMemStats(&memStat)
+	c.Assert(memStat.HeapInuse-oldHeapInUse, Less, uint64(150*units.MiB))
+}
+
+func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_read_staleness='-5s'")
+	err := tk.ExecToErr("set @@tidb_read_staleness='-5'")
+	c.Assert(err, NotNil)
+	err = tk.ExecToErr("set @@tidb_read_staleness='foo'")
+	c.Assert(err, NotNil)
+	tk.MustExec("set @@tidb_read_staleness=''")
 }

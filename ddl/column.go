@@ -1648,7 +1648,8 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
 		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	}
-	nextAutoIncID, err := m.GetAutoTableID(dbInfo.ID, tblInfo.ID)
+	idAcc := m.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID).RowID()
+	nextAutoIncID, err := idAcc.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1656,7 +1657,7 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := m.CleanAutoID(dbInfo.ID, tblInfo.ID); err != nil {
+	if err := idAcc.Del(); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
