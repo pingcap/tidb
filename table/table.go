@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
-// Type the type of table, store data in different ways.
+// Type is used to distinguish between different tables that store data in different ways.
 type Type int16
 
 const (
