@@ -212,7 +212,7 @@ const (
 	MaxDatetimeWidthWithFsp  = 26 // YYYY-MM-DD HH:MM:SS[.fraction]
 	MaxDatetimeFullWidth     = 29 // YYYY-MM-DD HH:MM:SS.###### AM
 	MaxDurationWidthNoFsp    = 10 // HH:MM:SS
-	MaxDurationWidthWithFsp  = 15 // HH:MM:SS[.fraction]
+	MaxDurationWidthWithFsp  = 17 // HH:MM:SS[.fraction] -838:59:59.000000 to 838:59:59.000000
 	MaxBlobWidth             = 16777216
 	MaxBitDisplayWidth       = 64
 	MaxFloatPrecisionLength  = 24
