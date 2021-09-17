@@ -1950,8 +1950,13 @@ func WrapWithCastAsTime(ctx sessionctx.Context, expr Expression, tp *types.Field
 		tp.Decimal = 0
 	case types.ETString, types.ETReal, types.ETJson:
 		tp.Decimal = int(types.MaxFsp)
-	case types.ETDecimal, types.ETDatetime, types.ETTimestamp, types.ETDuration:
+	case types.ETDatetime, types.ETTimestamp, types.ETDuration:
 		tp.Decimal = expr.GetType().Decimal
+	case types.ETDecimal:
+		tp.Decimal = expr.GetType().Decimal
+		if tp.Decimal > int(types.MaxFsp) {
+			tp.Decimal = int(types.MaxFsp)
+		}
 	default:
 	}
 	switch tp.Tp {
