@@ -375,3 +375,55 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop placement policy if exists x")
 }
+
+func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create database if not exists test2")
+	tk.MustExec("drop table if exists test.t11, test.t12, test2.t21, test2.t21, test2.t22")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("drop placement policy if exists p3")
+
+	// p1 is used by test.t11 and test2.t21
+	tk.MustExec("create placement policy p1 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"SCHEDULE=\"EVEN\"")
+	defer tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("create table test.t11 (id int) placement policy 'p1'")
+	defer tk.MustExec("drop table if exists test.t11")
+	tk.MustExec("create table test2.t21 (id int) placement policy 'p1'")
+	defer tk.MustExec("drop table if exists test2.t21")
+
+	// p1 is used by test.t12
+	tk.MustExec("create placement policy p2 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"SCHEDULE=\"EVEN\"")
+	defer tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("create table test.t12 (id int) placement policy 'p2'")
+	defer tk.MustExec("drop table if exists test.t12")
+
+	// p1 is used by test2.t22
+	tk.MustExec("create placement policy p3 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"SCHEDULE=\"EVEN\"")
+	defer tk.MustExec("drop placement policy if exists p3")
+	tk.MustExec("create table test.t21 (id int) placement policy 'p3'")
+	defer tk.MustExec("drop table if exists test.t21")
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	defer func() {
+		c.Assert(txn.Rollback(), IsNil)
+	}()
+	for _, policyName := range []string{"p1", "p2", "p3"} {
+		err := tk.ExecToErr(fmt.Sprintf("drop placement policy %s", policyName))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:8241]Placement policy '%s' is still in use", policyName))
+
+		err = tk.ExecToErr(fmt.Sprintf("drop placement policy if exists %s", policyName))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:8241]Placement policy '%s' is still in use", policyName))
+	}
+}
