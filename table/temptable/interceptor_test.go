@@ -218,7 +218,7 @@ func TestGetRangeAccessedTableID(t *testing.T) {
 	}
 }
 
-func TestSafeWithSnapshotScan(t *testing.T) {
+func TestNotTableRange(t *testing.T) {
 	t.Parallel()
 	falseCases := [][]kv.Key{
 		{nil, nil},
@@ -245,11 +245,11 @@ func TestSafeWithSnapshotScan(t *testing.T) {
 	}
 
 	for _, c := range falseCases {
-		require.False(t, safeWithSnapshotScan(c[0], c[1]))
+		require.False(t, notTableRange(c[0], c[1]))
 	}
 
 	for _, c := range trueCases {
-		require.True(t, safeWithSnapshotScan(c[0], c[1]))
+		require.True(t, notTableRange(c[0], c[1]))
 	}
 }
 

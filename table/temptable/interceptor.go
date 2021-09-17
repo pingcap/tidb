@@ -134,7 +134,7 @@ func (i *TemporaryTableSnapshotInterceptor) batchGetTemporaryTableKeys(ctx conte
 
 // OnIter intercepts Iter operation for Snapshot
 func (i *TemporaryTableSnapshotInterceptor) OnIter(snap kv.Snapshot, k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	if safeWithSnapshotScan(k, upperBound) {
+	if notTableRange(k, upperBound) {
 		return snap.Iter(k, upperBound)
 	}
 
@@ -147,7 +147,7 @@ func (i *TemporaryTableSnapshotInterceptor) OnIter(snap kv.Snapshot, k kv.Key, u
 
 // OnIterReverse intercepts IterReverse operation for Snapshot
 func (i *TemporaryTableSnapshotInterceptor) OnIterReverse(snap kv.Snapshot, k kv.Key) (kv.Iterator, error) {
-	if safeWithSnapshotScan(nil, k) {
+	if notTableRange(nil, k) {
 		// scan range has no intersect with table data
 		return snap.IterReverse(k)
 	}
@@ -250,7 +250,7 @@ func getKeyAccessedTableID(k kv.Key) (int64, bool) {
 	return 0, false
 }
 
-func safeWithSnapshotScan(k, upperBound kv.Key) bool {
+func notTableRange(k, upperBound kv.Key) bool {
 	tblPrefix := tablecodec.TablePrefix()
 	return bytes.Compare(k, tblPrefix) > 0 && !bytes.HasPrefix(k, tblPrefix) ||
 		len(upperBound) > 0 && bytes.Compare(upperBound, tblPrefix) < 0
