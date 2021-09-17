@@ -167,6 +167,48 @@ func (s *testPrepareSerialSuite) TestPrepareCacheIndexScan(c *C) {
 	tk.MustQuery("execute stmt1 using @a, @b").Check(testkit.Rows("1 3", "1 3"))
 }
 
+func (s *testPrepareSerialSuite) TestPrepareCachePointGetInsert(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1 (a int, b int, primary key(a))")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
+
+	tk.MustExec("create table t2 (a int, b int, primary key(a))")
+	tk.MustExec(`prepare stmt1 from "insert into t2 select * from t1 where a=?"`)
+
+	tk.MustExec("set @a=1")
+	tk.MustExec("execute stmt1 using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 1"))
+
+	tk.MustExec("set @a=2")
+	tk.MustExec("execute stmt1 using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 1", "2 2"))
+
+	tk.MustExec("set @a=3")
+	tk.MustExec("execute stmt1 using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 1", "2 2", "3 3"))
+}
+
 func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
