@@ -338,12 +338,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}()
 
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
-		if n, ok := val.(int); ok {
+		if n, ok := val.(int); ok && a.IsStaleness {
 			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if n != int(startTS) {
 				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
-			failpoint.Return()
 		}
 	})
 	sctx := a.Ctx
