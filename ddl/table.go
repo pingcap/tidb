@@ -1294,8 +1294,9 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 
 func onAlterTablePartitionOptions(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var partitionID int64
-	ptDef := &model.PartitionDefinition{}
-	err = job.DecodeArgs(&partitionID, ptDef)
+	policyRefInfo := &model.PolicyRefInfo{}
+	placementSettings := &model.PlacementSettings{}
+	err = job.DecodeArgs(&partitionID, policyRefInfo, placementSettings)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1310,11 +1311,11 @@ func onAlterTablePartitionOptions(t *meta.Meta, job *model.Job) (ver int64, err 
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
-	for idx, orgPtDef := range ptInfo.Definitions {
-		if orgPtDef.ID == partitionID {
-			orgPtDef.DirectPlacementOpts = ptDef.DirectPlacementOpts
-			orgPtDef.PlacementPolicyRef = ptDef.PlacementPolicyRef
-			ptInfo.Definitions[idx] = orgPtDef
+	for idx, ptDef := range ptInfo.Definitions {
+		if ptDef.ID == partitionID {
+			ptDef.DirectPlacementOpts = placementSettings
+			ptDef.PlacementPolicyRef = policyRefInfo
+			ptInfo.Definitions[idx] = ptDef
 			break
 		}
 	}
