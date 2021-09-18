@@ -2066,42 +2066,44 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	return nil
 }
 
-func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
 	if local.duplicateDB == nil {
-		return nil
+		return false, nil
 	}
 	log.L().Info("Begin collect duplicate local keys", zap.String("table", tbl.Meta().Name.String()))
 	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
 	duplicateManager, err := NewDuplicateManager(local.errorMgr, local.splitCli, ts, local.tls, local.tcpConcurrency)
 	if err != nil {
-		return errors.Annotate(err, "open duplicatemanager failed")
+		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
-	if err := duplicateManager.CollectDuplicateRowsFromLocalIndex(ctx, tbl, local.duplicateDB); err != nil {
-		return errors.Annotate(err, "collect local duplicate rows failed")
+	hasDupe, err := duplicateManager.CollectDuplicateRowsFromLocalIndex(ctx, tbl, local.duplicateDB)
+	if err != nil {
+		return false, errors.Annotate(err, "collect local duplicate rows failed")
 	}
-	return nil
+	return hasDupe, nil
 }
 
-func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
 	log.L().Info("Begin collect remote duplicate keys", zap.String("table", tbl.Meta().Name.String()))
 	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
 
 	duplicateManager, err := NewDuplicateManager(local.errorMgr, local.splitCli, ts, local.tls, local.tcpConcurrency)
 	if err != nil {
-		return errors.Annotate(err, "open duplicatemanager failed")
+		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
-	if err = duplicateManager.CollectDuplicateRowsFromTiKV(ctx, tbl); err != nil {
-		return errors.Annotate(err, "collect remote duplicate rows failed")
+	hasDupe, err := duplicateManager.CollectDuplicateRowsFromTiKV(ctx, tbl)
+	if err != nil {
+		return false, errors.Annotate(err, "collect remote duplicate rows failed")
 	}
-	return nil
+	return hasDupe, nil
 }
 
 func (e *File) unfinishedRanges(ranges []Range) []Range {

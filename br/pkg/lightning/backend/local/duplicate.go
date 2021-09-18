@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
@@ -198,7 +199,7 @@ func NewDuplicateManager(
 // CollectDuplicateRowsFromTiKV collects duplicated rows already imported into TiKV.
 //
 // Collection result are saved into the ErrorManager.
-func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, tbl table.Table) (err error) {
+func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, tbl table.Table) (hasDupe bool, err error) {
 	logTask := log.L().Begin(zapcore.InfoLevel, "collect duplicate data from remote TiKV")
 	defer func() {
 		logTask.End(zapcore.InfoLevel, err)
@@ -206,32 +207,35 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Contex
 
 	reqs, err := buildDuplicateRequests(tbl.Meta())
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	decoder, err := kv.NewTableKVDecoder(tbl, &kv.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 	g, rpcctx := errgroup.WithContext(ctx)
+	atomicHasDupe := atomic.NewBool(false)
 	for _, r := range reqs {
 		req := r
 		g.Go(func() error {
-			err := manager.sendRequestToTiKV(rpcctx, decoder, req)
+			err := manager.sendRequestToTiKV(rpcctx, decoder, req, atomicHasDupe)
 			if err != nil {
 				log.L().Error("error occur when collect duplicate data from TiKV", zap.Error(err))
 			}
 			return err
 		})
 	}
-	return errors.Trace(g.Wait())
+	return atomicHasDupe.Load(), errors.Trace(g.Wait())
 }
 
 func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 	decoder *kv.TableKVDecoder,
-	req *DuplicateRequest) error {
+	req *DuplicateRequest,
+	hasDupe *atomic.Bool,
+) error {
 	startKey := codec.EncodeBytes([]byte{}, req.start)
 	endKey := codec.EncodeBytes([]byte{}, req.end)
 
@@ -332,6 +336,10 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 					break
 				}
 
+				if len(resp.Pairs) > 0 {
+					hasDupe.Store(true)
+				}
+
 				handles, err := manager.storeDuplicateData(ctx, resp, decoder, req)
 				if err != nil {
 					return err
@@ -410,26 +418,27 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 	ctx context.Context,
 	tbl table.Table,
 	db *pebble.DB,
-) error {
+) (bool, error) {
 	decoder, err := kv.NewTableKVDecoder(tbl, &kv.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	})
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 
 	allRanges := make([]tidbkv.KeyRange, 0)
 	tableIDs := physicalTableIDs(tbl.Meta())
+	// Collect row handle duplicates.
+	var dataConflictInfos []errormanager.DataConflictInfo
+	hasDataConflict := false
 	{
-		// Collect row handle duplicates.
-		var dataConflictInfos []errormanager.DataConflictInfo
 		ranges := ranger.FullIntRange(false)
 		if tbl.Meta().IsCommonHandle {
 			ranges = ranger.FullRange()
 		}
 		keyRanges, err := distsql.TableHandleRangesToKVRanges(nil, tableIDs, tbl.Meta().IsCommonHandle, ranges, nil)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		allRanges = append(allRanges, keyRanges...)
 		for _, r := range keyRanges {
@@ -464,9 +473,14 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 					}
 					dataConflictInfos = append(dataConflictInfos, conflictInfo)
 				}
-				return manager.errorMgr.RecordDataConflictError(ctx, log.L(), decoder.Name(), dataConflictInfos)
+				if err := manager.errorMgr.RecordDataConflictError(ctx, log.L(), decoder.Name(), dataConflictInfos); err != nil {
+					return err
+				}
+				dataConflictInfos = dataConflictInfos[:0]
+				hasDataConflict = true
+				return nil
 			}(); err != nil {
-				return errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 			db.DeleteRange(startKey, endKey, &pebble.WriteOptions{Sync: false})
 		}
@@ -481,7 +495,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 		for _, id := range tableIDs {
 			partitionKeysRanges, err := distsql.IndexRangesToKVRanges(nil, id, indexInfo.ID, ranges, nil)
 			if err != nil {
-				return err
+				return false, err
 			}
 			keysRanges = append(keysRanges, partitionKeysRanges...)
 		}
@@ -541,7 +555,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 				}
 				return nil
 			}(); err != nil {
-				return errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 		}
 	}
@@ -550,14 +564,14 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 		handles = manager.getValues(ctx, decoder, handles)
 	}
 	if handles.Len() > 0 {
-		return errors.Errorf("retry getValues time exceed limit")
+		return false, errors.Errorf("retry getValues time exceed limit")
 	}
 	for _, r := range allRanges {
 		startKey := codec.EncodeBytes([]byte{}, r.StartKey)
 		endKey := codec.EncodeBytes([]byte{}, r.EndKey)
 		db.DeleteRange(startKey, endKey, &pebble.WriteOptions{Sync: false})
 	}
-	return nil
+	return hasDataConflict, nil
 }
 
 func (manager *DuplicateManager) getValues(

@@ -712,10 +712,13 @@ func (tr *TableRestore) postProcess(
 		} else {
 			if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
 				tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+				hasDupe := false
 				if rc.cfg.TikvImporter.DuplicateDetection {
-					if err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable); err != nil {
+					hasLocalDupe, err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable)
+					if err != nil {
 						tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
 					}
+					hasDupe = hasLocalDupe
 				}
 				needChecksum, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum)
 				if err != nil {
@@ -725,10 +728,12 @@ func (tr *TableRestore) postProcess(
 					return false, nil
 				}
 				if rc.cfg.TikvImporter.DuplicateDetection {
-					if err := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable); err != nil {
+					hasRemoteDupe, err := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable)
+					if err != nil {
 						tr.logger.Error("collect remote duplicate keys failed", log.ShortError(err))
 						err = nil
 					}
+					hasDupe = hasDupe || hasRemoteDupe
 				}
 				if cp.Checksum.SumKVS() > 0 || baseTotalChecksum.SumKVS() > 0 {
 					localChecksum.Add(&cp.Checksum)
@@ -736,17 +741,21 @@ func (tr *TableRestore) postProcess(
 					tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
 				}
 
-				remoteChecksum, err := DoChecksum(ctx, tr.tableInfo)
-				if err != nil {
-					return false, err
-				}
-				// TODO: If there are duplicate keys, do not set the `ChecksumMismatch` error
-				err = tr.compareChecksum(remoteChecksum, localChecksum)
-				// with post restore level 'optional', we will skip checksum error
-				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+				if hasDupe {
+					// If there are duplicate keys, do not set the `ChecksumMismatch` error
+					tr.logger.Warn("checksum not performed due to duplicated records")
+				} else {
+					remoteChecksum, err := DoChecksum(ctx, tr.tableInfo)
 					if err != nil {
-						tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
-						err = nil
+						return false, err
+					}
+					err = tr.compareChecksum(remoteChecksum, localChecksum)
+					// with post restore level 'optional', we will skip checksum error
+					if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+						if err != nil {
+							tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+							err = nil
+						}
 					}
 				}
 				if err == nil {

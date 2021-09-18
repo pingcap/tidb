@@ -142,11 +142,11 @@ func (b noopBackend) LocalWriter(context.Context, *backend.LocalWriterConfig, uu
 	return noopWriter{}, nil
 }
 
-func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
 	panic("Unsupported Operation")
 }
 
