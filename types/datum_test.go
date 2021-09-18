@@ -307,7 +307,8 @@ func TestToBytes(t *testing.T) {
 	}
 }
 
-func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
+func TestComputePlusAndMinus(t *testing.T) {
+	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	tests := []struct {
 		a      Datum
@@ -328,10 +329,10 @@ func (ts *testDatumSuite) TestComputePlusAndMinus(c *C) {
 
 	for ith, tt := range tests {
 		got, err := ComputePlus(tt.a, tt.b)
-		c.Assert(err != nil, Equals, tt.hasErr)
+		require.Equal(t, tt.hasErr, err != nil)
 		v, err := got.CompareDatum(sc, &tt.plus)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, 0, Commentf("%dth got:%#v, %#v, expect:%#v, %#v", ith, got, got.x, tt.plus, tt.plus.x))
+		require.NoError(t, err)
+		require.Equalf(t, 0, v, "%dth got:%#v, %#v, expect:%#v, %#v", ith, got, got.x, tt.plus, tt.plus.x)
 	}
 }
 
