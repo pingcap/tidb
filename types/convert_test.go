@@ -1074,7 +1074,8 @@ func TestConvertJSONToDecimal(t *testing.T) {
 	}
 }
 
-func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
+func TestNumberToDuration(t *testing.T) {
+	t.Parallel()
 	var testCases = []struct {
 		number int64
 		fsp    int
@@ -1101,13 +1102,13 @@ func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
 	for _, tc := range testCases {
 		dur, err := NumberToDuration(tc.number, int8(tc.fsp))
 		if tc.hasErr {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 			continue
 		}
-		c.Assert(err, IsNil)
-		c.Assert(dur.Hour(), Equals, tc.hour)
-		c.Assert(dur.Minute(), Equals, tc.minute)
-		c.Assert(dur.Second(), Equals, tc.second)
+		require.NoError(t, err)
+		require.Equal(t, tc.hour, dur.Hour())
+		require.Equal(t, tc.minute, dur.Minute())
+		require.Equal(t, tc.second, dur.Second())
 	}
 
 	var testCases1 = []struct {
@@ -1120,8 +1121,8 @@ func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
 
 	for _, tc := range testCases1 {
 		dur, err := NumberToDuration(tc.number, 0)
-		c.Assert(err, IsNil)
-		c.Assert(dur.Duration, Equals, tc.dur)
+		require.NoError(t, err)
+		require.Equal(t, tc.dur, dur.Duration)
 	}
 }
 
