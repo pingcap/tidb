@@ -371,8 +371,7 @@ func newTypeWithFlag(tp byte, flag uint) *FieldType {
 	return t
 }
 
-// TODO: Rename this later to newMyDecimal
-func newMyDecimalCopy(val string, t *testing.T) *MyDecimal {
+func newMyDecimal(val string, t *testing.T) *MyDecimal {
 	d := MyDecimal{}
 	err := d.FromString([]byte(val))
 	require.NoError(t, err)
@@ -397,7 +396,7 @@ func TestEstimatedMemUsage(t *testing.T) {
 		NewFloat32Datum(1.0),
 		NewStringDatum(string(b)),
 		NewBytesDatum(b),
-		NewDecimalDatum(newMyDecimalCopy("1234.1234", t)),
+		NewDecimalDatum(newMyDecimal("1234.1234", t)),
 		NewMysqlEnumDatum(enum),
 	}
 	bytesConsumed := 10 * (len(datumArray)*sizeOfEmptyDatum +
@@ -472,13 +471,13 @@ func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 		// int64 reserve to Decimal
 		{
 			NewIntDatum(1),
-			NewDecimalDatum(newMyDecimalCopy("2", t)),
+			NewDecimalDatum(newMyDecimal("2", t)),
 			newRetTypeWithFlenDecimal(mysql.TypeNewDecimal, 30, 3),
 			Ceiling,
 		},
 		{
 			NewIntDatum(1),
-			NewDecimalDatum(newMyDecimalCopy("1", t)),
+			NewDecimalDatum(newMyDecimal("1", t)),
 			newRetTypeWithFlenDecimal(mysql.TypeNewDecimal, 30, 3),
 			Floor,
 		},
@@ -490,7 +489,7 @@ func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 		},
 		{
 			NewIntDatum(math.MaxInt64),
-			NewDecimalDatum(newMyDecimalCopy(strconv.FormatInt(math.MaxInt64, 10), t)),
+			NewDecimalDatum(newMyDecimal(strconv.FormatInt(math.MaxInt64, 10), t)),
 			newRetTypeWithFlenDecimal(mysql.TypeNewDecimal, 30, 3),
 			Floor,
 		},
