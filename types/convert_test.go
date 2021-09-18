@@ -1053,7 +1053,8 @@ func TestConvertJSONToFloat(t *testing.T) {
 	}
 }
 
-func (s *testTypeConvertSuite) TestConvertJSONToDecimal(c *C) {
+func TestConvertJSONToDecimal(t *testing.T) {
+	t.Parallel()
 	var tests = []struct {
 		In  string
 		Out *MyDecimal
@@ -1066,10 +1067,10 @@ func (s *testTypeConvertSuite) TestConvertJSONToDecimal(c *C) {
 	}
 	for _, tt := range tests {
 		j, err := json.ParseBinaryFromString(tt.In)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		casted, err := ConvertJSONToDecimal(new(stmtctx.StatementContext), j)
-		c.Assert(err, IsNil, Commentf("input: %v, casted: %v, out: %v, json: %#v", tt.In, casted, tt.Out, j))
-		c.Assert(casted.Compare(tt.Out), Equals, 0, Commentf("input: %v, casted: %v, out: %v, json: %#v", tt.In, casted, tt.Out, j))
+		require.NoErrorf(t, err, "input: %v, casted: %v, out: %v, json: %#v", tt.In, casted, tt.Out, j)
+		require.Equalf(t, 0, casted.Compare(tt.Out), "input: %v, casted: %v, out: %v, json: %#v", tt.In, casted, tt.Out, j)
 	}
 }
 
