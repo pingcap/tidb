@@ -998,7 +998,8 @@ func testConvertTimeTimeZone(t *testing.T, sc *stmtctx.StatementContext) {
 	}
 }
 
-func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
+func TestConvertJSONToInt(t *testing.T) {
+	t.Parallel()
 	var tests = []struct {
 		In  string
 		Out int64
@@ -1017,10 +1018,10 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 	}
 	for _, tt := range tests {
 		j, err := json.ParseBinaryFromString(tt.In)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		casted, _ := ConvertJSONToInt64(new(stmtctx.StatementContext), j, false)
-		c.Assert(casted, Equals, tt.Out)
+		require.Equal(t, tt.Out, casted)
 	}
 }
 
