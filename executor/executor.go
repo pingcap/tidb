@@ -345,7 +345,7 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	allocators := tbl.Allocators(e.ctx)
 	for _, alloc := range allocators {
-		nextGlobalID, err := alloc.NextGlobalAutoID(tblMeta.ID)
+		nextGlobalID, err := alloc.NextGlobalAutoID()
 		if err != nil {
 			return err
 		}
