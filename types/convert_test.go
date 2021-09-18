@@ -942,7 +942,8 @@ func TestGetValidFloat(t *testing.T) {
 // TestConvertTime tests time related conversion.
 // time conversion is complicated including Date/Datetime/Time/Timestamp etc,
 // Timestamp may involving timezone.
-func (s *testTypeConvertSuite) TestConvertTime(c *C) {
+func TestConvertTime(t *testing.T) {
+	t.Parallel()
 	timezones := []*time.Location{
 		time.UTC,
 		time.FixedZone("", 3*3600),
@@ -953,11 +954,11 @@ func (s *testTypeConvertSuite) TestConvertTime(c *C) {
 		sc := &stmtctx.StatementContext{
 			TimeZone: timezone,
 		}
-		testConvertTimeTimeZone(c, sc)
+		testConvertTimeTimeZone(t, sc)
 	}
 }
 
-func testConvertTimeTimeZone(c *C, sc *stmtctx.StatementContext) {
+func testConvertTimeTimeZone(t *testing.T, sc *stmtctx.StatementContext) {
 	raw := FromDate(2002, 3, 4, 4, 6, 7, 8)
 	tests := []struct {
 		input  Time
@@ -990,10 +991,10 @@ func testConvertTimeTimeZone(c *C, sc *stmtctx.StatementContext) {
 		var d Datum
 		d.SetMysqlTime(test.input)
 		nd, err := d.ConvertTo(sc, test.target)
-		c.Assert(err, IsNil)
-		t := nd.GetMysqlTime()
-		c.Assert(t.Type(), Equals, test.expect.Type())
-		c.Assert(t.CoreTime(), Equals, test.expect.CoreTime())
+		require.NoError(t, err)
+		v := nd.GetMysqlTime()
+		require.Equal(t, test.expect.Type(), v.Type())
+		require.Equal(t, test.expect.CoreTime(), v.CoreTime())
 	}
 }
 
