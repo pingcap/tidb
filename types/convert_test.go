@@ -784,7 +784,8 @@ func TestConvert(t *testing.T) {
 	signedAccept(t, mysql.TypeNewDecimal, dec, "-0.00123")
 }
 
-func (s *testTypeConvertSuite) TestRoundIntStr(c *C) {
+func TestRoundIntStr(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		a string
 		b byte
@@ -795,7 +796,7 @@ func (s *testTypeConvertSuite) TestRoundIntStr(c *C) {
 		{"-999", '5', "-1000"},
 	}
 	for _, cc := range cases {
-		c.Assert(roundIntStr(cc.b, cc.a), Equals, cc.c)
+		require.Equal(t, cc.c, roundIntStr(cc.b, cc.a))
 	}
 }
 
