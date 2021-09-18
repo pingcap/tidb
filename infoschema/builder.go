@@ -261,7 +261,7 @@ func (b *Builder) applyCreatePolicy(m *meta.Meta, diff *model.SchemaDiff) error 
 			fmt.Sprintf("(Policy ID %d)", diff.SchemaID),
 		)
 	}
-	b.is.SetPolicy(po)
+	b.is.setPolicy(po)
 	return nil
 }
 
@@ -277,7 +277,7 @@ func (b *Builder) applyAlterPolicy(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		)
 	}
 
-	b.is.SetPolicy(po)
+	b.is.setPolicy(po)
 	// TODO: return the policy related table ids
 	return []int64{}, nil
 }
@@ -320,7 +320,7 @@ func (b *Builder) applyDropPolicy(PolicyID int64) []int64 {
 	if !ok {
 		return nil
 	}
-	b.is.DeletePolicy(po.Name.L)
+	b.is.deletePolicy(po.Name.L)
 	// TODO: return the policy related table ids
 	return []int64{}
 }
@@ -588,7 +588,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.
 	}
 	// build the policies.
 	for _, policy := range policies {
-		info.SetPolicy(policy)
+		info.setPolicy(policy)
 	}
 
 	for _, di := range dbInfos {
