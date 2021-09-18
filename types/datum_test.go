@@ -223,7 +223,8 @@ func mustParseTimeIntoDatum(s string, tp byte, fsp int8) (d Datum) {
 	return
 }
 
-func (ts *testDatumSuite) TestToJSON(c *C) {
+func TestToJSON(t *testing.T) {
+	t.Parallel()
 	ft := NewFieldType(mysql.TypeJSON)
 	sc := new(stmtctx.StatementContext)
 	tests := []struct {
@@ -245,19 +246,19 @@ func (ts *testDatumSuite) TestToJSON(c *C) {
 	for _, tt := range tests {
 		obtain, err := tt.datum.ConvertTo(sc, ft)
 		if tt.success {
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 
 			sd := NewStringDatum(tt.expected)
 			var expected Datum
 			expected, err = sd.ConvertTo(sc, ft)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 
 			var cmp int
 			cmp, err = obtain.CompareDatum(sc, &expected)
-			c.Assert(err, IsNil)
-			c.Assert(cmp, Equals, 0)
+			require.NoError(t, err)
+			require.Equal(t, 0, cmp)
 		} else {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		}
 	}
 }
