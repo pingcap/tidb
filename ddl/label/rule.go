@@ -57,7 +57,7 @@ type Rule struct {
 	Index    int           `json:"index"`
 	Labels   Labels        `json:"labels"`
 	RuleType string        `json:"rule_type"`
-	Rules    []interface{} `json:"rule"`
+	Data     []interface{} `json:"data"`
 }
 
 // NewRule creates a rule.
@@ -139,13 +139,13 @@ func (r *Rule) Reset(ids []int64, dbName, tableName string, partName ...string) 
 		r.Labels = append(r.Labels, Label{Key: partitionKey, Value: partName[0]})
 	}
 	r.RuleType = ruleType
-	r.Rules = []interface{}{}
+	r.Data = []interface{}{}
 	for i := 0; i < len(ids); i++ {
-		rule := map[string]string{
+		data := map[string]string{
 			"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(ids[i]))),
 			"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(ids[i]+1))),
 		}
-		r.Rules = append(r.Rules, rule)
+		r.Data = append(r.Data, data)
 	}
 	// We may support more types later.
 	r.Index = RuleIndexTable
