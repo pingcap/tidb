@@ -881,7 +881,8 @@ func TestGetValidInt(t *testing.T) {
 	}
 }
 
-func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
+func TestGetValidFloat(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		origin string
 		valid  string
@@ -907,9 +908,9 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
 		prefix, _ := getValidFloatPrefix(sc, tt.origin, false)
-		c.Assert(prefix, Equals, tt.valid)
+		require.Equal(t, tt.valid, prefix)
 		_, err := strconv.ParseFloat(prefix, 64)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
 	tests2 := []struct {
@@ -931,10 +932,10 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		{"123.456784e5", "12345678"},
 		{"+999.9999e2", "+100000"},
 	}
-	for _, t := range tests2 {
-		str, err := floatStrToIntStr(sc, t.origin, t.origin)
-		c.Assert(err, IsNil)
-		c.Assert(str, Equals, t.expected, Commentf("%v, %v", t.origin, t.expected))
+	for _, tt := range tests2 {
+		str, err := floatStrToIntStr(sc, tt.origin, tt.origin)
+		require.NoError(t, err)
+		require.Equalf(t, tt.expected, str, "%v, %v", tt.origin, tt.expected)
 	}
 }
 
