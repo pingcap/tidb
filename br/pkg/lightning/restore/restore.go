@@ -1445,9 +1445,6 @@ func (tr *TableRestore) restoreTable(
 		if err := tr.populateChunks(ctx, rc, cp); err != nil {
 			return false, errors.Trace(err)
 		}
-		if len(cp.Engines) == 1 {
-			return false, nil
-		}
 
 		// fetch the max chunk row_id max value as the global max row_id
 		rowIDMax := int64(0)
