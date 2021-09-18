@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/distsql"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
@@ -69,6 +70,7 @@ type DuplicateManager struct {
 	tls               *common.TLS
 	ts                uint64
 	keyAdapter        KeyAdapter
+	remoteWorkerPool  *utils.WorkerPool
 }
 
 type pendingIndexHandles struct {
@@ -193,6 +195,8 @@ func NewDuplicateManager(
 		keyAdapter:        duplicateKeyAdapter{},
 		ts:                ts,
 		connPool:          common.NewGRPCConns(),
+		// TODO: not sure what is the correct concurrency value.
+		remoteWorkerPool: utils.NewWorkerPool(uint(regionConcurrency), "duplicates"),
 	}, nil
 }
 
@@ -220,7 +224,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Contex
 	atomicHasDupe := atomic.NewBool(false)
 	for _, r := range reqs {
 		req := r
-		g.Go(func() error {
+		manager.remoteWorkerPool.ApplyOnErrorGroup(g, func() error {
 			err := manager.sendRequestToTiKV(rpcctx, decoder, req, atomicHasDupe)
 			if err != nil {
 				log.L().Error("error occur when collect duplicate data from TiKV", zap.Error(err))
