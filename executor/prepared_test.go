@@ -429,20 +429,23 @@ func (s *testSerialSuite) TestIssue28064(c *C) {
 		"KEY `iabc` (`a`,`b`,`c`));")
 	tk.MustExec("set @a='123', @b='234', @c='345';")
 	tk.MustExec("prepare stmt1 from 'select * from t28064 use index (iabc) where a = ? and b = ? and c = ?';")
+
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
 	tkProcess := tk.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	rows.Check(testkit.Rows("IndexLookUp_7 0.00 0 root  time:0s, loops:0,   N/A N/A",
-		"├─IndexRangeScan_5(Build) 0.00 0 cop[tikv] table:t28064, index:iabc(a, b, c)  range:[123 234 345,123 234 345], keep order:false, stats:pseudo N/A N/A",
-		"└─TableRowIDScan_6(Probe) 0.00 0 cop[tikv] table:t28064  keep order:false, stats:pseudo N/A N/A"))
+	rows.Check(testkit.Rows("IndexLookUp_7 0.00 root  ",
+		"├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"└└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
-	rows = tk.MustQuery(fmt.Sprintf("select @@last_plan_from_cache"))
+	rows = tk.MustQuery("select @@last_plan_from_cache")
 	rows.Check(testkit.Rows("1"))
+
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	rows.Check(testkit.Rows("IndexLookUp_7 0.00 0 root  time:0s, loops:0,   N/A N/A",
-		"├─IndexRangeScan_5(Build) 0.00 0 cop[tikv] table:t28064, index:iabc(a, b, c)  range:[123 234 345,123 234 345], keep order:false, stats:pseudo N/A N/A",
-		"└─TableRowIDScan_6(Probe) 0.00 0 cop[tikv] table:t28064  keep order:false, stats:pseudo N/A N/A"))
+	rows.Check(testkit.Rows("IndexLookUp_7 0.00 root  ",
+		"├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
 }
