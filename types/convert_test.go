@@ -302,7 +302,6 @@ func TestConvertType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, Enum{Name: "a", Value: 1}, v)
 	v, err = Convert(2, ft)
-	t.Log(errors.ErrorStack(err))
 	require.NoError(t, err)
 	require.Equal(t, Enum{Name: "b", Value: 2}, v)
 	_, err = Convert("d", ft)
