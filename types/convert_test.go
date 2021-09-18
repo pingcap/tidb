@@ -800,7 +800,8 @@ func TestRoundIntStr(t *testing.T) {
 	}
 }
 
-func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
+func TestGetValidInt(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		origin  string
 		valid   string
@@ -829,21 +830,21 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	warningCount := 0
 	for i, tt := range tests {
 		prefix, err := getValidIntPrefix(sc, tt.origin, false)
-		c.Assert(err, IsNil)
-		c.Assert(prefix, Equals, tt.valid)
+		require.NoError(t, err)
+		require.Equal(t, tt.valid, prefix)
 		if tt.signed {
 			_, err = strconv.ParseInt(prefix, 10, 64)
 		} else {
 			_, err = strconv.ParseUint(prefix, 10, 64)
 		}
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		warnings := sc.GetWarnings()
 		if tt.warning {
-			c.Assert(warnings, HasLen, warningCount+1, Commentf("%d", i))
-			c.Assert(terror.ErrorEqual(warnings[len(warnings)-1].Err, ErrTruncatedWrongVal), IsTrue)
+			require.Lenf(t, warnings, warningCount+1, "%d", i)
+			require.True(t, terror.ErrorEqual(warnings[len(warnings)-1].Err, ErrTruncatedWrongVal))
 			warningCount += 1
 		} else {
-			c.Assert(warnings, HasLen, warningCount)
+			require.Len(t, warnings, warningCount)
 		}
 	}
 
@@ -872,11 +873,11 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	for _, tt := range tests2 {
 		prefix, err := getValidIntPrefix(sc, tt.origin, false)
 		if tt.warning {
-			c.Assert(terror.ErrorEqual(err, ErrTruncatedWrongVal), IsTrue)
+			require.True(t, terror.ErrorEqual(err, ErrTruncatedWrongVal))
 		} else {
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
-		c.Assert(prefix, Equals, tt.valid)
+		require.Equal(t, tt.valid, prefix)
 	}
 }
 
