@@ -521,7 +521,8 @@ func prepareCompareDatums() ([]Datum, []Datum) {
 	return vals, vals1
 }
 
-func (ts *testDatumSuite) TestStringToMysqlBit(c *C) {
+func TestStringToMysqlBit(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		a   Datum
 		out []byte
@@ -539,8 +540,8 @@ func (ts *testDatumSuite) TestStringToMysqlBit(c *C) {
 	tp.Flen = 1
 	for _, tt := range tests {
 		bin, err := tt.a.convertToMysqlBit(nil, tp)
-		c.Assert(err, IsNil)
-		c.Assert(bin.b, BytesEquals, tt.out)
+		require.NoError(t, err)
+		require.Equal(t, tt.out, bin.b)
 	}
 }
 
