@@ -1218,6 +1218,26 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 
 	var err error
 	if p.cte.seedPartPhysicalPlan == nil {
+		// Build push-downed predicates.
+		if len(p.cte.pushDownPredicates) > 0 && p.cte.recursivePartLogicalPlan == nil {
+			selectedPushDownPredicates := make([]expression.Expression, 0)
+			minColSet := expression.IntersectColumnSet(p.cte.pushDownPredicates)
+			for _, cond := range p.cte.pushDownPredicates {
+				cnfItems := expression.SplitCNFItems(cond)
+				usedItems := make([]expression.Expression, 0)
+				for _, item := range cnfItems {
+					if expression.ExtractColumnSetSimple(item).SubsetOf(minColSet) {
+						usedItems = append(usedItems, item)
+					}
+				}
+				selectedPushDownPredicates = append(selectedPushDownPredicates, expression.ComposeCNFCondition(p.ctx, usedItems...))
+			}
+			newSelCond := make([]expression.Expression, 0)
+			newSelCond = append(newSelCond, expression.ComposeDNFCondition(p.ctx, selectedPushDownPredicates...))
+			newSel := LogicalSelection{Conditions: newSelCond}.Init(p.SCtx(), p.cte.seedPartLogicalPlan.SelectBlockOffset())
+			newSel.SetChildren(p.cte.seedPartLogicalPlan)
+			p.cte.seedPartLogicalPlan = newSel
+		}
 		p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
 		if err != nil {
 			return nil, err

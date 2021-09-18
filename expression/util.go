@@ -176,6 +176,26 @@ func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
 	return set
 }
 
+// ExtractColumnSetSimple extracts the different values of `UniqueId` for columns in expressions.
+func ExtractColumnSetSimple(expr Expression) *intsets.Sparse {
+	set := &intsets.Sparse{}
+	extractColumnSet(expr, set)
+	return set
+}
+
+func IntersectColumnSet(exprs []Expression) *intsets.Sparse {
+	minSet := &intsets.Sparse{}
+	for i, expr := range exprs {
+		currSet := &intsets.Sparse{}
+		extractColumnSet(expr, currSet)
+		if i == 0 {
+			minSet.Copy(currSet)
+		}
+		minSet.Intersection(minSet, currSet)
+	}
+	return minSet
+}
+
 func extractColumnSet(expr Expression, set *intsets.Sparse) {
 	switch v := expr.(type) {
 	case *Column:

@@ -630,6 +630,19 @@ func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression) 
 	return predicates, p.self
 }
 
+func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	if len(predicates) == 0 {
+		return predicates, p.self
+	}
+	newPred := make([]expression.Expression, 0, len(predicates))
+	for i := range predicates {
+		newPred = append(newPred, predicates[i].Clone())
+		ResolveExprAndReplace(newPred[i], p.cte.ColumnMap)
+	}
+	p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.ComposeCNFCondition(p.ctx, newPred...))
+	return predicates, p.self
+}
+
 func (*ppdSolver) name() string {
 	return "predicate_push_down"
 }
