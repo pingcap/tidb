@@ -1025,7 +1025,8 @@ func TestConvertJSONToInt(t *testing.T) {
 	}
 }
 
-func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
+func TestConvertJSONToFloat(t *testing.T) {
+	t.Parallel()
 	var tests = []struct {
 		In  interface{}
 		Out float64
@@ -1046,9 +1047,9 @@ func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 	}
 	for _, tt := range tests {
 		j := json.CreateBinary(tt.In)
-		c.Assert(j.TypeCode, Equals, tt.ty)
+		require.Equal(t, tt.ty, j.TypeCode)
 		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
-		c.Assert(casted, Equals, tt.Out)
+		require.Equal(t, tt.Out, casted)
 	}
 }
 
