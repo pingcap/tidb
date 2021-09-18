@@ -1182,7 +1182,8 @@ func TestConvertScientificNotation(t *testing.T) {
 	}
 }
 
-func (s *testTypeConvertSuite) TestConvertDecimalStrToUint(c *C) {
+func TestConvertDecimalStrToUint(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		input  string
 		result uint64
@@ -1206,10 +1207,10 @@ func (s *testTypeConvertSuite) TestConvertDecimalStrToUint(c *C) {
 	for _, ca := range cases {
 		result, err := convertDecimalStrToUint(&stmtctx.StatementContext{}, ca.input, math.MaxUint64, 0)
 		if !ca.succ {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			c.Assert(result, Equals, ca.result)
+			require.NoError(t, err)
+			require.Equal(t, ca.result, result)
 		}
 	}
 }
