@@ -21,8 +21,6 @@ import (
 	"testing"
 	"time"
 
-	// TODO[karuppiah7890]: Remove later
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -31,13 +29,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/stretchr/testify/require"
 )
-
-// TODO[karuppiah7890]: Remove later
-var _ = Suite(&testTypeConvertSuite{})
-
-// TODO[karuppiah7890]: Remove later
-type testTypeConvertSuite struct {
-}
 
 type invalidMockType struct {
 }
