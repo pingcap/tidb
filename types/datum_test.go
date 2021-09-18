@@ -263,7 +263,8 @@ func TestToJSON(t *testing.T) {
 	}
 }
 
-func (ts *testDatumSuite) TestIsNull(c *C) {
+func TestIsNull(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		data   interface{}
 		isnull bool
@@ -276,13 +277,13 @@ func (ts *testDatumSuite) TestIsNull(c *C) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		testIsNull(c, tt.data, tt.isnull)
+		testIsNull(t, tt.data, tt.isnull)
 	}
 }
 
-func testIsNull(c *C, data interface{}, isnull bool) {
+func testIsNull(t *testing.T, data interface{}, isnull bool) {
 	d := NewDatum(data)
-	c.Assert(d.IsNull(), Equals, isnull, Commentf("data: %v, isnull: %v", data, isnull))
+	require.Equalf(t, isnull, d.IsNull(), "data: %v, isnull: %v", data, isnull)
 }
 
 func (ts *testDatumSuite) TestToBytes(c *C) {
