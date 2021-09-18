@@ -127,42 +127,42 @@ func TestRangeIntersect(t *testing.T) {
 	rg := newRange([]byte("a"), []byte("c"))
 
 	start, end, isIntersect := rg.Intersect([]byte(""), []byte(""))
-	require.Equal(t, true, isIntersect)
+	require.True(t, isIntersect)
 	require.Equal(t, []byte("a"), start)
 	require.Equal(t, []byte("c"), end)
 
 	start, end, isIntersect = rg.Intersect([]byte(""), []byte("a"))
-	require.Equal(t, false, isIntersect)
+	require.False(t, isIntersect)
 	require.Equal(t, []byte(nil), start)
 	require.Equal(t, []byte(nil), end)
 
 	start, end, isIntersect = rg.Intersect([]byte(""), []byte("b"))
-	require.Equal(t, true, isIntersect)
+	require.True(t, isIntersect)
 	require.Equal(t, []byte("a"), start)
 	require.Equal(t, []byte("b"), end)
 
 	start, end, isIntersect = rg.Intersect([]byte("a"), []byte("b"))
-	require.Equal(t, true, isIntersect)
+	require.True(t, isIntersect)
 	require.Equal(t, []byte("a"), start)
 	require.Equal(t, []byte("b"), end)
 
 	start, end, isIntersect = rg.Intersect([]byte("aa"), []byte("b"))
-	require.Equal(t, true, isIntersect)
+	require.True(t, isIntersect)
 	require.Equal(t, []byte("aa"), start)
 	require.Equal(t, []byte("b"), end)
 
 	start, end, isIntersect = rg.Intersect([]byte("b"), []byte("c"))
-	require.Equal(t, true, isIntersect)
+	require.True(t, isIntersect)
 	require.Equal(t, []byte("b"), start)
 	require.Equal(t, []byte("c"), end)
 
 	start, end, isIntersect = rg.Intersect([]byte(""), []byte{1})
-	require.Equal(t, false, isIntersect)
+	require.False(t, isIntersect)
 	require.Equal(t, []byte(nil), start)
 	require.Equal(t, []byte(nil), end)
 
 	start, end, isIntersect = rg.Intersect([]byte("c"), []byte(""))
-	require.Equal(t, false, isIntersect)
+	require.False(t, isIntersect)
 	require.Equal(t, []byte(nil), start)
 	require.Equal(t, []byte(nil), end)
 }

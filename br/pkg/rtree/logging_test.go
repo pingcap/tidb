@@ -38,7 +38,7 @@ func TestLogRanges(t *testing.T) {
 			ranges[j].Files = append(ranges[j].Files, &backuppb.File{TotalKvs: uint64(j), TotalBytes: uint64(j)})
 		}
 		out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{rtree.ZapRanges(ranges)})
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, cs.expect, strings.TrimRight(out.String(), "\n"))
 	}
 }
