@@ -385,7 +385,7 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 		"_UTF8MB4'cccccccccc' AS `cccccccccc`,_UTF8MB4'ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' AS `ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd`"
 	tk.MustQuery("select * from v")
 	tk.MustQuery("select name_exp_1, name_exp_2, cccccccccc, name_exp_4 from v")
-	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + " utf8mb4 utf8mb4_bin"))
 	tk.MustExec("drop view v;")
 	tk.MustExec(resultCreateStmt)
 
@@ -400,7 +400,7 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 		"COUNT(DISTINCT _UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', _UTF8MB4'c') AS `count(distinct 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'c')`"
 	tk.MustQuery("select * from v")
 	tk.MustQuery("select a, name_exp_2 from v")
-	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + " utf8mb4 utf8mb4_bin"))
 	tk.MustExec("drop view v;")
 	tk.MustExec(resultCreateStmt)
 
@@ -409,7 +409,7 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 	tk.MustQuery("select * from v")
 	tk.MustQuery("select name_exp_1 from v")
 	resultCreateStmt = "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`) AS SELECT _UTF8MB4'a' AS `" + strings.Repeat("b", 65) + "` FROM `test`.`t`"
-	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + " utf8mb4 utf8mb4_bin"))
 	tk.MustExec("drop view v;")
 	tk.MustExec(resultCreateStmt)
 
