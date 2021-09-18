@@ -371,14 +371,6 @@ func newTypeWithFlag(tp byte, flag uint) *FieldType {
 	return t
 }
 
-// TODO: Remove this later
-func newMyDecimal(val string, c *C) *MyDecimal {
-	t := MyDecimal{}
-	err := t.FromString([]byte(val))
-	c.Assert(err, IsNil)
-	return &t
-}
-
 // TODO: Rename this later to newMyDecimal
 func newMyDecimalCopy(val string, t *testing.T) *MyDecimal {
 	d := MyDecimal{}
