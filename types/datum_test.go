@@ -286,7 +286,8 @@ func testIsNull(t *testing.T, data interface{}, isnull bool) {
 	require.Equalf(t, isnull, d.IsNull(), "data: %v, isnull: %v", data, isnull)
 }
 
-func (ts *testDatumSuite) TestToBytes(c *C) {
+func TestToBytes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		a   Datum
 		out []byte
@@ -301,8 +302,8 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
 		bin, err := tt.a.ToBytes()
-		c.Assert(err, IsNil)
-		c.Assert(bin, BytesEquals, tt.out)
+		require.NoError(t, err)
+		require.Equal(t, tt.out, bin)
 	}
 }
 
