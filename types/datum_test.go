@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	// TODO: Remove this later
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -30,8 +31,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TODO: Remove this later
 var _ = Suite(&testDatumSuite{})
 
+// TODO: Remove this later
 type testDatumSuite struct {
 }
 
@@ -368,11 +371,20 @@ func newTypeWithFlag(tp byte, flag uint) *FieldType {
 	return t
 }
 
+// TODO: Remove this later
 func newMyDecimal(val string, c *C) *MyDecimal {
 	t := MyDecimal{}
 	err := t.FromString([]byte(val))
 	c.Assert(err, IsNil)
 	return &t
+}
+
+// TODO: Rename this later to newMyDecimal
+func newMyDecimalCopy(val string, t *testing.T) *MyDecimal {
+	d := MyDecimal{}
+	err := d.FromString([]byte(val))
+	require.NoError(t, err)
+	return &d
 }
 
 func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldType {
@@ -383,7 +395,8 @@ func newRetTypeWithFlenDecimal(tp byte, flen int, decimal int) *FieldType {
 	}
 }
 
-func (ts *testDatumSuite) TestEstimatedMemUsage(c *C) {
+func TestEstimatedMemUsage(t *testing.T) {
+	t.Parallel()
 	b := []byte{'a', 'b', 'c', 'd'}
 	enum := Enum{Name: "a", Value: 1}
 	datumArray := []Datum{
@@ -392,14 +405,14 @@ func (ts *testDatumSuite) TestEstimatedMemUsage(c *C) {
 		NewFloat32Datum(1.0),
 		NewStringDatum(string(b)),
 		NewBytesDatum(b),
-		NewDecimalDatum(newMyDecimal("1234.1234", c)),
+		NewDecimalDatum(newMyDecimalCopy("1234.1234", t)),
 		NewMysqlEnumDatum(enum),
 	}
 	bytesConsumed := 10 * (len(datumArray)*sizeOfEmptyDatum +
 		sizeOfMyDecimal +
 		len(b)*2 +
 		len(hack.Slice(enum.Name)))
-	c.Assert(int(EstimatedMemUsage(datumArray, 10)), Equals, bytesConsumed)
+	require.Equal(t, bytesConsumed, int(EstimatedMemUsage(datumArray, 10)))
 }
 
 func (ts *testDatumSuite) TestChangeReverseResultByUpperLowerBound(c *C) {
