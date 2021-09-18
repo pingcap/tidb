@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package session
 
@@ -1081,7 +1081,7 @@ func (s *session) replaceGlobalVariablesTableValue(ctx context.Context, varName,
 		return err
 	}
 	_, _, err = s.ExecRestrictedStmt(ctx, stmt)
-	domain.GetDomain(s).NotifyUpdateSysVarCache(s)
+	domain.GetDomain(s).NotifyUpdateSysVarCache()
 	return err
 }
 
@@ -1101,7 +1101,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 
-	sysVar, err := domain.GetDomain(s).GetSysVarCache().GetGlobalVar(s, name)
+	sysVar, err := domain.GetDomain(s).GetGlobalVar(name)
 	if err != nil {
 		// The sysvar exists, but there is no cache entry yet.
 		// This might be because the sysvar was only recently registered.
@@ -2710,7 +2710,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars.CommonGlobalLoaded = true
 
 	// Deep copy sessionvar cache
-	sessionCache, err := domain.GetDomain(s).GetSysVarCache().GetSessionCache(s)
+	sessionCache, err := domain.GetDomain(s).GetSessionCache()
 	if err != nil {
 		return err
 	}
