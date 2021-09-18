@@ -336,7 +336,8 @@ func TestComputePlusAndMinus(t *testing.T) {
 	}
 }
 
-func (ts *testDatumSuite) TestCloneDatum(c *C) {
+func TestCloneDatum(t *testing.T) {
+	t.Parallel()
 	var raw Datum
 	raw.b = []byte("raw")
 	raw.k = KindRaw
@@ -353,10 +354,10 @@ func (ts *testDatumSuite) TestCloneDatum(c *C) {
 	for _, tt := range tests {
 		tt1 := *tt.Clone()
 		res, err := tt.CompareDatum(sc, &tt1)
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, 0)
+		require.NoError(t, err)
+		require.Equal(t, 0, res)
 		if tt.b != nil {
-			c.Assert(&tt.b[0], Not(Equals), &tt1.b[0])
+			require.NotSame(t, &tt1.b[0], &tt.b[0])
 		}
 	}
 }
