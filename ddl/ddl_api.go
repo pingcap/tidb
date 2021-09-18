@@ -1437,8 +1437,7 @@ func buildTableInfo(
 				} else {
 					hasBinlog := ctx.GetSessionVars().BinlogClient != nil
 					if hasBinlog {
-						msg := mysql.Message("Cannot create clustered index table when the binlog is ON", nil)
-						return nil, dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, msg)
+						return nil, errUnsupportedClusteredIndexWhenBinlogIsOn
 					}
 					tbInfo.IsCommonHandle = true
 					tbInfo.CommonHandleVersion = 1
