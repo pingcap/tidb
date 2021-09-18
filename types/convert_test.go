@@ -18,8 +18,10 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"testing"
 	"time"
 
+	// TODO[karuppiah7890]: Remove later
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
@@ -28,10 +30,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
+// TODO[karuppiah7890]: Remove later
 var _ = Suite(&testTypeConvertSuite{})
 
+// TODO[karuppiah7890]: Remove later
 type testTypeConvertSuite struct {
 }
 
@@ -50,287 +55,287 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	return ret.GetValue(), nil
 }
 
-func (s *testTypeConvertSuite) TestConvertType(c *C) {
-	defer testleak.AfterTest(c)()
+func TestConvertType(t *testing.T) {
+	t.Parallel()
 	ft := NewFieldType(mysql.TypeBlob)
 	ft.Flen = 4
 	ft.Charset = "utf8"
 	v, err := Convert("123456", ft)
-	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
-	c.Assert(v, Equals, "1234")
+	require.True(t, ErrDataTooLong.Equal(err))
+	require.Equal(t, "1234", v)
 	ft = NewFieldType(mysql.TypeString)
 	ft.Flen = 4
 	ft.Charset = charset.CharsetBin
 	v, err = Convert("12345", ft)
-	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
-	c.Assert(v, DeepEquals, []byte("1234"))
+	require.True(t, ErrDataTooLong.Equal(err))
+	require.Equal(t, []byte("1234"), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(111.114, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, float32(111.11))
+	require.NoError(t, err)
+	require.Equal(t, float32(111.11), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(999.999, ft)
-	c.Assert(err, NotNil)
-	c.Assert(v, Equals, float32(999.99))
+	require.Error(t, err)
+	require.Equal(t, float32(999.99), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(-999.999, ft)
-	c.Assert(err, NotNil)
-	c.Assert(v, Equals, float32(-999.99))
+	require.Error(t, err)
+	require.Equal(t, float32(-999.99), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(1111.11, ft)
-	c.Assert(err, NotNil)
-	c.Assert(v, Equals, float32(999.99))
+	require.Error(t, err)
+	require.Equal(t, float32(999.99), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(999.916, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, float32(999.92))
+	require.NoError(t, err)
+	require.Equal(t, float32(999.92), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(999.914, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, float32(999.91))
+	require.NoError(t, err)
+	require.Equal(t, float32(999.91), v)
 
 	ft = NewFieldType(mysql.TypeFloat)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(999.9155, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, float32(999.92))
+	require.NoError(t, err)
+	require.Equal(t, float32(999.92), v)
 
 	// For TypeBlob
 	ft = NewFieldType(mysql.TypeBlob)
 	_, err = Convert(&invalidMockType{}, ft)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// Nil
 	ft = NewFieldType(mysql.TypeBlob)
 	v, err = Convert(nil, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
+	require.NoError(t, err)
+	require.Nil(t, v)
 
 	// TypeDouble
 	ft = NewFieldType(mysql.TypeDouble)
 	ft.Flen = 5
 	ft.Decimal = 2
 	v, err = Convert(999.9155, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, float64(999.92))
+	require.NoError(t, err)
+	require.Equal(t, float64(999.92), v)
 
 	// For TypeString
 	ft = NewFieldType(mysql.TypeString)
 	ft.Flen = 3
 	v, err = Convert("12345", ft)
-	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
-	c.Assert(v, Equals, "123")
+	require.True(t, ErrDataTooLong.Equal(err))
+	require.Equal(t, "123", v)
 	ft = NewFieldType(mysql.TypeString)
 	ft.Flen = 3
 	ft.Charset = charset.CharsetBin
 	v, err = Convert("12345", ft)
-	c.Assert(ErrDataTooLong.Equal(err), IsTrue)
-	c.Assert(v, DeepEquals, []byte("123"))
+	require.True(t, ErrDataTooLong.Equal(err))
+	require.Equal(t, []byte("123"), v)
 
 	// For TypeDuration
 	ft = NewFieldType(mysql.TypeDuration)
 	ft.Decimal = 3
 	v, err = Convert("10:11:12.123456", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v.(Duration).String(), Equals, "10:11:12.123")
+	require.NoError(t, err)
+	require.Equal(t, "10:11:12.123", v.(Duration).String())
 	ft.Decimal = 1
 	vv, err := Convert(v, ft)
-	c.Assert(err, IsNil)
-	c.Assert(vv.(Duration).String(), Equals, "10:11:12.1")
+	require.NoError(t, err)
+	require.Equal(t, "10:11:12.1", vv.(Duration).String())
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	vd, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2)
-	c.Assert(vd.String(), Equals, "2010-10-10 10:11:11.12")
-	c.Assert(err, IsNil)
+	require.Equal(t, "2010-10-10 10:11:11.12", vd.String())
+	require.NoError(t, err)
 	v, err = Convert(vd, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v.(Duration).String(), Equals, "10:11:11.1")
+	require.NoError(t, err)
+	require.Equal(t, "10:11:11.1", v.(Duration).String())
 
 	vt, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
-	c.Assert(vt.String(), Equals, "2010-10-10 10:11:11.12")
-	c.Assert(err, IsNil)
+	require.Equal(t, "2010-10-10 10:11:11.12", vt.String())
+	require.NoError(t, err)
 	v, err = Convert(vt, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v.(Duration).String(), Equals, "10:11:11.1")
+	require.NoError(t, err)
+	require.Equal(t, "10:11:11.1", v.(Duration).String())
 
 	// For mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate
 	ft = NewFieldType(mysql.TypeTimestamp)
 	ft.Decimal = 3
 	v, err = Convert("2010-10-10 10:11:11.12345", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v.(Time).String(), Equals, "2010-10-10 10:11:11.123")
+	require.NoError(t, err)
+	require.Equal(t, "2010-10-10 10:11:11.123", v.(Time).String())
 	ft.Decimal = 1
 	vv, err = Convert(v, ft)
-	c.Assert(err, IsNil)
-	c.Assert(vv.(Time).String(), Equals, "2010-10-10 10:11:11.1")
+	require.NoError(t, err)
+	require.Equal(t, "2010-10-10 10:11:11.1", vv.(Time).String())
 
 	// For TypeLonglong
 	ft = NewFieldType(mysql.TypeLonglong)
 	v, err = Convert("100", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(100))
+	require.NoError(t, err)
+	require.Equal(t, int64(100), v)
 	// issue 4287.
 	v, err = Convert(math.Pow(2, 63)-1, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(math.MaxInt64))
+	require.NoError(t, err)
+	require.Equal(t, int64(math.MaxInt64), v)
 	ft = NewFieldType(mysql.TypeLonglong)
 	ft.Flag |= mysql.UnsignedFlag
 	v, err = Convert("100", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, uint64(100))
+	require.NoError(t, err)
+	require.Equal(t, uint64(100), v)
 	// issue 3470
 	ft = NewFieldType(mysql.TypeLonglong)
 	v, err = Convert(Duration{Duration: 12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond, Fsp: 3}, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(130000))
+	require.NoError(t, err)
+	require.Equal(t, int64(130000), v)
 	v, err = Convert(NewTime(FromDate(2017, 1, 1, 12, 59, 59, 555000), mysql.TypeDatetime, MaxFsp), ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(20170101130000))
+	require.NoError(t, err)
+	require.Equal(t, int64(20170101130000), v)
 
 	// For TypeBit
 	ft = NewFieldType(mysql.TypeBit)
 	ft.Flen = 24 // 3 bytes.
 	v, err = Convert("100", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, NewBinaryLiteralFromUint(3223600, 3))
+	require.NoError(t, err)
+	require.Equal(t, NewBinaryLiteralFromUint(3223600, 3), v)
 
 	v, err = Convert(NewBinaryLiteralFromUint(100, -1), ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, NewBinaryLiteralFromUint(100, 3))
+	require.NoError(t, err)
+	require.Equal(t, NewBinaryLiteralFromUint(100, 3), v)
 
 	ft.Flen = 1
 	v, err = Convert(1, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, NewBinaryLiteralFromUint(1, 1))
+	require.NoError(t, err)
+	require.Equal(t, NewBinaryLiteralFromUint(1, 1), v)
 
 	_, err = Convert(2, ft)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	ft.Flen = 0
 	_, err = Convert(2, ft)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// For TypeNewDecimal
 	ft = NewFieldType(mysql.TypeNewDecimal)
 	ft.Flen = 8
 	ft.Decimal = 4
 	v, err = Convert(3.1416, ft)
-	c.Assert(err, IsNil, Commentf(errors.ErrorStack(err)))
-	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
+	require.NoErrorf(t, err, errors.ErrorStack(err))
+	require.Equal(t, "3.1416", v.(*MyDecimal).String())
 	v, err = Convert("3.1415926", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
+	require.NoError(t, err)
+	require.Equal(t, "3.1416", v.(*MyDecimal).String())
 	v, err = Convert("99999", ft)
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
-	c.Assert(v.(*MyDecimal).String(), Equals, "9999.9999")
+	require.Truef(t, terror.ErrorEqual(err, ErrOverflow), "err %v", err)
+	require.Equal(t, "9999.9999", v.(*MyDecimal).String())
 	v, err = Convert("-10000", ft)
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
-	c.Assert(v.(*MyDecimal).String(), Equals, "-9999.9999")
+	require.Truef(t, terror.ErrorEqual(err, ErrOverflow), "err %v", err)
+	require.Equal(t, "-9999.9999", v.(*MyDecimal).String())
 	v, err = Convert("1,999.00", ft)
-	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
-	c.Assert(v.(*MyDecimal).String(), Equals, "1.0000")
+	require.Truef(t, terror.ErrorEqual(err, ErrBadNumber), "err %v", err)
+	require.Equal(t, "1.0000", v.(*MyDecimal).String())
 	v, err = Convert("1,999,999.00", ft)
-	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
-	c.Assert(v.(*MyDecimal).String(), Equals, "1.0000")
+	require.Truef(t, terror.ErrorEqual(err, ErrBadNumber), "err %v", err)
+	require.Equal(t, "1.0000", v.(*MyDecimal).String())
 	v, err = Convert("199.00 ", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v.(*MyDecimal).String(), Equals, "199.0000")
+	require.NoError(t, err)
+	require.Equal(t, "199.0000", v.(*MyDecimal).String())
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
 	_, err = d.ToDecimal(sc)
-	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
+	require.Truef(t, terror.ErrorEqual(err, ErrBadNumber), "err %v", err)
 
 	sc.IgnoreTruncate = true
 	v, err = d.ToDecimal(sc)
-	c.Assert(err, IsNil)
-	c.Assert(v.(*MyDecimal).String(), Equals, "0")
+	require.NoError(t, err)
+	require.Equal(t, "0", v.(*MyDecimal).String())
 
 	// For TypeYear
 	ft = NewFieldType(mysql.TypeYear)
 	v, err = Convert("2015", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(2015))
+	require.NoError(t, err)
+	require.Equal(t, int64(2015), v)
 	v, err = Convert(2015, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(2015))
+	require.NoError(t, err)
+	require.Equal(t, int64(2015), v)
 	_, err = Convert(1800, ft)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	dt, err := ParseDate(nil, "2015-11-11")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	v, err = Convert(dt, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(2015))
+	require.NoError(t, err)
+	require.Equal(t, int64(2015), v)
 	v, err = Convert(ZeroDuration, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), v)
 	bj1, err := json.ParseBinaryFromString("99")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	v, err = Convert(bj1, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(1999))
+	require.NoError(t, err)
+	require.Equal(t, int64(1999), v)
 	bj2, err := json.ParseBinaryFromString("-1")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = Convert(bj2, ft)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	bj3, err := json.ParseBinaryFromString("{\"key\": 99}")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = Convert(bj3, ft)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	bj4, err := json.ParseBinaryFromString("[99, 0, 1]")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = Convert(bj4, ft)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// For enum
 	ft = NewFieldType(mysql.TypeEnum)
 	ft.Elems = []string{"a", "b", "c"}
 	v, err = Convert("a", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, Enum{Name: "a", Value: 1})
+	require.NoError(t, err)
+	require.Equal(t, Enum{Name: "a", Value: 1}, v)
 	v, err = Convert(2, ft)
-	c.Log(errors.ErrorStack(err))
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, Enum{Name: "b", Value: 2})
+	t.Log(errors.ErrorStack(err))
+	require.NoError(t, err)
+	require.Equal(t, Enum{Name: "b", Value: 2}, v)
 	_, err = Convert("d", ft)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	v, err = Convert(4, ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
-	c.Assert(v, DeepEquals, Enum{})
+	require.Truef(t, terror.ErrorEqual(err, ErrTruncated), "err %v", err)
+	require.Equal(t, Enum{}, v)
 
 	ft = NewFieldType(mysql.TypeSet)
 	ft.Elems = []string{"a", "b", "c"}
 	v, err = Convert("a", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, Set{Name: "a", Value: 1})
+	require.NoError(t, err)
+	require.Equal(t, Set{Name: "a", Value: 1}, v)
 	v, err = Convert(2, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, Set{Name: "b", Value: 2})
+	require.NoError(t, err)
+	require.Equal(t, Set{Name: "b", Value: 2}, v)
 	v, err = Convert(3, ft)
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, Set{Name: "a,b", Value: 3})
+	require.NoError(t, err)
+	require.Equal(t, Set{Name: "a,b", Value: 3}, v)
 	_, err = Convert("d", ft)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	_, err = Convert(9, ft)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
 func testToString(c *C, val interface{}, expect string) {
