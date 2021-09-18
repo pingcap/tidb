@@ -1073,6 +1073,10 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 		if record.Privileges&globalDBVisible > 0 {
 			return true
 		}
+		// For metrics_schema, `PROCESS` can also work.
+		if record.Privileges&mysql.ProcessPriv > 0 && strings.EqualFold(db, util.MetricSchemaName.O) {
+			return true
+		}
 	}
 
 	// INFORMATION_SCHEMA is visible to all users.
@@ -1109,6 +1113,7 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 
 func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentity) []string {
 	var gs []string
+	var sortFromIdx int
 	var hasGlobalGrant = false
 	// Some privileges may granted from role inheritance.
 	// We should find these inheritance relationship.
@@ -1166,6 +1171,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	}
 
 	// Show db scope grants.
+	sortFromIdx = len(gs)
 	dbPrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.DB {
 		if record.fullyMatch(user, host) {
@@ -1203,8 +1209,10 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			gs = append(gs, s)
 		}
 	}
+	sort.Strings(gs[sortFromIdx:])
 
 	// Show table scope grants.
+	sortFromIdx = len(gs)
 	tablePrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.TablesPriv {
 		recordKey := record.DB + "." + record.TableName
@@ -1243,9 +1251,11 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			gs = append(gs, s)
 		}
 	}
+	sort.Strings(gs[sortFromIdx:])
 
 	// Show column scope grants, column and table are combined.
 	// A map of "DB.Table" => Priv(col1, col2 ...)
+	sortFromIdx = len(gs)
 	columnPrivTable := make(map[string]privOnColumns)
 	for _, record := range p.ColumnsPriv {
 		if !collectColumnGrant(&record, user, host, columnPrivTable) {
@@ -1259,6 +1269,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
 		gs = append(gs, s)
 	}
+	sort.Strings(gs[sortFromIdx:])
 
 	// Show role grants.
 	graphKey := user + "@" + host

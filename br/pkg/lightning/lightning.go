@@ -211,7 +211,10 @@ func (l *Lightning) RunServer() error {
 	}
 }
 
-var taskCfgRecorderKey struct{}
+var (
+	taskRunNotifyKey   = "taskRunNotifyKey"
+	taskCfgRecorderKey = "taskCfgRecorderKey"
+)
 
 func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.Glue) (err error) {
 	build.LogInfo(build.Lightning)
@@ -235,7 +238,13 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	}()
 
 	failpoint.Inject("SkipRunTask", func() {
-		if recorder, ok := l.ctx.Value(&taskCfgRecorderKey).(chan *config.Config); ok {
+		if notifyCh, ok := l.ctx.Value(taskRunNotifyKey).(chan struct{}); ok {
+			select {
+			case notifyCh <- struct{}{}:
+			default:
+			}
+		}
+		if recorder, ok := l.ctx.Value(taskCfgRecorderKey).(chan *config.Config); ok {
 			select {
 			case recorder <- taskCfg:
 			case <-ctx.Done():
@@ -667,7 +676,10 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 
 		// region-concurrency: number of LocalWriters writing SST files.
 		// 2*totalSize/memCacheSize: number of Pebble MemCache files.
-		estimateMaxFiles := local.Rlim_t(cfg.App.RegionConcurrency) + local.Rlim_t(topNTotalSize)/local.Rlim_t(cfg.TikvImporter.EngineMemCacheSize)*2
+		maxDBFiles := topNTotalSize / int64(cfg.TikvImporter.LocalWriterMemCacheSize) * 2
+		// the pebble db and all import routine need upto maxDBFiles fds for read and write.
+		maxOpenDBFiles := maxDBFiles * (1 + int64(cfg.TikvImporter.RangeConcurrency))
+		estimateMaxFiles := local.Rlim_t(cfg.App.RegionConcurrency) + local.Rlim_t(maxOpenDBFiles)
 		if err := local.VerifyRLimit(estimateMaxFiles); err != nil {
 			return err
 		}
