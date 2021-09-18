@@ -22,21 +22,12 @@ import (
 	"testing"
 	"time"
 
-	// TODO: Remove this later
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/require"
 )
-
-// TODO: Remove this later
-var _ = Suite(&testDatumSuite{})
-
-// TODO: Remove this later
-type testDatumSuite struct {
-}
 
 func TestDatum(t *testing.T) {
 	t.Parallel()
