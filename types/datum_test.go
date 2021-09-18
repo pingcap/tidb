@@ -415,7 +415,8 @@ func TestEstimatedMemUsage(t *testing.T) {
 	require.Equal(t, bytesConsumed, int(EstimatedMemUsage(datumArray, 10)))
 }
 
-func (ts *testDatumSuite) TestChangeReverseResultByUpperLowerBound(c *C) {
+func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
+	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 	sc.OverflowAsWarning = true
@@ -479,13 +480,13 @@ func (ts *testDatumSuite) TestChangeReverseResultByUpperLowerBound(c *C) {
 		// int64 reserve to Decimal
 		{
 			NewIntDatum(1),
-			NewDecimalDatum(newMyDecimal("2", c)),
+			NewDecimalDatum(newMyDecimalCopy("2", t)),
 			newRetTypeWithFlenDecimal(mysql.TypeNewDecimal, 30, 3),
 			Ceiling,
 		},
 		{
 			NewIntDatum(1),
-			NewDecimalDatum(newMyDecimal("1", c)),
+			NewDecimalDatum(newMyDecimalCopy("1", t)),
 			newRetTypeWithFlenDecimal(mysql.TypeNewDecimal, 30, 3),
 			Floor,
 		},
@@ -497,18 +498,18 @@ func (ts *testDatumSuite) TestChangeReverseResultByUpperLowerBound(c *C) {
 		},
 		{
 			NewIntDatum(math.MaxInt64),
-			NewDecimalDatum(newMyDecimal(strconv.FormatInt(math.MaxInt64, 10), c)),
+			NewDecimalDatum(newMyDecimalCopy(strconv.FormatInt(math.MaxInt64, 10), t)),
 			newRetTypeWithFlenDecimal(mysql.TypeNewDecimal, 30, 3),
 			Floor,
 		},
 	}
 	for ith, test := range testData {
 		reverseRes, err := ChangeReverseResultByUpperLowerBound(sc, test.retType, test.a, test.roundType)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		var cmp int
 		cmp, err = reverseRes.CompareDatum(sc, &test.res)
-		c.Assert(err, IsNil)
-		c.Assert(cmp, Equals, 0, Commentf("%dth got:%#v, expect:%#v", ith, reverseRes, test.res))
+		require.NoError(t, err)
+		require.Equalf(t, 0, cmp, "%dth got:%#v, expect:%#v", ith, reverseRes, test.res)
 	}
 }
 
