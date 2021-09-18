@@ -1146,7 +1146,8 @@ func TestStrToDuration(t *testing.T) {
 	}
 }
 
-func (s *testTypeConvertSuite) TestConvertScientificNotation(c *C) {
+func TestConvertScientificNotation(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		input  string
 		output string
@@ -1173,10 +1174,10 @@ func (s *testTypeConvertSuite) TestConvertScientificNotation(c *C) {
 	for _, ca := range cases {
 		result, err := convertScientificNotation(ca.input)
 		if !ca.succ {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			c.Assert(ca.output, Equals, result)
+			require.NoError(t, err)
+			require.Equal(t, ca.output, result)
 		}
 	}
 }
