@@ -338,46 +338,46 @@ func TestConvertType(t *testing.T) {
 	require.Error(t, err)
 }
 
-func testToString(c *C, val interface{}, expect string) {
+func testToString(t *testing.T, val interface{}, expect string) {
 	b, err := ToString(val)
-	c.Assert(err, IsNil)
-	c.Assert(b, Equals, expect)
+	require.NoError(t, err)
+	require.Equal(t, expect, b)
 }
 
-func (s *testTypeConvertSuite) TestConvertToString(c *C) {
-	defer testleak.AfterTest(c)()
-	testToString(c, "0", "0")
-	testToString(c, true, "1")
-	testToString(c, "false", "false")
-	testToString(c, 0, "0")
-	testToString(c, int64(0), "0")
-	testToString(c, uint64(0), "0")
-	testToString(c, float32(1.6), "1.6")
-	testToString(c, float64(-0.6), "-0.6")
-	testToString(c, []byte{1}, "\x01")
-	testToString(c, NewBinaryLiteralFromUint(0x4D7953514C, -1), "MySQL")
-	testToString(c, NewBinaryLiteralFromUint(0x41, -1), "A")
-	testToString(c, Enum{Name: "a", Value: 1}, "a")
-	testToString(c, Set{Name: "a", Value: 1}, "a")
+func TestConvertToString(t *testing.T) {
+	t.Parallel()
+	testToString(t, "0", "0")
+	testToString(t, true, "1")
+	testToString(t, "false", "false")
+	testToString(t, 0, "0")
+	testToString(t, int64(0), "0")
+	testToString(t, uint64(0), "0")
+	testToString(t, float32(1.6), "1.6")
+	testToString(t, float64(-0.6), "-0.6")
+	testToString(t, []byte{1}, "\x01")
+	testToString(t, NewBinaryLiteralFromUint(0x4D7953514C, -1), "MySQL")
+	testToString(t, NewBinaryLiteralFromUint(0x41, -1), "A")
+	testToString(t, Enum{Name: "a", Value: 1}, "a")
+	testToString(t, Set{Name: "a", Value: 1}, "a")
 
-	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC},
+	t1, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC},
 		"2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
-	c.Assert(err, IsNil)
-	testToString(c, t, "2011-11-10 11:11:11.999999")
+	require.NoError(t, err)
+	testToString(t, t1, "2011-11-10 11:11:11.999999")
 
 	td, err := ParseDuration(nil, "11:11:11.999999", 6)
-	c.Assert(err, IsNil)
-	testToString(c, td, "11:11:11.999999")
+	require.NoError(t, err)
+	testToString(t, td, "11:11:11.999999")
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
 	ft.Flen = 10
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
-	c.Assert(err, IsNil)
-	testToString(c, v, "3.14159")
+	require.NoError(t, err)
+	testToString(t, v, "3.14159")
 
 	_, err = ToString(&invalidMockType{})
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// test truncate
 	tests := []struct {
@@ -402,11 +402,11 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 		sc := new(stmtctx.StatementContext)
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
 		if tt.input != tt.output {
-			c.Assert(ErrDataTooLong.Equal(err), IsTrue)
+			require.True(t, ErrDataTooLong.Equal(err))
 		} else {
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
-		c.Assert(outputDatum.GetString(), Equals, tt.output)
+		require.Equal(t, tt.output, outputDatum.GetString())
 	}
 }
 
