@@ -1126,7 +1126,8 @@ func TestNumberToDuration(t *testing.T) {
 	}
 }
 
-func (s *testTypeConvertSuite) TestStrToDuration(c *C) {
+func TestStrToDuration(t *testing.T) {
+	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	var tests = []struct {
 		str        string
@@ -1140,8 +1141,8 @@ func (s *testTypeConvertSuite) TestStrToDuration(c *C) {
 	}
 	for _, tt := range tests {
 		_, _, isDuration, err := StrToDuration(sc, tt.str, tt.fsp)
-		c.Assert(err, IsNil)
-		c.Assert(isDuration, Equals, tt.isDuration)
+		require.NoError(t, err)
+		require.Equal(t, tt.isDuration, isDuration)
 	}
 }
 
