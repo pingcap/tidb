@@ -285,7 +285,6 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd]\"")
 
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
@@ -297,7 +296,7 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
 		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
 		c.Assert(policySetting.Followers, Equals, uint64(2))
-		c.Assert(policySetting.FollowerConstraints, Equals, "[+zone=cn-east-1]")
+		c.Assert(policySetting.FollowerConstraints, Equals, "")
 		c.Assert(policySetting.Voters, Equals, uint64(0))
 		c.Assert(policySetting.VoterConstraints, Equals, "")
 		c.Assert(policySetting.Learners, Equals, uint64(0))
@@ -313,7 +312,6 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd]\" " +
 		"PLACEMENT POLICY=\"x\"")
 	c.Assert(err, NotNil)
@@ -326,7 +324,6 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
 	tk.MustExec("create table t(a int)" +
 		"PLACEMENT POLICY=\"x\"")
@@ -352,7 +349,6 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
 
 	tbl = testGetTableByName(c, tk.Se, "test", "t")
@@ -363,7 +359,7 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
 		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
 		c.Assert(policySetting.Followers, Equals, uint64(2))
-		c.Assert(policySetting.FollowerConstraints, Equals, "[+zone=cn-east-1]")
+		c.Assert(policySetting.FollowerConstraints, Equals, "")
 		c.Assert(policySetting.Voters, Equals, uint64(0))
 		c.Assert(policySetting.VoterConstraints, Equals, "")
 		c.Assert(policySetting.Learners, Equals, uint64(0))
