@@ -530,7 +530,7 @@ func (ds *DataSource) generateIndexMergeOrPaths() error {
 		dnfItems := expression.FlattenDNFConditions(sf)
 		for _, item := range dnfItems {
 			cnfItems := expression.SplitCNFItems(item)
-			itemPaths := ds.accessPathsForConds(cnfItems, usedIndexCount)
+			itemPaths := ds.indexMergeAccessPathsForConds(cnfItems, usedIndexCount)
 			if len(itemPaths) == 0 {
 				partialPaths = nil
 				break
@@ -602,7 +602,7 @@ func (ds *DataSource) isInIndexMergeHints(name string) bool {
 }
 
 // accessPathsForConds generates all possible index paths for conditions.
-func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, usedIndexCount int) []*util.AccessPath {
+func (ds *DataSource) indexMergeAccessPathsForConds(conditions []expression.Expression, usedIndexCount int) []*util.AccessPath {
 	var results = make([]*util.AccessPath, 0, usedIndexCount)
 	for i := 0; i < usedIndexCount; i++ {
 		path := &util.AccessPath{}
