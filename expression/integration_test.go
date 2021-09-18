@@ -2738,6 +2738,35 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("9223372036854775808", "9223372036854775808"))
 	tk.MustExec(`drop table tb5`)
 
+	// test builtinCastStringAsDecimalSig
+	tk.MustExec(`drop table if exists tb5`)
+	tk.MustExec(`create table tb5 (a varchar(20));`)
+	tk.MustExec(`insert into tb5 values ('123'), ('.0a1');`)
+	result = tk.MustQuery(`select cast(a as decimal(10, 2)) from tb5;`)
+	result.Check(testkit.Rows("123.00", "0.00"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '.0a1'"))
+
+	result = tk.MustQuery("select cast('123E5a' as decimal(10,2));")
+	result.Check(testkit.Rows("12300000.00"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '123E5a'"))
+
+	result = tk.MustQuery(`select cast('123aE5' as decimal(10, 2));`)
+	result.Check(testkit.Rows("123.00"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '123aE5'"))
+
+	result = tk.MustQuery(`select cast('1.4a' as decimal(10, 2));`)
+	result.Check(testkit.Rows("1.40"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '1.4a'"))
+
+	result = tk.MustQuery(`select cast('1e - 1' as decimal);`)
+	result.Check(testkit.Rows("1"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '1e - 1'"))
+
+	result = tk.MustQuery(`select cast('1 1' as decimal)`)
+	result.Check(testkit.Rows("1"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '1 1'"))
+	tk.MustExec(`drop table tb5`)
+
 	// test builtinCastIntAsRealSig
 	tk.MustExec(`drop table if exists tb5`)
 	tk.MustExec(`create table tb5 (a bigint(64) unsigned, b double(64, 10));`)

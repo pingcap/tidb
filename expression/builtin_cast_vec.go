@@ -837,7 +837,7 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 				if types.ErrOverflow.Equal(err) {
 					warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
 					err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
-				} else if types.ErrTruncated.Equal(err) {
+				} else if strings.Contains(err.Error(), "Truncated incorrect") {
 					// This behavior is consistent with MySQL.
 					err = nil
 				}

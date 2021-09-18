@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 )
 
 var _ = Suite(&testMyDecimalSuite{})
@@ -534,8 +535,8 @@ func (s *testMyDecimalSerialSuite) TestFromString(c *C) {
 	tests := []tcase{
 		{"12345", "12345", nil},
 		{"12345.", "12345", nil},
-		{"123.45.", "123.45", nil},
-		{"-123.45.", "-123.45", nil},
+		{"123.45.", "123.45", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "123.45.")},
+		{"-123.45.", "-123.45", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "-123.45.")},
 		{".00012345000098765", "0.00012345000098765", nil},
 		{".12345000098765", "0.12345000098765", nil},
 		{"-.000000012345000098765", "-0.000000012345000098765", nil},
@@ -545,31 +546,40 @@ func (s *testMyDecimalSerialSuite) TestFromString(c *C) {
 		{"1e1073741823", "999999999999999999999999999999999999999999999999999999999999999999999999999999999", ErrOverflow},
 		{"-1e1073741823", "-999999999999999999999999999999999999999999999999999999999999999999999999999999999", ErrOverflow},
 		{"1e18446744073709551620", "0", ErrBadNumber},
-		{"1e", "1", ErrTruncated},
+		{"1e", "1", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "1e")},
 		{"1e001", "10", nil},
 		{"1e00", "1", nil},
-		{"1eabc", "1", ErrTruncated},
-		{"1e 1dddd ", "10", ErrTruncated},
-		{"1e - 1", "1", ErrTruncated},
+		{"1eabc", "1", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "1eabc")},
+		{"1e 1dddd ", "10", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "1e 1dddd ")},
+		{"1e - 1", "1", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "1e - 1")},
 		{"1e -1", "0.1", nil},
-		{"0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000", "0.000000000000000000000000000000000000000000000000000000000000000000000000", ErrTruncated},
+		{"0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+			"0.000000000000000000000000000000000000000000000000000000000000000000000000",
+			ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL",
+				"0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")},
+		{"0.1a2", "0.1", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "0.1a2")},
+		{"123aE5", "123", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "123aE5")},
+		{"123E5a", "12300000", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "123E5a")},
+		{"1 1", "1", ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "1 1")},
 	}
 	for _, ca := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(ca.input))
-		c.Check(err, Equals, ca.err, Commentf("input: %s", ca.input))
+
+		c.Assert(terror.ErrorEqual(err, ca.err), IsTrue, Commentf("input: %s", ca.input))
 		result := dec.ToString()
 		c.Check(string(result), Equals, ca.output, Commentf("dec:%s", dec.String()))
 	}
 	wordBufLen = 1
 	tests = []tcase{
 		{"123450000098765", "98765", ErrOverflow},
-		{"123450.000098765", "123450", ErrTruncated},
+		{"123450.000098765", "123450",
+			ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", "123450.000098765")},
 	}
 	for _, ca := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(ca.input))
-		c.Check(err, Equals, ca.err)
+		c.Assert(terror.ErrorEqual(err, ca.err), IsTrue)
 		result := dec.ToString()
 		c.Check(string(result), Equals, ca.output, Commentf("dec:%s", dec.String()))
 	}
