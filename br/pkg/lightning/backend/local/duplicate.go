@@ -477,6 +477,9 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 					}
 					dataConflictInfos = append(dataConflictInfos, conflictInfo)
 				}
+				if err := iter.Error(); err != nil {
+					return err
+				}
 				if err := manager.errorMgr.RecordDataConflictError(ctx, log.L(), decoder.Name(), dataConflictInfos); err != nil {
 					return err
 				}
