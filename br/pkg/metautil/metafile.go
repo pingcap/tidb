@@ -16,6 +16,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/encrypt"
 	"go.uber.org/zap"
 )
 
@@ -49,9 +51,28 @@ const (
 	MetaV2
 )
 
+func Decrypt(content []byte, cipher *backuppb.CipherInfo) ([]byte, error) {
+	if encryptionpb.EncryptionMethod_PLAINTEXT == cipher.CipherType {
+		return content, nil
+	}
+
+	return encrypt.AESDecryptWithECB(content, []byte(cipher.CipherKey))
+}
+
+func Encrypt(content []byte, cipher *backuppb.CipherInfo) ([]byte, error) {
+	if encryptionpb.EncryptionMethod_PLAINTEXT == cipher.CipherType {
+		return content, nil
+	}
+
+	return encrypt.AESEncryptWithECB(content, []byte(cipher.CipherKey))
+}
+
 func walkLeafMetaFile(
-	ctx context.Context, storage storage.ExternalStorage, file *backuppb.MetaFile, output func(*backuppb.MetaFile),
-) error {
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	file *backuppb.MetaFile,
+	cipher *backuppb.CipherInfo,
+	output func(*backuppb.MetaFile)) error {
 	if file == nil {
 		return nil
 	}
@@ -64,16 +85,23 @@ func walkLeafMetaFile(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		checksum := sha256.Sum256(content)
+
+		decryptContent, err := Decrypt(content, cipher)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		checksum := sha256.Sum256(decryptContent)
 		if !bytes.Equal(node.Sha256, checksum[:]) {
 			return errors.Annotatef(berrors.ErrInvalidMetaFile,
 				"checksum mismatch expect %x, got %x", node.Sha256, checksum[:])
 		}
+
 		child := &backuppb.MetaFile{}
-		if err = proto.Unmarshal(content, child); err != nil {
+		if err = proto.Unmarshal(decryptContent, child); err != nil {
 			return errors.Trace(err)
 		}
-		if err = walkLeafMetaFile(ctx, storage, child, output); err != nil {
+		if err = walkLeafMetaFile(ctx, storage, child, cipher, output); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -101,13 +129,18 @@ func (tbl *Table) NoChecksum() bool {
 type MetaReader struct {
 	storage    storage.ExternalStorage
 	backupMeta *backuppb.BackupMeta
+	cipher     *backuppb.CipherInfo
 }
 
 // NewMetaReader creates MetaReader.
-func NewMetaReader(backpMeta *backuppb.BackupMeta, storage storage.ExternalStorage) *MetaReader {
+func NewMetaReader(
+	backpMeta *backuppb.BackupMeta,
+	storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo) *MetaReader {
 	return &MetaReader{
 		storage:    storage,
 		backupMeta: backpMeta,
+		cipher:     cipher,
 	}
 }
 
@@ -124,7 +157,7 @@ func (reader *MetaReader) readDDLs(ctx context.Context, output func([]byte)) err
 			output(s)
 		}
 	}
-	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.DdlIndexes, outputFn)
+	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.DdlIndexes, reader.cipher, outputFn)
 }
 
 func (reader *MetaReader) readSchemas(ctx context.Context, output func(*backuppb.Schema)) error {
@@ -138,7 +171,7 @@ func (reader *MetaReader) readSchemas(ctx context.Context, output func(*backuppb
 			output(s)
 		}
 	}
-	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.SchemaIndex, outputFn)
+	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.SchemaIndex, reader.cipher, outputFn)
 }
 
 func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backuppb.File)) error {
@@ -152,7 +185,7 @@ func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backup
 			output(f)
 		}
 	}
-	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.FileIndex, outputFn)
+	return walkLeafMetaFile(ctx, reader.storage, reader.backupMeta.FileIndex, reader.cipher, outputFn)
 }
 
 // ArchiveSize return the size of Archive data
@@ -429,10 +462,14 @@ type MetaWriter struct {
 
 	// records the total item of in one write meta job.
 	flushedItemNum int
+
+	cipher *backuppb.CipherInfo
 }
 
 // NewMetaWriter creates MetaWriter.
-func NewMetaWriter(storage storage.ExternalStorage, metafileSizeLimit int, useV2Meta bool) *MetaWriter {
+func NewMetaWriter(storage storage.ExternalStorage,
+	metafileSizeLimit int,
+	useV2Meta bool, cipher *backuppb.CipherInfo) *MetaWriter {
 	return &MetaWriter{
 		start:             time.Now(),
 		storage:           storage,
@@ -444,6 +481,7 @@ func NewMetaWriter(storage storage.ExternalStorage, metafileSizeLimit int, useV2
 		metafileSizes:  make(map[string]int),
 		metafiles:      NewSizedMetaFile(metafileSizeLimit),
 		metafileSeqNum: make(map[string]int),
+		cipher:         cipher,
 	}
 }
 
@@ -561,7 +599,13 @@ func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 	}
 	log.Debug("backup meta", zap.Reflect("meta", writer.backupMeta))
 	log.Info("save backup meta", zap.Int("size", len(backupMetaData)))
-	return writer.storage.WriteFile(ctx, MetaFile, backupMetaData)
+
+	encryptBuff, err := Encrypt(backupMetaData, writer.cipher)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return writer.storage.WriteFile(ctx, MetaFile, encryptBuff)
 }
 
 // fillMetasV1 keep the compatibility for old version.
@@ -620,7 +664,13 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 	// Flush metafiles to external storage.
 	writer.metafileSeqNum["metafiles"] += 1
 	fname := fmt.Sprintf("backupmeta.%s.%09d", name, writer.metafileSeqNum["metafiles"])
-	if err = writer.storage.WriteFile(ctx, fname, content); err != nil {
+
+	encypterContent, err := Encrypt(content, writer.cipher)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = writer.storage.WriteFile(ctx, fname, encypterContent); err != nil {
 		return errors.Trace(err)
 	}
 	checksum := sha256.Sum256(content)

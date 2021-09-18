@@ -261,6 +261,7 @@ func (importer *FileImporter) Import(
 	ctx context.Context,
 	files []*backuppb.File,
 	rewriteRules *RewriteRules,
+	crypter *backuppb.CipherInfo,
 ) error {
 	start := time.Now()
 	log.Debug("import file", logutil.Files(files))
@@ -314,7 +315,7 @@ func (importer *FileImporter) Import(
 					if importer.isRawKvMode {
 						downloadMeta, e = importer.downloadRawKVSST(ctx, info, f)
 					} else {
-						downloadMeta, e = importer.downloadSST(ctx, info, f, rewriteRules)
+						downloadMeta, e = importer.downloadSST(ctx, info, f, rewriteRules, crypter)
 					}
 					failpoint.Inject("restore-storage-error", func(val failpoint.Value) {
 						msg := val.(string)
@@ -451,6 +452,7 @@ func (importer *FileImporter) downloadSST(
 	regionInfo *RegionInfo,
 	file *backuppb.File,
 	rewriteRules *RewriteRules,
+	cipher *backuppb.CipherInfo,
 ) (*import_sstpb.SSTMeta, error) {
 	uid := uuid.New()
 	id := uid[:]
@@ -470,6 +472,7 @@ func (importer *FileImporter) downloadSST(
 		StorageBackend: importer.backend,
 		Name:           file.GetName(),
 		RewriteRule:    rule,
+		CipherInfo:     cipher,
 	}
 	log.Debug("download SST",
 		logutil.SSTMeta(&sstMeta),

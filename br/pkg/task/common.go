@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -15,11 +16,13 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -72,7 +75,15 @@ const (
 	defaultGRPCKeepaliveTime    = 10 * time.Second
 	defaultGRPCKeepaliveTimeout = 3 * time.Second
 
-	unlimited = 0
+	flagCrypter        = "crypter.type"
+	flagCipherKey      = "crypter.key"
+	flagCipherFilePath = "crypter.filepath"
+
+	unlimited           = 0
+	crypterAES128KeyLen = 16
+	crypterAES192KeyLen = 24
+	crypterAES256KeyLen = 32
+	crypterIvLen        = 16
 )
 
 // TLSConfig is the common configuration for TLS connection.
@@ -99,6 +110,13 @@ func (tls *TLSConfig) ToTLSConfig() (*tls.Config, error) {
 		return nil, errors.Trace(err)
 	}
 	return tlsConfig, nil
+}
+
+// ParseFromFlags parses the TLS config from the flag set.
+func (tls *TLSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+	var err error
+	tls.CA, tls.Cert, tls.Key, err = ParseTLSTripleFromFlags(flags)
+	return err
 }
 
 // Config is the common configuration for all BRIE tasks.
@@ -148,6 +166,8 @@ type Config struct {
 	GRPCKeepaliveTime time.Duration `json:"grpc-keepalive-time" toml:"grpc-keepalive-time"`
 	// GrpcKeepaliveTimeout is the max time a grpc conn can keep idel before killed.
 	GRPCKeepaliveTimeout time.Duration `json:"grpc-keepalive-timeout" toml:"grpc-keepalive-timeout"`
+
+	CipherInfo backuppb.CipherInfo
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -195,6 +215,14 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.BoolP(flagSkipCheckPath, "", false, "Skip path verification")
 	_ = flags.MarkHidden(flagSkipCheckPath)
 
+	flags.String(flagCrypter, "NONE",
+		"Encrypt/decrypt algorithm, can be one of ‘NONE|AES128|AES192|AES256’, default: \"NONE\" represent no encrypt/decrypt."+
+			"\nNote: 1. If AES128|AES192|AES256, should fill in one of crypter.key and crypter.filepath with 16|24|32 bytes"+
+			"\n      2. If the key is lost, the backup data cannot be decrypted")
+	flags.String(flagCipherKey, "",
+		"Encrypt/decrypt key, used to generate encrypted data and restore original data")
+	flags.String(flagCipherFilePath, "", "FilePath, its content is used as the cipher-key")
+
 	storage.DefineFlags(flags)
 }
 
@@ -218,13 +246,6 @@ func DefineFilterFlags(command *cobra.Command, defaultFilter []string) {
 	flags.Bool(flagCaseSensitive, false, "whether the table names used in --filter should be case-sensitive")
 }
 
-// ParseFromFlags parses the TLS config from the flag set.
-func (tls *TLSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
-	var err error
-	tls.CA, tls.Cert, tls.Key, err = ParseTLSTripleFromFlags(flags)
-	return err
-}
-
 // ParseTLSTripleFromFlags parses the (ca, cert, key) triple from flags.
 func ParseTLSTripleFromFlags(flags *pflag.FlagSet) (ca, cert, key string, err error) {
 	ca, err = flags.GetString(flagCA)
@@ -240,6 +261,108 @@ func ParseTLSTripleFromFlags(flags *pflag.FlagSet) (ca, cert, key string, err er
 		return
 	}
 	return
+}
+
+func parseCipherType(t string) (encryptionpb.EncryptionMethod, error) {
+	ct := encryptionpb.EncryptionMethod_UNKNOWN
+	switch t {
+	case "NONE":
+		ct = encryptionpb.EncryptionMethod_PLAINTEXT
+	case "AES128":
+		ct = encryptionpb.EncryptionMethod_AES128_CTR
+	case "AES192":
+		ct = encryptionpb.EncryptionMethod_AES192_CTR
+	case "AES256":
+		ct = encryptionpb.EncryptionMethod_AES256_CTR
+	default:
+		return ct, errors.Annotatef(berrors.ErrInvalidArgument, "invalid crypther type '%s'", t)
+	}
+
+	return ct, nil
+}
+
+func checkCipherKey(cipherKey, cipherFilePath string) error {
+	if (len(cipherKey) == 0 && len(cipherFilePath) == 0) ||
+		(len(cipherKey) > 0 && len(cipherFilePath) > 0) {
+		return errors.Annotate(berrors.ErrInvalidArgument,
+			"one of cipher key and filepath should be fill")
+	}
+	return nil
+}
+
+func getCipherKeyContent(cipherKey, cipherFilePath string) (string, error) {
+	var keyContent string
+	if err := checkCipherKey(cipherKey, cipherFilePath); err != nil {
+		return keyContent, errors.Trace(err)
+	}
+
+	if len(cipherKey) > 0 {
+		return cipherKey, nil
+	}
+
+	content, err := os.ReadFile(cipherFilePath)
+	if err != nil {
+		return keyContent, errors.Annotate(err, "failed to read cipher file")
+	}
+
+	return string(content[:len(content)-1]), nil
+}
+
+func checkCipherTypeAndKey(cipher *backuppb.CipherInfo) bool {
+	switch cipher.CipherType {
+	case encryptionpb.EncryptionMethod_PLAINTEXT:
+		return true
+	case encryptionpb.EncryptionMethod_AES128_CTR:
+		return len(cipher.CipherKey) == crypterAES128KeyLen
+	case encryptionpb.EncryptionMethod_AES192_CTR:
+		return len(cipher.CipherKey) == crypterAES192KeyLen
+	case encryptionpb.EncryptionMethod_AES256_CTR:
+		return len(cipher.CipherKey) == crypterAES256KeyLen
+	default:
+		return false
+	}
+}
+
+func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
+	crypterStr, err := flags.GetString(flagCrypter)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	cfg.CipherInfo.CipherType, err = parseCipherType(crypterStr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Set [16]uint8 to CipherIv if cipherType is PlainText
+	if cfg.CipherInfo.CipherType == encryptionpb.EncryptionMethod_PLAINTEXT {
+		var iv [crypterIvLen]uint8
+		cfg.CipherInfo.CipherIv = string(iv[:])
+		return nil
+	}
+
+	key, err := flags.GetString(flagCipherKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	filePath, err := flags.GetString(flagCipherFilePath)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	cfg.CipherInfo.CipherKey, err = getCipherKeyContent(key, filePath)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !checkCipherTypeAndKey(&cfg.CipherInfo) {
+		return errors.Annotate(err, "Cipher type and key not match")
+	}
+
+	// regards cipher key[:16] as cipher iv
+	cfg.CipherInfo.CipherIv = cfg.CipherInfo.CipherKey[:crypterIvLen]
+	return nil
 }
 
 func (cfg *Config) normalizePDURLs() error {
@@ -366,6 +489,11 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.SkipCheckPath, err = flags.GetBool(flagSkipCheckPath); err != nil {
 		return errors.Trace(err)
 	}
+
+	if err = cfg.parseCipherInfo(flags); err != nil {
+		return errors.Trace(err)
+	}
+
 	return cfg.normalizePDURLs()
 }
 
@@ -461,9 +589,16 @@ func ReadBackupMeta(
 			return nil, nil, nil, errors.Annotate(err, "load backupmeta failed")
 		}
 	}
+
+	decryptBackupMeta, err := metautil.Decrypt(metaData, &cfg.CipherInfo)
+	if err != nil {
+		return nil, nil, nil, errors.Annotate(err, "decrypt failed with wrong key")
+	}
+
 	backupMeta := &backuppb.BackupMeta{}
-	if err = proto.Unmarshal(metaData, backupMeta); err != nil {
-		return nil, nil, nil, errors.Annotate(err, "parse backupmeta failed")
+	if err = proto.Unmarshal(decryptBackupMeta, backupMeta); err != nil {
+		return nil, nil, nil, errors.Annotate(err,
+			"parse backupmeta failed because of wrong aes cipher")
 	}
 	return u, s, backupMeta, nil
 }
