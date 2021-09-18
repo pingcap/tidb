@@ -34,8 +34,8 @@ func TestRangeTree(t *testing.T) {
 		t.Logf("%#v %#v\n%#v\n%#v\n", startKey, endKey, incomplete, ranges)
 		require.Equal(t, len(ranges), len(incomplete))
 		for idx, rg := range incomplete {
-			require.Equal(t, ranges[idx].StartKey, rg.StartKey)
-			require.Equal(t, ranges[idx].EndKey, rg.EndKey)
+			require.Equalf(t, ranges[idx].StartKey, rg.StartKey, "idx=%d", idx)
+			require.Equalf(t, ranges[idx].EndKey, rg.EndKey, "idx=%d", idx)
 		}
 	}
 	assertAllComplete := func() {
