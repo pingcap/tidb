@@ -621,7 +621,7 @@ func (s *testIntegrationSuite1) TestDisableTablePartition(c *C) {
 
 func (s *testIntegrationSuite1) generatePartitionTableByNum(num int) string {
 	buf := bytes.NewBuffer(make([]byte, 0, 1024*1024))
-	buf.WriteString("create table t (id int) partition by list  (id) (")
+	buf.WriteString("create table gen_t (id int) partition by list  (id) (")
 	for i := 0; i < num; i++ {
 		if i > 0 {
 			buf.WriteString(",")
@@ -762,10 +762,14 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		s.generatePartitionTableByNum(ddl.PartitionCountLimit),
 	}
 
-	for _, sql := range validCases {
+	for id, sql := range validCases {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(sql)
-		tbl := testGetTableByName(c, s.ctx, "test", "t")
+		tblName := "t"
+		if id == len(validCases)-1 {
+			tblName = "gen_t"
+		}
+		tbl := testGetTableByName(c, s.ctx, "test", tblName)
 		tblInfo := tbl.Meta()
 		c.Assert(tblInfo.Partition, NotNil)
 		c.Assert(tblInfo.Partition.Enable, Equals, true)
@@ -2174,7 +2178,7 @@ func checkPartitionDelRangeDone(c *C, s *testIntegrationSuite, partitionPrefix k
 	return hasOldPartitionData
 }
 
-func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
+func (s *testIntegrationSuite5) TestTruncatePartitionAndDropTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	// Test truncate common table.
