@@ -410,91 +410,91 @@ func TestConvertToString(t *testing.T) {
 	}
 }
 
-func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr error) {
+func testStrToInt(t *testing.T, str string, expect int64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToInt(sc, str, false)
 	if expectErr != nil {
-		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
+		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
 	} else {
-		c.Assert(err, IsNil)
-		c.Assert(val, Equals, expect)
+		require.NoError(t, err)
+		require.Equal(t, expect, val)
 	}
 }
 
-func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectErr error) {
+func testStrToUint(t *testing.T, str string, expect uint64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToUint(sc, str, false)
 	if expectErr != nil {
-		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
+		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
 	} else {
-		c.Assert(err, IsNil)
-		c.Assert(val, Equals, expect)
+		require.NoError(t, err)
+		require.Equal(t, expect, val)
 	}
 }
 
-func testStrToFloat(c *C, str string, expect float64, truncateAsErr bool, expectErr error) {
+func testStrToFloat(t *testing.T, str string, expect float64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToFloat(sc, str, false)
 	if expectErr != nil {
-		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
+		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
 	} else {
-		c.Assert(err, IsNil)
-		c.Assert(val, Equals, expect)
+		require.NoError(t, err)
+		require.Equal(t, expect, val)
 	}
 }
 
-func (s *testTypeConvertSuite) TestStrToNum(c *C) {
-	defer testleak.AfterTest(c)()
-	testStrToInt(c, "0", 0, true, nil)
-	testStrToInt(c, "-1", -1, true, nil)
-	testStrToInt(c, "100", 100, true, nil)
-	testStrToInt(c, "65.0", 65, false, nil)
-	testStrToInt(c, "65.0", 65, true, nil)
-	testStrToInt(c, "", 0, false, nil)
-	testStrToInt(c, "", 0, true, ErrTruncatedWrongVal)
-	testStrToInt(c, "xx", 0, true, ErrTruncatedWrongVal)
-	testStrToInt(c, "xx", 0, false, nil)
-	testStrToInt(c, "11xx", 11, true, ErrTruncatedWrongVal)
-	testStrToInt(c, "11xx", 11, false, nil)
-	testStrToInt(c, "xx11", 0, false, nil)
+func TestStrToNum(t *testing.T) {
+	t.Parallel()
+	testStrToInt(t, "0", 0, true, nil)
+	testStrToInt(t, "-1", -1, true, nil)
+	testStrToInt(t, "100", 100, true, nil)
+	testStrToInt(t, "65.0", 65, false, nil)
+	testStrToInt(t, "65.0", 65, true, nil)
+	testStrToInt(t, "", 0, false, nil)
+	testStrToInt(t, "", 0, true, ErrTruncatedWrongVal)
+	testStrToInt(t, "xx", 0, true, ErrTruncatedWrongVal)
+	testStrToInt(t, "xx", 0, false, nil)
+	testStrToInt(t, "11xx", 11, true, ErrTruncatedWrongVal)
+	testStrToInt(t, "11xx", 11, false, nil)
+	testStrToInt(t, "xx11", 0, false, nil)
 
-	testStrToUint(c, "0", 0, true, nil)
-	testStrToUint(c, "", 0, false, nil)
-	testStrToUint(c, "", 0, false, nil)
-	testStrToUint(c, "-1", 0xffffffffffffffff, false, ErrOverflow)
-	testStrToUint(c, "100", 100, true, nil)
-	testStrToUint(c, "+100", 100, true, nil)
-	testStrToUint(c, "65.0", 65, true, nil)
-	testStrToUint(c, "xx", 0, true, ErrTruncatedWrongVal)
-	testStrToUint(c, "11xx", 11, true, ErrTruncatedWrongVal)
-	testStrToUint(c, "xx11", 0, true, ErrTruncatedWrongVal)
+	testStrToUint(t, "0", 0, true, nil)
+	testStrToUint(t, "", 0, false, nil)
+	testStrToUint(t, "", 0, false, nil)
+	testStrToUint(t, "-1", 0xffffffffffffffff, false, ErrOverflow)
+	testStrToUint(t, "100", 100, true, nil)
+	testStrToUint(t, "+100", 100, true, nil)
+	testStrToUint(t, "65.0", 65, true, nil)
+	testStrToUint(t, "xx", 0, true, ErrTruncatedWrongVal)
+	testStrToUint(t, "11xx", 11, true, ErrTruncatedWrongVal)
+	testStrToUint(t, "xx11", 0, true, ErrTruncatedWrongVal)
 
 	// TODO: makes StrToFloat return truncated value instead of zero to make it pass.
-	testStrToFloat(c, "", 0, true, ErrTruncatedWrongVal)
-	testStrToFloat(c, "-1", -1.0, true, nil)
-	testStrToFloat(c, "1.11", 1.11, true, nil)
-	testStrToFloat(c, "1.11.00", 1.11, false, nil)
-	testStrToFloat(c, "1.11.00", 1.11, true, ErrTruncatedWrongVal)
-	testStrToFloat(c, "xx", 0.0, false, nil)
-	testStrToFloat(c, "0x00", 0.0, false, nil)
-	testStrToFloat(c, "11.xx", 11.0, false, nil)
-	testStrToFloat(c, "11.xx", 11.0, true, ErrTruncatedWrongVal)
-	testStrToFloat(c, "xx.11", 0.0, false, nil)
+	testStrToFloat(t, "", 0, true, ErrTruncatedWrongVal)
+	testStrToFloat(t, "-1", -1.0, true, nil)
+	testStrToFloat(t, "1.11", 1.11, true, nil)
+	testStrToFloat(t, "1.11.00", 1.11, false, nil)
+	testStrToFloat(t, "1.11.00", 1.11, true, ErrTruncatedWrongVal)
+	testStrToFloat(t, "xx", 0.0, false, nil)
+	testStrToFloat(t, "0x00", 0.0, false, nil)
+	testStrToFloat(t, "11.xx", 11.0, false, nil)
+	testStrToFloat(t, "11.xx", 11.0, true, ErrTruncatedWrongVal)
+	testStrToFloat(t, "xx.11", 0.0, false, nil)
 
 	// for issue #5111
-	testStrToFloat(c, "1e649", math.MaxFloat64, true, ErrTruncatedWrongVal)
-	testStrToFloat(c, "1e649", math.MaxFloat64, false, nil)
-	testStrToFloat(c, "-1e649", -math.MaxFloat64, true, ErrTruncatedWrongVal)
-	testStrToFloat(c, "-1e649", -math.MaxFloat64, false, nil)
+	testStrToFloat(t, "1e649", math.MaxFloat64, true, ErrTruncatedWrongVal)
+	testStrToFloat(t, "1e649", math.MaxFloat64, false, nil)
+	testStrToFloat(t, "-1e649", -math.MaxFloat64, true, ErrTruncatedWrongVal)
+	testStrToFloat(t, "-1e649", -math.MaxFloat64, false, nil)
 
 	// for issue #10806, #11179
-	testSelectUpdateDeleteEmptyStringError(c)
+	testSelectUpdateDeleteEmptyStringError(t)
 }
 
-func testSelectUpdateDeleteEmptyStringError(c *C) {
+func testSelectUpdateDeleteEmptyStringError(t *testing.T) {
 	testCases := []struct {
 		inSelect bool
 		inDelete bool
@@ -512,16 +512,16 @@ func testSelectUpdateDeleteEmptyStringError(c *C) {
 		expect := 0
 
 		val, err := StrToInt(sc, str, false)
-		c.Assert(err, IsNil)
-		c.Assert(val, Equals, int64(expect))
+		require.NoError(t, err)
+		require.Equal(t, int64(expect), val)
 
 		val1, err := StrToUint(sc, str, false)
-		c.Assert(err, IsNil)
-		c.Assert(val1, Equals, uint64(expect))
+		require.NoError(t, err)
+		require.Equal(t, uint64(expect), val1)
 
 		val2, err := StrToFloat(sc, str, false)
-		c.Assert(err, IsNil)
-		c.Assert(val2, Equals, float64(expect))
+		require.NoError(t, err)
+		require.Equal(t, float64(expect), val2)
 	}
 }
 
