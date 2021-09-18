@@ -525,14 +525,14 @@ func testSelectUpdateDeleteEmptyStringError(t *testing.T) {
 	}
 }
 
-func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
-	defer testleak.AfterTest(c)()
+func TestFieldTypeToStr(t *testing.T) {
+	t.Parallel()
 	v := TypeToStr(mysql.TypeUnspecified, "not binary")
-	c.Assert(v, Equals, TypeStr(mysql.TypeUnspecified))
+	require.Equal(t, TypeStr(mysql.TypeUnspecified), v)
 	v = TypeToStr(mysql.TypeBlob, charset.CharsetBin)
-	c.Assert(v, Equals, "blob")
+	require.Equal(t, "blob", v)
 	v = TypeToStr(mysql.TypeString, charset.CharsetBin)
-	c.Assert(v, Equals, "binary")
+	require.Equal(t, "binary", v)
 }
 
 func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
