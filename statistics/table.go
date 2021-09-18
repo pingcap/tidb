@@ -959,14 +959,16 @@ func (coll *HistColl) GetIndexAvgRowSize(ctx sessionctx.Context, cols []*express
 // Also, it tracks the used(needed) column stats in sc.ColStatsUsage.
 func (coll *HistColl) GetValidColumn(sc *stmtctx.StatementContext, colID int64, collPseudo bool) *Column {
 	// track the column stats usage
-	if coll.UniqueID2TblColID != nil {
-		if tblColID, ok := coll.UniqueID2TblColID[colID]; ok {
+	if sc.ColStatsUsage != nil {
+		if coll.UniqueID2TblColID != nil {
+			if tblColID, ok := coll.UniqueID2TblColID[colID]; ok {
+				sc.ColStatsUsage[tblColID] = time.Now()
+			}
+		} else {
+			// TODO: check whether coll.PhysicalID is always valid
+			tblColID := model.TableColumnID{TableID: coll.PhysicalID, ColumnID: colID}
 			sc.ColStatsUsage[tblColID] = time.Now()
 		}
-	} else {
-		// TODO: check whether coll.PhysicalID is always valid
-		tblColID := model.TableColumnID{TableID: coll.PhysicalID, ColumnID: colID}
-		sc.ColStatsUsage[tblColID] = time.Now()
 	}
 	if c, ok := coll.Columns[colID]; ok && !c.IsInvalid(true, collPseudo) {
 		return c

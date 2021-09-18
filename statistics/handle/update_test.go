@@ -2351,13 +2351,16 @@ AS
          JOIN mysql.column_stats_usage AS u
            ON u.table_id = t.tidb_table_id
               AND u.column_id = c.ordinal_position`)
+	defer func() {
+		tk.MustExec("DROP VIEW column_stats_usage_info")
+	}()
 
 	tk.MustExec("create table t1 (a int, b int, c int)")
 	tk.MustExec("insert into t1 values (1,2,3), (4,5,6), (7,8,9)")
 	tk.MustExec("create table t2 (a int primary key, b int, c int)")
 	tk.MustExec("insert into t2 values (1,2,3), (4,5,6), (7,8,9)")
 
-	tk.MustExec("select * fromm t1 where a > 2")
+	tk.MustExec("select * from t1 where a > 2")
 	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
 	tk.MustQuery("select table_name, column_name from column_stats_usage_info where table_schema = 'test'").Sort().Check(testkit.Rows("t1 a"))
 	tk.MustExec("delete from mysql.column_stats_usage")
