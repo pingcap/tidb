@@ -129,15 +129,14 @@ func TestRestrictionWithConnectionPool(t *testing.T) {
 		for {
 			t := <-ticker.C
 			_, err := conn.ExecContext(context.Background(), fmt.Sprintf("insert into t values (%d)", t.Nanosecond()))
-			if err == nil {
-				continue
+			if err != nil {
+				if err.Error() == ReadOnlyErrMsg {
+					done <- true
+				} else {
+					done <- false
+				}
+				return
 			}
-			if err.Error() == ReadOnlyErrMsg {
-				done <- true
-			} else {
-				done <- false
-			}
-			return
 		}
 	}(conn, done)
 	time.Sleep(1 * time.Second)
