@@ -100,7 +100,7 @@ func IntergerSignedLowerBound(intType byte) int64 {
 // ConvertFloatToInt converts a float64 value to a int value.
 // `tp` is used in err msg, if there is overflow, this func will report err according to `tp`
 func ConvertFloatToInt(fval float64, lowerBound, upperBound int64, tp byte) (int64, error) {
-	val := RoundFloat(fval)
+	val := math.RoundToEven(fval)
 	if val < float64(lowerBound) {
 		return lowerBound, overflow(val, tp)
 	}
@@ -160,7 +160,7 @@ func ConvertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 
 // ConvertFloatToUint converts a float value to an uint value.
 func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound uint64, tp byte) (uint64, error) {
-	val := RoundFloat(fval)
+	val := math.RoundToEven(fval)
 	if val < 0 {
 		if sc.ShouldClipToZero() {
 			return 0, overflow(val, tp)

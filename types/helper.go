@@ -23,29 +23,33 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// RoundFloat rounds float val to the nearest even integer value with float64 format, like MySQL Round function.
-// RoundFloat uses default rounding mode, see https://dev.mysql.com/doc/refman/5.7/en/precision-math-rounding.html
-// so rounding use "round to nearest even".
-// e.g, 1.5 -> 2, -1.5 -> -2.
-func RoundFloat(f float64) float64 {
-	return math.RoundToEven(f)
-}
-
-// Round rounds the argument f to dec decimal places.
+// RoundFloat rounds the argument f to dec decimal places using "round to nearest even" rule.
 // dec defaults to 0 if not specified. dec can be negative
-// to cause dec digits left of the decimal point of the
-// value f to become zero.
-func Round(f float64, dec int) float64 {
+// see https://dev.mysql.com/doc/refman/5.7/en/precision-math-rounding.html
+func RoundFloat(f float64, dec int) float64 {
 	shift := math.Pow10(dec)
 	tmp := f * shift
 	if math.IsInf(tmp, 0) {
 		return f
 	}
-	result := RoundFloat(tmp) / shift
+	result := math.RoundToEven(tmp) / shift
 	if math.IsNaN(result) {
 		return 0
 	}
 	return result
+}
+
+// RoundInt rounds the argument i to dec decimal places using "round half up" rule.
+// dec defaults to 0 if not specified. dec can be negative
+func RoundInt(i int64, dec int) int64 {
+	// is itself when dec >= 0
+	if dec >= 0 {
+		return i
+	}
+
+	shift := math.Pow10(-dec)
+	intPart := math.Round(float64(i) / shift)
+	return int64(intPart) * int64(shift)
 }
 
 // Truncate truncates the argument f to dec decimal places.
@@ -80,7 +84,7 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	maxF := GetMaxFloat(flen, decimal)
 
 	if !math.IsInf(f, 0) {
-		f = Round(f, decimal)
+		f = RoundFloat(f, decimal)
 	}
 
 	var err error
