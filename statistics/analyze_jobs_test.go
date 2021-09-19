@@ -21,6 +21,7 @@ import (
 )
 
 func TestMoveToHistory(t *testing.T) {
+	t.Parallel()
 	ClearHistoryJobs()
 	numJobs := numMaxHistoryJobs*2 + 1
 	jobs := make([]*AnalyzeJob, 0, numJobs)
