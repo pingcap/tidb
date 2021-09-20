@@ -3817,7 +3817,31 @@ type loadFileFunctionClass struct {
 }
 
 func (c *loadFileFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "load_file")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.Flen = 64
+	sig := &builtinLoadFileSig{bf}
+	return sig, nil
+}
+
+type builtinLoadFileSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLoadFileSig) evalString(row chunk.Row) (string, bool, error) {
+	return "", false, nil
+}
+
+func (b *builtinLoadFileSig) Clone() builtinFunc {
+	newSig := &builtinLoadFileSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 type weightStringPadding byte

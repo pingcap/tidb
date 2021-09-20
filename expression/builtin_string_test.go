@@ -1642,6 +1642,37 @@ func (s *testEvaluatorSuite) TestInstr(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestLoadFile(c *C) {
+	cases := []struct {
+		arg    interface{}
+		isNil  bool
+		getErr bool
+		res    string
+	}{
+		{"", false, false, ""},
+		{"/tmp/tikv/tikv.frm", false, false, ""},
+		{"tidb.sql", false, false, ""},
+		{nil, true, true, ""},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.LoadFile, s.primitiveValsToConstants([]interface{}{t.arg})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		if t.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
+	}
+	_, err := funcs[ast.LoadFile].getFunction(s.ctx, []Expression{NewZero()})
+	c.Assert(err, IsNil)
+}
+
 func (s *testEvaluatorSuite) TestMakeSet(c *C) {
 	tbl := []struct {
 		argList []interface{}
