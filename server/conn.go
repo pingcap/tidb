@@ -1,3 +1,17 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Copyright 2013 The Go-MySQL-Driver Authors. All rights reserved.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -18,20 +32,6 @@
 //
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
-
-// Copyright 2015 PingCAP, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
 
 package server
 
@@ -996,14 +996,18 @@ func (cc *clientConn) Run(ctx context.Context) {
 				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
 			}
 			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
-			logutil.Logger(ctx).Info("command dispatched failed",
-				zap.String("connInfo", cc.String()),
-				zap.String("command", mysql.Command2Str[data[0]]),
-				zap.String("status", cc.SessionStatusToString()),
-				zap.Stringer("sql", getLastStmtInConn{cc}),
-				zap.String("txn_mode", txnMode),
-				zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
-			)
+			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
+				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
+			} else {
+				logutil.Logger(ctx).Info("command dispatched failed",
+					zap.String("connInfo", cc.String()),
+					zap.String("command", mysql.Command2Str[data[0]]),
+					zap.String("status", cc.SessionStatusToString()),
+					zap.Stringer("sql", getLastStmtInConn{cc}),
+					zap.String("txn_mode", txnMode),
+					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
+				)
+			}
 			err1 := cc.writeError(ctx, err)
 			terror.Log(err1)
 		}
