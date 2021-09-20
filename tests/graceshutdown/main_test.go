@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,23 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Copyright 2011 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+package graceshutdown
 
-package mvmap
+import (
+	"testing"
 
-const (
-	offset64 uint64 = 14695981039346656037
-	prime64  uint64 = 1099511628211
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-// fnvHash64 is ported from go library, which is thread-safe.
-func fnvHash64(data []byte) uint64 {
-	hash := offset64
-	for _, c := range data {
-		hash *= prime64
-		hash ^= uint64(c)
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("syscall.syscall6"),
 	}
-	return hash
+	goleak.VerifyTestMain(m, opts...)
 }
