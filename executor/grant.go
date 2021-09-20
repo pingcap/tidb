@@ -490,7 +490,7 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 	// Attempts to use GRANT ALL as shorthand for granting privileges
 	// at the database leval fail with an error
 	// See https://dev.mysql.com/doc/refman/8.0/en/performance-schema-table-characteristics.html for more detail
-	if dbName == "performance_schema" && priv.Priv == mysql.AllPriv {
+	if strings.EqualFold(dbName, "performance_schema") && priv.Priv == mysql.AllPriv {
 		return e.dbAccessDenied(dbName)
 	}
 

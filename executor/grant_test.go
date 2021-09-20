@@ -424,6 +424,9 @@ func (s *testSuite3) TestIssue27867(c *C) {
 	err := tk.ExecToErr("grant all on performance_schema.* to issue27867;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
+	err = tk.ExecToErr("grant all on PERFormanCE_scHemA.* to issue27867;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'root'@'%' to database 'PERFormanCE_scHemA'")
 }
 
 func (s *testSuite3) TestGrantDynamicPrivs(c *C) {
