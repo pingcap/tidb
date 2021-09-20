@@ -1144,3 +1144,47 @@ func (s *testStaleTxnSerialSuite) TestStaleSessionQuery(c *C) {
 	tk.MustExec(`set @@tidb_read_staleness=""`)
 	c.Assert(tk.MustQuery("select * from t10").Rows(), HasLen, 3)
 }
+
+func (s *testStaleTxnSerialSuite) TestStaleReadCompatibility(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("insert into t(id) values (1)")
+	time.Sleep(2 * time.Second)
+	t1 := time.Now()
+	tk.MustExec("insert into t(id) values (2)")
+	time.Sleep(2 * time.Second)
+	t2 := time.Now()
+	tk.MustExec("insert into t(id) values (3)")
+	// assert select as of timestamp won't work after set transaction read only as of timestamp
+	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t1.Format("2006-1-2 15:04:05")))
+	err := tk.ExecToErr(fmt.Sprintf("select * from t as of timestamp '%s';", t1.Format("2006-1-2 15:04:05")))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*invalid as of timestamp: can't use select as of while already set transaction as of.*")
+	// assert set transaction read only as of timestamp is consumed
+	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 3)
+	// enable tidb_read_staleness
+	tk.MustExec("set @@tidb_read_staleness='-1s'")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, t1.Unix())), IsNil)
+	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 1)
+	// assert select as of timestamp during tidb_read_staleness
+	c.Assert(tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s'", t2.Format("2006-1-2 15:04:05"))).Rows(), HasLen, 2)
+	// assert set transaction as of timestamp during tidb_read_staleness
+	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t2.Format("2006-1-2 15:04:05")))
+	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 2)
+
+	// assert begin stale transaction during tidb_read_staleness
+	tk.MustExec(fmt.Sprintf("start transaction read only as of timestamp '%v'", t2.Format("2006-1-2 15:04:05")))
+	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 2)
+	tk.MustExec("commit")
+
+	// assert session query still is affected by tidb_read_staleness
+	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 1)
+
+	// disable tidb_read_staleness
+	tk.MustExec("set @@tidb_read_staleness=''")
+	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 3)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/injectNow"), IsNil)
+}
