@@ -487,6 +487,13 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 		dbName = e.ctx.GetSessionVars().CurrentDB
 	}
 
+	// Attempts to use GRANT ALL as shorthand for granting privileges
+	// at the database leval fail with an error
+	// See https://dev.mysql.com/doc/refman/8.0/en/performance-schema-table-characteristics.html for more detail
+	if dbName == "performance_schema" && priv.Priv == mysql.AllPriv {
+		return e.dbAccessDenied(dbName)
+	}
+
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.DBTable)
 	err := composeDBPrivUpdate(sql, priv.Priv, "Y")
@@ -549,6 +556,17 @@ func (e *GrantExec) grantColumnLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 		}
 	}
 	return nil
+}
+
+func (e *GrantExec) dbAccessDenied(dbName string) error {
+	user := e.ctx.GetSessionVars().User
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	return ErrDBaccessDenied.GenWithStackByArgs(u, h, dbName)
 }
 
 // composeGlobalPrivUpdate composes update stmt assignment list string for global scope privilege update.
