@@ -1655,7 +1655,6 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSlowLogMasking, Value: BoolToOnOff(DefTiDBRedactLog), Aliases: []string{TiDBRedactLog}, skipInit: true, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, TiDBSlowLogMasking, TiDBRedactLog)
 		return normalizedValue, nil
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return s.systems[TiDBRedactLog], nil
