@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package expression
 
@@ -366,13 +366,13 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 				bf.tp.Flen = mysql.MaxBlobWidth
 				logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
 			}
+			bf.tp.Flen += argType.Flen
 		}
-		bf.tp.Flen += argType.Flen
 	}
 
 	// add separator
-	argsLen := len(args) - 1
-	bf.tp.Flen += argsLen - 1
+	sepsLen := len(args) - 2
+	bf.tp.Flen += sepsLen * args[0].GetType().Flen
 
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
@@ -1364,6 +1364,10 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 	if len(delim) == 0 {
 		return "", false, nil
 	}
+	// when count > MaxInt64, returns whole string.
+	if count < 0 && mysql.HasUnsignedFlag(b.args[2].GetType().Flag) {
+		return str, false, nil
+	}
 
 	strs := strings.Split(str, delim)
 	start, end := int64(0), int64(len(strs))
@@ -1376,8 +1380,8 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 		// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
 		count = -count
 		if count < 0 {
-			// -count overflows max int64, returns an empty string.
-			return "", false, nil
+			// -count overflows max int64, returns whole string.
+			return str, false, nil
 		}
 
 		if count < end {
