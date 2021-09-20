@@ -79,7 +79,7 @@ type Domain struct {
 	sysSessionPool       *sessionPool
 	exit                 chan struct{}
 	etcdClient           *clientv3.Client
-	sysVarCache          SysVarCache // replaces GlobalVariableCache
+	sysVarCache          sysVarCache // replaces GlobalVariableCache
 	slowQuery            *topNSlowQueries
 	expensiveQueryHandle *expensivequery.Handle
 	wg                   sync.WaitGroup
@@ -918,7 +918,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
 // it should be called only once in BootstrapSession.
 func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
-	err := do.sysVarCache.RebuildSysVarCache(ctx)
+	err := do.rebuildSysVarCache()
 	if err != nil {
 		return err
 	}
@@ -967,7 +967,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			}
 			count = 0
 			logutil.BgLogger().Debug("Rebuilding sysvar cache from etcd watch event.")
-			err := do.sysVarCache.RebuildSysVarCache(ctx)
+			err := do.rebuildSysVarCache()
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
@@ -1395,7 +1395,7 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
 // clients are subscribed to for updates. For the caller, the cache is also built
 // synchronously so that the effect is immediate.
-func (do *Domain) NotifyUpdateSysVarCache(ctx sessionctx.Context) {
+func (do *Domain) NotifyUpdateSysVarCache() {
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), sysVarCacheKey, "")
@@ -1404,7 +1404,7 @@ func (do *Domain) NotifyUpdateSysVarCache(ctx sessionctx.Context) {
 		}
 	}
 	// update locally
-	if err := do.sysVarCache.RebuildSysVarCache(ctx); err != nil {
+	if err := do.rebuildSysVarCache(); err != nil {
 		logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 	}
 }

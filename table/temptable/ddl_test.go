@@ -27,15 +27,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/goleak"
 )
-
-func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
-	goleak.VerifyTestMain(m)
-}
 
 func createTestSuite(t *testing.T) (sessionctx.Context, *temporaryTableDDL, func()) {
 	store, err := mockstore.NewMockStore()
