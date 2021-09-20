@@ -17,16 +17,13 @@ package types
 import (
 	"strconv"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testMyDecimalSuite{})
-
-type testMyDecimalSuite struct {
-}
-
-func (s *testMyDecimalSuite) TestFromInt(c *C) {
+func TestFromInt(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input  int64
 		output string
@@ -40,11 +37,12 @@ func (s *testMyDecimalSuite) TestFromInt(c *C) {
 	for _, tt := range tests {
 		dec := NewDecFromInt(tt.input)
 		str := dec.ToString()
-		c.Check(string(str), Equals, tt.output)
+		require.Equal(t, tt.output, string(str))
 	}
 }
 
-func (s *testMyDecimalSuite) TestFromUint(c *C) {
+func TestFromUint(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input  uint64
 		output string
@@ -57,11 +55,12 @@ func (s *testMyDecimalSuite) TestFromUint(c *C) {
 		var dec MyDecimal
 		dec.FromUint(tt.input)
 		str := dec.ToString()
-		c.Check(string(str), Equals, tt.output)
+		require.Equal(t, tt.output, string(str))
 	}
 }
 
-func (s *testMyDecimalSuite) TestToInt(c *C) {
+func TestToInt(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input  string
 		output int64
@@ -79,14 +78,15 @@ func (s *testMyDecimalSuite) TestToInt(c *C) {
 	for _, tt := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(tt.input))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		result, ec := dec.ToInt()
-		c.Check(ec, Equals, tt.err)
-		c.Check(result, Equals, tt.output)
+		require.Equal(t, tt.err, ec)
+		require.Equal(t, tt.output, result)
 	}
 }
 
-func (s *testMyDecimalSuite) TestToUint(c *C) {
+func TestToUint(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input  string
 		output uint64
@@ -104,14 +104,15 @@ func (s *testMyDecimalSuite) TestToUint(c *C) {
 	for _, tt := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(tt.input))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		result, ec := dec.ToUint()
-		c.Check(ec, Equals, tt.err)
-		c.Check(result, Equals, tt.output)
+		require.Equal(t, tt.err, ec)
+		require.Equal(t, tt.output, result)
 	}
 }
 
-func (s *testMyDecimalSuite) TestFromFloat(c *C) {
+func TestFromFloat(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		s string
 		f float64
@@ -125,11 +126,12 @@ func (s *testMyDecimalSuite) TestFromFloat(c *C) {
 	for _, tt := range tests {
 		dec := NewDecFromFloatForTest(tt.f)
 		str := dec.ToString()
-		c.Check(string(str), Equals, tt.s)
+		require.Equal(t, tt.s, string(str))
 	}
 }
 
-func (s *testMyDecimalSuite) TestToFloat(c *C) {
+func TestToFloat(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		in  string
 		out string
@@ -177,16 +179,17 @@ func (s *testMyDecimalSuite) TestToFloat(c *C) {
 	for _, ca := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(ca.in))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		f, err := dec.ToFloat64()
-		c.Check(err, IsNil)
+		require.NoError(t, err)
 		std, err := strconv.ParseFloat(ca.out, 64)
-		c.Check(err, IsNil)
-		c.Check(f, Equals, std)
+		require.NoError(t, err)
+		require.Equal(t, std, f)
 	}
 }
 
-func (s *testMyDecimalSuite) TestToHashKey(c *C) {
+func TestToHashKey(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		numbers []string
 	}{
@@ -204,14 +207,14 @@ func (s *testMyDecimalSuite) TestToHashKey(c *C) {
 		keys := make([]string, 0, len(ca.numbers))
 		for _, num := range ca.numbers {
 			var dec MyDecimal
-			c.Check(dec.FromString([]byte(num)), IsNil)
+			require.NoError(t, dec.FromString([]byte(num)))
 			key, err := dec.ToHashKey()
-			c.Check(err, IsNil)
+			require.NoError(t, err)
 			keys = append(keys, string(key))
 		}
 
 		for i := 1; i < len(keys); i++ {
-			c.Check(keys[0], Equals, keys[i])
+			require.Equal(t, keys[0], keys[i])
 		}
 	}
 
@@ -241,29 +244,30 @@ func (s *testMyDecimalSuite) TestToHashKey(c *C) {
 		keys := make([]string, 0, len(ca.hashNumbers)+len(ca.binNumbers))
 		for _, num := range ca.hashNumbers {
 			var dec MyDecimal
-			c.Check(dec.FromString([]byte(num)), IsNil)
+			require.NoError(t, dec.FromString([]byte(num)))
 			key, err := dec.ToHashKey()
 			// remove digit len
 			key = key[:len(key)-1]
-			c.Check(err, IsNil)
+			require.NoError(t, err)
 			keys = append(keys, string(key))
 		}
 		for _, num := range ca.binNumbers {
 			var dec MyDecimal
-			c.Check(dec.FromString([]byte(num)), IsNil)
+			require.NoError(t, dec.FromString([]byte(num)))
 			prec, frac := dec.PrecisionAndFrac() // remove leading zeros but trailing zeros remain
 			key, err := dec.ToBin(prec, frac)
-			c.Check(err, IsNil)
+			require.NoError(t, err)
 			keys = append(keys, string(key))
 		}
 
 		for i := 1; i < len(keys); i++ {
-			c.Check(keys[0], Equals, keys[i])
+			require.Equal(t, keys[0], keys[i])
 		}
 	}
 }
 
-func (s *testMyDecimalSuite) TestRemoveTrailingZeros(c *C) {
+func TestRemoveTrailingZeros(t *testing.T) {
+	t.Parallel()
 	tests := []string{
 		"0", "0.0", ".0", ".00000000", "0.0000", "0000", "0000.0", "0000.000",
 		"-0", "-0.0", "-.0", "-.00000000", "-0.0000", "-0000", "-0000.0", "-0000.000",
@@ -274,7 +278,7 @@ func (s *testMyDecimalSuite) TestRemoveTrailingZeros(c *C) {
 	}
 	for _, ca := range tests {
 		var dec MyDecimal
-		c.Check(dec.FromString([]byte(ca)), IsNil)
+		require.NoError(t, dec.FromString([]byte(ca)))
 
 		// calculate the number of digits after point but trailing zero
 		digitsFracExp := 0
@@ -292,11 +296,12 @@ func (s *testMyDecimalSuite) TestRemoveTrailingZeros(c *C) {
 		}
 
 		_, digitsFrac := dec.removeTrailingZeros()
-		c.Check(digitsFrac, Equals, digitsFracExp)
+		require.Equal(t, digitsFracExp, digitsFrac)
 	}
 }
 
-func (s *testMyDecimalSuite) TestRoundWithHalfEven(c *C) {
+func TestRoundWithHalfEven(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input  string
 		scale  int
@@ -323,16 +328,17 @@ func (s *testMyDecimalSuite) TestRoundWithHalfEven(c *C) {
 	for _, ca := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(ca.input))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		var rounded MyDecimal
 		err = dec.Round(&rounded, ca.scale, ModeHalfEven)
-		c.Check(err, Equals, ca.err)
+		require.Equal(t, ca.err, err)
 		result := rounded.ToString()
-		c.Check(string(result), Equals, ca.output)
+		require.Equal(t, ca.output, string(result))
 	}
 }
 
-func (s *testMyDecimalSuite) TestRoundWithTruncate(c *C) {
+func TestRoundWithTruncate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input  string
 		scale  int
@@ -358,16 +364,17 @@ func (s *testMyDecimalSuite) TestRoundWithTruncate(c *C) {
 	for _, ca := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(ca.input))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		var rounded MyDecimal
 		err = dec.Round(&rounded, ca.scale, ModeTruncate)
-		c.Check(err, Equals, ca.err)
+		require.Equal(t, ca.err, err)
 		result := rounded.ToString()
-		c.Check(string(result), Equals, ca.output)
+		require.Equal(t, ca.output, string(result))
 	}
 }
 
-func (s *testMyDecimalSuite) TestRoundWithCeil(c *C) {
+func TestRoundWithCeil(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input  string
 		scale  int
@@ -394,16 +401,17 @@ func (s *testMyDecimalSuite) TestRoundWithCeil(c *C) {
 	for _, ca := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(ca.input))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		var rounded MyDecimal
 		err = dec.Round(&rounded, ca.scale, modeCeiling)
-		c.Check(err, Equals, ca.err)
+		require.Equal(t, ca.err, err)
 		result := rounded.ToString()
-		c.Check(string(result), Equals, ca.output)
+		require.Equal(t, ca.output, string(result))
 	}
 }
 
-func (s *testMyDecimalSuite) TestToString(c *C) {
+func TestToString(t *testing.T) {
+	t.Parallel()
 	type tcase struct {
 		input  string
 		output string
@@ -416,13 +424,14 @@ func (s *testMyDecimalSuite) TestToString(c *C) {
 	for _, ca := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(ca.input))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		result := dec.ToString()
-		c.Check(string(result), Equals, ca.output)
+		require.Equal(t, ca.output, string(result))
 	}
 }
 
-func (s *testMyDecimalSuite) TestToBinFromBin(c *C) {
+func TestToBinFromBin(t *testing.T) {
+	t.Parallel()
 	type tcase struct {
 		input     string
 		precision int
@@ -466,14 +475,14 @@ func (s *testMyDecimalSuite) TestToBinFromBin(c *C) {
 	for _, ca := range tests {
 		var dec MyDecimal
 		err := dec.FromString([]byte(ca.input))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		buf, err := dec.ToBin(ca.precision, ca.frac)
-		c.Assert(err, Equals, ca.err, Commentf(ca.input))
+		require.Equal(t, ca.err, err)
 		var dec2 MyDecimal
 		_, err = dec2.FromBin(buf, ca.precision, ca.frac)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		str := dec2.ToString()
-		c.Assert(string(str), Equals, ca.output)
+		require.Equal(t, ca.output, string(str))
 	}
 	var dec MyDecimal
 	dec.FromInt(1)
@@ -488,11 +497,12 @@ func (s *testMyDecimalSuite) TestToBinFromBin(c *C) {
 	}
 	for _, tt := range errTests {
 		_, err := dec.ToBin(tt.prec, tt.frac)
-		c.Assert(ErrBadNumber.Equal(err), IsTrue)
+		require.True(t, ErrBadNumber.Equal(err))
 	}
 }
 
-func (s *testMyDecimalSuite) TestCompare(c *C) {
+func TestCompareMyDecimal(t *testing.T) {
+	t.Parallel()
 	type tcase struct {
 		a   string
 		b   string
@@ -514,14 +524,15 @@ func (s *testMyDecimalSuite) TestCompare(c *C) {
 	for _, tt := range tests {
 		var a, b MyDecimal
 		err := a.FromString([]byte(tt.a))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = b.FromString([]byte(tt.b))
-		c.Assert(err, IsNil)
-		c.Assert(a.Compare(&b), Equals, tt.cmp)
+		require.NoError(t, err)
+		require.Equal(t, tt.cmp, a.Compare(&b))
 	}
 }
 
-func (s *testMyDecimalSuite) TestMaxDecimal(c *C) {
+func TestMaxDecimal(t *testing.T) {
+	t.Parallel()
 	type tcase struct {
 		prec   int
 		frac   int
@@ -548,11 +559,12 @@ func (s *testMyDecimalSuite) TestMaxDecimal(c *C) {
 		var dec MyDecimal
 		maxDecimal(tt.prec, tt.frac, &dec)
 		str := dec.ToString()
-		c.Assert(string(str), Equals, tt.result)
+		require.Equal(t, tt.result, string(str))
 	}
 }
 
-func (s *testMyDecimalSuite) TestNeg(c *C) {
+func TestNegMyDecimal(t *testing.T) {
+	t.Parallel()
 	type testCase struct {
 		a      string
 		result string
@@ -566,11 +578,12 @@ func (s *testMyDecimalSuite) TestNeg(c *C) {
 		a := NewDecFromStringForTest(tt.a)
 		negResult := DecimalNeg(a)
 		result := negResult.ToString()
-		c.Assert(string(result), Equals, tt.result)
+		require.Equal(t, tt.result, string(result))
 	}
 }
 
-func (s *testMyDecimalSuite) TestAdd(c *C) {
+func TestAddMyDecimal(t *testing.T) {
+	t.Parallel()
 	type testCase struct {
 		a      string
 		b      string
@@ -600,13 +613,14 @@ func (s *testMyDecimalSuite) TestAdd(c *C) {
 		b := NewDecFromStringForTest(tt.b)
 		var sum MyDecimal
 		err := DecimalAdd(a, b, &sum)
-		c.Assert(err, Equals, tt.err)
+		require.Equal(t, tt.err, err)
 		result := sum.ToString()
-		c.Assert(string(result), Equals, tt.result)
+		require.Equal(t, tt.result, string(result))
 	}
 }
 
-func (s *testMyDecimalSuite) TestSub(c *C) {
+func TestSubMyDecimal(t *testing.T) {
+	t.Parallel()
 	type tcase struct {
 		a      string
 		b      string
@@ -633,17 +647,18 @@ func (s *testMyDecimalSuite) TestSub(c *C) {
 	for _, tt := range tests {
 		var a, b, sum MyDecimal
 		err := a.FromString([]byte(tt.a))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = b.FromString([]byte(tt.b))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = DecimalSub(&a, &b, &sum)
-		c.Assert(err, Equals, tt.err)
+		require.Equal(t, tt.err, err)
 		result := sum.ToString()
-		c.Assert(string(result), Equals, tt.result)
+		require.Equal(t, tt.result, string(result))
 	}
 }
 
-func (s *testMyDecimalSuite) TestMul(c *C) {
+func TestMulMyDecimal(t *testing.T) {
+	t.Parallel()
 	type tcase struct {
 		a      string
 		b      string
@@ -667,17 +682,18 @@ func (s *testMyDecimalSuite) TestMul(c *C) {
 	for _, tt := range tests {
 		var a, b, product MyDecimal
 		err := a.FromString([]byte(tt.a))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = b.FromString([]byte(tt.b))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = DecimalMul(&a, &b, &product)
-		c.Check(err, Equals, tt.err)
+		require.Equal(t, tt.err, err)
 		result := product.String()
-		c.Assert(result, Equals, tt.result)
+		require.Equal(t, tt.result, result)
 	}
 }
 
-func (s *testMyDecimalSuite) TestDivMod(c *C) {
+func TestDivModMyDecimal(t *testing.T) {
+	t.Parallel()
 	type tcase struct {
 		a      string
 		b      string
@@ -704,16 +720,16 @@ func (s *testMyDecimalSuite) TestDivMod(c *C) {
 	for _, tt := range tests {
 		var a, b, to MyDecimal
 		err := a.FromString([]byte(tt.a))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = b.FromString([]byte(tt.b))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = DecimalDiv(&a, &b, &to, 5)
-		c.Check(err, Equals, tt.err)
+		require.Equal(t, tt.err, err)
 		if tt.err == ErrDivByZero {
 			continue
 		}
 		result := to.ToString()
-		c.Assert(string(result), Equals, tt.result)
+		require.Equal(t, tt.result, string(result))
 	}
 
 	tests = []tcase{
@@ -729,16 +745,16 @@ func (s *testMyDecimalSuite) TestDivMod(c *C) {
 	for _, tt := range tests {
 		var a, b, to MyDecimal
 		err := a.FromString([]byte(tt.a))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = b.FromString([]byte(tt.b))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		ec := DecimalMod(&a, &b, &to)
-		c.Check(ec, Equals, tt.err)
+		require.Equal(t, tt.err, ec)
 		if tt.err == ErrDivByZero {
 			continue
 		}
 		result := to.ToString()
-		c.Assert(string(result), Equals, tt.result)
+		require.Equal(t, tt.result, string(result))
 	}
 
 	tests = []tcase{
@@ -752,15 +768,15 @@ func (s *testMyDecimalSuite) TestDivMod(c *C) {
 	for _, tt := range tests {
 		var a, b, to MyDecimal
 		err := a.FromString([]byte(tt.a))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = b.FromString([]byte(tt.b))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		ec := DecimalDiv(&a, &b, &to, DivFracIncr)
-		c.Check(ec, Equals, tt.err)
+		require.Equal(t, tt.err, ec)
 		if tt.err == ErrDivByZero {
 			continue
 		}
-		c.Assert(to.String(), Equals, tt.result)
+		require.Equal(t, tt.result, to.String())
 	}
 
 	tests = []tcase{
@@ -772,19 +788,20 @@ func (s *testMyDecimalSuite) TestDivMod(c *C) {
 	for _, tt := range tests {
 		var a, b, to MyDecimal
 		err := a.FromString([]byte(tt.a))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = b.FromString([]byte(tt.b))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		ec := DecimalMod(&a, &b, &to)
-		c.Check(ec, Equals, tt.err)
+		require.Equal(t, tt.err, ec)
 		if tt.err == ErrDivByZero {
 			continue
 		}
-		c.Assert(to.String(), Equals, tt.result)
+		require.Equal(t, tt.result, to.String())
 	}
 }
 
-func (s *testMyDecimalSuite) TestMaxOrMin(c *C) {
+func TestMaxOrMinMyDecimal(t *testing.T) {
+	t.Parallel()
 	type tcase struct {
 		neg    bool
 		prec   int
@@ -800,21 +817,22 @@ func (s *testMyDecimalSuite) TestMaxOrMin(c *C) {
 	}
 	for _, tt := range tests {
 		dec := NewMaxOrMinDec(tt.neg, tt.prec, tt.frac)
-		c.Assert(dec.String(), Equals, tt.result)
+		require.Equal(t, tt.result, dec.String())
 	}
 }
 
-func (s *testMyDecimalSuite) TestReset(c *C) {
+func TestReset(t *testing.T) {
+	t.Parallel()
 	var x1, y1, z1 MyDecimal
-	c.Assert(x1.FromString([]byte("38520.130741106671")), IsNil)
-	c.Assert(y1.FromString([]byte("9863.944799797851")), IsNil)
-	c.Assert(DecimalAdd(&x1, &y1, &z1), IsNil)
+	require.NoError(t, x1.FromString([]byte("38520.130741106671")))
+	require.NoError(t, y1.FromString([]byte("9863.944799797851")))
+	require.NoError(t, DecimalAdd(&x1, &y1, &z1))
 
 	var x2, y2, z2 MyDecimal
-	c.Assert(x2.FromString([]byte("121519.080207244")), IsNil)
-	c.Assert(y2.FromString([]byte("54982.444519146")), IsNil)
-	c.Assert(DecimalAdd(&x2, &y2, &z2), IsNil)
+	require.NoError(t, x2.FromString([]byte("121519.080207244")))
+	require.NoError(t, y2.FromString([]byte("54982.444519146")))
+	require.NoError(t, DecimalAdd(&x2, &y2, &z2))
 
-	c.Assert(DecimalAdd(&x2, &y2, &z1), IsNil)
-	c.Assert(z1, Equals, z2)
+	require.NoError(t, DecimalAdd(&x2, &y2, &z1))
+	require.Equal(t, z2, z1)
 }
