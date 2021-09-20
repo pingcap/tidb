@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package graceshutdown
+package rtree_test
 
 import (
 	"testing"
@@ -23,8 +23,5 @@ import (
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("syscall.syscall6"),
-	}
-	goleak.VerifyTestMain(m, opts...)
+	goleak.VerifyTestMain(m)
 }
