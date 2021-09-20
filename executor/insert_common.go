@@ -1065,7 +1065,6 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 
-	txnValueGetter := e.txnValueGetter(txn)
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
 		if r.ignored {
@@ -1073,7 +1072,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		}
 		skip := false
 		if r.handleKey != nil {
-			_, err := txnValueGetter.Get(ctx, r.handleKey.newKey)
+			_, err := txn.Get(ctx, r.handleKey.newKey)
 			if err == nil {
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 				continue
@@ -1083,7 +1082,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 		for _, uk := range r.uniqueKeys {
-			_, err := txnValueGetter.Get(ctx, uk.newKey)
+			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
@@ -1110,15 +1109,6 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		e.stats.CheckInsertTime += time.Since(start)
 	}
 	return nil
-}
-
-func (e *InsertValues) txnValueGetter(txn kv.Transaction) kv.Getter {
-	tblInfo := e.Table.Meta()
-	if tblInfo.TempTableType == model.TempTableNone {
-		return txn
-	}
-
-	return e.ctx.GetSessionVars().TemporaryTableTxnReader(txn, tblInfo)
 }
 
 func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) error {
