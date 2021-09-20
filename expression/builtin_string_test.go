@@ -1652,7 +1652,7 @@ func (s *testEvaluatorSuite) TestLoadFile(c *C) {
 		{"", false, false, ""},
 		{"/tmp/tikv/tikv.frm", false, false, ""},
 		{"tidb.sql", false, false, ""},
-		{nil, true, true, ""},
+		{nil, true, false, ""},
 	}
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.LoadFile, s.primitiveValsToConstants([]interface{}{t.arg})...)

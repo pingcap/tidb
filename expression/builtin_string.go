@@ -3834,7 +3834,11 @@ type builtinLoadFileSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLoadFileSig) evalString(row chunk.Row) (string, bool, error) {
+func (b *builtinLoadFileSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
 	return "", false, nil
 }
 
