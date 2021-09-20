@@ -22,7 +22,7 @@ import (
 )
 
 // this test will change global variable `wordBufLen`, so it must run in serial
-func TestShift(t *testing.T) {
+func TestShiftMyDecimal(t *testing.T) {
 	type tcase struct {
 		input  string
 		shift  int
@@ -140,7 +140,7 @@ func TestShift(t *testing.T) {
 }
 
 // this test will change global variable `wordBufLen`, so it must run in serial
-func TestFromString(t *testing.T) {
+func TestFromStringMyDecimal(t *testing.T) {
 	type tcase struct {
 		input  string
 		output string
