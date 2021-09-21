@@ -41,7 +41,6 @@ func TestWalkMetaFileEmpty(t *testing.T) {
 	require.Equal(t, empty, files[0])
 }
 
-
 func TestWalkMetaFileLeaf(t *testing.T) {
 	t.Parallel()
 
