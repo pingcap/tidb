@@ -60,7 +60,7 @@ func getUnsignedFieldType() *types.FieldType {
 	return tp
 }
 
-func TestCalcFraction(t *testing.T){
+func TestCalcFraction(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -178,7 +178,7 @@ func TestCalcFraction(t *testing.T){
 	}
 }
 
-func TestEnumRangeValues(t *testing.T){
+func TestEnumRangeValues(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
