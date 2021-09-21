@@ -10,16 +10,8 @@ import (
 	"time"
 
 	"github.com/opentracing/opentracing-go"
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
-
-type testTracingSuite struct{}
-
-var _ = Suite(&testTracingSuite{})
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 func jobA(ctx context.Context) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -28,7 +20,7 @@ func jobA(ctx context.Context) {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	jobB(ctx)
-	time.Sleep(time.Second)
+	time.Sleep(10 * time.Millisecond)
 }
 
 func jobB(ctx context.Context) {
@@ -36,11 +28,11 @@ func jobB(ctx context.Context) {
 		span1 := span.Tracer().StartSpan("jobB", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
-	time.Sleep(time.Second)
+	time.Sleep(10 * time.Millisecond)
 }
 
-func (t *testTracingSuite) TestSpan(c *C) {
-	filename := path.Join(c.MkDir(), "br.trace")
+func TestSpan(t *testing.T) {
+	filename := path.Join(t.TempDir(), "br.trace")
 	getTraceFileName = func() string {
 		return filename
 	}
@@ -51,10 +43,10 @@ func (t *testTracingSuite) TestSpan(c *C) {
 	jobA(ctx)
 	TracerFinishSpan(ctx, store)
 	content, err := os.ReadFile(filename)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	s := string(content)
 	// possible result:
-	// "jobA      18:00:30.745723  2.009301253s\n"
-	// "  └─jobB  18:00:30.745724  1.003791041s\n"
-	c.Assert(s, Matches, `jobA.*2\.[0-9]+s\n  └─jobB.*1\.[0-9]+s\n`)
+	// "jobA      22:02:02.545296  20.621764ms\n"
+	// "  └─jobB  22:02:02.545297  10.293444ms\n"
+	require.Regexp(t, `jobA.*2[0-9]\.[0-9]+ms\n  └─jobB.*1[0-9]\.[0-9]+ms\n`, s)
 }
