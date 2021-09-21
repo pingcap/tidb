@@ -681,7 +681,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			pkIdx := FindPrimaryIndex(tblInfo)
 			pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
 			for _, idxCol := range pkIdx.Columns {
-				pkDts = append(pkDts, r[tblInfo.Columns[idxCol.Offset].Offset])
+				pkDts = append(pkDts, r[idxCol.Offset])
 			}
 			tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
 			var handleBytes []byte
@@ -1208,7 +1208,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 		return err
 	}
 	for _, v := range t.deletableIndices() {
-		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
+		if v.Meta().Primary && t.Meta().IsCommonHandle {
 			continue
 		}
 		vals, err := v.FetchValues(rec, nil)
