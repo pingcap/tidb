@@ -17,6 +17,7 @@ package conn
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
 
