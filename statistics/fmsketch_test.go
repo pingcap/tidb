@@ -15,11 +15,13 @@
 package statistics
 
 import (
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
 // extractSampleItemsDatums is for test purpose only to extract Datum slice
@@ -32,77 +34,141 @@ func extractSampleItemsDatums(items []*SampleItem) []types.Datum {
 	return datums
 }
 
-func (s *testStatisticsSuite) TestSketch(c *C) {
+func setUpSuite(t *testing.T) *testStatisticsSuite {
+	s := &testStatisticsSuite{}
+	s.count = 100000
+	samples := make([]*SampleItem, 10000)
+	for i := 0; i < len(samples); i++ {
+		samples[i] = &SampleItem{}
+	}
+	start := 1000
+	samples[0].Value.SetInt64(0)
+	for i := 1; i < start; i++ {
+		samples[i].Value.SetInt64(2)
+	}
+	for i := start; i < len(samples); i++ {
+		samples[i].Value.SetInt64(int64(i))
+	}
+	for i := start; i < len(samples); i += 3 {
+		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 1)
+	}
+	for i := start; i < len(samples); i += 5 {
+		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 2)
+	}
+	sc := new(stmtctx.StatementContext)
+	samples, err := SortSampleItems(sc, samples)
+	require.Nil(t, err)
+	s.samples = samples
+
+	rc := &recordSet{
+		data:   make([]types.Datum, s.count),
+		count:  s.count,
+		cursor: 0,
+	}
+	rc.setFields(mysql.TypeLonglong)
+	rc.data[0].SetInt64(0)
+	for i := 1; i < start; i++ {
+		rc.data[i].SetInt64(2)
+	}
+	for i := start; i < rc.count; i++ {
+		rc.data[i].SetInt64(int64(i))
+	}
+	for i := start; i < rc.count; i += 3 {
+		rc.data[i].SetInt64(rc.data[i].GetInt64() + 1)
+	}
+	for i := start; i < rc.count; i += 5 {
+		rc.data[i].SetInt64(rc.data[i].GetInt64() + 2)
+	}
+	err = types.SortDatums(sc, rc.data)
+	require.Nil(t, err)
+	s.rc = rc
+
+	pk := &recordSet{
+		data:   make([]types.Datum, s.count),
+		count:  s.count,
+		cursor: 0,
+	}
+	pk.setFields(mysql.TypeLonglong)
+	for i := 0; i < rc.count; i++ {
+		pk.data[i].SetInt64(int64(i))
+	}
+	s.pk = pk
+	return s
+}
+
+func TestSketch(t *testing.T) {
+	s := setUpSuite(t)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
 	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(6232))
+	require.Nil(t, err)
+	require.Equal(t, int64(6232), ndv)
 
 	rcSketch, ndv, err := buildFMSketch(sc, s.rc.(*recordSet).data, maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(73344))
+	require.Nil(t, err)
+	require.Equal(t, int64(73344), ndv)
 
 	pkSketch, ndv, err := buildFMSketch(sc, s.pk.(*recordSet).data, maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(100480))
+	require.Nil(t, err)
+	require.Equal(t, int64(100480), ndv)
 
 	sampleSketch.MergeFMSketch(pkSketch)
 	sampleSketch.MergeFMSketch(rcSketch)
-	c.Check(sampleSketch.NDV(), Equals, int64(100480))
+	require.Equal(t, int64(100480), sampleSketch.NDV())
 
 	maxSize = 2
 	sketch := NewFMSketch(maxSize)
 	sketch.insertHashValue(1)
 	sketch.insertHashValue(2)
-	c.Check(len(sketch.hashset), Equals, maxSize)
+	require.Equal(t, maxSize, len(sketch.hashset))
 	sketch.insertHashValue(4)
-	c.Check(len(sketch.hashset), LessEqual, maxSize)
+	require.LessOrEqual(t, maxSize, len(sketch.hashset))
 }
 
-func (s *testStatisticsSuite) TestSketchProtoConversion(c *C) {
+func TestSketchProtoConversion(t *testing.T) {
+	s := setUpSuite(t)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
 	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(6232))
-
+	require.Nil(t, err)
+	require.Equal(t, int64(6232), ndv)
 	p := FMSketchToProto(sampleSketch)
 	f := FMSketchFromProto(p)
-	c.Assert(sampleSketch.mask, Equals, f.mask)
-	c.Assert(len(sampleSketch.hashset), Equals, len(f.hashset))
+	require.Equal(t, f.mask, sampleSketch.mask)
+	require.Equal(t, len(f.hashset), len(sampleSketch.hashset))
 	for val := range sampleSketch.hashset {
-		c.Assert(f.hashset[val], IsTrue)
+		require.True(t, f.hashset[val])
 	}
 }
 
-func (s *testStatisticsSuite) TestFMSketchCoding(c *C) {
+func TestFMSketchCoding(t *testing.T) {
+	s := setUpSuite(t)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
 	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(6232))
+	require.Nil(t, err)
+	require.Equal(t, int64(6232), ndv)
 	bytes, err := EncodeFMSketch(sampleSketch)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	fmsketch, err := DecodeFMSketch(bytes)
-	c.Assert(err, IsNil)
-	c.Assert(sampleSketch.NDV(), Equals, fmsketch.NDV())
+	require.Nil(t, err)
+	require.Equal(t, fmsketch.NDV(), sampleSketch.NDV())
 
 	rcSketch, ndv, err := buildFMSketch(sc, s.rc.(*recordSet).data, maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(73344))
+	require.Nil(t, err)
+	require.Equal(t, int64(73344), ndv)
 	bytes, err = EncodeFMSketch(rcSketch)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	fmsketch, err = DecodeFMSketch(bytes)
-	c.Assert(err, IsNil)
-	c.Assert(rcSketch.NDV(), Equals, fmsketch.NDV())
+	require.Nil(t, err)
+	require.Equal(t, fmsketch.NDV(), rcSketch.NDV())
 
 	pkSketch, ndv, err := buildFMSketch(sc, s.pk.(*recordSet).data, maxSize)
-	c.Check(err, IsNil)
-	c.Check(ndv, Equals, int64(100480))
+	require.Nil(t, err)
+	require.Equal(t, int64(100480), ndv)
 	bytes, err = EncodeFMSketch(pkSketch)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	fmsketch, err = DecodeFMSketch(bytes)
-	c.Assert(err, IsNil)
-	c.Assert(pkSketch.NDV(), Equals, fmsketch.NDV())
+	require.Nil(t, err)
+	require.Equal(t, fmsketch.NDV(), pkSketch.NDV())
 }
