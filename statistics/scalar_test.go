@@ -81,14 +81,14 @@ func TestCalcFraction(t *testing.T) {
 			lower:    types.NewIntDatum(0),
 			upper:    types.NewIntDatum(4),
 			value:    types.NewIntDatum(4),
-			fraction: 1,
+			fraction: 1.0,
 			tp:       types.NewFieldType(mysql.TypeLonglong),
 		},
 		{
 			lower:    types.NewIntDatum(0),
 			upper:    types.NewIntDatum(4),
 			value:    types.NewIntDatum(-1),
-			fraction: 0,
+			fraction: 0.0,
 			tp:       types.NewFieldType(mysql.TypeLonglong),
 		},
 		{
@@ -174,7 +174,7 @@ func TestCalcFraction(t *testing.T) {
 		hg.AppendBucket(&test.lower, &test.upper, 0, 0)
 		hg.PreCalculateScalar()
 		fraction := hg.calcFraction(0, &test.value)
-		require.True(t, math.Abs(fraction-test.fraction) < eps)
+		require.InDelta(t, test.fraction, fraction, eps)
 	}
 }
 
