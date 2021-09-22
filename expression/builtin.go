@@ -91,10 +91,11 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
-	if err := CheckIllegalMixCollation(funcName, args, retType); err != nil {
+	derivedCharset, derivedCollate, coer, err := deriveCollation(ctx, funcName, args, retType, retType)
+	if err != nil {
 		return baseBuiltinFunc{}, err
 	}
-	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
+
 	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
@@ -106,39 +107,8 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	}
 	bf.SetCharsetAndCollation(derivedCharset, derivedCollate)
 	bf.setCollator(collate.GetCollator(derivedCollate))
+	bf.SetCoercibility(coer)
 	return bf, nil
-}
-
-var (
-	coerString = []string{"EXPLICIT", "NONE", "IMPLICIT", "SYSCONST", "COERCIBLE", "NUMERIC", "IGNORABLE"}
-)
-
-// CheckIllegalMixCollation checks illegal mix collation with expressions
-func CheckIllegalMixCollation(funcName string, args []Expression, evalType types.EvalType) error {
-	if len(args) < 2 {
-		return nil
-	}
-	_, _, coercibility, legal := inferCollation(args...)
-	if !legal {
-		return illegalMixCollationErr(funcName, args)
-	}
-	if coercibility == CoercibilityNone && evalType != types.ETString {
-		return illegalMixCollationErr(funcName, args)
-	}
-	return nil
-}
-
-func illegalMixCollationErr(funcName string, args []Expression) error {
-	funcName = GetDisplayName(funcName)
-
-	switch len(args) {
-	case 2:
-		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], funcName)
-	case 3:
-		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], args[2].GetType().Collate, coerString[args[2].Coercibility()], funcName)
-	default:
-		return collate.ErrIllegalMixCollation.GenWithStackByArgs(funcName)
-	}
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
@@ -150,6 +120,13 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	}
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
+	}
+
+	// derive collation information for string function, and we must do it
+	// before doing implicit cast.
+	derivedCharset, derivedCollate, coer, err := deriveCollation(ctx, funcName, args, retType, argTps...)
+	if err != nil {
+		return
 	}
 
 	for i := range args {
@@ -173,13 +150,6 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		}
 	}
 
-	if err = CheckIllegalMixCollation(funcName, args, retType); err != nil {
-		return
-	}
-
-	// derive collation information for string function, and we must do it
-	// before doing implicit cast.
-	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:
@@ -259,6 +229,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	}
 	bf.SetCharsetAndCollation(derivedCharset, derivedCollate)
 	bf.setCollator(collate.GetCollator(derivedCollate))
+	bf.SetCoercibility(coer)
 	return bf, nil
 }
 

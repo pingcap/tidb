@@ -804,7 +804,9 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeNone, Name: "license", Value: "Apache License 2.0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: BlockEncryptionMode, Value: "aes-128-ecb"},
-	{Scope: ScopeSession, Name: "last_insert_id", Value: "", skipInit: true},
+	{Scope: ScopeSession, Name: LastInsertID, Value: "", skipInit: true, GetSession: func(s *SessionVars) (string, error) {
+		return strconv.FormatUint(s.StmtCtx.PrevLastInsertID, 10), nil
+	}},
 	{Scope: ScopeNone, Name: "have_ssl", Value: "DISABLED"},
 	{Scope: ScopeNone, Name: "have_openssl", Value: "DISABLED"},
 	{Scope: ScopeNone, Name: "ssl_ca", Value: ""},
@@ -851,6 +853,9 @@ var defaultSysVars = []*SysVar{
 		return setTxnReadTS(s, val)
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return normalizedValue, nil
+	}},
+	{Scope: ScopeSession, Name: TiDBReadStaleness, Value: "", Hidden: false, SetSession: func(s *SessionVars, val string) error {
+		return setReadStaleness(s, val)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution), SetSession: func(s *SessionVars, val string) error {
 		s.allowMPPExecution = TiDBOptOn(val)
@@ -2136,6 +2141,8 @@ const (
 	ReadOnly = "read_only"
 	// DefaultAuthPlugin is the name of 'default_authentication_plugin' system variable.
 	DefaultAuthPlugin = "default_authentication_plugin"
+	// LastInsertID is the name of 'last_insert_id' system variable.
+	LastInsertID = "last_insert_id"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

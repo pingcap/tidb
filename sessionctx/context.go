@@ -89,6 +89,9 @@ type Context interface {
 	// It should be called right before we builds an executor.
 	InitTxnWithStartTS(startTS uint64) error
 
+	// GetSnapshotWithTS returns a snapshot with start ts
+	GetSnapshotWithTS(ts uint64) kv.Snapshot
+
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 
