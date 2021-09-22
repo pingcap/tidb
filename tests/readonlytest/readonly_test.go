@@ -27,18 +27,8 @@ import (
 )
 
 var (
-	logLevel       = flag.String("L", "info", "test log level")
-	serverLogLevel = flag.String("server_log_level", "info", "server log level")
-	tmpPath        = flag.String("tmp", "/tmp/tidb_globalkilltest", "temporary files path")
-
-	tidbBinaryPath = flag.String("s", "bin/globalkilltest_tidb-server", "tidb server binary path")
-	pdBinaryPath   = flag.String("p", "bin/pd-server", "pd server binary path")
-	tikvBinaryPath = flag.String("k", "bin/tikv-server", "tikv server binary path")
-
 	tidbRootPassword = flag.String("passwd", "", "tidb root password")
 	tidbStartPort    = flag.Int("tidb_start_port", 4000, "first tidb server listening port")
-	tidbStatusPort   = flag.Int("tidb_status_port", 8000, "first tidb server status port")
-
 	ReadOnlyErrMsg = "Error 1836: Running in read-only mode"
 )
 
@@ -54,14 +44,14 @@ func checkVariable(t *testing.T, db *sql.DB, on bool) {
 	require.NoError(t, err)
 	require.True(t, rs.Next())
 
-	err = rs.Scan(&name, &status)
-	require.NoError(t, err)
+	require.NoError(t, rs.Scan(&name, &status))
 	require.Equal(t, name, "tidb_restricted_read_only")
 	if on {
 		require.Equal(t, status, "ON")
 	} else {
 		require.Equal(t, status, "OFF")
 	}
+	require.NoError(t, rs.Close())
 }
 
 func setReadOnly(t *testing.T, db *sql.DB, status int) {
@@ -97,6 +87,8 @@ func createReadOnlySuite(t *testing.T) (s *ReadOnlySuite, clean func()) {
 	require.NoError(t, err)
 	clean = func() {
 		require.NoError(t, s.db.Close())
+		require.NoError(t, s.rdb.Close())
+		require.NoError(t, s.udb.Close())
 	}
 	return
 }
@@ -128,19 +120,22 @@ func TestRestrictionWithConnectionPool(t *testing.T) {
 
 	conn, err := s.udb.Conn(context.Background())
 	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, conn.Close())
+	}()
 	done := make(chan bool)
 	go func(conn *sql.Conn, done chan bool) {
 		ticker := time.NewTicker(50 * time.Millisecond)
 		for {
 			t := <-ticker.C
 			_, err := conn.ExecContext(context.Background(), fmt.Sprintf("insert into t values (%d)", t.Nanosecond()))
-			if err == nil {
-				continue
-			}
-			if err.Error() == ReadOnlyErrMsg {
-				done <- true
-			} else {
-				done <- false
+			if err != nil {
+				if err.Error() == ReadOnlyErrMsg {
+					done <- true
+				} else {
+					done <- false
+				}
+				return
 			}
 		}
 	}(conn, done)
@@ -171,12 +166,20 @@ func TestReplicationWriter(t *testing.T) {
 
 	conn, err := s.rdb.Conn(context.Background())
 	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, conn.Close())
+	}()
+	done := make(chan struct{})
 	go func(conn *sql.Conn) {
 		ticker := time.NewTicker(50 * time.Millisecond)
 		for {
-			t1 := <-ticker.C
-			_, err := conn.ExecContext(context.Background(), fmt.Sprintf("insert into t values (%d)", t1.Nanosecond()))
-			require.NoError(t, err)
+			select {
+			case t1 := <-ticker.C:
+				_, err := conn.ExecContext(context.Background(), fmt.Sprintf("insert into t values (%d)", t1.Nanosecond()))
+				require.NoError(t, err)
+			case <-done:
+				return
+			}
 		}
 	}(conn)
 	time.Sleep(1 * time.Second)
@@ -187,4 +190,5 @@ func TestReplicationWriter(t *testing.T) {
 	_, err = s.db.Exec("insert into t values (1)")
 	require.Equal(t, err.Error(), ReadOnlyErrMsg)
 	<-timer.C
+	done <- struct{}{}
 }
