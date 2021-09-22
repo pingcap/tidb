@@ -31,7 +31,7 @@ func ToString(p Plan) string {
 func needIncludeChildrenString(plan Plan) bool {
 	switch x := plan.(type) {
 	case *LogicalUnionAll, *PhysicalUnionAll, *LogicalPartitionUnionAll:
-		// after https://github.com/pingcap/tidb/pull/25218, the union may contain only 1 child,
+		// after https://github.com/pingcap/tidb/pull/25218, the union may contain less than 2 children,
 		// but we still wants to include its child plan's information when calling `toString` on union.
 		return true
 	case LogicalPlan:
