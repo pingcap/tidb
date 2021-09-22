@@ -1779,10 +1779,8 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	}
 
 	if rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements {
-		// print check info at any time.
 		fmt.Print(rc.checkTemplate.Output())
 		if !rc.checkTemplate.Success() {
-			// if check requirements is true, return error.
 			if !taskExist && rc.taskMgr != nil {
 				rc.taskMgr.CleanupTask(ctx)
 			}

@@ -167,11 +167,6 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
 	defer func() {
 		rc.checkTemplate.Collect(Critical, passed, message)
 	}()
-	// skip requirement check if explicitly turned off
-	if !rc.cfg.App.CheckRequirements {
-		message = "Cluster's available check is skipped by user requirement"
-		return nil
-	}
 	checkCtx := &backend.CheckCtx{
 		DBMetas: rc.dbMetas,
 	}
