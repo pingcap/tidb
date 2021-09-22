@@ -453,7 +453,7 @@ func (s *testDBSuite6) TestAlterTablePartitionWithPlacementPolicy(c *C) {
 	tbl := testGetTableByName(c, tk.Se, "test", "t1")
 	c.Assert(tbl, NotNil)
 	ptDef := testGetPartitionDefinitionsByName(c, tk.Se, "test", "t1", "p0")
-	c.Assert(ptDef.PlacementPolicyRef, IsNil)
+	c.Assert(ptDef.PlacementPolicyRef.Name.L, Equals, "")
 	c.Assert(ptDef.DirectPlacementOpts, NotNil)
 
 	checkFunc := func(policySetting *model.PlacementSettings) {
