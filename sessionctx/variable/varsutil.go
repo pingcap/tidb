@@ -168,9 +168,8 @@ func checkSQLAutoIsNull(vars *SessionVars, normalizedValue string, originalValue
 		if scope == ScopeSession {
 			if vars.EnableNoopFuncs {
 				return normalizedValue, nil
-			} else {
-				return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
 			}
+			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
 		}
 		val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
 		if err != nil {
