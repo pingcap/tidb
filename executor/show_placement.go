@@ -160,11 +160,7 @@ func (e *ShowExec) fetchShowPlacement(_ context.Context) error {
 		return err
 	}
 
-	if err := e.fetchAllTablePlacements(); err != nil {
-		return err
-	}
-
-	return nil
+	return e.fetchAllTablePlacements()
 }
 
 func (e *ShowExec) fetchAllPlacementPolicies() error {
