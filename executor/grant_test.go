@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -395,9 +396,6 @@ func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
 	tk.MustExec("create table if not exists xx (id int)")
 	// Case sensitive
 	_, err = tk.Exec("grant Select,Insert on XX to 'genius'")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
-	// The database name should also case sensitive match.
-	_, err = tk.Exec("grant Select,Insert on Test.xx to 'genius'")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
 
 	_, err = tk.Exec("grant Select,Insert on xx to 'genius'")

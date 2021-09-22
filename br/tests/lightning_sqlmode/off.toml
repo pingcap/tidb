@@ -1,0 +1,5 @@
+[tikv-importer]
+backend = 'local'
+
+[tidb]
+sql-mode = 'ALLOW_INVALID_DATES'

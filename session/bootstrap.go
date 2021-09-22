@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package session
 
@@ -52,7 +53,7 @@ import (
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
 	CreateUserTable = `CREATE TABLE IF NOT EXISTS mysql.user (
-		Host					CHAR(64),
+		Host					CHAR(255),
 		User					CHAR(32),
 		authentication_string	TEXT,
 		plugin					CHAR(64),
@@ -92,14 +93,14 @@ const (
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
-		"Host CHAR(60) NOT NULL DEFAULT ''," +
+		"Host CHAR(255) NOT NULL DEFAULT ''," +
 		"User CHAR(80) NOT NULL DEFAULT ''," +
 		"Priv LONGTEXT NOT NULL DEFAULT ''," +
 		"PRIMARY KEY (Host, User)" +
 		")"
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE IF NOT EXISTS mysql.db (
-		Host					CHAR(60),
+		Host					CHAR(255),
 		DB						CHAR(64),
 		User					CHAR(32),
 		Select_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -124,7 +125,7 @@ const (
 		PRIMARY KEY (Host, DB, User));`
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
 	CreateTablePrivTable = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
-		Host		CHAR(60),
+		Host		CHAR(255),
 		DB			CHAR(64),
 		User		CHAR(32),
 		Table_name	CHAR(64),
@@ -135,7 +136,7 @@ const (
 		PRIMARY KEY (Host, DB, User, Table_name));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
-		Host		CHAR(60),
+		Host		CHAR(255),
 		DB			CHAR(64),
 		User		CHAR(32),
 		Table_name	CHAR(64),
@@ -254,7 +255,7 @@ const (
 		charset TEXT NOT NULL,
 		collation TEXT NOT NULL,
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
-		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
+		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
@@ -338,7 +339,15 @@ const (
 		PRIV char(32) NOT NULL DEFAULT '',
 		WITH_GRANT_OPTION enum('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (USER,HOST,PRIV)
-	  );`
+	);`
+	// CreateCapturePlanBaselinesBlacklist stores the baseline capture filter rules.
+	CreateCapturePlanBaselinesBlacklist = `CREATE TABLE IF NOT EXISTS mysql.capture_plan_baselines_blacklist (
+		id bigint(64) auto_increment,
+		filter_type varchar(32) NOT NULL COMMENT "type of the filter, only db, table and frequency supported now",
+		filter_value varchar(32) NOT NULL,
+		key idx(filter_type),
+		primary key(id)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -498,11 +507,17 @@ const (
 	version71 = 71
 	// version72 adds snapshot column for mysql.stats_meta
 	version72 = 72
+	// version73 adds mysql.capture_plan_baselines_blacklist table
+	version73 = 73
+	// version74 changes global variable `tidb_stmt_summary_max_stmt_count` value from 200 to 3000.
+	version74 = 74
+	// version75 update mysql.*.host from char(60) to char(255)
+	version75 = 75
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version72
+var currentBootstrapVersion int64 = version75
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -578,6 +593,9 @@ var (
 		upgradeToVer70,
 		upgradeToVer71,
 		upgradeToVer72,
+		upgradeToVer73,
+		upgradeToVer74,
+		upgradeToVer75,
 	}
 )
 
@@ -1378,9 +1396,6 @@ func upgradeToVer67(s Session, ver int64) {
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
 	}
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
 	req := rs.NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	p := parser.New()
@@ -1395,6 +1410,7 @@ func upgradeToVer67(s Session, ver int64) {
 		}
 		updateBindInfo(iter, p, bindMap)
 	}
+	terror.Call(rs.Close)
 
 	mustExecute(s, "DELETE FROM mysql.bind_info where source != 'builtin'")
 	for original, bind := range bindMap {
@@ -1529,6 +1545,32 @@ func upgradeToVer72(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN snapshot BIGINT(64) UNSIGNED NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer73(s Session, ver int64) {
+	if ver >= version73 {
+		return
+	}
+	doReentrantDDL(s, CreateCapturePlanBaselinesBlacklist)
+}
+
+func upgradeToVer74(s Session, ver int64) {
+	if ver >= version74 {
+		return
+	}
+	// The old default value of `tidb_stmt_summary_max_stmt_count` is 200, we want to enlarge this to the new default value when TiDB upgrade.
+	mustExecute(s, fmt.Sprintf("UPDATE mysql.global_variables SET VARIABLE_VALUE='%[1]v' WHERE VARIABLE_NAME = 'tidb_stmt_summary_max_stmt_count' AND CAST(VARIABLE_VALUE AS SIGNED) = 200", config.GetGlobalConfig().StmtSummary.MaxStmtCount))
+}
+
+func upgradeToVer75(s Session, ver int64) {
+	if ver >= version75 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.global_priv MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.db MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Host CHAR(255)")
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1607,6 +1649,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsFMSketchTable)
 	// Create global_grants
 	mustExecute(s, CreateGlobalGrantsTable)
+	// Create capture_plan_baselines_blacklist
+	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

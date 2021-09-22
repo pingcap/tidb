@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -931,7 +932,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 	}
 
 	// This is a test for issue 7334
-	du := newDateArighmeticalUtil()
+	du := newDateArithmeticalUtil()
 	resetStmtContext(s.ctx)
 	now, _, err := evalNowWithFsp(s.ctx, 0)
 	c.Assert(err, IsNil)
@@ -1165,9 +1166,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	n := v.GetMysqlTime()
 	c.Assert(n.String(), GreaterEqual, last.Format(types.TimeFormat))
 
-	f, err = fc.getFunction(ctx, s.datumsToConstants(types.MakeDatums(-2)))
-	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
+	_, err = fc.getFunction(ctx, s.datumsToConstants(types.MakeDatums(-2)))
 	c.Assert(err, NotNil)
 }
 

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/benchdaily"
 )
 
 func BenchmarkEncodeRowKeyWithHandle(b *testing.B) {
@@ -51,4 +53,16 @@ func BenchmarkDecodeRowKey(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkEncodeRowKeyWithHandle,
+		BenchmarkEncodeEndKey,
+		BenchmarkEncodeRowKeyWithPrefixNex,
+		BenchmarkDecodeRowKey,
+		BenchmarkHasTablePrefix,
+		BenchmarkHasTablePrefixBuiltin,
+		BenchmarkEncodeValue,
+	)
 }

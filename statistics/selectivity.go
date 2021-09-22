@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -246,7 +247,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		id2Paths[path.Index.ID] = path
 	}
 	for id, idxInfo := range coll.Indices {
-		idxCols := expression.FindPrefixOfIndex(extractedCols, coll.Idx2ColumnIDs[id])
+		idxCols := FindPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxInfo.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
 			for i := 0; i < len(idxCols) && i < len(idxInfo.Info.Columns); i++ {
@@ -366,7 +367,7 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
-		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0].UniqueID)
+		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0])
 		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType, types.UnspecifiedLength)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
@@ -375,10 +376,10 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 		}
 		var res *ranger.DetachRangeResult
 		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
-		ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
 		if err != nil {
 			return 0, nil, false, err
 		}
+		ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
 	default:
 		panic("should never be here")
 	}
@@ -455,4 +456,26 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 		marked[bestID] = true
 	}
 	return
+}
+
+// FindPrefixOfIndexByCol will find columns in index by checking the unique id or the virtual expression.
+// So it will return at once no matching column is found.
+func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64, cachedPath *planutil.AccessPath) []*expression.Column {
+	if cachedPath != nil {
+		idxCols := cachedPath.IdxCols
+		retCols := make([]*expression.Column, 0, len(idxCols))
+	idLoop:
+		for _, idCol := range idxCols {
+			for _, col := range cols {
+				if col.EqualByExprAndID(nil, idCol) {
+					retCols = append(retCols, col)
+					continue idLoop
+				}
+			}
+			// If no matching column is found, just return.
+			return retCols
+		}
+		return retCols
+	}
+	return expression.FindPrefixOfIndex(cols, idxColIDs)
 }

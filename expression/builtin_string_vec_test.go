@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -253,6 +254,13 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimTrailing), RetType: types.NewFieldType(mysql.TypeLonglong)}},
 		},
 	},
+	ast.Translate: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), newRandLenStrGener(5, 25)},
+		},
+	},
 	ast.LTrim: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&randSpaceStrGener{10, 100}}},
 	},
@@ -329,6 +337,9 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&constStrGener{"case"}, &constStrGener{"test,case"}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&constStrGener{""}, &constStrGener{"test,case"}}},
 	},
+}
+
+var vecBuiltinStringCases2 = map[string][]vecExprBenchCase{
 	ast.MakeSet: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString}},
 	},
@@ -532,4 +543,20 @@ func BenchmarkVectorizedBuiltinStringEvalOneVec(b *testing.B) {
 
 func BenchmarkVectorizedBuiltinStringFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinStringCases)
+}
+
+func (s *testVectorizeSuite1) TestVectorizedBuiltinStringEvalOneVec2(c *C) {
+	testVectorizedEvalOneVec(c, vecBuiltinStringCases2)
+}
+
+func (s *testVectorizeSuite1) TestVectorizedBuiltinStringFunc2(c *C) {
+	testVectorizedBuiltinFunc(c, vecBuiltinStringCases2)
+}
+
+func BenchmarkVectorizedBuiltinStringEvalOneVec2(b *testing.B) {
+	benchmarkVectorizedEvalOneVec(b, vecBuiltinStringCases2)
+}
+
+func BenchmarkVectorizedBuiltinStringFunc2(b *testing.B) {
+	benchmarkVectorizedBuiltinFunc(b, vecBuiltinStringCases2)
 }
