@@ -759,6 +759,7 @@ func testGetPartitionDefinitionsByName(c *C, ctx sessionctx.Context, db string, 
 	err := dom.Reload()
 	c.Assert(err, IsNil)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(err, IsNil)
 	c.Assert(tbl, NotNil)
 	var ptDef model.PartitionDefinition
 	for _, def := range tbl.Meta().Partition.Definitions {
