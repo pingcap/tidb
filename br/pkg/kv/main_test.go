@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,14 +17,11 @@ package kv
 import (
 	"testing"
 
-	"github.com/pingcap/parser/mysql"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestSession(t *testing.T) {
-	t.Parallel()
-
-	session := newSession(&SessionOptions{SQLMode: mysql.ModeNone, Timestamp: 1234567890, RowFormatVersion: "1"})
-	_, err := session.Txn(true)
-	require.NoError(t, err)
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	goleak.VerifyTestMain(m)
 }
