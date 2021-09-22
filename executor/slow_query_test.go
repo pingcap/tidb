@@ -18,7 +18,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"github.com/stretchr/testify/require"
 	"os"
 	"strings"
 	"testing"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/assert"
 )
 
 func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
@@ -520,8 +520,8 @@ func TestSplitbyColon(t *testing.T) {
 	}
 	for _, c := range cases {
 		resFields, resValues := splitByColon(c.line)
-		require.Equal(t, c.fields, resFields)
-		require.Equal(t, c.values, resValues)
+		assert.Equal(t, c.fields, resFields)
+		assert.Equal(t, c.values, resValues)
 	}
 }
 
