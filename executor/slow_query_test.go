@@ -18,8 +18,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"github.com/stretchr/testify/require"
 	"os"
 	"strings"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -109,6 +111,7 @@ select * from t;`
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "panic test")
 }
+
 
 func (s *testExecSuite) TestParseSlowLogFile(c *C) {
 	slowLogStr :=
@@ -481,6 +484,49 @@ select 7;`
 		c.Assert(retriever.close(), IsNil)
 	}
 }
+
+
+func TestSplitbyColon(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		line string
+		fields []string
+		values []string
+	}{
+		{
+			"",
+			[]string{},
+			[]string{},
+		},
+		{
+			"123a",
+			[]string{},
+			[]string{"123a"},
+		},
+		{
+			"1a: 2b",
+			[]string{"1a"},
+			[]string{"2b"},
+		},
+		{
+			"1a: [2b 3c] 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"[2b 3c]", "5e"},
+		},
+		{
+			"1a: [2b,3c] 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"[2b,3c]", "5e"},
+		},
+	}
+	for _, c := range cases {
+		resFields, resValues := splitByColon(c.line)
+		require.Equal(t, c.fields, resFields)
+		require.Equal(t, c.values, resValues)
+	}
+}
+
 
 func (s *testExecSuite) TestBatchLogForReversedScan(c *C) {
 	logData0 := ""
