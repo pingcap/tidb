@@ -112,7 +112,6 @@ select * from t;`
 	c.Assert(err.Error(), Equals, "panic test")
 }
 
-
 func (s *testExecSuite) TestParseSlowLogFile(c *C) {
 	slowLogStr :=
 		`# Time: 2019-04-28T15:24:04.309074+08:00
@@ -485,12 +484,11 @@ select 7;`
 	}
 }
 
-
 func TestSplitbyColon(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		line string
+		line   string
 		fields []string
 		values []string
 	}{
@@ -526,7 +524,6 @@ func TestSplitbyColon(t *testing.T) {
 		require.Equal(t, c.values, resValues)
 	}
 }
-
 
 func (s *testExecSuite) TestBatchLogForReversedScan(c *C) {
 	logData0 := ""
