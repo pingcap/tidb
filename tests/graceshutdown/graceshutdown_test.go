@@ -129,7 +129,9 @@ func TestGracefulShutdown(t *testing.T) {
 	defer cancel()
 	conn1, err := db.Conn(ctx)
 	require.NoError(t, err)
-	defer conn1.Close()
+	defer func() {
+		require.NoError(t, conn1.Close())
+	}()
 
 	_, err = conn1.ExecContext(ctx, "drop table if exists t;")
 	require.NoError(t, err)
