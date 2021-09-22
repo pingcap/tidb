@@ -2158,7 +2158,7 @@ func (c *currentTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	bf.setDecimalAndFlenForTime(fsp)
 	// 1. no sign.
-	// 2. jour is in the 2-digit range
+	// 2. hour is in the 2-digit range.
 	bf.tp.Flen -= 2
 	if len(args) == 0 {
 		sig = &builtinCurrentTime0ArgSig{bf}
@@ -6896,7 +6896,7 @@ func (c *utcTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 	bf.setDecimalAndFlenForTime(fsp)
 	// 1. no sign.
-	// 2. jour is in the 2-digit range
+	// 2. hour is in the 2-digit range.
 	bf.tp.Flen -= 2
 
 	var sig builtinFunc
