@@ -540,6 +540,7 @@ type StmtSummary struct {
 
 // TopSQL is the config for TopSQL.
 type TopSQL struct {
+	// The TopSQL's data receiver address.
 	ReceiverAddress string `toml:"receiver-address" json:"receiver-address"`
 }
 
