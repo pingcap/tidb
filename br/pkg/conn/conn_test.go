@@ -6,44 +6,27 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testClientSuite{})
-
-type testClientSuite struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	mgr *Mgr
-}
-
-func (s *testClientSuite) SetUpSuite(c *C) {
-	s.ctx, s.cancel = context.WithCancel(context.Background())
-	s.mgr = &Mgr{PdController: &pdutil.PdController{}}
-}
-
-func (s *testClientSuite) TearDownSuite(c *C) {
-	s.cancel()
-}
 
 type fakePDClient struct {
 	pd.Client
 	stores []*metapb.Store
 }
 
-func (fpdc fakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
-	return append([]*metapb.Store{}, fpdc.stores...), nil
+func (c fakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+	return append([]*metapb.Store{}, c.stores...), nil
 }
 
-func (s *testClientSuite) TestCheckStoresAlive(c *C) {
+func TestCheckStoresAlive(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	stores := []*metapb.Store{
 		{
 			Id:    1,
@@ -91,16 +74,18 @@ func (s *testClientSuite) TestCheckStoresAlive(c *C) {
 		stores: stores,
 	}
 
-	kvStores, err := GetAllTiKVStoresWithRetry(s.ctx, fpdc, SkipTiFlash)
-	c.Assert(err, IsNil)
-	c.Assert(len(kvStores), Equals, 2)
-	c.Assert(kvStores, DeepEquals, stores[2:])
+	kvStores, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
+	require.NoError(t, err)
+	require.Len(t, kvStores, 2)
+	require.Equal(t, stores[2:], kvStores)
 
-	err = checkStoresAlive(s.ctx, fpdc, SkipTiFlash)
-	c.Assert(err, IsNil)
+	err = checkStoresAlive(ctx, fpdc, SkipTiFlash)
+	require.NoError(t, err)
 }
 
-func (s *testClientSuite) TestGetAllTiKVStores(c *C) {
+func TestGetAllTiKVStores(t *testing.T) {
+	t.Parallel()
+
 	testCases := []struct {
 		stores         []*metapb.Store
 		storeBehavior  StoreBehavior
@@ -179,23 +164,31 @@ func (s *testClientSuite) TestGetAllTiKVStores(c *C) {
 		pdClient := fakePDClient{stores: testCase.stores}
 		stores, err := GetAllTiKVStores(context.Background(), pdClient, testCase.storeBehavior)
 		if len(testCase.expectedError) != 0 {
-			c.Assert(err, ErrorMatches, testCase.expectedError)
+			require.Error(t, err)
+			require.Regexp(t, testCase.expectedError, err.Error())
 			continue
 		}
 		foundStores := make(map[uint64]int)
 		for _, store := range stores {
 			foundStores[store.Id]++
 		}
-		c.Assert(foundStores, DeepEquals, testCase.expectedStores)
+		require.Equal(t, testCase.expectedStores, foundStores)
 	}
 }
 
-func (s *testClientSuite) TestGetConnOnCanceledContext(c *C) {
+func TestGetConnOnCanceledContext(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := s.mgr.GetBackupClient(ctx, 42)
-	c.Assert(err, ErrorMatches, ".*context canceled.*")
-	_, err = s.mgr.ResetBackupClient(ctx, 42)
-	c.Assert(err, ErrorMatches, ".*context canceled.*")
+	mgr := &Mgr{PdController: &pdutil.PdController{}}
+
+	_, err := mgr.GetBackupClient(ctx, 42)
+	require.Error(t, err)
+	require.Regexp(t, ".*context canceled.*", err.Error())
+
+	_, err = mgr.ResetBackupClient(ctx, 42)
+	require.Error(t, err)
+	require.Regexp(t, ".*context canceled.*", err.Error())
 }
