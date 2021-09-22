@@ -1892,6 +1892,8 @@ func (s *testInferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"maketime(c_int_d, c_int_d, c_char)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
 		{"maketime(c_int_d, c_int_d, c_varchar)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 17, 6},
 		{"maketime(c_int_d, c_int_d, 1.2345)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
+		{"maketime(c_int_d, c_int_d, time '14.12')", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 13, 2},
+		{"maketime(c_int_d, c_int_d, date '2001-01-30')", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 
 		{"get_format(DATE, 'USA')", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 17, types.UnspecifiedLength},
 
