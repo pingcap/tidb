@@ -92,6 +92,7 @@ func (rc *Controller) getClusterAvail(ctx context.Context) (uint64, error) {
 	return clusterAvail, nil
 }
 
+// clusterResource check cluster has enough resource to import data. this test can by skipped.
 func (rc *Controller) clusterResource(ctx context.Context, localSource int64) error {
 	passed := true
 	message := "Cluster resources are rich for this import task"
@@ -313,6 +314,7 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 	return nil
 }
 
+// checkClusterRegion checks cluster if there are too many empty regions or region distribution is unbalanced.
 func (rc *Controller) checkClusterRegion(ctx context.Context) error {
 	err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 		restoreStarted := false
@@ -438,6 +440,7 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 	return sourceSize, nil
 }
 
+// localResource checks the local node has enough resources for this import when local backend enabled;
 func (rc *Controller) localResource(sourceSize int64) error {
 	if rc.isSourceInLocal() {
 		sourceDir := strings.TrimPrefix(rc.cfg.Mydumper.SourceDir, storage.LocalURIPrefix)

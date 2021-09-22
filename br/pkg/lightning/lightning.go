@@ -327,10 +327,10 @@ func (l *Lightning) Stop() {
 }
 
 // Status return the sum size of file which has been imported to TiKV and the total size of source file.
-func (l *Lightning) Status() (int64, int64) {
-	finished := l.status.FinishedFileSize.Load()
-	total := l.status.TotalFileSize.Load()
-	return finished, total
+func (l *Lightning) Status() (finished int64, total int64) {
+	finished = l.status.FinishedFileSize.Load()
+	total = l.status.TotalFileSize.Load()
+	return
 }
 
 func writeJSONError(w http.ResponseWriter, code int, prefix string, err error) {
