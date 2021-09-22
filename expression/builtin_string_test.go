@@ -1649,9 +1649,9 @@ func (s *testEvaluatorSuite) TestLoadFile(c *C) {
 		getErr bool
 		res    string
 	}{
-		{"", false, false, ""},
-		{"/tmp/tikv/tikv.frm", false, false, ""},
-		{"tidb.sql", false, false, ""},
+		{"", true, false, ""},
+		{"/tmp/tikv/tikv.frm", true, false, ""},
+		{"tidb.sql", true, false, ""},
 		{nil, true, false, ""},
 	}
 	for _, t := range cases {
