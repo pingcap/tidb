@@ -947,7 +947,7 @@ type SessionVars struct {
 	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
 	MPPStoreFailTTL string
 
-	// cached is used to optimze the object allocation.
+	// cached is used to optimize the object allocation.
 	cached struct {
 		curr int8
 		data [2]stmtctx.StatementContext

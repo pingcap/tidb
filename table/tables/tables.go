@@ -420,6 +420,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	if err = memBuffer.Set(key, value); err != nil {
 		return err
 	}
+	if err = CheckIndexConsistency(txn, sessVars, t, newData, oldData, memBuffer, sh); err != nil {
+		return errors.Trace(err)
+	}
 	memBuffer.Release(sh)
 	if shouldWriteBinlog(sctx, t.meta) {
 		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
@@ -836,6 +839,10 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		return h, err
 	}
 
+	if err = CheckIndexConsistency(txn, sessVars, t, r, nil, memBuffer, sh); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	memBuffer.Release(sh)
 
 	if shouldWriteBinlog(sctx, t.meta) {
@@ -1047,15 +1054,20 @@ func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
-	err := t.removeRowData(ctx, h)
-	if err != nil {
-		return err
-	}
-
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
 	}
+
+	memBuffer := txn.GetMemBuffer()
+	sh := memBuffer.Staging()
+	defer memBuffer.Cleanup(sh)
+
+	err = t.removeRowData(ctx, h)
+	if err != nil {
+		return err
+	}
+
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
 			if err := checkTempTableSize(ctx, tmpTable, m); err != nil {
@@ -1083,6 +1095,13 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 
+	sessVars := ctx.GetSessionVars()
+	sc := sessVars.StmtCtx
+	if err = CheckIndexConsistency(txn, sessVars, t, nil, r, memBuffer, sh); err != nil {
+		return errors.Trace(err)
+	}
+	memBuffer.Release(sh)
+
 	if shouldWriteBinlog(ctx, t.meta) {
 		cols := t.Cols()
 		colIDs := make([]int64, 0, len(cols)+1)
@@ -1108,7 +1127,6 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return nil
 	}
 	colSize := make(map[int64]int64, len(t.Cols()))
-	sc := ctx.GetSessionVars().StmtCtx
 	for id, col := range t.Cols() {
 		size, err := codec.EstimateValueSize(sc, r[id])
 		if err != nil {

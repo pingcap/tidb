@@ -70,6 +70,9 @@ const (
 	//		2. Ranges of Retrievers do not intersect each other.
 	//		3. Retrievers are sorted by range.
 	SortedCustomRetrievers
+	// TableToColumnMaps is a map from tableID to a series of maps. The maps are needed when checking data consistency.
+	// Save them here to reduce redundant computations.
+	TableToColumnMaps
 )
 
 // ReplicaReadType is the type of replica to read data from
