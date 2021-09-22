@@ -5131,8 +5131,12 @@ func getBf4TimeAddSub(ctx sessionctx.Context, funcName string, args []Expression
 	if err != nil {
 		return
 	}
-	bf.tp.Decimal = mathutil.Min(mathutil.Max(arg0Dec, arg1Dec), int(types.MaxFsp))
-	if retTp == types.ETString {
+	switch retTp {
+	case types.ETDatetime:
+		bf.setDecimalAndFlenForDatetime(mathutil.Min(mathutil.Max(arg0Dec, arg1Dec), int(types.MaxFsp)))
+	case types.ETDuration:
+		bf.setDecimalAndFlenForTime(mathutil.Min(mathutil.Max(arg0Dec, arg1Dec), int(types.MaxFsp)))
+	case types.ETString:
 		bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeString, mysql.MaxDatetimeWidthWithFsp, types.UnspecifiedLength
 	}
 	return
