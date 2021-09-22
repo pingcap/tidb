@@ -849,11 +849,11 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, 3*time.Second)
 
 		resetStmtContext(s.ctx)
-		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(8)))
+		_, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(8)))
 		c.Assert(err, NotNil)
 
 		resetStmtContext(s.ctx)
-		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-2)))
+		_, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-2)))
 		c.Assert(err, NotNil)
 	}
 
@@ -1353,13 +1353,13 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 
 	for _, test := range tests {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(test.param)))
-		c.Assert(err, IsNil)
-		resetStmtContext(s.ctx)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
 		if test.error {
 			c.Assert(err, NotNil)
 			continue
 		}
+		c.Assert(err, IsNil)
+		resetStmtContext(s.ctx)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		if test.expect > 0 {
 			c.Assert(err, IsNil)
 			n := v.GetMysqlDuration()
