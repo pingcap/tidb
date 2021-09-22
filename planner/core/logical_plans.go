@@ -1214,7 +1214,7 @@ type CTEClass struct {
 	LimitEnd uint64
 	// pushDownPredicates may be push-downed by different references.
 	pushDownPredicates []expression.Expression
-	ColumnMap map[string]*expression.Column
+	ColumnMap          map[string]*expression.Column
 }
 
 // LogicalCTE is for CTE.

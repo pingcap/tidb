@@ -168,18 +168,11 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 }
 
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
-func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
+func ExtractColumnSet(exprs ...Expression) *intsets.Sparse {
 	set := &intsets.Sparse{}
 	for _, expr := range exprs {
 		extractColumnSet(expr, set)
 	}
-	return set
-}
-
-// ExtractColumnSetSimple extracts the different values of `UniqueId` for columns in expressions.
-func ExtractColumnSetSimple(expr Expression) *intsets.Sparse {
-	set := &intsets.Sparse{}
-	extractColumnSet(expr, set)
 	return set
 }
 
