@@ -7099,6 +7099,7 @@ func (c *tidbBoundedStalenessFunctionClass) getFunction(ctx sessionctx.Context, 
 	if err != nil {
 		return nil, err
 	}
+	bf.setDecimalAndFlenForDatetime(3)
 	sig := &builtinTiDBBoundedStalenessSig{bf}
 	return sig, nil
 }
