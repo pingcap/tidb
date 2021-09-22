@@ -940,8 +940,8 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 	// Merge the results
 	var finalRows [][]types.Datum
 	allSchemas := sctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
-	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	tz := sctx.GetSessionVars().Location()
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
