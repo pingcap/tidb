@@ -1348,7 +1348,7 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	tests := []struct {
 		param  interface{}
 		expect int
-		error bool
+		error  bool
 	}{{0, 8, false}, {3, 12, false}, {6, 15, false}, {-1, 0, true}, {7, 0, true}}
 
 	for _, test := range tests {
@@ -1586,9 +1586,9 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		flen       int
 		getWarning bool
 	}{
-		{[]interface{}{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001"}, "-00:00:00.000001", false, 6, 17,false},
+		{[]interface{}{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001"}, "-00:00:00.000001", false, 6, 17, false},
 		{[]interface{}{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002"}, "46:58:57.999999", false, 6, 17, false},
-		{[]interface{}{"2016-12-00 12:00:00", "2016-12-01 12:00:00"}, "-24:00:00", false, 0, 10,false},
+		{[]interface{}{"2016-12-00 12:00:00", "2016-12-01 12:00:00"}, "-24:00:00", false, 0, 10, false},
 		{[]interface{}{"10:10:10", "10:9:0"}, "00:01:10", false, 0, 10, false},
 		{[]interface{}{"2016-12-00 12:00:00", "10:9:0"}, "", true, 0, 10, false},
 		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, 10, true},
