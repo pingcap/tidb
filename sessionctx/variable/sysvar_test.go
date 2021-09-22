@@ -673,3 +673,15 @@ func TestTiDBReplicaRead(t *testing.T) {
 	require.Equal(t, val, "follower")
 	require.NoError(t, err)
 }
+
+func TestLastInsertID(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := GetSessionOrGlobalSystemVar(vars, LastInsertID)
+	require.NoError(t, err)
+	require.Equal(t, val, "0")
+
+	vars.StmtCtx.PrevLastInsertID = 21
+	val, err = GetSessionOrGlobalSystemVar(vars, LastInsertID)
+	require.NoError(t, err)
+	require.Equal(t, val, "21")
+}
