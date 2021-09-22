@@ -1049,6 +1049,10 @@ func (s *extractorSuite) TestInspectionRuleTableExtractor(c *C) {
 }
 
 func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	se.GetSessionVars().StmtCtx.TimeZone = time.Local
+
 	var cases = []struct {
 		sql                          string
 		skipRequest                  bool
@@ -1295,9 +1299,7 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			skipRequest: true,
 		},
 	}
-	se, err := session.CreateSession4Test(s.store)
-	se.GetSessionVars().StmtCtx.TimeZone = time.Local
-	c.Assert(err, IsNil)
+
 	parser := parser.New()
 	for _, ca := range cases {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
