@@ -160,6 +160,8 @@ func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValu
 	return normalizedValue, nil
 }
 
+// checkSQLAutoIsNull requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.
+// See also https://github.com/pingcap/tidb/issues/28230
 func checkSQLAutoIsNull(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 	feature := "sql_auto_is_null"
 	if TiDBOptOn(normalizedValue) {
