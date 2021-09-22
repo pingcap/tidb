@@ -1887,7 +1887,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV(c *C) {
 		{
 			false,
 			"(.*)large csv: /testPath file exists(.*)",
-			false,
+			true,
 			1,
 			[]*mydump.MDDatabaseMeta{
 				{
