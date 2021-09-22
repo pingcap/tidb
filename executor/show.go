@@ -218,6 +218,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlacementLabels(ctx)
 	case ast.ShowPlacement:
 		return e.fetchShowPlacement(ctx)
+	case ast.ShowPlacementForTable:
+		return e.fetchShowPlacementForTable(ctx)
 	}
 	return nil
 }
