@@ -240,7 +240,7 @@ func NormalizeBackupVersion(version string) *semver.Version {
 	return ver
 }
 
-// SelectVersion gets the version information from the database server
+// FetchVersion gets the version information from the database server
 func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
 	var versionInfo string
 	const query = "SELECT version();"

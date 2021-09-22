@@ -1094,8 +1094,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					f()
 				}
 			}()
-			// tidb backend don't need to switch tikv to import mode
-			if rc.cfg.TikvImporter.Backend != config.BackendTiDB && rc.cfg.Cron.SwitchMode.Duration > 0 {
+			if rc.cfg.Cron.SwitchMode.Duration > 0 {
 				rc.switchToImportMode(ctx)
 			}
 			start := time.Now()
@@ -1448,8 +1447,8 @@ func (tr *TableRestore) restoreTable(
 
 		versionInfo := version.ParseServerInfo(versionStr)
 
-		// "show table next_row_id" is only available after v4.0.0
-		if versionInfo.ServerType == version.ServerTypeTiDB && versionInfo.ServerVersion.Major >= 4 &&
+		// "show table next_row_id" is only available after tidb v4.0.0
+		if versionInfo.ServerVersion.Major >= 4 &&
 			(rc.cfg.TikvImporter.Backend == config.BackendLocal || rc.cfg.TikvImporter.Backend == config.BackendImporter) {
 			// first, insert a new-line into meta table
 			if err = metaMgr.InitTableMeta(ctx); err != nil {
@@ -1549,14 +1548,16 @@ func (rc *Controller) switchToImportMode(ctx context.Context) {
 }
 
 func (rc *Controller) switchToNormalMode(ctx context.Context) error {
-	if rc.isTiDBBackend() {
-		return nil
-	}
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
 	return nil
 }
 
 func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
+	// // tidb backend don't need to switch tikv to import mode
+	if rc.isTiDBBackend() {
+		return
+	}
+
 	// It is fine if we miss some stores which did not switch to Import mode,
 	// since we're running it periodically, so we exclude disconnected stores.
 	// But it is essential all stores be switched back to Normal mode to allow

@@ -109,23 +109,21 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		"allow_auto_random_explicit_insert": "1",
 		// allow use _tidb_rowid in sql statement
 		"tidb_opt_write_row_id": "1",
+		// always set auto-commit to ON
+		"autocommit": "1",
 	}
 
-	validVars := make(map[string]string, len(vars))
-	// always set auto-commit to ON
-	validVars["autocommit"] = "1"
 	for k, v := range vars {
 		q := fmt.Sprintf("SET SESSION %s = %s;", k, v)
 		if _, err1 := db.ExecContext(ctx, q); err1 != nil {
 			log.L().Warn("set session variable failed, will skip this query", zap.String("query", q),
 				zap.Error(err1))
-			continue
+			delete(vars, k)
 		}
-		validVars[k] = v
 	}
 	_ = db.Close()
 
-	param.Vars = validVars
+	param.Vars = vars
 	db, err = param.Connect()
 	return db, errors.Trace(err)
 }
