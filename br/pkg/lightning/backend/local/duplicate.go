@@ -664,8 +664,6 @@ func (manager *DuplicateManager) getValuesFromRegion(
 		return errors.Errorf("key error")
 	}
 
-	log.L().Error("get keys", zap.Int("key size", len(resp.Pairs)))
-
 	rawRows := make([][]byte, 0, len(resp.Pairs))
 	for i, kv := range resp.Pairs {
 		if !bytes.Equal(kv.Key, handles.rawHandles[i]) {
