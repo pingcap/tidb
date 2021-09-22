@@ -1303,6 +1303,8 @@ func (s *testInferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 		{"timestamp(c_datetime, c_timestamp)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 24, 4},
 		{"timestamp(c_timestamp, c_char)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 6},
 		{"timestamp(c_int_d, c_datetime)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
+		{"timestamp('2000-01-27','23:13:41')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 19, 0},
+		{"timestamp('2000-01-27','23:13:41.123')", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 23, 3},
 
 		{"addtime(c_int_d, c_time_d)", mysql.TypeString, charset.CharsetUTF8MB4, 0, 26, types.UnspecifiedLength},
 		{"addtime(c_datetime_d, c_time_d)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 26, 0},
