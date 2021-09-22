@@ -653,10 +653,9 @@ func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rT
 
 // Coercibility returns the coercibility value which is used to check collations.
 func (col *Column) Coercibility() Coercibility {
-	if col.HasCoercibility() {
-		return col.collationInfo.Coercibility()
+	if !col.HasCoercibility() {
+		col.SetCoercibility(deriveCoercibilityForColumn(col))
 	}
-	col.SetCoercibility(deriveCoercibilityForColumn(col))
 	return col.collationInfo.Coercibility()
 }
 

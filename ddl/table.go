@@ -67,6 +67,23 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 		return ver, errors.Trace(err)
 	}
+	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
+	if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
+		return ver, errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+	}
+	if tbInfo.DirectPlacementOpts != nil {
+		// check the direct placement option compatibility.
+		if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+	if tbInfo.PlacementPolicyRef != nil {
+		// placement policy reference will override the direct placement options.
+		_, err = checkPlacementPolicyExistAndCancelNonExistJob(t, job, tbInfo.PlacementPolicyRef.ID)
+		if err != nil {
+			return ver, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+		}
+	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
@@ -151,7 +168,11 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
 		if oldTbInfoID > 0 && orReplace {
-			err = t.DropTableOrView(schemaID, oldTbInfoID, true)
+			err = t.DropTableOrView(schemaID, oldTbInfoID)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			err = t.GetAutoIDAccessors(schemaID, oldTbInfoID).Del()
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -203,11 +224,14 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 		if tblInfo.IsSequence() {
-			if err = t.DropSequence(job.SchemaID, job.TableID, true); err != nil {
+			if err = t.DropSequence(job.SchemaID, job.TableID); err != nil {
 				break
 			}
 		} else {
-			if err = t.DropTableOrView(job.SchemaID, job.TableID, true); err != nil {
+			if err = t.DropTableOrView(job.SchemaID, job.TableID); err != nil {
+				break
+			}
+			if err = t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
 				break
 			}
 		}
@@ -482,7 +506,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
 	}
 
-	err = t.DropTableOrView(schemaID, tblInfo.ID, true)
+	err = t.DropTableOrView(schemaID, tblInfo.ID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	err = t.GetAutoIDAccessors(schemaID, tblInfo.ID).Del()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -774,27 +803,7 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID
 		return ver, tblInfo, errors.Trace(err)
 	}
 
-	var autoTableID int64
-	var autoRandID int64
-	shouldDelAutoID := false
-	if newSchemaID != oldSchemaID {
-		shouldDelAutoID = true
-		autoTableID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, tblInfo, errors.Trace(err)
-		}
-		autoRandID, err = t.GetAutoRandomID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, tblInfo, errors.Trace(err)
-		}
-		// It's compatible with old version.
-		// TODO: Remove it.
-		tblInfo.OldSchemaID = 0
-	}
-
-	err = t.DropTableOrView(oldSchemaID, tblInfo.ID, shouldDelAutoID)
+	err = t.DropTableOrView(oldSchemaID, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, tblInfo, errors.Trace(err)
@@ -822,18 +831,17 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID
 		job.State = model.JobStateCancelled
 		return ver, tblInfo, errors.Trace(err)
 	}
-	// Update the table's auto-increment ID.
+
 	if newSchemaID != oldSchemaID {
-		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, autoTableID)
+		oldDBID := tblInfo.GetDBID(oldSchemaID)
+		err := meta.BackupAndRestoreAutoIDs(t, oldDBID, tblInfo.ID, newSchemaID, tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, tblInfo, errors.Trace(err)
 		}
-		_, err = t.GenAutoRandomID(newSchemaID, tblInfo.ID, autoRandID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, tblInfo, errors.Trace(err)
-		}
+		// It's compatible with old version.
+		// TODO: Remove it.
+		tblInfo.OldSchemaID = 0
 	}
 
 	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)

@@ -228,14 +228,11 @@ func asyncNotify(ch chan struct{}) {
 func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
 	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
-	var jobs []*model.Job
-	var err error
-	switch curJob.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		jobs, err = t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
-	default:
-		jobs, err = t.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
+	jobListKey := meta.DefaultJobListKey
+	if !admin.MayNeedBackfill(curJob.Type) {
+		jobListKey = meta.AddIndexJobListKey
 	}
+	jobs, err := t.GetAllDDLJobsInQueue(jobListKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -296,14 +293,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			if err = buildJobDependence(t, job); err != nil {
 				return errors.Trace(err)
 			}
-
-			if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-				jobKey := meta.AddIndexJobListKey
-				err = t.EnQueueDDLJob(job, jobKey)
-			} else {
-				err = t.EnQueueDDLJob(job)
+			jobListKey := meta.DefaultJobListKey
+			if admin.MayNeedBackfill(job.Type) {
+				jobListKey = meta.AddIndexJobListKey
 			}
-			if err != nil {
+			if err = t.EnQueueDDLJob(job, jobListKey); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -514,6 +508,12 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			if job == nil || err != nil {
 				return errors.Trace(err)
 			}
+
+			// only general ddls allowed to be executed when TiKV is disk full.
+			if w.tp == addIdxWorker && job.IsRunning() {
+				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+			}
+
 			w.setDDLLabelForTopSQL(job)
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
 				return errors.Trace(err1)
@@ -536,16 +536,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.RLock()
 			d.mu.hook.OnJobRunBefore(job)
 			d.mu.RUnlock()
-
-			// Meta releated txn default is DiskFullOpt_AllowedOnAlmostFull to support
-			// all the ddl job queue operations or other meta change. But we only want
-			// to support the Drop Table like ddls to be executed when TiKV is disk full.
-			switch job.Type {
-			case model.ActionDropSchema, model.ActionDropTable, model.ActionDropIndex, model.ActionTruncateTable, model.ActionDropTablePartition, model.ActionDropView, model.ActionDropSequence, model.ActionDropIndexes, model.ActionTruncateTablePartition:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			default:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
-			}
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
@@ -839,7 +829,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionCreatePlacementPolicy:
 		ver, err = onCreatePlacementPolicy(d, t, job)
 	case model.ActionDropPlacementPolicy:
-		ver, err = onDropPlacementPolicy(t, job)
+		ver, err = onDropPlacementPolicy(d, t, job)
 	case model.ActionAlterPlacementPolicy:
 		ver, err = onAlterPlacementPolicy(t, job)
 	default:

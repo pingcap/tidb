@@ -481,6 +481,7 @@ type SessionVars struct {
 
 	// mppTaskIDAllocator is used to allocate mpp task id for a session.
 	mppTaskIDAllocator struct {
+		mu     sync.Mutex
 		lastTS uint64
 		taskID int64
 	}
@@ -947,6 +948,9 @@ type SessionVars struct {
 	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
 	MPPStoreFailTTL string
 
+	// ReadStaleness indicates the staleness duration for the following query
+	ReadStaleness time.Duration
+
 	// cached is used to optimze the object allocation.
 	cached struct {
 		curr int8
@@ -964,6 +968,8 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
 // startTs is different.
 func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
+	s.mppTaskIDAllocator.mu.Lock()
+	defer s.mppTaskIDAllocator.mu.Unlock()
 	if s.mppTaskIDAllocator.lastTS == startTS {
 		s.mppTaskIDAllocator.taskID++
 		return s.mppTaskIDAllocator.taskID

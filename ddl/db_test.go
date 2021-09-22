@@ -1349,7 +1349,7 @@ func testAddIndex(c *C, store kv.Storage, lease time.Duration, tp testAddIndexTy
 	otherKeys = append(otherKeys, v)
 
 	addIdxSQL := fmt.Sprintf("alter table test_add_index add %s key c3_index(c3)", idxTp)
-	testddlutil.SessionExecInGoroutine(c, store, addIdxSQL, done)
+	testddlutil.SessionExecInGoroutine(store, addIdxSQL, done)
 
 	deletedKeys := make(map[int]struct{})
 
@@ -1543,7 +1543,7 @@ func testAddIndexWithSplitTable(c *C, store kv.Storage, lease time.Duration, cre
 	rows := re.Rows()
 	c.Assert(len(rows), Equals, 16)
 	addIdxSQL := "alter table test_add_index add index idx(a)"
-	testddlutil.SessionExecInGoroutine(c, store, addIdxSQL, done)
+	testddlutil.SessionExecInGoroutine(store, addIdxSQL, done)
 
 	ticker := time.NewTicker(lease / 5)
 	defer ticker.Stop()
@@ -1721,7 +1721,7 @@ func testDropIndex(c *C, store kv.Storage, lease time.Duration, createSQL, dropI
 	}
 	c.Assert(c3idx, NotNil)
 
-	testddlutil.SessionExecInGoroutine(c, store, dropIdxSQL, done)
+	testddlutil.SessionExecInGoroutine(store, dropIdxSQL, done)
 
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
@@ -2340,7 +2340,7 @@ func (s *testDBSuite) testAddColumn(tk *testkit.TestKit, c *C) {
 	// add some rows
 	batchInsert(tk, "t2", 0, num)
 
-	testddlutil.SessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1", done)
+	testddlutil.SessionExecInGoroutine(s.store, "alter table t2 add column c4 int default -1", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -2486,7 +2486,7 @@ func (s *testDBSuite) testDropColumn(tk *testkit.TestKit, c *C) {
 	}
 
 	// get c4 column id
-	testddlutil.SessionExecInGoroutine(c, s.store, "alter table t2 drop column c4", done)
+	testddlutil.SessionExecInGoroutine(s.store, "alter table t2 drop column c4", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -2552,9 +2552,9 @@ func (s *testDBSuite6) TestDropColumn(c *C) {
 	dmlDone := make(chan error, num)
 	ddlDone := make(chan error, num)
 
-	testddlutil.ExecMultiSQLInGoroutine(c, s.store, "drop_col_db", multiDDL, ddlDone)
+	testddlutil.ExecMultiSQLInGoroutine(s.store, "drop_col_db", multiDDL, ddlDone)
 	for i := 0; i < num; i++ {
-		testddlutil.ExecMultiSQLInGoroutine(c, s.store, "drop_col_db", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
+		testddlutil.ExecMultiSQLInGoroutine(s.store, "drop_col_db", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
 	}
 	for i := 0; i < num; i++ {
 		err := <-ddlDone
@@ -2860,6 +2860,61 @@ func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 	c.Assert(t1.Meta().TiFlashReplica, NotNil)
 	c.Assert(t1.Meta().TiFlashReplica.Available, IsTrue)
 	c.Assert(t1.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID})
+}
+
+func (s *testSerialDBSuite) TestCreateTableWithSpecialComment(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// case for direct options
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
+		"/*T![placement] PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"CONSTRAINTS=\"[+disk=ssd]\" " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" */",
+	)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PRIMARY_REGION=\"cn-east-1\" "+
+			"REGIONS=\"cn-east-1, cn-east-2\" "+
+			"FOLLOWERS=2 "+
+			"CONSTRAINTS=\"[+disk=ssd]\" "+
+			"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" */",
+	))
+
+	// case for policy
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create placement policy x " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+disk=ssd]\" ")
+	tk.MustExec("create table t(a int)" +
+		"/*T![placement] PLACEMENT POLICY=`x` */")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PLACEMENT POLICY=`x` */",
+	))
+
+	// case for policy with quotes
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create table t(a int)" +
+		"/*T![placement] PLACEMENT POLICY=\"x\" */")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PLACEMENT POLICY=`x` */",
+	))
 }
 
 func (s *testSerialDBSuite) TestCreateTable(c *C) {
@@ -3787,7 +3842,7 @@ func (s *testDBSuite2) TestAddNotNullColumn(c *C) {
 	tk.MustExec("create table tnn (c1 int primary key auto_increment, c2 int)")
 	tk.MustExec("insert tnn (c2) values (0)" + strings.Repeat(",(0)", 99))
 	done := make(chan error, 1)
-	testddlutil.SessionExecInGoroutine(c, s.store, "alter table tnn add column c3 int not null default 3", done)
+	testddlutil.SessionExecInGoroutine(s.store, "alter table tnn add column c3 int not null default 3", done)
 	updateCnt := 0
 out:
 	for {
@@ -4897,7 +4952,7 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
 	s.mustExec(tk, c, "alter table t1 drop column if exists b") // only `a` exists now
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|column b doesn't exist"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|Can't DROP 'b'; check that column/key exists"))
 
 	// CHANGE COLUMN
 	sql = "alter table t1 change column b c int"
@@ -5556,16 +5611,16 @@ type testModifyColumnTimeCase struct {
 
 func testModifyColumnTime(c *C, store kv.Storage, tests []testModifyColumnTimeCase) {
 	limit := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(3)
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
 
 	// Set time zone to UTC.
 	originalTz := tk.Se.GetSessionVars().TimeZone
 	tk.Se.GetSessionVars().TimeZone = time.UTC
 	defer func() {
-		variable.SetDDLErrorCountLimit(limit)
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", limit))
 		tk.Se.GetSessionVars().TimeZone = originalTz
 	}()
 
@@ -7325,7 +7380,7 @@ func testDropIndexes(c *C, store kv.Storage, lease time.Duration, createSQL, dro
 	}
 	c.Assert(idxs, NotNil)
 
-	testddlutil.SessionExecInGoroutine(c, store, dropIdxSQL, done)
+	testddlutil.SessionExecInGoroutine(store, dropIdxSQL, done)
 
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
