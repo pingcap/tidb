@@ -322,21 +322,21 @@ func TestDuplicateBindings(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	createTime := rows[0][4]
-	time.Sleep(1000000)
+	time.Sleep(time.Millisecond)
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, false, createTime == rows[0][4])
+	require.False(t, createTime == rows[0][4])
 
 	tk.MustExec("create session binding for select * from t using select * from t use index(idx);")
 	rows = tk.MustQuery("show session bindings").Rows()
 	require.Len(t, rows, 1)
 	createTime = rows[0][4]
-	time.Sleep(1000000)
+	time.Sleep(time.Millisecond)
 	tk.MustExec("create session binding for select * from t using select * from t use index(idx);")
 	rows = tk.MustQuery("show session bindings").Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, false, createTime == rows[0][4])
+	require.False(t, createTime == rows[0][4])
 }
 
 func TestDefaultDB(t *testing.T) {
