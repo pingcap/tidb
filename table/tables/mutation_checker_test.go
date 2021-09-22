@@ -172,15 +172,13 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 }
 
 func TestCheckIndexKeys(t *testing.T) {
-	/*
-		dimensions of the domain of checkIndexKeys:
-		1. location										*2
-		2. table structure
-			(1) unique index/non-unique index			*2
-			(2) clustered index							*2
-			(3) string collation						*2
-			We don't test primary clustered index and int handle, since they should not have index mutations.
-	*/
+	//	dimensions of the domain of checkIndexKeys:
+	//	1. location										*2
+	//	2. table structure
+	//		(1) unique index/non-unique index			*2
+	//		(2) clustered index							*2
+	//		(3) string collation						*2
+	//		We don't test primary clustered index and int handle, since they should not have index mutations.
 
 	// cases
 	locations := []*time.Location{time.UTC, time.Local}
@@ -250,6 +248,7 @@ func TestCheckIndexKeys(t *testing.T) {
 
 	// test
 	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	for _, isCommonHandle := range []bool{true, false} {
 		for _, lc := range locations {
 			for _, columnInfos := range columnInfoSets {
