@@ -491,7 +491,7 @@ func getLineIndex(offset offset, index int) int {
 	return fileLine
 }
 
-// splitByColon split a line like "field:value field:value..."
+// splitByColon split a line like "field: value field: value..."
 func splitByColon(line string) (fields []string, values []string) {
 	re := regexp.MustCompile(`\w+: `)
 	matches := re.FindAllStringIndex(line, -1)
