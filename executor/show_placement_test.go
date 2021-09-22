@@ -12,74 +12,55 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package executor_test
 
 import (
-	gjson "encoding/json"
-
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
-var _ = SerialSuites(&testShowPlacementSuit{})
+func (s *testSuite5) TestShowPlacement(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop placement policy if exists p1")
 
-type testShowPlacementSuit struct {
-}
+	tk.MustExec("create placement policy pa1 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1,cn-east-2\"" +
+		"SCHEDULE=\"EVEN\"")
+	defer tk.MustExec("drop placement policy pa1")
 
-func (s *testPartitionSuite) TestShowPlacementLabelsBuilder(c *C) {
-	cases := []struct {
-		stores  [][]*helper.StoreLabel
-		expects [][]interface{}
-	}{
-		{
-			stores:  nil,
-			expects: nil,
-		},
-		{
-			stores: [][]*helper.StoreLabel{
-				{{Key: "zone", Value: "z1"}, {Key: "rack", Value: "r3"}, {Key: "host", Value: "h1"}},
-				{{Key: "zone", Value: "z1"}, {Key: "rack", Value: "r1"}, {Key: "host", Value: "h2"}},
-				{{Key: "zone", Value: "z1"}, {Key: "rack", Value: "r2"}, {Key: "host", Value: "h2"}},
-				{{Key: "zone", Value: "z2"}, {Key: "rack", Value: "r1"}, {Key: "host", Value: "h2"}},
-				nil,
-				{{Key: "k1", Value: "v1"}},
-			},
-			expects: [][]interface{}{
-				{"host", []string{"h1", "h2"}},
-				{"k1", []string{"v1"}},
-				{"rack", []string{"r1", "r2", "r3"}},
-				{"zone", []string{"z1", "z2"}},
-			},
-		},
-	}
+	tk.MustExec("create placement policy pa2 " +
+		"LEADER_CONSTRAINTS=\"[+region=us-east-1]\" " +
+		"FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" " +
+		"FOLLOWERS=3")
+	defer tk.MustExec("drop placement policy pa2")
 
-	b := &showPlacementLabelsResultBuilder{}
-	toBinaryJSON := func(obj interface{}) (bj json.BinaryJSON) {
-		d, err := gjson.Marshal(obj)
-		c.Assert(err, IsNil)
-		err = bj.UnmarshalJSON(d)
-		c.Assert(err, IsNil)
-		return
-	}
+	tk.MustExec("create placement policy pb1 " +
+		"VOTER_CONSTRAINTS=\"[+region=bj]\" " +
+		"LEARNER_CONSTRAINTS=\"[+region=sh]\" " +
+		"CONSTRAINTS=\"[+disk=ssd]\"" +
+		"VOTERS=5 " +
+		"LEARNERS=3")
+	defer tk.MustExec("drop placement policy pb1")
 
-	for _, ca := range cases {
-		for _, store := range ca.stores {
-			bj := toBinaryJSON(store)
-			err := b.AppendStoreLabels(bj)
-			c.Assert(err, IsNil)
-		}
+	tk.MustQuery("show placement").Check(testkit.Rows(
+		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SCHEDULED",
+		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" SCHEDULED",
+		"POLICY pb1 CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" SCHEDULED",
+	))
 
-		rows, err := b.BuildRows()
-		c.Assert(err, IsNil)
-		c.Assert(len(rows), Equals, len(ca.expects))
-		for idx, expect := range ca.expects {
-			row := rows[idx]
-			bj := toBinaryJSON(expect[1])
+	tk.MustQuery("show placement like 'POLICY%'").Check(testkit.Rows(
+		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SCHEDULED",
+		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" SCHEDULED",
+		"POLICY pb1 CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" SCHEDULED",
+	))
 
-			c.Assert(row[0].(string), Equals, expect[0].(string))
-			c.Assert(row[1].(json.BinaryJSON).TypeCode, Equals, bj.TypeCode)
-			c.Assert(row[1].(json.BinaryJSON).Value, BytesEquals, bj.Value)
-		}
-	}
+	tk.MustQuery("show placement like 'POLICY pa%'").Check(testkit.Rows(
+		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SCHEDULED",
+		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" SCHEDULED",
+	))
+
+	tk.MustQuery("show placement where Target='POLICY pb1'").Check(testkit.Rows(
+		"POLICY pb1 CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" SCHEDULED",
+	))
 }

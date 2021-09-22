@@ -437,6 +437,19 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 	return err
 }
 
+func setReadStaleness(s *SessionVars, sVal string) error {
+	if sVal == "" {
+		s.ReadStaleness = 0
+		return nil
+	}
+	d, err := time.ParseDuration(sVal)
+	if err != nil {
+		return err
+	}
+	s.ReadStaleness = d
+	return nil
+}
+
 // serverGlobalVariable is used to handle variables that acts in server and global scope.
 type serverGlobalVariable struct {
 	sync.Mutex
