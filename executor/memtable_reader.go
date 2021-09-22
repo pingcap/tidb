@@ -864,6 +864,9 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 	serversInfo []infoschema.ServerInfo,
 	req *HistoryHotRegionsRequest,
 ) ([]chan hotRegionsResult, error) {
+	// The retrieve progress may be abort
+	ctx, e.cancel = context.WithCancel(ctx)
+
 	var results []chan hotRegionsResult
 	for _, srv := range serversInfo {
 		for typ := range e.extractor.HotRegionTypes {
