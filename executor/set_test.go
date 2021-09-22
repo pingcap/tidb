@@ -1470,7 +1470,6 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	// Top SQL variables are now visible in SHOW VARIABLES
 	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows(
 		"tidb_enable_top_sql OFF",
-		"tidb_top_sql_agent_address ",
 		"tidb_top_sql_max_collect 20000",
 		"tidb_top_sql_max_statement_count 20",
 		"tidb_top_sql_precision_seconds 2",
