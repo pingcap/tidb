@@ -6421,8 +6421,6 @@ func (s *testIntegrationSuite) TestCollation(c *C) {
 	tk.MustQuery("select trim(both 'abc' collate utf8mb4_bin from 'c' collate utf8mb4_general_ci);").Check(testkit.Rows("c"))
 	tk.MustQuery("select substr('abc' collate utf8mb4_bin, 2 collate `binary`);").Check(testkit.Rows("bc"))
 	tk.MustQuery("select replace('abc' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci, 'd' collate utf8mb4_unicode_ci);").Check(testkit.Rows("adc"))
-
-	tk.MustGetErrMsg("select locate('1' collate utf8mb4_general_ci, '123' collate utf8mb4_bin, 2 collate `binary`);", "")
 }
 
 func (s *testIntegrationSuite) TestCoercibility(c *C) {
