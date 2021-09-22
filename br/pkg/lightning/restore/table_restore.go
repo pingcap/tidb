@@ -316,7 +316,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 						err = tr.importEngine(ctx, dataClosedEngine, rc, eid, ecp)
 						if rc.status != nil {
 							for _, chunk := range ecp.Chunks {
-								rc.status.FinishedFileSize.Add(chunk.FileMeta.FileSize)
+								rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
 							}
 						}
 					}
@@ -326,7 +326,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 				}(restoreWorker, engineID, engine)
 			} else {
 				for _, chunk := range engine.Chunks {
-					rc.status.FinishedFileSize.Add(chunk.FileMeta.FileSize)
+					rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
 				}
 			}
 		}

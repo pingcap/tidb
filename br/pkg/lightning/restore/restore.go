@@ -1739,7 +1739,12 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		return err
 	}
 	taskExist := false
-
+	// We still need to sample source data even if this task has existed, because we need to judge whether the
+	// source is in order as row key to decide how to sort local data.
+	source, err := rc.estimateSourceData(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if rc.isLocalBackend() {
 		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
@@ -1750,13 +1755,6 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		// PdController will be closed when `taskMetaMgr` closes.
 		rc.taskMgr = rc.metaMgrBuilder.TaskMetaMgr(pdController)
 		taskExist, err = rc.taskMgr.CheckTaskExist(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		// We still need to sample source data even if this task has existed, because we need to judge whether the
-		// source is in order as row key to decide how to sort local data.
-		source, err := rc.estimateSourceData(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
