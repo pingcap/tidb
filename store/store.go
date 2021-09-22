@@ -17,6 +17,7 @@ package store
 import (
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -26,9 +27,13 @@ import (
 )
 
 var stores = make(map[string]kv.Driver)
+var storesLock sync.RWMutex
 
 // Register registers a kv storage with unique name and its associated Driver.
 func Register(name string, driver kv.Driver) error {
+	storesLock.Lock()
+	defer storesLock.Unlock()
+
 	name = strings.ToLower(name)
 
 	if _, ok := stores[name]; ok {
@@ -59,10 +64,16 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	}
 
 	name := strings.ToLower(storeURL.Scheme)
+
+	storesLock.RLock()
+
 	d, ok := stores[name]
 	if !ok {
+		storesLock.RUnlock()
 		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
 	}
+
+	storesLock.RUnlock()
 
 	var s kv.Storage
 	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
