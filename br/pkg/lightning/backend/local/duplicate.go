@@ -214,6 +214,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Contex
 		return false, err
 	}
 
+	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
 	decoder, err := kv.NewTableKVDecoder(tbl, &kv.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	})
@@ -423,6 +424,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 	tbl table.Table,
 	db *pebble.DB,
 ) (bool, error) {
+	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
 	decoder, err := kv.NewTableKVDecoder(tbl, &kv.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	})
