@@ -10,6 +10,7 @@ import (
 
 	"github.com/golang/mock/gomock"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	mockstorage "github.com/pingcap/tidb/br/pkg/mock/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -28,13 +29,17 @@ func TestWalkMetaFileEmpty(t *testing.T) {
 
 	files := []*backuppb.MetaFile{}
 	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
-	err := walkLeafMetaFile(context.Background(), nil, nil, collect)
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
+
+	err := walkLeafMetaFile(context.Background(), nil, nil, &cipher, collect)
 
 	require.NoError(t, err)
 	require.Len(t, files, 0)
 
 	empty := &backuppb.MetaFile{}
-	err = walkLeafMetaFile(context.Background(), nil, empty, collect)
+	err = walkLeafMetaFile(context.Background(), nil, empty, &cipher, collect)
 
 	require.NoError(t, err)
 	require.Len(t, files, 1)
@@ -48,8 +53,11 @@ func TestWalkMetaFileLeaf(t *testing.T) {
 		{Db: []byte("db"), Table: []byte("table")},
 	}}
 	files := []*backuppb.MetaFile{}
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
 	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
-	err := walkLeafMetaFile(context.Background(), nil, leaf, collect)
+	err := walkLeafMetaFile(context.Background(), nil, leaf, &cipher, collect)
 
 	require.NoError(t, err)
 	require.Len(t, files, 1)
@@ -73,8 +81,11 @@ func TestWalkMetaFileInvalid(t *testing.T) {
 		{Name: "leaf", Sha256: []byte{}},
 	}}
 
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
 	collect := func(m *backuppb.MetaFile) { panic("unreachable") }
-	err := walkLeafMetaFile(ctx, mockStorage, root, collect)
+	err := walkLeafMetaFile(ctx, mockStorage, root, &cipher, collect)
 
 	require.Regexp(t, regexp.MustCompile(".*ErrInvalidMetaFile.*"), err)
 }
@@ -130,8 +141,11 @@ func TestWalkMetaFile(t *testing.T) {
 	}}
 
 	files := []*backuppb.MetaFile{}
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
 	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
-	err := walkLeafMetaFile(ctx, mockStorage, root, collect)
+	err := walkLeafMetaFile(ctx, mockStorage, root, &cipher, collect)
 	require.NoError(t, err)
 
 	require.Len(t, files, len(expect))

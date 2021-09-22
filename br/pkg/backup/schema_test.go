@@ -10,6 +10,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -52,7 +53,12 @@ func (s *testBackupSchemaSuite) GetSchemasFromMeta(c *C, es storage.ExternalStor
 	mockMeta := &backuppb.BackupMeta{}
 	err = proto.Unmarshal(metaBytes, mockMeta)
 	c.Assert(err, IsNil)
-	metaReader := metautil.NewMetaReader(mockMeta, es)
+	metaReader := metautil.NewMetaReader(mockMeta,
+		es,
+		&backuppb.CipherInfo{
+			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+		},
+	)
 
 	output := make(chan *metautil.Table, 4)
 	go func() {
@@ -126,7 +132,10 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchema(c *C) {
 	updateCh := new(simpleProgress)
 	skipChecksum := false
 	es := s.GetRandomStorage(c)
-	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false)
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
+	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, &cipher)
 	ctx := context.Background()
 	err = backupSchemas.BackupSchemas(
 		ctx, metaWriter, s.mock.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
@@ -154,7 +163,7 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchema(c *C) {
 	updateCh.reset()
 
 	es2 := s.GetRandomStorage(c)
-	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false)
+	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, &cipher)
 	err = backupSchemas.BackupSchemas(
 		ctx, metaWriter2, s.mock.Storage, nil, math.MaxUint64, 2, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	c.Assert(updateCh.get(), Equals, int64(2))
@@ -200,8 +209,12 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchemaWithBrokenStats(c *
 	skipChecksum := false
 	updateCh := new(simpleProgress)
 
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
+
 	es := s.GetRandomStorage(c)
-	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false)
+	metaWriter := metautil.NewMetaWriter(es, metautil.MetaFileSize, false, &cipher)
 	ctx := context.Background()
 	err = backupSchemas.BackupSchemas(
 		ctx, metaWriter, s.mock.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
@@ -230,7 +243,7 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchemaWithBrokenStats(c *
 	updateCh.reset()
 	statsHandle := s.mock.Domain.StatsHandle()
 	es2 := s.GetRandomStorage(c)
-	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false)
+	metaWriter2 := metautil.NewMetaWriter(es2, metautil.MetaFileSize, false, &cipher)
 	err = backupSchemas.BackupSchemas(
 		ctx, metaWriter2, s.mock.Storage, statsHandle, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	c.Assert(err, IsNil)

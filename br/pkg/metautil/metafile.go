@@ -52,7 +52,9 @@ const (
 )
 
 func Decrypt(content []byte, cipher *backuppb.CipherInfo) ([]byte, error) {
-	if encryptionpb.EncryptionMethod_PLAINTEXT == cipher.CipherType {
+	if encryptionpb.EncryptionMethod_UNKNOWN == cipher.CipherType {
+		return content, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
+	} else if encryptionpb.EncryptionMethod_PLAINTEXT == cipher.CipherType {
 		return content, nil
 	}
 
@@ -60,7 +62,9 @@ func Decrypt(content []byte, cipher *backuppb.CipherInfo) ([]byte, error) {
 }
 
 func Encrypt(content []byte, cipher *backuppb.CipherInfo) ([]byte, error) {
-	if encryptionpb.EncryptionMethod_PLAINTEXT == cipher.CipherType {
+	if encryptionpb.EncryptionMethod_UNKNOWN == cipher.CipherType {
+		return content, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
+	} else if encryptionpb.EncryptionMethod_PLAINTEXT == cipher.CipherType {
 		return content, nil
 	}
 
