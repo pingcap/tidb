@@ -49,50 +49,50 @@ func TestBuildTasks(t *testing.T) {
 	req := &kv.Request{}
 	flashReq := &kv.Request{}
 	flashReq.StoreType = kv.TiFlash
-	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c"), req)
+	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "c")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "c"), flashReq)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "c"), flashReq, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "c")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), req)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[1], "g", "n")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), flashReq)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), flashReq, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[1], "g", "n")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), req)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[1], "m", "n")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), flashReq)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), flashReq, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[1], "m", "n")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), req)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 2)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "g")
 	taskEqual(t, tasks[1], regionIDs[1], "g", "k")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), flashReq)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), flashReq, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 2)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "g")
 	taskEqual(t, tasks[1], regionIDs[1], "g", "k")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), req)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 4)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "g")
@@ -100,7 +100,7 @@ func TestBuildTasks(t *testing.T) {
 	taskEqual(t, tasks[2], regionIDs[2], "n", "t")
 	taskEqual(t, tasks[3], regionIDs[3], "t", "x")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), flashReq)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), flashReq, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 4)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "g")
@@ -108,45 +108,45 @@ func TestBuildTasks(t *testing.T) {
 	taskEqual(t, tasks[2], regionIDs[2], "n", "t")
 	taskEqual(t, tasks[3], regionIDs[3], "t", "x")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), req)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "b", "b", "c")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), flashReq)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), flashReq, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "b", "b", "c")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), req)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "b", "e", "f")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), flashReq)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), flashReq, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "b", "e", "f")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), req)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 2)
 	taskEqual(t, tasks[0], regionIDs[1], "g", "n")
 	taskEqual(t, tasks[1], regionIDs[2], "o", "p")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), flashReq)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), flashReq, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 2)
 	taskEqual(t, tasks[0], regionIDs[1], "g", "n")
 	taskEqual(t, tasks[1], regionIDs[2], "o", "p")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), req)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 2)
 	taskEqual(t, tasks[0], regionIDs[1], "h", "k", "m", "n")
 	taskEqual(t, tasks[1], regionIDs[2], "n", "p")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), flashReq)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), flashReq, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 2)
 	taskEqual(t, tasks[0], regionIDs[1], "h", "k", "m", "n")
@@ -236,7 +236,7 @@ func TestRebuild(t *testing.T) {
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
 	req := &kv.Request{}
-	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "z"), req)
+	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "z"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 2)
 	taskEqual(t, tasks[0], regionIDs[0], "a", "m")
@@ -250,7 +250,7 @@ func TestRebuild(t *testing.T) {
 	cache.InvalidateCachedRegion(tasks[1].region)
 
 	req.Desc = true
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "z"), req)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "z"), req, nil)
 	require.NoError(t, err)
 	require.Len(t, tasks, 3)
 	taskEqual(t, tasks[2], regionIDs[0], "a", "m")

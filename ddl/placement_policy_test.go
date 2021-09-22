@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/placementpolicy"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -60,7 +59,7 @@ func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 		"VOTERS=3 " +
 		"VOTER_CONSTRAINTS=\"[+disk=ssd]\"")
 
-	checkFunc := func(policyInfo *placementpolicy.PolicyInfo) {
+	checkFunc := func(policyInfo *model.PolicyInfo) {
 		c.Assert(policyInfo.ID != 0, Equals, true)
 		c.Assert(policyInfo.Name.L, Equals, "x")
 		c.Assert(policyInfo.PrimaryRegion, Equals, "cn-east-1")
@@ -108,9 +107,9 @@ func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 	// TODO: privilege check & constraint syntax check.
 }
 
-func testGetPolicyByIDFromMeta(c *C, store kv.Storage, policyID int64) *placementpolicy.PolicyInfo {
+func testGetPolicyByIDFromMeta(c *C, store kv.Storage, policyID int64) *model.PolicyInfo {
 	var (
-		policyInfo *placementpolicy.PolicyInfo
+		policyInfo *model.PolicyInfo
 		err        error
 	)
 	err1 := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
@@ -126,7 +125,7 @@ func testGetPolicyByIDFromMeta(c *C, store kv.Storage, policyID int64) *placemen
 	return policyInfo
 }
 
-func testGetPolicyByNameFromIS(c *C, ctx sessionctx.Context, policy string) *placementpolicy.PolicyInfo {
+func testGetPolicyByNameFromIS(c *C, ctx sessionctx.Context, policy string) *model.PolicyInfo {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
@@ -265,4 +264,166 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	tk.MustExec("drop placement policy x")
 	tk.MustGetErrCode("alter placement policy x REGIONS=\"bj,sh\"", mysql.ErrPlacementPolicyNotExists)
 	tk.MustGetErrCode("alter placement policy x2 REGIONS=\"bj,sh\"", mysql.ErrPlacementPolicyNotExists)
+}
+
+func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	// Direct placement option: special constraints may be incompatible with common constraint.
+	_, err := tk.Exec("create table t(a int) " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+disk=ssd,-zone=cn-east-1]\"")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'")
+
+	tk.MustExec("create table t(a int) " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+disk=ssd]\"")
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(tbl, NotNil)
+	c.Assert(tbl.Meta().PlacementPolicyRef, IsNil)
+	c.Assert(tbl.Meta().DirectPlacementOpts, NotNil)
+
+	checkFunc := func(policySetting *model.PlacementSettings) {
+		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
+		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
+		c.Assert(policySetting.Followers, Equals, uint64(2))
+		c.Assert(policySetting.FollowerConstraints, Equals, "[+zone=cn-east-1]")
+		c.Assert(policySetting.Voters, Equals, uint64(0))
+		c.Assert(policySetting.VoterConstraints, Equals, "")
+		c.Assert(policySetting.Learners, Equals, uint64(0))
+		c.Assert(policySetting.LearnerConstraints, Equals, "")
+		c.Assert(policySetting.Constraints, Equals, "[+disk=ssd]")
+		c.Assert(policySetting.Schedule, Equals, "")
+	}
+	checkFunc(tbl.Meta().DirectPlacementOpts)
+	tk.MustExec("drop table if exists t")
+
+	// Direct placement option and placement policy can't co-exist.
+	_, err = tk.Exec("create table t(a int) " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+disk=ssd]\" " +
+		"PLACEMENT POLICY=\"x\"")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8240]Placement policy 'x' can't co-exist with direct placement options")
+
+	// Only placement policy should check the policy existence.
+	tk.MustGetErrCode("create table t(a int)"+
+		"PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
+	tk.MustExec("create placement policy x " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+disk=ssd]\" ")
+	tk.MustExec("create table t(a int)" +
+		"PLACEMENT POLICY=\"x\"")
+
+	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(tbl, NotNil)
+	c.Assert(tbl.Meta().PlacementPolicyRef, NotNil)
+	c.Assert(tbl.Meta().PlacementPolicyRef.Name.L, Equals, "x")
+	c.Assert(tbl.Meta().PlacementPolicyRef.ID != 0, Equals, true)
+	tk.MustExec("drop table if exists t")
+
+	// Only direct placement options should check the compatibility itself.
+	_, err = tk.Exec("create table t(a int)" +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+disk=ssd, -zone=cn-east-1]\" ")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'")
+
+	tk.MustExec("create table t(a int)" +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+disk=ssd]\" ")
+
+	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(tbl, NotNil)
+	c.Assert(tbl.Meta().DirectPlacementOpts, NotNil)
+
+	checkFunc = func(policySetting *model.PlacementSettings) {
+		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
+		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
+		c.Assert(policySetting.Followers, Equals, uint64(2))
+		c.Assert(policySetting.FollowerConstraints, Equals, "[+zone=cn-east-1]")
+		c.Assert(policySetting.Voters, Equals, uint64(0))
+		c.Assert(policySetting.VoterConstraints, Equals, "")
+		c.Assert(policySetting.Learners, Equals, uint64(0))
+		c.Assert(policySetting.LearnerConstraints, Equals, "")
+		c.Assert(policySetting.Constraints, Equals, "[+disk=ssd]")
+		c.Assert(policySetting.Schedule, Equals, "")
+	}
+	checkFunc(tbl.Meta().DirectPlacementOpts)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop placement policy if exists x")
+}
+
+func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create database if not exists test2")
+	tk.MustExec("drop table if exists test.t11, test.t12, test2.t21, test2.t21, test2.t22")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("drop placement policy if exists p3")
+
+	// p1 is used by test.t11 and test2.t21
+	tk.MustExec("create placement policy p1 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"SCHEDULE=\"EVEN\"")
+	defer tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("create table test.t11 (id int) placement policy 'p1'")
+	defer tk.MustExec("drop table if exists test.t11")
+	tk.MustExec("create table test2.t21 (id int) placement policy 'p1'")
+	defer tk.MustExec("drop table if exists test2.t21")
+
+	// p1 is used by test.t12
+	tk.MustExec("create placement policy p2 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"SCHEDULE=\"EVEN\"")
+	defer tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("create table test.t12 (id int) placement policy 'p2'")
+	defer tk.MustExec("drop table if exists test.t12")
+
+	// p1 is used by test2.t22
+	tk.MustExec("create placement policy p3 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"SCHEDULE=\"EVEN\"")
+	defer tk.MustExec("drop placement policy if exists p3")
+	tk.MustExec("create table test.t21 (id int) placement policy 'p3'")
+	defer tk.MustExec("drop table if exists test.t21")
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	defer func() {
+		c.Assert(txn.Rollback(), IsNil)
+	}()
+	for _, policyName := range []string{"p1", "p2", "p3"} {
+		err := tk.ExecToErr(fmt.Sprintf("drop placement policy %s", policyName))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:8241]Placement policy '%s' is still in use", policyName))
+
+		err = tk.ExecToErr(fmt.Sprintf("drop placement policy if exists %s", policyName))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:8241]Placement policy '%s' is still in use", policyName))
+	}
 }
