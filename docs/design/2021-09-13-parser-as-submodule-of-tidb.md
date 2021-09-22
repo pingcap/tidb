@@ -2,7 +2,7 @@
 
 - Author(s): [xhebox](http://github.com/xhebox)
 - Discussion: [Move parser back to pingcap/tidb](https://internals.tidb.io/t/topic/385)
-- Tracking Issue: None for now.
+- Tracking Issue: [Tracking issue for moving parser back to TiDB](https://github.com/pingcap/tidb/issues/28257)
 
 ## Table of Contents
 
