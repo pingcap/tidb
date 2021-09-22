@@ -84,6 +84,7 @@ const (
 	ActionCreatePlacementPolicy         ActionType = 51
 	ActionAlterPlacementPolicy          ActionType = 52
 	ActionDropPlacementPolicy           ActionType = 53
+	ActionAlterTablePartitionPolicy     ActionType = 54
 )
 
 var actionMap = map[ActionType]string{
