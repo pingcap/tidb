@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -438,15 +439,18 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 }
 
 func setReadStaleness(s *SessionVars, sVal string) error {
-	if sVal == "" {
+	if sVal == "" || sVal == "0" {
 		s.ReadStaleness = 0
 		return nil
 	}
-	d, err := time.ParseDuration(sVal)
+	sValue, err := strconv.ParseInt(sVal, 10, 32)
 	if err != nil {
 		return err
 	}
-	s.ReadStaleness = d
+	if sValue > 0 {
+		return fmt.Errorf("%s's value should be less than 0", TiDBReadStaleness)
+	}
+	s.ReadStaleness = time.Duration(sValue) * time.Second
 	return nil
 }
 
