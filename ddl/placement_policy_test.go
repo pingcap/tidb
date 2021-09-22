@@ -428,117 +428,6 @@ func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 	}
 }
 
-func (s *testDBSuite6) TestCreateDatabaseWithPlacementPolicy(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	defer func() {
-		tk.MustExec("drop database if exists placementDb1")
-		tk.MustExec("drop placement policy if exists x")
-	}()
-
-	tk.MustExec("drop database if exists placementDb1")
-	// Direct placement option: special constraints may be incompatible with common constraint.
-	_, err := tk.Exec("create database placementDb1 " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-		"CONSTRAINTS=\"[+disk=ssd,-zone=cn-east-1]\"")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'")
-
-	tk.MustExec("create database placementDb1 " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-		"CONSTRAINTS=\"[+disk=ssd]\"")
-
-	db := testGetSchemaByName(c, tk.Se, "placementDb1")
-	c.Assert(db, NotNil)
-	c.Assert(db.PlacementPolicyRef, IsNil)
-	c.Assert(db.DirectPlacementOpts, NotNil)
-
-	checkFunc := func(policySetting *model.PlacementSettings) {
-		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
-		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
-		c.Assert(policySetting.Followers, Equals, uint64(2))
-		c.Assert(policySetting.FollowerConstraints, Equals, "[+zone=cn-east-1]")
-		c.Assert(policySetting.Voters, Equals, uint64(0))
-		c.Assert(policySetting.VoterConstraints, Equals, "")
-		c.Assert(policySetting.Learners, Equals, uint64(0))
-		c.Assert(policySetting.LearnerConstraints, Equals, "")
-		c.Assert(policySetting.Constraints, Equals, "[+disk=ssd]")
-		c.Assert(policySetting.Schedule, Equals, "")
-	}
-	checkFunc(db.DirectPlacementOpts)
-	tk.MustExec("drop database if exists placementDb1")
-
-	// Direct placement option and placement policy can't co-exist.
-	_, err = tk.Exec("create database placementDb1 " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-		"CONSTRAINTS=\"[+disk=ssd]\" " +
-		"PLACEMENT POLICY=\"x\"")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8240]Placement policy 'x' can't co-exist with direct placement options")
-
-	// Only placement policy should check the policy existence.
-	tk.MustGetErrCode("create database placementDb1 "+
-		"PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
-	tk.MustExec("create placement policy x " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-		"CONSTRAINTS=\"[+disk=ssd]\" ")
-	tk.MustExec("create database placementDb1 " +
-		"PLACEMENT POLICY=\"x\"")
-
-	db = testGetSchemaByName(c, tk.Se, "placementDb1")
-	c.Assert(db, NotNil)
-	c.Assert(db.PlacementPolicyRef, NotNil)
-	c.Assert(db.PlacementPolicyRef.Name.L, Equals, "x")
-	c.Assert(db.PlacementPolicyRef.ID != 0, Equals, true)
-	tk.MustExec("drop database if exists placementDb1")
-
-	// Only direct placement options should check the compatibility itself.
-	_, err = tk.Exec("create database placementDb1 " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-		"CONSTRAINTS=\"[+disk=ssd, -zone=cn-east-1]\" ")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'")
-
-	tk.MustExec("create database placementDb1 " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-		"CONSTRAINTS=\"[+disk=ssd]\" ")
-
-	db = testGetSchemaByName(c, tk.Se, "placementDb1")
-	c.Assert(db, NotNil)
-	c.Assert(db.DirectPlacementOpts, NotNil)
-
-	checkFunc = func(policySetting *model.PlacementSettings) {
-		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
-		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
-		c.Assert(policySetting.Followers, Equals, uint64(2))
-		c.Assert(policySetting.FollowerConstraints, Equals, "[+zone=cn-east-1]")
-		c.Assert(policySetting.Voters, Equals, uint64(0))
-		c.Assert(policySetting.VoterConstraints, Equals, "")
-		c.Assert(policySetting.Learners, Equals, uint64(0))
-		c.Assert(policySetting.LearnerConstraints, Equals, "")
-		c.Assert(policySetting.Constraints, Equals, "[+disk=ssd]")
-		c.Assert(policySetting.Schedule, Equals, "")
-	}
-	checkFunc(db.DirectPlacementOpts)
-}
-
 func (s *testDBSuite6) TestAlterTablePartitionWithPlacementPolicy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer func() {
@@ -595,12 +484,7 @@ func (s *testDBSuite6) TestAlterTablePartitionWithPlacementPolicy(c *C) {
 	// Only placement policy should check the policy existence.
 	tk.MustGetErrCode("alter table t1 partition p0 "+
 		"PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
-	tk.MustExec("create placement policy x " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-		"CONSTRAINTS=\"[+disk=ssd]\" ")
+	tk.MustExec("create placement policy x FOLLOWERS=2 ")
 	tk.MustExec("alter table t1 partition p0 " +
 		"PLACEMENT POLICY=\"x\"")
 
