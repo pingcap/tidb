@@ -517,6 +517,12 @@ func TestSplitbyColon(t *testing.T) {
 			[]string{"1a", "4d"},
 			[]string{"[2b,3c]", "5e"},
 		},
+		{
+
+			"Time: 2021-09-08T14:39:54.506967433+08:00",
+			[]string{"Time"},
+			[]string{"2021-09-08T14:39:54.506967433+08:00"},
+		},
 	}
 	for _, c := range cases {
 		resFields, resValues := splitByColon(c.line)
