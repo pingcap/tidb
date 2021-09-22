@@ -160,6 +160,27 @@ func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValu
 	return normalizedValue, nil
 }
 
+func checkSQLAutoIsNull(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	feature := "sql_auto_is_null"
+	if TiDBOptOn(normalizedValue) {
+		if scope == ScopeSession {
+			if vars.EnableNoopFuncs {
+				return normalizedValue, nil
+			} else {
+				return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+			}
+		}
+		val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
+		if err != nil {
+			return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
+		}
+		if !TiDBOptOn(val) {
+			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+		}
+	}
+	return normalizedValue, nil
+}
+
 // GetSessionOrGlobalSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
