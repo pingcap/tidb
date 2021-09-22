@@ -1408,6 +1408,34 @@ func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
 	}
 }
 
+func (s *testSuite5) TestIssue28230(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	err := tk.ExecToErr("set sql_auto_is_null = 1;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+	// change tidb_enable_noop_functions to 1, it will success
+	tk.MustExec("set tidb_enable_noop_functions = 1;")
+	tk.MustExec("set sql_auto_is_null = 1;")
+	tk.MustQuery("select @@tidb_enable_noop_functions;").Check(testkit.Rows("1"))
+	// restore tidb_enable_noop_functions to 0 failed, as sql_auto_is_null is 1
+	err = tk.ExecToErr("set tidb_enable_noop_functions = 0;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrValueNotSupportedWhen), IsTrue, Commentf("err %v", err))
+	// after set sql_auto_is_null to 0, restore success
+	tk.MustExec("set sql_auto_is_null = 0;")
+	tk.MustExec("set tidb_enable_noop_functions = 0;")
+
+	// Same to global scope
+	err = tk.ExecToErr("set @@global.sql_auto_is_null = 1;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@global.tidb_enable_noop_functions = 1;")
+	tk.MustExec("set @@global.sql_auto_is_null = 1;")
+	tk.MustQuery("select @@global.tidb_enable_noop_functions;").Check(testkit.Rows("1"))
+	err = tk.ExecToErr("set @@global.tidb_enable_noop_functions = 0;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrValueNotSupportedWhen), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@global.sql_auto_is_null = 0;")
+	tk.MustExec("set @@global.tidb_enable_noop_functions = 0;")
+}
+
 func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`), IsNil)
 	defer func() {

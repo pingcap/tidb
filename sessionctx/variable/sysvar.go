@@ -1437,7 +1437,7 @@ var defaultSysVars = []*SysVar{
 					}
 				}
 				if TiDBOptOn(val) {
-					return originalValue, errValueNotSupportedWhen.GenWithStackByArgs(TiDBEnableNoopFuncs, potentialIncompatibleSysVar)
+					return originalValue, ErrValueNotSupportedWhen.GenWithStackByArgs(TiDBEnableNoopFuncs, potentialIncompatibleSysVar)
 				}
 			}
 		}
