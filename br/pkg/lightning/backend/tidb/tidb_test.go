@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/uber-go/atomic"
+	"go.uber.org/atomic"
 )
 
 func Test(t *testing.T) {
