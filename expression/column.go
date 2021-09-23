@@ -662,6 +662,9 @@ func (col *Column) Coercibility() Coercibility {
 
 // Repertoire ...
 func (col *Column) Repertoire() Repertoire {
+	if col.RetType.EvalType() != types.ETString {
+		return ASCII
+	}
 	if col.RetType.Charset == charset.CharsetASCII {
 		return ASCII
 	}

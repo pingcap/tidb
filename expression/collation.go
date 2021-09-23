@@ -156,15 +156,16 @@ var (
 
 // The Repertoire of a character set is the collection of characters in the set.
 // See https://dev.mysql.com/doc/refman/8.0/en/charset-repertoire.html.
+// Only String expression has Repertoire, for non-string expression, it does not matter what the value it is.
 type Repertoire int
 
 const (
-	// ASCII is ascii repertoire.
+	// ASCII is pure ASCII U+0000..U+007F.
 	ASCII Repertoire = 0x01
-	// UNICODE is unicode repertoire.
-	UNICODE = ASCII << 1
-	// EXTEND is ...
-	EXTEND = ASCII | UNICODE
+	// EXTENDED is extended characters: U+0080..U+FFFF
+	EXTENDED = ASCII << 1
+	// UNICODE is ASCII | EXTENDED
+	UNICODE = ASCII | EXTENDED
 )
 
 func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
@@ -238,20 +239,10 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		}
 	case ast.DateFormat, ast.TimeFormat:
 		charsetInfo, collation := ctx.GetSessionVars().GetCharsetInfo()
-		return &ExprCollation{
-			Coer:      args[1].Coercibility(),
-			Repe:      args[1].Repertoire(),
-			Charset:   charsetInfo,
-			Collation: collation,
-		}, nil
+		return &ExprCollation{args[1].Coercibility(), args[1].Repertoire(), charsetInfo, collation}, nil
 	case ast.Cast:
 		// we assume all the cast are implicit.
-		ec = &ExprCollation{
-			Coer:      args[0].Coercibility(),
-			Repe:      args[0].Repertoire(),
-			Charset:   charset.CharsetBin,
-			Collation: charset.CollationBin,
-		}
+		ec = &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), charset.CharsetBin, charset.CollationBin}
 		if retType == types.ETString {
 			ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
 		}
@@ -261,23 +252,21 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
 	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion:
 		chs, coll := charset.GetDefaultCharsetAndCollate()
-		return &ExprCollation{
-			Coer:      CoercibilitySysconst,
-			Repe:      UNICODE,
-			Charset:   chs,
-			Collation: coll,
-		}, nil
+		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil
+	case ast.Format:
+		// format function should return ASCII repertoire, MySQL's doc says it depend on character_set_connection, but it not ture from its source code.
+		ec = &ExprCollation{Coer: CoercibilityCoercible, Repe: ASCII}
+		ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
+		return ec, nil
 	}
 
-	ec = &ExprCollation{
-		Coer:      CoercibilityNumeric,
-		Repe:      UNICODE,
-		Charset:   charset.CharsetBin,
-		Collation: charset.CollationBin,
-	}
+	ec = &ExprCollation{CoercibilityNumeric, ASCII, charset.CharsetBin, charset.CollationBin}
 	if retType == types.ETString {
 		ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
 		ec.Coer = CoercibilityCoercible
+		if ec.Charset != charset.CharsetASCII {
+			ec.Repe = UNICODE
+		}
 	}
 	return ec, nil
 }
@@ -436,8 +425,8 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 				if dstCollation == arg.GetType().Collate {
 				} else if coercibility == CoercibilityExplicit {
 					return nil
-				} else if collate.IsBinCollation(dstCollation) {
-				} else if collate.IsBinCollation(arg.GetType().Collate) {
+				} else if isBinCollation(dstCollation) {
+				} else if isBinCollation(arg.GetType().Collate) {
 					coercibility, dstCharset, dstCollation = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate
 				} else {
 					coercibility, dstCollation, dstCharset = CoercibilityNone, getBinCollation(arg.GetType().Charset), arg.GetType().Charset
@@ -463,6 +452,12 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 
 func isUnicodeCollation(ch string) bool {
 	return ch == charset.CharsetUTF8 || ch == charset.CharsetUTF8MB4
+}
+
+func isBinCollation(collate string) bool {
+	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
+		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
+		collate == charset.CollationGBKBin
 }
 
 // getBinCollation get binary collation by charset

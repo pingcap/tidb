@@ -1115,8 +1115,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		castFunction := expression.BuildCastFunction(er.sctx, arg, v.Tp)
 		if v.Tp.EvalType() == types.ETString {
 			castFunction.SetCoercibility(expression.CoercibilityImplicit)
-			chs, _ := er.sctx.GetSessionVars().GetCharsetInfo()
-			if chs == charset.CharsetASCII {
+			if v.Tp.Charset == charset.CharsetASCII {
 				castFunction.SetRepertoire(expression.ASCII)
 			} else {
 				castFunction.SetRepertoire(expression.UNICODE)
