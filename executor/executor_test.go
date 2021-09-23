@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"archive/zip"
 	"context"
 	"flag"
 	"fmt"
@@ -8900,11 +8901,58 @@ func (s *testSuite) TestIssue25447(c *C) {
 	tk.MustQuery("select /*+ tidb_inlj(t2) */ t2.b, t1.b from t1 join t2 ON t2.a=t1.a").Check(testkit.Rows("<nil> 1"))
 }
 
-func (s *testSuite) TestPlanRecreatorDumpSingle(c *C) {
+func checkFileName(s string) bool {
+	files := []string{
+		"config.toml",
+		"meta.txt",
+		"stats/test.t.json",
+		"schema/test.t.schema.txt",
+		"variables.toml",
+		"sqls.sql",
+		"session_bindings.sql",
+		"global_bindings.sql",
+		"explain.txt",
+	}
+	for _, f := range files {
+		if strings.Compare(f, s) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *testSuiteWithData) TestPlanRecreatorDumpSingle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_dump_single")
-	tk.MustExec("create table t(a int)")
-	res := tk.MustQuery("plan recreator dump explain select * from t")
-	fmt.Println("[res]", res.Rows()[0])
+	tk.MustExec("create table t_dump_single(a int)")
+	res := tk.MustQuery("plan recreator dump explain select * from t_dump_single")
+	path := s.testData.ConvertRowsToStrings(res.Rows())
+
+	reader, err := zip.OpenReader(path[0])
+	c.Assert(err, IsNil)
+	defer reader.Close()
+	for _, file := range reader.File {
+		c.Assert(checkFileName(file.Name), IsTrue)
+	}
+}
+
+func (s *testSuiteWithData) TestPlanReplayerGC(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_pr_gc")
+	tk.MustExec("create table t_pr_gc(a int)")
+	res := tk.MustQuery("plan recreator dump explain select * from t_pr_gc")
+	path := s.testData.ConvertRowsToStrings(res.Rows())
+
+	reader, err := zip.OpenReader(path[0])
+	c.Assert(err, IsNil)
+	reader.Close()
+
+	s.domain.PlanReplayerGC4Test()
+	reader, err = zip.OpenReader(path[0])
+	fmt.Println("[err reader]", err, reader)
+	for _, file := range reader.File {
+		fmt.Println("[x]", file.Name)
+	}
 }

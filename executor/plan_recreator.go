@@ -22,10 +22,9 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
-	"path/filepath"
-	"strconv"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -40,8 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
-
-const recreatorPath string = "/tmp/recreator"
 
 // TTL of plan recreator files
 const remainedInterval float64 = 3
@@ -72,16 +69,6 @@ type tableNameExtractor struct {
 	curDB string
 	names map[tableNamePair]struct{}
 }
-//
-//type fileInfo struct {
-//	StartTime time.Time
-//	Token     [16]byte
-//}
-//
-//type fileList struct {
-//	FileInfo map[string]fileInfo
-//	TokenMap map[[16]byte]string
-//}
 
 func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
 	if _, ok := in.(*ast.TableName); ok {
@@ -103,17 +90,6 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
-// planRecreatorFileListType is a dummy type to avoid naming collision in context.
-type planRecreatorFileListType int
-
-// String defines a Stringer function for debugging and pretty printing.
-func (k planRecreatorFileListType) String() string {
-	return "plan_recreator_file_list"
-}
-
-// PlanRecreatorFileList is a variable key for plan recreator's file list.
-const PlanRecreatorFileList planRecreatorFileListType = 0
-
 // Next implements the Executor Next interface.
 func (e *PlanRecreatorSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
@@ -123,7 +99,7 @@ func (e *PlanRecreatorSingleExec) Next(ctx context.Context, req *chunk.Chunk) er
 	if e.info.ExecStmt == nil {
 		return errors.New("plan Recreator: sql is empty")
 	}
-	res, err := e.info.dumpSingle(recreatorPath)
+	res, err := e.info.dumpSingle(filepath.Join(domain.GetPlanReplayerDirName(), fmt.Sprintf("%v", os.Getpid())))
 	if err != nil {
 		return err
 	}
@@ -149,36 +125,15 @@ func (e *PlanRecreatorSingleInfo) dumpSingle(path string) (string, error) {
 		return "", errors.New("Plan Recreator: cannot create plan recreator path")
 	}
 
-	// Create zip file
+	// Generate token and create zip file
 	startTime := time.Now()
-	fileName := filepath.Join(strconv.FormatUint(e.Ctx.GetSessionVars().ConnectionID, 10),
-								fmt.Sprintf("recreator_single_%v.zip", startTime.UnixNano()))
+	time := startTime.UnixNano()
+	token := md5.Sum([]byte(fmt.Sprintf("%v%d", time, rand.Int63())))
+	fileName := fmt.Sprintf("recreator_single_%x_%v.zip", token, time)
 	zf, err := os.Create(filepath.Join(path, fileName))
 	if err != nil {
 		return "", errors.New("Plan Recreator: cannot create zip file")
 	}
-	val := e.Ctx.Value(PlanRecreatorFileList)
-	if val == nil {
-		e.Ctx.SetValue(PlanRecreatorFileList, fileList{FileInfo: make(map[string]fileInfo), TokenMap: make(map[[16]byte]string)})
-	} else {
-		// Clean outdated files
-		Flist := val.(fileList).FileInfo
-		TList := val.(fileList).TokenMap
-		for k, v := range Flist {
-			if time.Since(v.StartTime).Minutes() > remainedInterval {
-				err := os.Remove(filepath.Join(path, k))
-				if err != nil {
-					logutil.BgLogger().Warn(fmt.Sprintf("Cleaning outdated file %s failed.", k))
-				}
-				delete(Flist, k)
-				delete(TList, v.Token)
-			}
-		}
-	}
-	// Generate Token
-	token := md5.Sum([]byte(fmt.Sprintf("%s%d", fileName, rand.Int63())))
-	e.Ctx.Value(PlanRecreatorFileList).(fileList).FileInfo[fileName] = fileInfo{StartTime: startTime, Token: token}
-	e.Ctx.Value(PlanRecreatorFileList).(fileList).TokenMap[token] = fileName
 
 	// Create zip writer
 	zw := zip.NewWriter(zf)
@@ -361,7 +316,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle(path string) (string, error) {
 			return "", err
 		}
 	}
-	return hex.EncodeToString(token[:]), nil
+	return filepath.Join(path, fileName), nil
 }
 
 func extractTableNames(ExecStmt ast.StmtNode, curDB string) (map[tableNamePair]struct{}, error) {
@@ -468,13 +423,4 @@ func GetFile4Test(token string) string {
 	var tb [16]byte
 	copy(tb[:], b)
 	return filepath.Join()
-}
-
-// CleanUpPlanRecreatorFile cleans files corresponding to the session.
-func CleanUpPlanRecreatorFile(id uint64) {
-	path := fmt.Sprintf("%s/%v", recreatorPath, id)
-	err := os.RemoveAll(path)
-	if err != nil {
-		logutil.BgLogger().Warn(fmt.Sprintf("Cleaning up plan recreator file %s failed.", path))
-	}
 }

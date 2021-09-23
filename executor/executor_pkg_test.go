@@ -14,17 +14,16 @@
 package executor
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/tls"
+	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"time"
 	"unsafe"
-	"fmt"
-	"os"
-	"path/filepath"
-	"encoding/hex"
-	"archive/zip"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -577,20 +577,13 @@ func (s *pkgTestSuite) TestDumpSingle(c *C) {
 	c.Assert(ok, IsTrue)
 	info := PlanRecreatorSingleInfo{
 		ExecStmt: pr.Stmt,
-		Ctx: mock.NewContext(),
+		Ctx:      mock.NewContext(),
 	}
-	path := filepath.Join(os.TempDir(), fmt.Sprintf("test-dump-single-%v", time.Now().Nanosecond()))
+	path := filepath.Join(filepath.Join(domain.GetPlanReplayerDirName(), fmt.Sprintf("%v", os.Getpid())))
 	token, err := info.dumpSingle(path)
 	c.Assert(ok, IsNil)
-	val := info.Ctx.Value(PlanRecreatorFileList)
-//	FList := val.(fileList).FileInfo
-	bytes, err := hex.DecodeString(token)
-	var tokenBytes [16]byte
-	copy(tokenBytes[:], bytes)
-	c.Assert(err, IsNil)
-	filename := val.(fileList).TokenMap[tokenBytes]
 
-	reader, err := zip.OpenReader(filepath.Join(path, filename))
+	reader, err := zip.OpenReader(filepath.Join(path, token))
 	c.Assert(err, IsNil)
 	defer reader.Close()
 	for _, file := range reader.File {
