@@ -374,12 +374,14 @@ func (kvcodec *tableKVEncoder) Encode(
 
 		if isAutoRandom && isPk {
 			incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
-			if err := kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64()&((1<<incrementalBits)-1), false, autoid.AutoRandomType); err != nil {
+			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoRandomType)
+			if err := alloc.Rebase(value.GetInt64()&((1<<incrementalBits)-1), false); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
 		if isAutoIncCol {
-			if err := kvcodec.tbl.RebaseAutoID(kvcodec.se, getAutoRecordID(value, &col.FieldType), false, autoid.AutoIncrementType); err != nil {
+			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoIncrementType)
+			if err := alloc.Rebase(getAutoRecordID(value, &col.FieldType), false); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -399,7 +401,8 @@ func (kvcodec *tableKVEncoder) Encode(
 			return nil, logKVConvertFailed(logger, row, j, ExtraHandleColumnInfo, err)
 		}
 		record = append(record, value)
-		if err := kvcodec.tbl.RebaseAutoID(kvcodec.se, rowValue, false, autoid.RowIDAllocType); err != nil {
+		alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.RowIDAllocType)
+		if err := alloc.Rebase(rowValue, false); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
