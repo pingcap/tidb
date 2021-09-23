@@ -50,6 +50,11 @@ type testCaseItem struct {
 	tok int
 }
 
+type testLiteralValue struct {
+	str string
+	val interface{}
+}
+
 func (s *testLexerSuite) TestSingleCharOther(c *C) {
 	table := []testCaseItem{
 		{"AT", identifier},
@@ -149,12 +154,77 @@ func (s *testLexerSuite) TestLiteral(c *C) {
 	runTest(c, table)
 }
 
+func (s *testLexerSuite) TestLiteralValue(c *C) {
+	table := []testLiteralValue{
+		{`'''a'''`, `'a'`},
+		{`''a''`, ``},
+		{`""a""`, ``},
+		{`\'a\'`, `\`},
+		{`\"a\"`, `\`},
+		{"0.2314", "0.2314"},
+		{"1234567890123456789012345678901234567890", "1234567890123456789012345678901234567890"},
+		{"132.313", "132.313"},
+		{"132.3e231", 1.323e+233},
+		{"132.3e-231", 1.323e-229},
+		{"001e-12", 1e-12},
+		{"23416", int64(23416)},
+		{"123test", "123test"},
+		{"123" + string(unicode.ReplacementChar) + "xxx", "123" + string(unicode.ReplacementChar) + "xxx"},
+		{"0", int64(0)},
+		{"0x3c26", "[60 38]"},
+		{"x'13181C76734725455A'", "[19 24 28 118 115 71 37 69 90]"},
+		{"0b01", "[1]"},
+		{fmt.Sprintf("t1%c", 0), "t1"},
+		{"N'some text'", "utf8"},
+		{"n'some text'", "utf8"},
+		{"\\N", `\N`},
+		{".*", `.`},                   // `.`, `*`
+		{".1_t_1_x", "0.1"},           // `.1`, `_t_1_x`
+		{"9e9e", float64(9000000000)}, // 9e9e = 9e9 + e
+		{".1e", ""},
+		// Issue #3954
+		{".1e23", float64(10000000000000000000000)}, // `.1e23`
+		{".123", "0.123"}, // `.123`
+		{".1*23", "0.1"},  // `.1`, `*`, `23`
+		{".1,23", "0.1"},  // `.1`, `,`, `23`
+		{".1 23", "0.1"},  // `.1`, `23`
+		{".1$23", "0.1"},  // `.1`, `$23`
+		{".1a23", "0.1"},  // `.1`, `a23`
+		{".1e23$23", float64(10000000000000000000000)}, // `.1e23`, `$23`
+		{".1e23a23", float64(10000000000000000000000)}, // `.1e23`, `a23`
+		{".1C23", "0.1"},    // `.1`, `C23`
+		{".1\u0081", "0.1"}, // `.1`, `\u0081`
+		{".1\uff34", "0.1"}, // `.1`, `\uff34`
+		{`b''`, "[]"},
+		{`b'0101'`, "[5]"},
+		{`0b0101`, "[5]"},
+	}
+	runLiteralTest(c, table)
+}
+
 func runTest(c *C, table []testCaseItem) {
 	var val yySymType
 	for _, v := range table {
 		l := NewScanner(v.str)
 		tok := l.Lex(&val)
 		c.Check(tok, Equals, v.tok, Commentf(v.str))
+	}
+}
+
+func runLiteralTest(c *C, table []testLiteralValue) {
+	for _, v := range table {
+		l := NewScanner(v.str)
+		val := l.LexLiteral()
+		switch val.(type) {
+		case int64:
+			c.Check(v.val, Equals, val, Commentf(v.str))
+		case float64:
+			c.Check(v.val, Equals, val, Commentf(v.str))
+		case string:
+			c.Check(v.val, Equals, val, Commentf(v.str))
+		default:
+			c.Check(v.val, Equals, fmt.Sprint(val), Commentf(v.str))
+		}
 	}
 }
 
