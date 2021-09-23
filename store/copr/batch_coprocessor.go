@@ -102,8 +102,15 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 // 2. for the remaining regions:
 //    if there is only 1 available store, then put the region to the related store
 //    otherwise, use a greedy algorithm to put it into the store with highest weight
+<<<<<<< HEAD
 func balanceBatchCopTask(ctx context.Context, kvStore *tikv.KVStore, originalTasks []*batchCopTask, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) []*batchCopTask {
 	if len(originalTasks) <= 1 {
+=======
+func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) []*batchCopTask {
+	isMPP := mppStoreLastFailTime != nil
+	// for mpp, we still need to detect the store availability
+	if len(originalTasks) <= 1 && !isMPP {
+>>>>>>> 624f7cab3... copr: Fix bug that mpp node availability detect does not work in some corner cases (#28201)
 		return originalTasks
 	}
 	cache := kvStore.GetRegionCache()
@@ -267,41 +274,55 @@ func balanceBatchCopTask(ctx context.Context, kvStore *tikv.KVStore, originalTas
 				// get the first region
 				break
 			}
+<<<<<<< HEAD
 		}
 		return store
 	}
 
 	store := findNextStore(nil)
-	if store == uint64(math.MaxUint64) {
-		break
-	}
-	var key string
-	var ri tikv.RegionInfo
-	for key, ri = range storeCandidateRegionMap[store] {
-		// get the first region
-		break
-	}
-	storeTaskMap[store].regionInfos = append(storeTaskMap[store].regionInfos, ri)
-	totalRemainingRegionNum--
-	for _, id := range ri.AllStores {
-		if _, ok := storeCandidateRegionMap[id]; ok {
-			delete(storeCandidateRegionMap[id], key)
-			totalRegionCandidateNum--
-			if len(storeCandidateRegionMap[id]) == 0 {
-				delete(storeCandidateRegionMap, id)
+	for totalRemainingRegionNum > 0 {
+		if store == uint64(math.MaxUint64) {
+			break
+		}
+		var key string
+		var ri tikv.RegionInfo
+		for key, ri = range storeCandidateRegionMap[store] {
+			// get the first region
+			break
+		}
+		storeTaskMap[store].regionInfos = append(storeTaskMap[store].regionInfos, ri)
+		totalRemainingRegionNum--
+		for _, id := range ri.AllStores {
+			if _, ok := storeCandidateRegionMap[id]; ok {
+				delete(storeCandidateRegionMap[id], key)
+				totalRegionCandidateNum--
+				if len(storeCandidateRegionMap[id]) == 0 {
+					delete(storeCandidateRegionMap, id)
+=======
+			storeTaskMap[store].regionInfos = append(storeTaskMap[store].regionInfos, ri)
+			totalRemainingRegionNum--
+			for _, id := range ri.AllStores {
+				if _, ok := storeCandidateRegionMap[id]; ok {
+					delete(storeCandidateRegionMap[id], key)
+					totalRegionCandidateNum--
+					if len(storeCandidateRegionMap[id]) == 0 {
+						delete(storeCandidateRegionMap, id)
+					}
+>>>>>>> 624f7cab3... copr: Fix bug that mpp node availability detect does not work in some corner cases (#28201)
+				}
+			}
+			if totalRemainingRegionNum > 0 {
+				avgStorePerRegion = float64(totalRegionCandidateNum) / float64(totalRemainingRegionNum)
+				// it is not optimal because we only check the stores that affected by this region, in fact in order
+				// to find out the store with the lowest weightedRegionNum, all stores should be checked, but I think
+				// check only the affected stores is more simple and will get a good enough result
+				store = findNextStore(ri.AllStores)
 			}
 		}
 		if totalRemainingRegionNum > 0 {
-			avgStorePerRegion = float64(totalRegionCandidateNum) / float64(totalRemainingRegionNum)
-			// it is not optimal because we only check the stores that affected by this region, in fact in order
-			// to find out the store with the lowest weightedRegionNum, all stores should be checked, but I think
-			// check only the affected stores is more simple and will get a good enough result
-			store = findNextStore(ri.AllStores)
+			logutil.BgLogger().Warn("Some regions are not used when trying to balance batch cop task, give up balancing")
+			return originalTasks
 		}
-	}
-	if totalRemainingRegionNum > 0 {
-		logutil.BgLogger().Warn("Some regions are not used when trying to balance batch cop task, give up balancing")
-		return originalTasks
 	}
 
 	var ret []*batchCopTask
