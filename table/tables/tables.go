@@ -1466,12 +1466,6 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	return retAllocs
 }
 
-// RebaseAutoID implements table.Table RebaseAutoID interface.
-// Both auto-increment and auto-random can use this function to do rebase on explicit newBase value (without shadow bits).
-func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
-	return t.Allocators(ctx).Get(tp).Rebase(newBase, isSetStep)
-}
-
 // Type implements table.Table Type interface.
 func (t *TableCommon) Type() table.Type {
 	return table.NormalTable

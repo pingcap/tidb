@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,19 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package kv
+package conn
 
 import (
 	"testing"
 
-	"github.com/pingcap/parser/mysql"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestSession(t *testing.T) {
-	t.Parallel()
-
-	session := newSession(&SessionOptions{SQLMode: mysql.ModeNone, Timestamp: 1234567890, RowFormatVersion: "1"})
-	_, err := session.Txn(true)
-	require.NoError(t, err)
+func TestMain(m *testing.M) {
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	}
+	testbridge.WorkaroundGoCheckFlags()
+	goleak.VerifyTestMain(m, opts...)
 }

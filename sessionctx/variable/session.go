@@ -480,6 +480,7 @@ type SessionVars struct {
 
 	// mppTaskIDAllocator is used to allocate mpp task id for a session.
 	mppTaskIDAllocator struct {
+		mu     sync.Mutex
 		lastTS uint64
 		taskID int64
 	}
@@ -966,6 +967,8 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
 // startTs is different.
 func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
+	s.mppTaskIDAllocator.mu.Lock()
+	defer s.mppTaskIDAllocator.mu.Unlock()
 	if s.mppTaskIDAllocator.lastTS == startTS {
 		s.mppTaskIDAllocator.taskID++
 		return s.mppTaskIDAllocator.taskID
