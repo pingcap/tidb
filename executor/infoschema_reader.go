@@ -2857,7 +2857,11 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 
 	// Get DIRECT PLACEMENT from schemas/tables/partitions
 	for _, schema := range schemas {
-		// TODO: Filter on schema, to avoid iterating over every schema if SELECT * FROM placment_rules WHERE SCHEMA_NAME IN ('schema1', 'schema2')
+		// Traverse all schemas and all tables (and eventually all partitions)
+		// to extract any Direct Placement information on Schema/Table/Partition.
+		// Currently there is no filtering during traversal implemented for queries like
+		// SELECT * FROM placment_rules WHERE SCHEMA_NAME IN ('schema1', 'schema2')
+		// or SELECT * FROM placment_rules WHERE SCHEMA_NAME = 'schema1' AND TABLE_NAME = 'table1'
 		anyTablePriv := false
 		for _, table := range schema.Tables {
 			if table.IsView() {
