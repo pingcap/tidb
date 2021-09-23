@@ -34,6 +34,7 @@ func extractSampleItemsDatums(items []*SampleItem) []types.Datum {
 }
 
 func TestSketch(t *testing.T) {
+	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
 	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(suite.samples), maxSize)
@@ -62,6 +63,7 @@ func TestSketch(t *testing.T) {
 }
 
 func TestSketchProtoConversion(t *testing.T) {
+	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
 	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(suite.samples), maxSize)
@@ -77,6 +79,7 @@ func TestSketchProtoConversion(t *testing.T) {
 }
 
 func TestFMSketchCoding(t *testing.T) {
+	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
 	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(suite.samples), maxSize)
