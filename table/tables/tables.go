@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package tables
 
@@ -791,7 +791,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	if (t.meta.IsCommonHandle || t.meta.PKIsHandle) && !skipCheck && !opt.SkipHandleCheck {
 		if t.meta.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
-			_, err = sctx.GetSessionVars().TemporaryTableTxnReader(txn, t.meta).Get(ctx, key)
+			_, err = txn.Get(ctx, key)
 		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
 			var v []byte
 			v, err = txn.GetMemBuffer().Get(ctx, key)
@@ -1464,12 +1464,6 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 		retAllocs = append(retAllocs, sessAlloc)
 	}
 	return retAllocs
-}
-
-// RebaseAutoID implements table.Table RebaseAutoID interface.
-// Both auto-increment and auto-random can use this function to do rebase on explicit newBase value (without shadow bits).
-func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
-	return t.Allocators(ctx).Get(tp).Rebase(newBase, isSetStep)
 }
 
 // Type implements table.Table Type interface.
