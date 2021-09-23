@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -88,6 +90,12 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		config.GetGlobalConfig().EnableBatchDML && batchDMLSize > 0
 	fields := retTypes(e.children[0])
 	chk := newFirstChunk(e.children[0])
+	columns := e.children[0].Schema().Columns
+	if len(columns) != len(fields) {
+		logutil.BgLogger().Error("schema columns and fields mismatch",
+			zap.Int("len(columns)", len(columns)),
+			zap.Int("len(fields)", len(fields)))
+	}
 	memUsageOfChk := int64(0)
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
@@ -109,7 +117,16 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				rowCount = 0
 			}
 
-			datumRow := chunkRow.GetDatumRow(fields)
+			datumRow := make([]types.Datum, 0, len(fields))
+			for i, field := range fields {
+				if columns[i].ID == model.ExtraPidColID {
+					continue
+				}
+
+				datum := chunkRow.GetDatum(i, field)
+				datumRow = append(datumRow, datum)
+			}
+
 			err = e.deleteOneRow(tbl, handleCols, isExtrahandle, datumRow)
 			if err != nil {
 				return err

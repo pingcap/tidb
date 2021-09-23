@@ -786,3 +786,27 @@ func TestTempTableBinlog(t *testing.T) {
 	ok = mustGetDDLBinlog(s, latestNonLocalTemporaryTableDDL, t)
 	require.True(t, ok)
 }
+
+func (s *testBinlogSuite) TestIssue28292(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().BinlogClient = s.client
+	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+	tk.MustExec(`CREATE TABLE xxx (
+machine_id int(11) DEFAULT NULL,
+date datetime DEFAULT NULL,
+code int(11) DEFAULT NULL,
+value decimal(20,3) DEFAULT NULL,
+KEY stat_data_index1 (machine_id,date,code)
+) PARTITION BY RANGE ( TO_DAYS(date) ) (
+PARTITION p0 VALUES LESS THAN (TO_DAYS('2021-09-04')),
+PARTITION p1 VALUES LESS THAN (TO_DAYS('2021-09-19')),
+PARTITION p2 VALUES LESS THAN (TO_DAYS('2021-10-04')),
+PARTITION p3 VALUES LESS THAN (TO_DAYS('2021-10-19')),
+PARTITION p4 VALUES LESS THAN (TO_DAYS('2021-11-04')))`)
+
+	tk.MustExec("INSERT INTO xxx value(123, '2021-09-22 00:00:00', 666, 123.24)")
+	tk.MustExec("BEGIN")
+	// No panic.
+	tk.MustExec("DELETE FROM xxx WHERE machine_id = 123 and date = '2021-09-22 00:00:00'")
+	tk.MustExec("COMMIT")
+}
