@@ -39,6 +39,7 @@ var testKitIDGenerator atomic.Uint64
 type TestKit struct {
 	require *require.Assertions
 	assert  *assert.Assertions
+	t       *testing.T
 	store   kv.Storage
 	session session.Session
 }
@@ -48,12 +49,22 @@ func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
 	return &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
+		t:       t,
 		store:   store,
 		session: newSession(t, store),
 	}
 }
 
-// Session return a session
+func (tk *TestKit) RefreshSession() {
+	tk.session = newSession(tk.t, tk.store)
+}
+
+// SetSession set the session of testkit
+func (tk *TestKit) SetSession(session session.Session) {
+	tk.session = session
+}
+
+// Session return the session associated with the testkit
 func (tk *TestKit) Session() session.Session {
 	return tk.session
 }
@@ -176,6 +187,13 @@ func newSession(t *testing.T, store kv.Storage) session.Session {
 	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())
 	return se
+}
+
+// RefreshConnectionID refresh the connection ID for session of the testkit
+func (tk *TestKit) RefreshConnectionID() {
+	if tk.session != nil {
+		tk.session.SetConnectionID(testKitIDGenerator.Inc())
+	}
 }
 
 // MustGetErrCode executes a sql statement and assert it's error code.
