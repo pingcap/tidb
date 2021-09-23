@@ -387,7 +387,6 @@ func (rc *Controller) HasLargeCSV(dbMetas []*mydump.MDDatabaseMeta) error {
 
 func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 	sourceSize := int64(0)
-	originSource := int64(0)
 	bigTableCount := 0
 	tableCount := 0
 	unSortedTableCount := 0
@@ -399,7 +398,6 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 		for _, tbl := range db.Tables {
 			tableInfo, ok := info.Tables[tbl.Name]
 			if ok {
-				originSource += tbl.TotalSize
 				// Do not sample small table because there may a large number of small table and it will take a long
 				// time to sample data for all of them.
 				if tbl.TotalSize < int64(config.SplitRegionSize) {
@@ -421,9 +419,6 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 				tableCount += 1
 			}
 		}
-	}
-	if rc.status != nil {
-		rc.status.TotalFileSize.Store(originSource)
 	}
 
 	// Do not import with too large concurrency because these data may be all unsorted.
