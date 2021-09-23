@@ -24,7 +24,7 @@ TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports 
 
 - __Distributed Transactions__
 
-    TiDB internally shards table into small range-based chunks that we refer to as "Regions". Each Region defaults to approximately 100 MiB in size, and TiDB uses [async commit](https://pingcap.com/blog/async-commit-the-accelerator-for-transaction-commit-in-tidb-5.0) to ensure that Regions are maintained in a transactionally consistent way.
+    TiDB internally shards table into small range-based chunks that we refer to as "Regions". Each Region defaults to approximately 100 MiB in size, and TiDB uses an [optimized](https://pingcap.com/blog/async-commit-the-accelerator-for-transaction-commit-in-tidb-5.0) Two-phase commit to ensure that Regions are maintained in a transactionally consistent way.
 
 - __Cloud Native__
 
