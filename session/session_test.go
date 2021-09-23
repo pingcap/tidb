@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -3973,7 +3974,7 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	defer failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil)
+	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil, nil, nil)
 	c.Assert(err.Error(), Equals, "context canceled")
 }
 
@@ -5660,6 +5661,61 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 	}
 }
 
+func (s *testSessionSuite) TestTemporaryTableInterceptor(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_noop_functions=true")
+	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
+	tbl, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tmp1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().TempTableType, Equals, model.TempTableLocal)
+	tblID := tbl.Meta().ID
+
+	// prepare a kv pair for temporary table
+	k := append(tablecodec.EncodeTablePrefix(tblID), 1)
+	err = tk.Se.GetSessionVars().TemporaryTableData.SetTableKey(tblID, k, []byte("v1"))
+	c.Assert(err, IsNil)
+
+	initTxnFuncs := []func() error{
+		func() error {
+			tk.Se.PrepareTSFuture(context.Background())
+			return nil
+		},
+		func() error {
+			return tk.Se.NewTxn(context.Background())
+		},
+		func() error {
+			return tk.Se.NewStaleTxnWithStartTS(context.Background(), 0)
+		},
+		func() error {
+			return tk.Se.InitTxnWithStartTS(0)
+		},
+	}
+
+	for _, initFunc := range initTxnFuncs {
+		err := initFunc()
+		c.Assert(err, IsNil)
+
+		txn, err := tk.Se.Txn(true)
+		c.Assert(err, IsNil)
+
+		val, err := txn.Get(context.Background(), k)
+		c.Assert(err, IsNil)
+		c.Assert(val, BytesEquals, []byte("v1"))
+
+		val, err = txn.GetSnapshot().Get(context.Background(), k)
+		c.Assert(err, IsNil)
+		c.Assert(val, BytesEquals, []byte("v1"))
+
+		tk.Se.RollbackTxn(context.Background())
+	}
+
+	// Also check GetSnapshotWithTS
+	snap := tk.Se.GetSnapshotWithTS(0)
+	val, err := snap.Get(context.Background(), k)
+	c.Assert(err, IsNil)
+	c.Assert(val, BytesEquals, []byte("v1"))
+}
+
 func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
 	initAndCloseTiDB := func() {
 		store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
@@ -5688,10 +5744,11 @@ func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
 
 func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_read_staleness='-5s'")
-	err := tk.ExecToErr("set @@tidb_read_staleness='-5'")
+	tk.MustExec("set @@tidb_read_staleness='-5'")
+	err := tk.ExecToErr("set @@tidb_read_staleness='-5s'")
 	c.Assert(err, NotNil)
 	err = tk.ExecToErr("set @@tidb_read_staleness='foo'")
 	c.Assert(err, NotNil)
 	tk.MustExec("set @@tidb_read_staleness=''")
+	tk.MustExec("set @@tidb_read_staleness='0'")
 }
