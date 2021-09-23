@@ -15,11 +15,13 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 )
@@ -194,10 +196,6 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// TODO: Reset all the policy reference, (modify meta & notify pd)
-		// If any partitions currently use this policy, they will be converted to the policy used by the table
-		// they belong to. If any databases use this policy, they will be converted to the default placement_policy policy.
-
 		// Finish this job. By now policy don't consider the binlog sync.
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, nil)
 	default:
@@ -206,7 +204,7 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	return ver, errors.Trace(err)
 }
 
-func onAlterPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	alterPolicy := &model.PolicyInfo{}
 	if err := job.DecodeArgs(alterPolicy); err != nil {
 		job.State = model.JobStateCancelled
@@ -230,6 +228,53 @@ func onAlterPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	err = t.UpdatePolicy(&newPolicyInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+
+	dbIDs, tblIDs, partIDs, err := getPlacementPolicyDependedObjectsIDs(t, oldPolicy)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if len(dbIDs)+len(tblIDs)+len(partIDs) != 0 {
+		// build bundle from new placement policy.
+		bundle, err := placement.NewBundleFromOptions(newPolicyInfo.PlacementSettings)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		err = bundle.Tidy()
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Do the http request only when the rules is existed.
+		bundles := make([]*placement.Bundle, 0, len(tblIDs)+len(partIDs))
+		// Reset bundle for tables.
+		for _, id := range tblIDs {
+			cp := bundle.Clone()
+			bundles = append(bundles, cp.Reset(id))
+			if len(bundle.Rules) == 0 {
+				bundle.Index = 0
+				bundle.Override = false
+			} else {
+				bundle.Index = placement.RuleIndexTable
+				bundle.Override = true
+			}
+		}
+		// Reset bundle for partitions.
+		for _, id := range partIDs {
+			cp := bundle.Clone()
+			bundles = append(bundles, cp.Reset(id))
+			if len(bundle.Rules) == 0 {
+				bundle.Index = 0
+				bundle.Override = false
+			} else {
+				bundle.Index = placement.RuleIndexPartition
+				bundle.Override = true
+			}
+		}
+		err = infosync.PutRuleBundles(context.TODO(), bundles)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -267,6 +312,39 @@ func checkPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy
 		}
 	}
 	return nil
+}
+
+func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo) (dbIDs, tblIDs, partIDs []int64, err error) {
+	schemas, err := t.ListDatabases()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	// DB ids don't have to set the bundle themselves, but to check the dependency.
+	dbIDs = make([]int64, 0, len(schemas))
+	tblIDs = make([]int64, 0, len(schemas))
+	partIDs = make([]int64, 0, len(schemas))
+	for _, dbInfo := range schemas {
+		if dbInfo.PlacementPolicyRef != nil && dbInfo.PlacementPolicyRef.ID == policy.ID {
+			dbIDs = append(dbIDs, dbInfo.ID)
+		}
+		tables, err := t.ListTables(dbInfo.ID)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		for _, tblInfo := range tables {
+			if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
+				tblIDs = append(tblIDs, tblInfo.ID)
+			}
+			if tblInfo.Partition != nil {
+				for _, part := range tblInfo.Partition.Definitions {
+					if part.PlacementPolicyRef != nil && part.PlacementPolicyRef.ID == part.ID {
+						partIDs = append(partIDs, part.ID)
+					}
+				}
+			}
+		}
+	}
+	return dbIDs, tblIDs, partIDs, nil
 }
 
 func checkPlacementPolicyNotInUseFromMeta(t *meta.Meta, policy *model.PolicyInfo) error {
