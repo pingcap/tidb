@@ -705,6 +705,8 @@ func TestSQLAutoIsNull(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, ErrFunctionsNoopImpl))
 	// change tidb_enable_noop_functions to 1, it will success
 	require.NoError(t, svNoop.SetSessionFromHook(vars, "ON"))
+	_, err = svSQL.Validate(vars, "ON", ScopeSession)
+	require.NoError(t, err)
 	require.NoError(t, svSQL.SetSessionFromHook(vars, "ON"))
 	res, ok := vars.GetSystemVar(SQLAutoIsNull)
 	require.True(t, ok)
