@@ -1916,6 +1916,7 @@ func (s *testTableSuite) TestIssue26379(c *C) {
 	// Clear all statements.
 	tk.MustExec("set session tidb_enable_stmt_summary = 0")
 	tk.MustExec("set session tidb_enable_stmt_summary = ''")
+	tk.MustExec("set @@global.tidb_stmt_summary_max_stmt_count=5")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), c int, d int, key k(a))")
@@ -1935,4 +1936,5 @@ func (s *testTableSuite) TestIssue26379(c *C) {
 	tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s' or digest = '%s'", digest1.String(), digest2.String())).Sort().Check(testkit.Rows(digest1.String(), digest2.String()))
 	c.Assert(len(tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s' and digest = '%s'", digest1.String(), digest2.String())).Rows()), Equals, 0)
 	tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest in ('%s', '%s', '%s', '%s')", digest1.String(), digest2.String(), digest3.String(), digest4.String())).Sort().Check(testkit.Rows(digest1.String(), digest4.String(), digest2.String(), digest3.String()))
+	tk.MustQuery("select count(*) from information_schema.statements_summary where digest=''").Check(testkit.Rows("0"))
 }
