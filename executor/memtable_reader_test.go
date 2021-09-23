@@ -949,14 +949,6 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	c.Assert(rs.Close(), IsNil)
 }
 
-var _ = SerialSuites(&testHotRegionsHistoryTableSuite{testInfoschemaTableSuiteBase: &testInfoschemaTableSuiteBase{}})
-
-type testHotRegionsHistoryTableSuite struct {
-	*testInfoschemaTableSuiteBase
-	httpServers []*httptest.Server
-	startTime   time.Time
-}
-
 type mockStoreWithMultiPD struct {
 	helper.Storage
 	hosts []string
@@ -969,6 +961,14 @@ func (s *mockStoreWithMultiPD) TLSConfig() *tls.Config       { panic("not implem
 func (s *mockStoreWithMultiPD) StartGCWorker() error         { panic("not implemented") }
 func (s *mockStoreWithMultiPD) Name() string                 { return "mockStore" }
 func (s *mockStoreWithMultiPD) Describe() string             { return "" }
+
+var _ = SerialSuites(&testHotRegionsHistoryTableSuite{testInfoschemaTableSuiteBase: &testInfoschemaTableSuiteBase{}})
+
+type testHotRegionsHistoryTableSuite struct {
+	*testInfoschemaTableSuiteBase
+	httpServers []*httptest.Server
+	startTime   time.Time
+}
 
 func (s *testHotRegionsHistoryTableSuite) SetUpSuite(c *C) {
 	s.testInfoschemaTableSuiteBase.SetUpSuite(c)
@@ -1082,8 +1082,6 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 		{"2019-10-10 10:10:23", "UNKONW", "UNKONW", "131", "UNKONW", "1", "5", "5", "55555", "0", "1", "READ", "99", "99", "99", "99"},
 		{"2019-10-10 10:10:24", "UNKONW", "UNKONW", "131", "UNKONW", "1", "6", "6", "66666", "0", "0", "WRITE", "99", "99", "99", "99"},
 	}
-
-	c.Assert(fullHotRegions, NotNil)
 
 	pdResps := []map[string]*executor.HistoryHotRegions{
 		{
@@ -1339,10 +1337,7 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 			expected: [][]string{},
 		},
 	}
-	// failpoint
-	fpName := "github.com/pingcap/tidb/executor/mockTiDBHotRegionsHistory"
-	c.Assert(failpoint.Enable(fpName, `return("")`), IsNil)
-	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
 	// mock http resp
 	store := s.store.(*mockStoreWithMultiPD)
 	for i, resp := range pdResps {
