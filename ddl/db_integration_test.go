@@ -2895,7 +2895,6 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustGetErrCode("create temporary table t(id int)", errno.ErrNotSupportedYet)
 
 	// Create local temporary table.
-	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 	tk.MustExec("create database tmp_db")
 	tk.MustExec("use tmp_db")
 	tk.MustExec("create temporary table t1 (id int)")
@@ -2962,7 +2961,6 @@ func (s *testIntegrationSuite3) TestAvoidCreateViewOnLocalTemporaryTable(c *C) {
 	tk.MustExec("drop table if exists tt1")
 	tk.MustExec("drop table if exists tt2")
 
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("create table tt0 (a int, b int)")
 	tk.MustExec("create view v0 as select * from tt0")
 	tk.MustExec("create temporary table tt1 (a int, b int)")
@@ -3032,7 +3030,6 @@ func (s *testIntegrationSuite3) TestAvoidCreateViewOnLocalTemporaryTable(c *C) {
 func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 
 	// Check drop temporary table(include meta data and real data.
 	tk.MustExec("create temporary table if not exists b_local_temp_table (id int)")
@@ -3161,7 +3158,6 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	clearSQL := "drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2"
 	tk.MustExec(clearSQL)
@@ -3236,7 +3232,6 @@ func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
 func (s *testIntegrationSuite3) TestDropWithLocalTemporaryTableKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	clearSQL := "drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2, testt.ltemp3"
 	tk.MustExec(clearSQL)
@@ -3320,7 +3315,6 @@ func (s *testIntegrationSuite3) TestDropWithLocalTemporaryTableKeyWord(c *C) {
 func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 
 	tk.MustExec("drop table if exists t1, tn")
 	tk.MustExec("create table t1 (id int)")
