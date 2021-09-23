@@ -26,7 +26,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 	zaplog "github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -161,6 +160,9 @@ func TestConfig(t *testing.T) {
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
+	defer func(configFile string) {
+		require.NoError(t, os.Remove(configFile))
+	}(configFile)
 
 	// Make sure the server refuses to start if there's an unrecognized configuration option
 	_, err = f.WriteString(`
@@ -209,6 +211,7 @@ max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
+resolve-lock-lite-threshold = 16
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
@@ -231,6 +234,8 @@ spilled-file-encryption-method = "plaintext"
 [pessimistic-txn]
 deadlock-history-capacity = 123
 deadlock-history-collect-retryable = true
+[top-sql]
+receiver-address = "127.0.0.1:10100"
 `)
 
 	require.NoError(t, err)
@@ -238,8 +243,6 @@ deadlock-history-collect-retryable = true
 
 	require.NoError(t, conf.Load(configFile))
 
-	require.Equal(t, "test_version", conf.ServerVersion)
-	require.Equal(t, conf.ServerVersion, mysql.ServerVersion)
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	require.True(t, conf.Binlog.Enable)
 	require.Equal(t, "hash", conf.Binlog.Strategy)
@@ -268,6 +271,7 @@ deadlock-history-collect-retryable = true
 	require.Equal(t, 100, conf.StmtSummary.HistorySize)
 	require.True(t, conf.EnableBatchDML)
 	require.True(t, conf.RepairMode)
+	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, uint32(200), conf.MaxServerConnections)
 	require.Equal(t, int64(10000), conf.MemQuotaQuery)
 	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
@@ -286,6 +290,8 @@ deadlock-history-collect-retryable = true
 	require.Equal(t, uint64(30), conf.StoresRefreshInterval)
 	require.Equal(t, uint(123), conf.PessimisticTxn.DeadlockHistoryCapacity)
 	require.True(t, conf.PessimisticTxn.DeadlockHistoryCollectRetryable)
+	require.False(t, conf.Experimental.EnableNewCharset)
+	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 
 	_, err = f.WriteString(`
 [log.file]
@@ -466,7 +472,9 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 	}{
 		{4 << 10, true},
 		{10 << 30, true},
-		{10<<30 + 1, false},
+		{10<<30 + 1, true},
+		{1 << 40, true},
+		{1<<40 + 1, false},
 	}
 
 	for _, tt := range tests {

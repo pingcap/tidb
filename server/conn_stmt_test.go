@@ -15,14 +15,16 @@
 package server
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
-func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
+func TestParseExecArgs(t *testing.T) {
 	type args struct {
 		args        []types.Datum
 		boundParams [][]byte
@@ -196,12 +198,12 @@ func (ts *ConnTestSuite) TestParseExecArgs(c *C) {
 	}
 	for _, tt := range tests {
 		err := parseExecArgs(&stmtctx.StatementContext{}, tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues)
-		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("err %v", err))
-		c.Assert(tt.args.args[0].GetValue(), Equals, tt.expect)
+		require.Truef(t, terror.ErrorEqual(err, tt.err), "err %v", err)
+		require.Equal(t, tt.expect, tt.args.args[0].GetValue())
 	}
 }
 
-func (ts *ConnTestSuite) TestParseStmtFetchCmd(c *C) {
+func TestParseStmtFetchCmd(t *testing.T) {
 	tests := []struct {
 		arg       []byte
 		stmtID    uint32
@@ -216,10 +218,10 @@ func (ts *ConnTestSuite) TestParseStmtFetchCmd(c *C) {
 		{[]byte{}, 0, 0, mysql.ErrMalformPacket},
 	}
 
-	for _, t := range tests {
-		stmtID, fetchSize, err := parseStmtFetchCmd(t.arg)
-		c.Assert(stmtID, Equals, t.stmtID)
-		c.Assert(fetchSize, Equals, t.fetchSize)
-		c.Assert(err, Equals, t.err)
+	for _, tc := range tests {
+		stmtID, fetchSize, err := parseStmtFetchCmd(tc.arg)
+		require.Equal(t, tc.stmtID, stmtID)
+		require.Equal(t, tc.fetchSize, fetchSize)
+		require.Equal(t, tc.err, err)
 	}
 }

@@ -540,6 +540,16 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec(`set tidb_opt_limit_push_down_threshold = 20`)
 	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
 	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
+
+	tk.MustQuery("select @@tidb_opt_prefer_range_scan").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_opt_prefer_range_scan = 1")
+	tk.MustQuery("select @@global.tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_opt_prefer_range_scan = 0")
+	tk.MustQuery("select @@global.tidb_opt_prefer_range_scan").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_opt_prefer_range_scan = 1")
+	tk.MustQuery("select @@session.tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_opt_prefer_range_scan = 0")
+	tk.MustQuery("select @@session.tidb_opt_prefer_range_scan").Check(testkit.Rows("0"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
@@ -1412,13 +1422,6 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	tk.MustExec("set @@global.tidb_enable_top_sql='off';")
 	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("0"))
 	c.Assert(variable.TopSQLVariable.Enable.Load(), IsFalse)
-
-	tk.MustExec("set @@tidb_top_sql_agent_address='127.0.0.1:4001';")
-	tk.MustQuery("select @@tidb_top_sql_agent_address;").Check(testkit.Rows("127.0.0.1:4001"))
-	c.Assert(variable.TopSQLVariable.AgentAddress.Load(), Equals, "127.0.0.1:4001")
-	tk.MustExec("set @@tidb_top_sql_agent_address='';")
-	tk.MustQuery("select @@tidb_top_sql_agent_address;").Check(testkit.Rows(""))
-	c.Assert(variable.TopSQLVariable.AgentAddress.Load(), Equals, "")
 
 	tk.MustExec("set @@global.tidb_top_sql_precision_seconds=2;")
 	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))
