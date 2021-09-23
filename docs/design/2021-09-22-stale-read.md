@@ -1,7 +1,7 @@
 # Proposal: Support Stale Read in TiDB
 
 - Author(s): [Yisaer](https://github.com/Yisaer) (Song Gao)
-- Last updated: 2021-08-18
+- Last updated: 2021-09-22
 - Tracking Issue: https://github.com/pingcap/tidb/issues/21094
 - Related Document: https://docs.google.com/document/d/1dSbXbudTK-hpz0vIBsmpfuzeQhhTFJ-zDenygt8fmCk/edit?usp=sharing
 
