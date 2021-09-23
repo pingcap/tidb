@@ -5,25 +5,44 @@
 - Tracking Issue: https://github.com/pingcap/tidb/issues/21094
 - Related Document: https://docs.google.com/document/d/1dSbXbudTK-hpz0vIBsmpfuzeQhhTFJ-zDenygt8fmCk/edit?usp=sharing
 
+## Table of Contents
+
+* [Introduction](#introduction)
+* [Motivation or Background](#motivation-or-background)
+* [Detailed Design](#detailed-design)
+    * [Implementation Overview](#implementation-overview)
+    * [New Syntax Overview](#new-syntax-overview)
+* [Compatibility](#compatibility)
+    * [ForBidden Behavior](#forbidden-behavior)
+    * [Statement Priority](#statement-priority)
+
 ## Introduction
 
-This proposal aims to support Stale Read and described what stale read looks like and how to keep compatibility with other
-query.
+This proposal aims to support Stale Read and descirbe what Stale Read looks like and how to keep compatibility with other queries.
 
 ## Motivation or Background
 
-Currently, TiDB support Follower Read to read data from follower replicas in order to increase the query throughput. TiDB
-also support Snapshot Read to read old data with given snapshot timestamp. However, Follower Read still require an rpc calling
-between follower replica and leader replica during querying which also increased query latency. For Snapshot Read, it only read
-data from leader replica which might be bottleneck especially in hot spot cases.
+Currently, TiDB support Follower Read to read data from follower replicas in order to increase the query throughput. TiDB also support Snapshot Read to read old data with given snapshot timestamp. 
 
-Stale Read is more like the combination of Follower Read and Snapshot Read. It supports tidb to read data from both leader replicas
-and follower replicas with no extra rpc calling during followers and leader. It also supports read data with given snapshot timestamp
-like Snapshot Read.
+However, Follower Read still require an rpc calling between follower replica and leader replica during querying which also increased query latency. 
+
+For Snapshot Read, it only read data from leader replica which might be bottleneck especially in hot spot cases.
+
+Stale Read is more like the combination of Follower Read and Snapshot Read. It supports tidb to read data from both leader replicas and follower replicas with no extra rpc calling during followers and leader. 
+
+It also supports read data with given snapshot timestamp like Snapshot Read.
 
 ## Detailed Design
 
-### Stale Read Syntax Overview
+### Implementation Overview
+
+Normally, tidb will send data query request to the storage with given timestamp to the leader replicas. 
+
+In Stale Read, each replica could handle the data query request because every replica maintain the resolved timestamp from leader replica. 
+
+This makes each store could know the smallest resoleved timestamp they could handle. Thus, tidb could send data request with staleness timestamp to get the  data they want.
+
+### New Syntax Overview
 
 Here we will introduce how to use Stale Read in TiDB. 
 
@@ -31,7 +50,7 @@ Here we will introduce how to use Stale Read in TiDB.
 
 ```sql
 SELECT * FROM t AS OF TIMESTAMP '2021-09-22 15:04:05' WHERE id = 1;
-SELECT * FROM t AS OF TIMESTAMP NOW(20) WHERE id = 1;
+SELECT * FROM t AS OF TIMESTAMP NOW() - INTERVAL 20 SECOND WHERE id = 1;
 ```
 
 2. Use Stale Read with given specific timestamp in single interactive transaction:
@@ -46,14 +65,14 @@ COMMIT;
 
 ```sql
 // query data with exact 20 seconds ago timestamp
-SELECT * FROM t AS OF TIMESTAMP NOW(20) WHERE id = 1;
+SELECT * FROM t AS OF TIMESTAMP NOW() - INTERVAL 20 SECOND WHERE id = 1;
 ```
 
 4. Use Stale Read with given exact seconds ago staleness in interactive statement:
 
 ```sql
 // query data with exact 20 seconds ago timestamp
-START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(20);
+START TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 20 SECOND;
 SELECT * FROM t where id = 1;
 COMMIT;
 ```
@@ -62,13 +81,13 @@ COMMIT;
 
 ```sql
 // query data with at most 20 seconds staleness
-SELECT * FROM t AS OF TIMESTAMP(NOW() - INTERVAL 20 SECOND) WHERE id = 1;
+SELECT * FROM t AS OF TIMESTAMP NOW() - INTERVAL 20 SECOND WHERE id = 1;
 ```
 
 6. Use Stale Read with given max tolerant staleness in interactive transaction:
 
 ```sql
-START TRANSACTION READ ONLY AS OF timestamp(NOW() - INTERVAL 20 SECOND);
+START TRANSACTION READ ONLY AS OF timestamp NOW() - INTERVAL 20 SECOND;
 SELECT * FROM t WHERE id = 1;
 COMMIT;
 ```
@@ -93,16 +112,17 @@ SET @@tidb_read_staleness='-5';
 select * from t where id = 1;
 ```
 
-Note that Stale Read will only affect the following simple query statement. 
+Note that Stale Read will only affect the following query statement `SELECT`, it won't affect the interactive transaction, or updating statement like `INSERT`,`DELETE` and `UPDATE`
 
 ### Compatibility
 
 This section we will talk about the compatibility between each Stale Read situations.
 
-#### Stale Read by SET TRANSACTION Statement
+#### Forbidden Behavior
 
-Stale Read by SET TRANSACTION Statement will make next interactive transaction or query with staleness timestamp. Thus 
-it is not allowed that querying stale read statement after stale read by SET TRANSACTION statement like following:
+Stale Read by SET TRANSACTION Statement will make next interactive transaction or query with staleness timestamp. 
+
+Thus it is not allowed that querying stale read statement after stale read by SET TRANSACTION statement like following:
 
 ```sql
 mysql> set transaction read only as of timestamp now(1);
@@ -112,9 +132,10 @@ mysql> select * from t as of timestamp now(2);
 ERROR 8135 (HY000): invalid as of timestamp: can't use select as of while already set transaction as of
 ```
 
-#### Stale Read Statement Priority 
+#### Statement Priority 
 
 After enabling `tidb_read_staleness`, the following querying will use given staleness timestamp to get data from replicas.
+
 And you can still use Stale Read with other forms with different timestamp:
 
 ```sql
