@@ -185,11 +185,6 @@ type Table interface {
 	// Allocators returns all allocators.
 	Allocators(ctx sessionctx.Context) autoid.Allocators
 
-	// RebaseAutoID rebases the auto_increment ID base.
-	// If allocIDs is true, it will allocate some IDs and save to the cache.
-	// If allocIDs is false, it will not allocate IDs.
-	RebaseAutoID(ctx sessionctx.Context, newBase int64, allocIDs bool, tp autoid.AllocatorType) error
-
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
 
