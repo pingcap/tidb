@@ -1715,7 +1715,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			sourceSize += size
 			return nil
 		})
-		err = rc.ClusterResource(ctx, sourceSize)
+		err = rc.clusterResource(ctx, sourceSize)
 		c.Assert(err, IsNil)
 
 		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCount)
@@ -1837,7 +1837,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
 		rc := &Controller{cfg: cfg, tls: tls, taskMgr: mockTaskMetaMgr{}, checkTemplate: template}
 
-		err := rc.CheckClusterRegion(context.Background())
+		err := rc.checkClusterRegion(context.Background())
 		c.Assert(err, IsNil)
 		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCnt)
 		c.Assert(template.Success(), Equals, ca.expectResult)
@@ -1889,7 +1889,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV(c *C) {
 		{
 			false,
 			"(.*)large csv: /testPath file exists(.*)",
-			false,
+			true,
 			1,
 			[]*mydump.MDDatabaseMeta{
 				{

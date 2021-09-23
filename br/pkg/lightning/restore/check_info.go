@@ -92,8 +92,8 @@ func (rc *Controller) getClusterAvail(ctx context.Context) (uint64, error) {
 	return clusterAvail, nil
 }
 
-// ClusterResource check cluster has enough resource to import data. this test can by skipped.
-func (rc *Controller) ClusterResource(ctx context.Context, localSource int64) error {
+// clusterResource check cluster has enough resource to import data. this test can by skipped.
+func (rc *Controller) clusterResource(ctx context.Context, localSource int64) error {
 	passed := true
 	message := "Cluster resources are rich for this import task"
 	defer func() {
@@ -167,11 +167,6 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
 	defer func() {
 		rc.checkTemplate.Collect(Critical, passed, message)
 	}()
-	// skip requirement check if explicitly turned off
-	if !rc.cfg.App.CheckRequirements {
-		message = "Cluster's available check is skipped by user requirement"
-		return nil
-	}
 	checkCtx := &backend.CheckCtx{
 		DBMetas: rc.dbMetas,
 	}
@@ -314,8 +309,8 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 	return nil
 }
 
-// CheckClusterRegion checks cluster if there are too many empty regions or region distribution is unbalanced.
-func (rc *Controller) CheckClusterRegion(ctx context.Context) error {
+// checkClusterRegion checks cluster if there are too many empty regions or region distribution is unbalanced.
+func (rc *Controller) checkClusterRegion(ctx context.Context) error {
 	err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 		restoreStarted := false
 		for _, task := range tasks {
@@ -390,7 +385,7 @@ func (rc *Controller) HasLargeCSV(dbMetas []*mydump.MDDatabaseMeta) error {
 	return nil
 }
 
-func (rc *Controller) EstimateSourceData(ctx context.Context) (int64, error) {
+func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 	sourceSize := int64(0)
 	originSource := int64(0)
 	bigTableCount := 0
@@ -404,20 +399,31 @@ func (rc *Controller) EstimateSourceData(ctx context.Context) (int64, error) {
 		for _, tbl := range db.Tables {
 			tableInfo, ok := info.Tables[tbl.Name]
 			if ok {
-				if err := rc.SampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core); err != nil {
-					return sourceSize, errors.Trace(err)
-				}
-				sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
 				originSource += tbl.TotalSize
-				if tbl.TotalSize > int64(config.DefaultBatchSize)*2 {
-					bigTableCount += 1
-					if !tbl.IsRowOrdered {
-						unSortedTableCount += 1
+				// Do not sample small table because there may a large number of small table and it will take a long
+				// time to sample data for all of them.
+				if tbl.TotalSize < int64(config.SplitRegionSize) {
+					sourceSize += tbl.TotalSize
+					tbl.IndexRatio = 1.0
+					tbl.IsRowOrdered = false
+				} else {
+					if err := rc.sampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core); err != nil {
+						return sourceSize, errors.Trace(err)
+					}
+					sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
+					if tbl.TotalSize > int64(config.DefaultBatchSize)*2 {
+						bigTableCount += 1
+						if !tbl.IsRowOrdered {
+							unSortedTableCount += 1
+						}
 					}
 				}
 				tableCount += 1
 			}
 		}
+	}
+	if rc.status != nil {
+		rc.status.TotalFileSize.Store(originSource)
 	}
 
 	// Do not import with too large concurrency because these data may be all unsorted.
@@ -429,8 +435,8 @@ func (rc *Controller) EstimateSourceData(ctx context.Context) (int64, error) {
 	return sourceSize, nil
 }
 
-// LocalResource checks the local node has enough resources for this import when local backend enabled;
-func (rc *Controller) LocalResource(ctx context.Context, sourceSize int64) error {
+// localResource checks the local node has enough resources for this import when local backend enabled;
+func (rc *Controller) localResource(sourceSize int64) error {
 	if rc.isSourceInLocal() {
 		sourceDir := strings.TrimPrefix(rc.cfg.Mydumper.SourceDir, storage.LocalURIPrefix)
 		same, err := common.SameDisk(sourceDir, rc.cfg.TikvImporter.SortedKVDir)
@@ -449,9 +455,6 @@ func (rc *Controller) LocalResource(ctx context.Context, sourceSize int64) error
 		return errors.Trace(err)
 	}
 	localAvailable := storageSize.Available
-	if err = rc.taskMgr.InitTask(ctx, sourceSize); err != nil {
-		return errors.Trace(err)
-	}
 
 	var message string
 	var passed bool
@@ -732,7 +735,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	return msgs, nil
 }
 
-func (rc *Controller) SampleDataFromTable(ctx context.Context, dbName string, tableMeta *mydump.MDTableMeta, tableInfo *model.TableInfo) error {
+func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, tableMeta *mydump.MDTableMeta, tableInfo *model.TableInfo) error {
 	if len(tableMeta.DataFiles) == 0 {
 		return nil
 	}
