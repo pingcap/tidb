@@ -49,7 +49,7 @@ func (m *MockGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
 	if ok {
 		return v, nil
 	}
-	return "", nil
+	return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
