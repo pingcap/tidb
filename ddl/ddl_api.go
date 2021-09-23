@@ -72,8 +72,26 @@ const (
 	longBlobMaxLength     = 4294967295
 )
 
-func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
+func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, directPlacementOpts *model.PlacementSettings, placementPolicyRef *model.PolicyRefInfo) error {
 	dbInfo := &model.DBInfo{Name: schema}
+	if directPlacementOpts != nil && placementPolicyRef != nil {
+		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(placementPolicyRef.Name))
+	}
+	if directPlacementOpts != nil {
+		// check the direct placement option compatibility.
+		if err := checkPolicyValidation(directPlacementOpts); err != nil {
+			return errors.Trace(err)
+		}
+		dbInfo.DirectPlacementOpts = directPlacementOpts
+	}
+	if placementPolicyRef != nil {
+		// placement policy reference will override the direct placement options.
+		policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(placementPolicyRef.Name)
+		if !ok {
+			return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(placementPolicyRef.Name))
+		}
+		dbInfo.PlacementPolicyRef = &model.PolicyRefInfo{ID: policy.ID, Name: placementPolicyRef.Name}
+	}
 	if charsetInfo != nil {
 		chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetInfo.Chs, Col: charsetInfo.Col})
 		if err != nil {
@@ -157,6 +175,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 				return ErrConflictingDeclarations.GenWithStackByArgs(toCharset, info.CharsetName)
 			}
 			toCollate = info.Name
+
 		}
 	}
 	if toCollate == "" {
@@ -1705,13 +1724,13 @@ func buildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInf
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionID are left as uninitialized value.
 func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return buildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "")
+	return buildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "", nil, nil)
 }
 
 // buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
-func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
-	tbInfo, err := buildTableInfoWithStmt(ctx, s, dbCharset, dbCollate)
+func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (*model.TableInfo, error) {
+	tbInfo, err := buildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef, directPlacementOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -1728,7 +1747,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 }
 
 // BuildSessionTemporaryTableInfo builds model.TableInfo from a SQL statement.
-func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSchema, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
+func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSchema, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (*model.TableInfo, error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	//build tableInfo
 	var tbInfo *model.TableInfo
@@ -1746,13 +1765,13 @@ func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSc
 		}
 		tbInfo, err = buildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithCheck(ctx, s, dbCharset, dbCollate)
+		tbInfo, err = buildTableInfoWithCheck(ctx, s, dbCharset, dbCollate, placementPolicyRef, directPlacementOpts)
 	}
 	return tbInfo, err
 }
 
 // buildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
-func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
+func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (*model.TableInfo, error) {
 	colDefs := s.Cols
 	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
 	if err != nil {
@@ -1789,14 +1808,25 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 
+	if err = handleTableOptions(s.Options, tbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if tbInfo.PlacementPolicyRef == nil && tbInfo.DirectPlacementOpts == nil {
+		// Set the defaults from Schema. Note: they are mutual exlusive!
+		if placementPolicyRef != nil {
+			tbInfo.PlacementPolicyRef = placementPolicyRef
+		} else if directPlacementOpts != nil {
+			tbInfo.DirectPlacementOpts = directPlacementOpts
+		}
+	}
+
+	// After handleTableOptions, so the partitions can get defaults from Table level
 	err = buildTablePartitionInfo(ctx, s.Partition, tbInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if err = handleTableOptions(s.Options, tbInfo); err != nil {
-		return nil, errors.Trace(err)
-	}
 	return tbInfo, nil
 }
 
@@ -1846,7 +1876,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if s.ReferTable != nil {
 		tbInfo, err = buildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate)
+		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate, schema.PlacementPolicyRef, schema.DirectPlacementOpts)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -2252,6 +2282,37 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd in
 	return nil
 }
 
+// SetDirectPlacementOpt tries to make the PlacementSettings assignments generic for Schema/Table/Partition
+func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placementOptionType ast.PlacementOptionType, stringVal string, uintVal uint64) error {
+	switch placementOptionType {
+	case ast.PlacementOptionPrimaryRegion:
+		placementSettings.PrimaryRegion = stringVal
+	case ast.PlacementOptionRegions:
+		placementSettings.Regions = stringVal
+	case ast.PlacementOptionFollowerCount:
+		placementSettings.Followers = uintVal
+	case ast.PlacementOptionVoterCount:
+		placementSettings.Voters = uintVal
+	case ast.PlacementOptionLearnerCount:
+		placementSettings.Learners = uintVal
+	case ast.PlacementOptionSchedule:
+		placementSettings.Schedule = stringVal
+	case ast.PlacementOptionConstraints:
+		placementSettings.Constraints = stringVal
+	case ast.PlacementOptionLeaderConstraints:
+		placementSettings.LeaderConstraints = stringVal
+	case ast.PlacementOptionLearnerConstraints:
+		placementSettings.LearnerConstraints = stringVal
+	case ast.PlacementOptionFollowerConstraints:
+		placementSettings.FollowerConstraints = stringVal
+	case ast.PlacementOptionVoterConstraints:
+		placementSettings.VoterConstraints = stringVal
+	default:
+		return errors.Trace(errors.New("unknown placement policy option"))
+	}
+	return nil
+}
+
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	for _, op := range options {
@@ -2296,61 +2357,19 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(op.StrValue),
 			}
-		case ast.TableOptionPlacementPrimaryRegion:
+		case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
+			ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
+			ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
+			ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
+			ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
+			ast.TableOptionPlacementVoterConstraints:
 			if tbInfo.DirectPlacementOpts == nil {
 				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
 			}
-			tbInfo.DirectPlacementOpts.PrimaryRegion = op.StrValue
-		case ast.TableOptionPlacementRegions:
-			if tbInfo.DirectPlacementOpts == nil {
-				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
+			err := SetDirectPlacementOpt(tbInfo.DirectPlacementOpts, ast.PlacementOptionType(op.Tp), op.StrValue, op.UintValue)
+			if err != nil {
+				return err
 			}
-			tbInfo.DirectPlacementOpts.Regions = op.StrValue
-		case ast.TableOptionPlacementFollowerCount:
-			if tbInfo.DirectPlacementOpts == nil {
-				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-			}
-			tbInfo.DirectPlacementOpts.Followers = op.UintValue
-		case ast.TableOptionPlacementVoterCount:
-			if tbInfo.DirectPlacementOpts == nil {
-				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-			}
-			tbInfo.DirectPlacementOpts.Voters = op.UintValue
-		case ast.TableOptionPlacementLearnerCount:
-			if tbInfo.DirectPlacementOpts == nil {
-				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-			}
-			tbInfo.DirectPlacementOpts.Learners = op.UintValue
-		case ast.TableOptionPlacementSchedule:
-			if tbInfo.DirectPlacementOpts == nil {
-				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-			}
-			tbInfo.DirectPlacementOpts.Schedule = op.StrValue
-		case ast.TableOptionPlacementConstraints:
-			if tbInfo.DirectPlacementOpts == nil {
-				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-			}
-			tbInfo.DirectPlacementOpts.Constraints = op.StrValue
-		case ast.TableOptionPlacementLeaderConstraints:
-			if tbInfo.DirectPlacementOpts == nil {
-				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-			}
-			tbInfo.DirectPlacementOpts.LeaderConstraints = op.StrValue
-		case ast.TableOptionPlacementLearnerConstraints:
-			if tbInfo.DirectPlacementOpts == nil {
-				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-			}
-			tbInfo.DirectPlacementOpts.LearnerConstraints = op.StrValue
-		case ast.TableOptionPlacementFollowerConstraints:
-			if tbInfo.DirectPlacementOpts == nil {
-				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-			}
-			tbInfo.DirectPlacementOpts.FollowerConstraints = op.StrValue
-		case ast.TableOptionPlacementVoterConstraints:
-			if tbInfo.DirectPlacementOpts == nil {
-				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
-			}
-			tbInfo.DirectPlacementOpts.VoterConstraints = op.StrValue
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
@@ -5951,7 +5970,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	}
 
 	// It is necessary to specify the table.ID and partition.ID manually.
-	newTableInfo, err := buildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
+	newTableInfo, err := buildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate, oldTableInfo.PlacementPolicyRef, oldTableInfo.DirectPlacementOpts)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6302,31 +6321,9 @@ func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*model.P
 	policyInfo := &model.PolicyInfo{PlacementSettings: &model.PlacementSettings{}}
 	policyInfo.Name = name
 	for _, opt := range options {
-		switch opt.Tp {
-		case ast.PlacementOptionPrimaryRegion:
-			policyInfo.PrimaryRegion = opt.StrValue
-		case ast.PlacementOptionRegions:
-			policyInfo.Regions = opt.StrValue
-		case ast.PlacementOptionFollowerCount:
-			policyInfo.Followers = opt.UintValue
-		case ast.PlacementOptionVoterCount:
-			policyInfo.Voters = opt.UintValue
-		case ast.PlacementOptionLearnerCount:
-			policyInfo.Learners = opt.UintValue
-		case ast.PlacementOptionSchedule:
-			policyInfo.Schedule = opt.StrValue
-		case ast.PlacementOptionConstraints:
-			policyInfo.Constraints = opt.StrValue
-		case ast.PlacementOptionLearnerConstraints:
-			policyInfo.LearnerConstraints = opt.StrValue
-		case ast.PlacementOptionFollowerConstraints:
-			policyInfo.FollowerConstraints = opt.StrValue
-		case ast.PlacementOptionVoterConstraints:
-			policyInfo.VoterConstraints = opt.StrValue
-		case ast.PlacementOptionLeaderConstraints:
-			policyInfo.LeaderConstraints = opt.StrValue
-		default:
-			return nil, errors.Trace(errors.New("unknown placement policy option"))
+		err := SetDirectPlacementOpt(policyInfo.PlacementSettings, opt.Tp, opt.StrValue, opt.UintValue)
+		if err != nil {
+			return nil, err
 		}
 	}
 	return policyInfo, nil
