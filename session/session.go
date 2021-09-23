@@ -2179,6 +2179,11 @@ func (s *session) Close() {
 		}
 	}
 	if s.statsCollector != nil {
+		if vars := s.GetSessionVars(); vars != nil && vars.StmtCtx != nil {
+			// Since we merge StmtCtx.ColStatsUsage into s.statsCollector in ResetContextOfStmt, the column stats usage of
+			// the last sql has not been merged into s.statsCollector. So we call UpdateColStatsUsage here.
+			s.UpdateColStatsUsage(vars.StmtCtx.ColStatsUsage)
+		}
 		s.statsCollector.Delete()
 	}
 	if s.idxUsageCollector != nil {
