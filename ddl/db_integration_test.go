@@ -2891,8 +2891,6 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustGetErrCode("create global temporary table t (id int) on commit preserve rows", errno.ErrUnsupportedDDLOperation)
 	// Engine type can only be 'memory' or empty for now.
 	tk.MustGetErrCode("create global temporary table t (id int) engine = 'innodb' on commit delete rows", errno.ErrUnsupportedDDLOperation)
-	// Follow the behaviour of the old version TiDB: parse and ignore the 'temporary' keyword.
-	tk.MustGetErrCode("create temporary table t(id int)", errno.ErrNotSupportedYet)
 
 	// Create local temporary table.
 	tk.MustExec("create database tmp_db")
