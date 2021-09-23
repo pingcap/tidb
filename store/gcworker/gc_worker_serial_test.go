@@ -117,12 +117,9 @@ func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite, clean func()) {
 		}),
 	}
 
-	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t, opts...)
-	s.tikvStore = s.store.(tikv.Storage)
-
-	s.tikvStore.GetOracle().Close()
 	s.oracle = &oracles.MockOracle{}
-	s.tikvStore.SetOracle(s.oracle)
+	s.store, s.dom, clean = testkit.CreateMockStoreWithOracle(t, s.oracle, opts...)
+	s.tikvStore = s.store.(tikv.Storage)
 
 	gcWorker, err := NewGCWorker(s.store, s.pdClient)
 	require.NoError(t, err)
