@@ -89,6 +89,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	err0 := saveOptsForAutoAnalyze(e)
 	if err0 != nil {
 		logutil.Logger(ctx).Warn("Fail to save options for auto analyze")
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("Fail to save options for auto analyze"))
 	}
 
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
