@@ -857,11 +857,6 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 }
 
 func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
-	if stmt.TemporaryKeyword == ast.TemporaryLocal && !p.ctx.GetSessionVars().EnableNoopFuncs {
-		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
-		return
-	}
-
 	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
