@@ -1740,22 +1740,13 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	}
 	taskExist := false
 
-	if rc.status != nil {
-		originSource := int64(0)
-		for _, db := range rc.dbMetas {
-			for _, tbl := range db.Tables {
-				originSource += tbl.TotalSize
-			}
-		}
-		rc.status.TotalFileSize.Store(originSource)
+	// We still need to sample source data even if this task has existed, because we need to judge whether the
+	// source is in order as row key to decide how to sort local data.
+	source, err := rc.estimateSourceData(ctx)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	if rc.isLocalBackend() {
-		// We still need to sample source data even if this task has existed, because we need to judge whether the
-		// source is in order as row key to decide how to sort local data.
-		source, err := rc.estimateSourceData(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
 		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
 		if err != nil {

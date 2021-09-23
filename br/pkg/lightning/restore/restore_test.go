@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/table/tables"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1921,6 +1922,52 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV(c *C) {
 		c.Assert(template.Success(), Equals, ca.expectResult)
 		c.Assert(strings.ReplaceAll(template.Output(), "\n", ""), Matches, ca.expectMsg)
 	}
+}
+func (s *tableRestoreSuite) TestEstimate(c *C) {
+	ctx := context.Background()
+	controller := gomock.NewController(c)
+	defer controller.Finish()
+	mockBackend := mock.NewMockBackend(controller)
+	idAlloc := kv.NewPanickingAllocators(0)
+	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
+
+	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
+		SQLMode:        s.cfg.TiDB.SQLMode,
+		Timestamp:      0,
+		AutoRandomSeed: 0,
+	})).AnyTimes()
+	importer := backend.MakeBackend(mockBackend)
+	s.cfg.TikvImporter.Backend = config.BackendLocal
+
+	template := NewSimpleTemplate()
+	rc := &Controller{
+		cfg:           s.cfg,
+		checkTemplate: template,
+		store:         s.store,
+		backend:       importer,
+		dbMetas: []*mydump.MDDatabaseMeta{
+			{
+				Name:   "db1",
+				Tables: []*mydump.MDTableMeta{s.tableMeta},
+			},
+		},
+		dbInfos: map[string]*checkpoints.TidbDBInfo{
+			"db1": s.dbInfo,
+		},
+		ioWorkers: worker.NewPool(context.Background(), 1, "io"),
+	}
+	source, err := rc.estimateSourceData(ctx)
+	// Because this file is small than region split size so we does not sample it.
+	c.Assert(err, IsNil)
+	c.Assert(source, Equals, s.tableMeta.TotalSize)
+	s.tableMeta.TotalSize = int64(config.SplitRegionSize)
+	source, err = rc.estimateSourceData(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(source, Greater, s.tableMeta.TotalSize)
+	rc.cfg.TikvImporter.Backend = config.BackendTiDB
+	source, err = rc.estimateSourceData(ctx)
+	c.Assert(source, Equals, s.tableMeta.TotalSize)
 }
 
 func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
