@@ -15,14 +15,12 @@
 package statistics
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testStatisticsSerialSuite{})
-
-type testStatisticsSerialSuite struct{}
-
-func (s *testStatisticsSerialSuite) TestMoveToHistory(c *C) {
+func TestMoveToHistory(t *testing.T) {
 	ClearHistoryJobs()
 	numJobs := numMaxHistoryJobs*2 + 1
 	jobs := make([]*AnalyzeJob, 0, numJobs)
@@ -32,11 +30,11 @@ func (s *testStatisticsSerialSuite) TestMoveToHistory(c *C) {
 		jobs = append(jobs, job)
 	}
 	MoveToHistory(jobs[0])
-	c.Assert(len(GetAllAnalyzeJobs()), Equals, numJobs)
+	require.Len(t, GetAllAnalyzeJobs(), numJobs)
 	for i := 1; i < numJobs; i++ {
 		MoveToHistory(jobs[i])
 	}
-	c.Assert(len(GetAllAnalyzeJobs()), Equals, numMaxHistoryJobs)
+	require.Len(t, GetAllAnalyzeJobs(), numMaxHistoryJobs)
 	ClearHistoryJobs()
-	c.Assert(len(GetAllAnalyzeJobs()), Equals, 0)
+	require.Len(t, GetAllAnalyzeJobs(), 0)
 }

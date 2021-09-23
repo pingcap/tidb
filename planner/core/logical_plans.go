@@ -388,10 +388,9 @@ func (la *LogicalAggregation) GetPotentialPartitionKeys() []*property.MPPPartiti
 	groupByCols := make([]*property.MPPPartitionColumn, 0, len(la.GroupByItems))
 	for _, item := range la.GroupByItems {
 		if col, ok := item.(*expression.Column); ok {
-			_, coll := expression.DeriveCollationFromExprs(la.ctx, col)
 			groupByCols = append(groupByCols, &property.MPPPartitionColumn{
 				Col:       col,
-				CollateID: property.GetCollateIDByNameForPartition(coll),
+				CollateID: property.GetCollateIDByNameForPartition(col.GetType().Collate),
 			})
 		}
 	}
