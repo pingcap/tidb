@@ -89,8 +89,10 @@ func (ssr *stmtSummaryReader) GetStmtSummaryCurrentRows() [][]types.Datum {
 			rows = append(rows, record)
 		}
 	}
-	if otherDatum := ssr.getStmtEvictedOtherRow(other); otherDatum != nil && ssr.checker == nil {
-		rows = append(rows, otherDatum)
+	if ssr.checker == nil {
+		if otherDatum := ssr.getStmtEvictedOtherRow(other); otherDatum != nil {
+			rows = append(rows, otherDatum)
+		}
 	}
 	return rows
 }
@@ -114,7 +116,8 @@ func (ssr *stmtSummaryReader) GetStmtSummaryHistoryRows() [][]types.Datum {
 		rows = append(rows, records...)
 	}
 
-	if otherDatum := ssr.getStmtEvictedOtherHistoryRow(other, historySize); ssr.checker == nil {
+	if ssr.checker == nil {
+		otherDatum := ssr.getStmtEvictedOtherHistoryRow(other, historySize)
 		rows = append(rows, otherDatum...)
 	}
 	return rows
