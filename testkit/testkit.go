@@ -55,6 +55,7 @@ func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
 	}
 }
 
+// RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = newSession(tk.t, tk.store)
 }
