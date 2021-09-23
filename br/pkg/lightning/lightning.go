@@ -61,6 +61,7 @@ type Lightning struct {
 	server     http.Server
 	serverAddr net.Addr
 	serverLock sync.Mutex
+	status     restore.LightningStatus
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -211,7 +212,10 @@ func (l *Lightning) RunServer() error {
 	}
 }
 
-var taskCfgRecorderKey struct{}
+var (
+	taskRunNotifyKey   = "taskRunNotifyKey"
+	taskCfgRecorderKey = "taskCfgRecorderKey"
+)
 
 func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.Glue) (err error) {
 	build.LogInfo(build.Lightning)
@@ -235,7 +239,13 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	}()
 
 	failpoint.Inject("SkipRunTask", func() {
-		if recorder, ok := l.ctx.Value(&taskCfgRecorderKey).(chan *config.Config); ok {
+		if notifyCh, ok := l.ctx.Value(taskRunNotifyKey).(chan struct{}); ok {
+			select {
+			case notifyCh <- struct{}{}:
+			default:
+			}
+		}
+		if recorder, ok := l.ctx.Value(taskCfgRecorderKey).(chan *config.Config); ok {
 			select {
 			case recorder <- taskCfg:
 			case <-ctx.Done():
@@ -301,7 +311,8 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	web.BroadcastInitProgress(dbMetas)
 
 	var procedure *restore.Controller
-	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, s, g)
+
+	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, &l.status, s, g)
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
@@ -322,6 +333,13 @@ func (l *Lightning) Stop() {
 		log.L().Warn("failed to shutdown HTTP server", log.ShortError(err))
 	}
 	l.shutdown()
+}
+
+// Status return the sum size of file which has been imported to TiKV and the total size of source file.
+func (l *Lightning) Status() (finished int64, total int64) {
+	finished = l.status.FinishedFileSize.Load()
+	total = l.status.TotalFileSize.Load()
+	return
 }
 
 func writeJSONError(w http.ResponseWriter, code int, prefix string, err error) {
@@ -667,7 +685,10 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 
 		// region-concurrency: number of LocalWriters writing SST files.
 		// 2*totalSize/memCacheSize: number of Pebble MemCache files.
-		estimateMaxFiles := local.Rlim_t(cfg.App.RegionConcurrency) + local.Rlim_t(topNTotalSize)/local.Rlim_t(cfg.TikvImporter.EngineMemCacheSize)*2
+		maxDBFiles := topNTotalSize / int64(cfg.TikvImporter.LocalWriterMemCacheSize) * 2
+		// the pebble db and all import routine need upto maxDBFiles fds for read and write.
+		maxOpenDBFiles := maxDBFiles * (1 + int64(cfg.TikvImporter.RangeConcurrency))
+		estimateMaxFiles := local.Rlim_t(cfg.App.RegionConcurrency) + local.Rlim_t(maxOpenDBFiles)
 		if err := local.VerifyRLimit(estimateMaxFiles); err != nil {
 			return err
 		}

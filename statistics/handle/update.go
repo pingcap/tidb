@@ -982,6 +982,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 				logutil.BgLogger().Error("Fail to load analyze options and fallback to global variables.", zap.Error(err))
 			}
 			tblInfo := tbl.Meta()
+			if tblInfo.IsView() {
+				continue
+			}
 			pi := tblInfo.GetPartitionInfo()
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)

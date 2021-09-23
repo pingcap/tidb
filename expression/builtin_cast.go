@@ -1945,11 +1945,19 @@ func WrapWithCastAsTime(ctx sessionctx.Context, expr Expression, tp *types.Field
 	} else if (exprTp == mysql.TypeDate || exprTp == mysql.TypeTimestamp) && tp.Tp == mysql.TypeDatetime {
 		return expr
 	}
-	switch x := expr.GetType(); x.Tp {
-	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration:
-		tp.Decimal = x.Decimal
-	default:
+	switch x := expr.GetType().EvalType(); x {
+	case types.ETInt:
+		tp.Decimal = int(types.MinFsp)
+	case types.ETString, types.ETReal, types.ETJson:
 		tp.Decimal = int(types.MaxFsp)
+	case types.ETDatetime, types.ETTimestamp, types.ETDuration:
+		tp.Decimal = expr.GetType().Decimal
+	case types.ETDecimal:
+		tp.Decimal = expr.GetType().Decimal
+		if tp.Decimal > int(types.MaxFsp) {
+			tp.Decimal = int(types.MaxFsp)
+		}
+	default:
 	}
 	switch tp.Tp {
 	case mysql.TypeDate:
