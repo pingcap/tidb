@@ -402,7 +402,7 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 			if ok {
 				// Do not sample small table because there may a large number of small table and it will take a long
 				// time to sample data for all of them.
-				if rc.cfg.TikvImporter.Backend != config.BackendLocal || tbl.TotalSize < int64(config.SplitRegionSize) {
+				if rc.cfg.TikvImporter.Backend == config.BackendTiDB || tbl.TotalSize < int64(config.SplitRegionSize) {
 					sourceSize += tbl.TotalSize
 					tbl.IndexRatio = 1.0
 					tbl.IsRowOrdered = false
