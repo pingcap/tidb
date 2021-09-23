@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -27,6 +28,7 @@ import (
 	parsertypes "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
@@ -1043,6 +1045,37 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 	))
 }
 
+func (s *testSuite5) TestShowCreateStmtIgnoreLocalTemporaryTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_noop_functions=true")
+
+	// SHOW CREATE VIEW ignores local temporary table with the same name
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create view v1 as select 1")
+	tk.MustExec("create temporary table v1 (a int)")
+	tk.MustQuery("show create table v1").Check(testutil.RowsWithSep("|",
+		""+
+			"v1 CREATE TEMPORARY TABLE `v1` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec("drop view v1")
+	err := tk.ExecToErr("show create view v1")
+	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
+
+	// SHOW CREATE SEQUENCE ignores local temporary table with the same name
+	tk.MustExec("drop view if exists seq1")
+	tk.MustExec("create sequence seq1")
+	tk.MustExec("create temporary table seq1 (a int)")
+	tk.MustQuery("show create sequence seq1").Check(testutil.RowsWithSep("|",
+		"seq1 CREATE SEQUENCE `seq1` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB",
+	))
+	tk.MustExec("drop sequence seq1")
+	err = tk.ExecToErr("show create sequence seq1")
+	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
+}
+
 func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
@@ -1130,7 +1163,7 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	const builtinFuncNum = 272
+	const builtinFuncNum = 273
 	c.Assert(builtinFuncNum, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
 	c.Assert("yearweek", Equals, rows[builtinFuncNum-1][0].(string))

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1128,16 +1129,10 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	}
 	switch d.k {
 	case KindMysqlTime:
-		// `select timestamp(cast("1000-01-02 23:59:59" as date)); ` casts usage will succeed.
-		// Alter datetime("1000-01-02 23:59:59") to timestamp will error.
-		if sc.InReorgAttribute {
-			t, err = d.GetMysqlTime().Convert(sc, target.Tp)
-			if err != nil {
-				ret.SetMysqlTime(t)
-				return ret, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, t.String()))
-			}
-		} else {
-			t = d.GetMysqlTime()
+		t, err = d.GetMysqlTime().Convert(sc, target.Tp)
+		if err != nil {
+			ret.SetMysqlTime(ZeroTimestamp)
+			return ret, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimestampStr, t.String()))
 		}
 		t, err = t.RoundFrac(sc, fsp)
 	case KindMysqlDuration:
@@ -1421,8 +1416,6 @@ func (d *Datum) ConvertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		}
 	case KindMysqlTime:
 		y = int64(d.GetMysqlTime().Year())
-	case KindMysqlDuration:
-		y = int64(time.Now().Year())
 	case KindMysqlJSON:
 		y, err = ConvertJSONToInt64(sc, d.GetMysqlJSON(), false)
 		if err != nil {

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -37,6 +38,7 @@ const header = `// Copyright 2019 PingCAP, Inc.
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -171,7 +173,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vectorized() 
 `))
 
 var builtinCoalesceCompareVecTpl = template.Must(template.New("").Parse(`
-// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen, 
+// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen,
 // the vectorization falls back to the scalar execution.
 func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) fallbackEval{{ .type.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()

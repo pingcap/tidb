@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +17,7 @@ package executor
 import (
 	"archive/zip"
 	"context"
-	"crypto/md5"
+	"crypto/md5" // #nosec G501
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -134,6 +135,28 @@ func (e *PlanRecreatorSingleInfo) dumpSingle(path string) (string, error) {
 	if err != nil {
 		return "", errors.New("Plan Recreator: cannot create zip file")
 	}
+	val := e.Ctx.Value(PlanRecreatorFileList)
+	if val == nil {
+		e.Ctx.SetValue(PlanRecreatorFileList, fileList{FileInfo: make(map[string]fileInfo), TokenMap: make(map[[16]byte]string)})
+	} else {
+		// Clean outdated files
+		Flist := val.(fileList).FileInfo
+		TList := val.(fileList).TokenMap
+		for k, v := range Flist {
+			if time.Since(v.StartTime).Minutes() > remainedInterval {
+				err := os.Remove(recreatorPath + "/" + k)
+				if err != nil {
+					logutil.BgLogger().Warn(fmt.Sprintf("Cleaning outdated file %s failed.", k))
+				}
+				delete(Flist, k)
+				delete(TList, v.Token)
+			}
+		}
+	}
+	// Generate Token
+	token := md5.Sum([]byte(fmt.Sprintf("%s%d", fileName, rand.Int63()))) // #nosec G401 G404
+	e.Ctx.Value(PlanRecreatorFileList).(fileList).FileInfo[fileName] = fileInfo{StartTime: startTime, Token: token}
+	e.Ctx.Value(PlanRecreatorFileList).(fileList).TokenMap[token] = fileName
 
 	// Create zip writer
 	zw := zip.NewWriter(zf)

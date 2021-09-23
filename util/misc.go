@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -466,6 +467,28 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Con
 	}
 
 	requireTLS := config.GetGlobalConfig().Security.RequireSecureTransport
+	var minTLSVersion uint16 = tls.VersionTLS11
+	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
+	case "TLSv1.0":
+		minTLSVersion = tls.VersionTLS10
+	case "TLSv1.1":
+		minTLSVersion = tls.VersionTLS11
+	case "TLSv1.2":
+		minTLSVersion = tls.VersionTLS12
+	case "TLSv1.3":
+		minTLSVersion = tls.VersionTLS13
+	case "":
+	default:
+		logutil.BgLogger().Warn(
+			"Invalid TLS version, using default instead",
+			zap.String("tls-version", tlsver),
+		)
+	}
+	if minTLSVersion < tls.VersionTLS12 {
+		logutil.BgLogger().Warn(
+			"Minimum TLS version allows pre-TLSv1.2 protocols, this is not recommended",
+		)
+	}
 
 	// Try loading CA cert.
 	clientAuthPolicy := tls.NoClientCert
@@ -490,10 +513,12 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Con
 			}
 		}
 	}
+	/* #nosec G402 */
 	tlsConfig = &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 		ClientCAs:    certPool,
 		ClientAuth:   clientAuthPolicy,
+		MinVersion:   minTLSVersion,
 	}
 	return
 }
@@ -580,6 +605,9 @@ func createTLSCertificates(certpath string, keypath string) error {
 	}
 
 	template := x509.Certificate{
+		Subject: pkix.Name{
+			CommonName: "TiDB_Server_Auto_Generated_Server_Certificate",
+		},
 		SerialNumber: big.NewInt(1),
 		NotBefore:    notBefore,
 		NotAfter:     notAfter,

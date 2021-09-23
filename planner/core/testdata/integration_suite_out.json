@@ -54,8 +54,8 @@
           "Projection 9990.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
           "└─HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "  ├─Selection(Build) 7992.00 root  from_unixtime(cast(test.t.b, decimal(20,0) BINARY))",
-          "  │ └─TableReader 7992.00 root  data:Selection",
-          "  │   └─Selection 7992.00 cop[tikv]  not(isnull(test.t.a))",
+          "  │ └─TableReader 9990.00 root  data:Selection",
+          "  │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
@@ -1686,7 +1686,7 @@
       {
         "SQL": "select * from t1 where a = 3 or a = 5",
         "Plan": [
-          "Batch_Point_Get 2.00 root table:t1 handle:[3 5], keep order:false, desc:false"
+          "Batch_Point_Get_5 2.00 12.53 root table:t1 handle:[3 5], keep order:false, desc:false"
         ],
         "Warnings": [
           "Note 1105 handle of t1 is selected since the path only has point ranges"
@@ -1695,7 +1695,7 @@
       {
         "SQL": "select f, g from t1 where f = 2 and g in (3, 4, 5)",
         "Plan": [
-          "Batch_Point_Get 3.00 root table:t1, index:f_g(f, g) keep order:false, desc:false"
+          "Batch_Point_Get_5 3.00 11.40 root table:t1, index:f_g(f, g) keep order:false, desc:false"
         ],
         "Warnings": [
           "Note 1105 unique index f_g of t1 is selected since the path only has point ranges with single scan"
@@ -1704,7 +1704,7 @@
       {
         "SQL": "select * from t1 where c = 1 and (d = 2 or d = 3) and e in (4, 5)",
         "Plan": [
-          "Batch_Point_Get 4.00 root table:t1, index:c_d_e(c, d, e) keep order:false, desc:false"
+          "Batch_Point_Get_5 4.00 27.20 root table:t1, index:c_d_e(c, d, e) keep order:false, desc:false"
         ],
         "Warnings": [
           "Note 1105 unique index c_d_e of t1 is selected since the path only has point ranges with double scan"
@@ -1713,8 +1713,8 @@
       {
         "SQL": "select f, g from t1 where f = 2 and g > 3",
         "Plan": [
-          "IndexReader 33.33 root  index:IndexRangeScan",
-          "└─IndexRangeScan 33.33 cop[tikv] table:t1, index:f_g(f, g) range:(2 3,2 +inf], keep order:false, stats:pseudo"
+          "IndexReader_6 33.33 160.78 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 33.33 1870.00 cop[tikv] table:t1, index:f_g(f, g) range:(2 3,2 +inf], keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 unique index f_g of t1 is selected since the path only fetches limited number of rows with single scan"
@@ -1723,11 +1723,163 @@
       {
         "SQL": "select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5)",
         "Plan": [
-          "Selection 0.01 root  eq(test.t2.b, 2), in(test.t2.c, 1, 2, 3, 4, 5)",
-          "└─Point_Get 1.00 root table:t2, index:idx_a(a) "
+          "Selection_6 0.01 0.00 root  eq(test.t2.b, 2), in(test.t2.c, 1, 2, 3, 4, 5)",
+          "└─Point_Get_5 1.00 8.60 root table:t2, index:idx_a(a) "
         ],
         "Warnings": [
           "Note 1105 unique index idx_a of t2 is selected since the path only has point ranges with double scan"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where (a = 1 or a = 3) and b = 'xx'",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 7.60 root table:t3, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 handle of t3 is selected since the path only has point ranges"
+        ]
+      },
+      {
+        "SQL": "select * from t4 where (a = 1 or a = 3) and b = 'xx'",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 10.00 root table:t4, index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 unique index PRIMARY of t4 is selected since the path only has point ranges with double scan"
+        ]
+      },
+      {
+        "SQL": "select a, b from t3 where (a = 1 or a = 3) and b = 'xx'",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 7.60 root table:t3, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 handle of t3 is selected since the path only has point ranges"
+        ]
+      },
+      {
+        "SQL": "select a, b from t4 where (a = 1 or a = 3) and b = 'xx'",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 7.60 root table:t4, index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 unique index PRIMARY of t4 is selected since the path only has point ranges with single scan"
+        ]
+      },
+      {
+        "SQL": "update t1 set b = 2 where a = 4 or a = 6",
+        "Plan": [
+          "Update_4 N/A N/A root  N/A",
+          "└─Batch_Point_Get_6 2.00 12.53 root table:t1 handle:[4 6], keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 handle of t1 is selected since the path only has point ranges"
+        ]
+      },
+      {
+        "SQL": "delete from t1 where f = 2 and g in (3, 4)",
+        "Plan": [
+          "Delete_4 N/A N/A root  N/A",
+          "└─Selection_7 2.00 0.00 root  in(test.t1.g, 3, 4)",
+          "  └─Point_Get_6 1.00 9.80 root table:t1, index:f(f) "
+        ],
+        "Warnings": [
+          "Note 1105 unique index f of t1 is selected since the path only has point ranges with double scan"
+        ]
+      },
+      {
+        "SQL": "insert into t3 select a, b, c from t1 where f = 2",
+        "Plan": [
+          "Insert_1 N/A N/A root  N/A",
+          "└─Projection_6 1.00 25.40 root  test.t1.a, test.t1.b, test.t1.c",
+          "  └─Point_Get_7 1.00 6.80 root table:t1, index:f(f) "
+        ],
+        "Warnings": [
+          "Note 1105 unique index f of t1 is selected since the path only has point ranges with double scan"
+        ]
+      },
+      {
+        "SQL": "replace into t3 select a, b, c from t1 where a = 3",
+        "Plan": [
+          "Insert_1 N/A N/A root  N/A",
+          "└─Point_Get_7 1.00 6.27 root table:t1 handle:3"
+        ],
+        "Warnings": [
+          "Note 1105 handle of t1 is selected since the path only has point ranges"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestOutputSkylinePruningInfo",
+    "Cases": [
+      {
+        "SQL": "select * from t where a > 1 order by f",
+        "Plan": [
+          "IndexLookUp_14 3333.33 139413.67 root  ",
+          "├─Selection_13(Build) 3333.33 0.00 cop[tikv]  gt(test.t.a, 1)",
+          "│ └─IndexFullScan_11 10000.00 555020.00 cop[tikv] table:t, index:f(f) keep order:true, stats:pseudo",
+          "└─TableRowIDScan_12(Probe) 3333.33 555020.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 [t,f,f_g] remain after pruning paths for t given Prop{SortItems: [{test.t.f asc}], TaskTp: rootTask}"
+        ]
+      },
+      {
+        "SQL": "select * from t where f > 1",
+        "Plan": [
+          "TableReader_7 3333.33 88640.22 root  data:Selection_6",
+          "└─Selection_6 3333.33 1140020.00 cop[tikv]  gt(test.t.f, 1)",
+          "  └─TableFullScan_5 10000.00 1110020.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 [t,f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
+        ]
+      },
+      {
+        "SQL": "select f from t where f > 1",
+        "Plan": [
+          "IndexReader_6 3333.33 11140.22 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 3333.33 140020.00 cop[tikv] table:t, index:f(f) range:(1,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 [f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
+        ]
+      },
+      {
+        "SQL": "select * from t where f > 3 and g = 5",
+        "Plan": [
+          "IndexLookUp_15 3.33 215.74 root  ",
+          "├─IndexRangeScan_12(Build) 10.00 590.00 cop[tikv] table:t, index:g(g) range:[5,5], keep order:false, stats:pseudo",
+          "└─Selection_14(Probe) 3.33 0.00 cop[tikv]  gt(test.t.f, 3)",
+          "  └─TableRowIDScan_13 10.00 590.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 [t,f_g,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
+        ]
+      },
+      {
+        "SQL": "select * from t where g = 5 order by f",
+        "Plan": [
+          "Sort_5 10.00 362.68 root  test.t.f",
+          "└─IndexLookUp_13 10.00 239.01 root  ",
+          "  ├─IndexRangeScan_11(Build) 10.00 590.00 cop[tikv] table:t, index:g(g) range:[5,5], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_12(Probe) 10.00 590.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 [t,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
+        ]
+      },
+      {
+        "SQL": "select * from t where d = 3 order by c, e",
+        "Plan": [
+          "IndexLookUp_15 10.00 57230.78 root  ",
+          "├─Selection_14(Build) 10.00 0.00 cop[tikv]  eq(test.t.d, 3)",
+          "│ └─IndexFullScan_12 10000.00 825020.00 cop[tikv] table:t, index:c_d_e(c, d, e) keep order:true, stats:pseudo",
+          "└─TableRowIDScan_13(Probe) 10.00 825020.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 [t,c_d_e] remain after pruning paths for t given Prop{SortItems: [{test.t.c asc} {test.t.e asc}], TaskTp: rootTask}"
         ]
       }
     ]
