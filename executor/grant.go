@@ -487,10 +487,10 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 		dbName = e.ctx.GetSessionVars().CurrentDB
 	}
 
-	// Attempts to use GRANT ALL as shorthand for granting privileges
-	// at the database leval fail with an error
-	// See https://dev.mysql.com/doc/refman/8.0/en/performance-schema-table-characteristics.html for more detail
-	if strings.EqualFold(dbName, "performance_schema") && priv.Priv == mysql.AllPriv {
+	// Some privilege can not be granted to performance_schema.* in MySQL.
+	// As TiDB ignores the privilege management part for this system database,
+	// check is performed here
+	if strings.EqualFold(dbName, "performance_schema") && e.checkPerformanceSchemaPriv(priv.Priv) {
 		return e.dbAccessDenied(dbName)
 	}
 
@@ -567,6 +567,17 @@ func (e *GrantExec) dbAccessDenied(dbName string) error {
 		h = user.AuthHostname
 	}
 	return ErrDBaccessDenied.GenWithStackByArgs(u, h, dbName)
+}
+
+// If the privilege can not be granted, return true
+func (e *GrantExec) checkPerformanceSchemaPriv(privType mysql.PrivilegeType) bool {
+	// Attempts to use GRANT ALL as shorthand for granting privileges
+	// at the database leval fail with an error
+	// See https://dev.mysql.com/doc/refman/8.0/en/performance-schema-table-characteristics.html for more detail
+	// Others are rejected in MySQL 8.0
+	return privType == mysql.AllPriv || privType == mysql.CreatePriv ||
+		privType == mysql.ReferencesPriv || privType == mysql.AlterPriv || privType == mysql.ExecutePriv ||
+		privType == mysql.IndexPriv || privType == mysql.CreateViewPriv || privType == mysql.ShowViewPriv
 }
 
 // composeGlobalPrivUpdate composes update stmt assignment list string for global scope privilege update.
