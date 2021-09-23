@@ -57,7 +57,7 @@ func setUpSuite(t *testing.T) *testStatisticsSuite {
 	}
 	sc := new(stmtctx.StatementContext)
 	samples, err := SortSampleItems(sc, samples)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	s.samples = samples
 
 	rc := &recordSet{
@@ -80,7 +80,7 @@ func setUpSuite(t *testing.T) *testStatisticsSuite {
 		rc.data[i].SetInt64(rc.data[i].GetInt64() + 2)
 	}
 	err = types.SortDatums(sc, rc.data)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	s.rc = rc
 
 	pk := &recordSet{
@@ -101,15 +101,15 @@ func TestSketch(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
 	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, int64(6232), ndv)
 
 	rcSketch, ndv, err := buildFMSketch(sc, s.rc.(*recordSet).data, maxSize)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, int64(73344), ndv)
 
 	pkSketch, ndv, err := buildFMSketch(sc, s.pk.(*recordSet).data, maxSize)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, int64(100480), ndv)
 
 	sampleSketch.MergeFMSketch(pkSketch)
@@ -130,7 +130,7 @@ func TestSketchProtoConversion(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
 	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, int64(6232), ndv)
 	p := FMSketchToProto(sampleSketch)
 	f := FMSketchFromProto(p)
@@ -146,29 +146,29 @@ func TestFMSketchCoding(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
 	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, int64(6232), ndv)
 	bytes, err := EncodeFMSketch(sampleSketch)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	fmsketch, err := DecodeFMSketch(bytes)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, fmsketch.NDV(), sampleSketch.NDV())
 
 	rcSketch, ndv, err := buildFMSketch(sc, s.rc.(*recordSet).data, maxSize)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, int64(73344), ndv)
 	bytes, err = EncodeFMSketch(rcSketch)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	fmsketch, err = DecodeFMSketch(bytes)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, fmsketch.NDV(), rcSketch.NDV())
 
 	pkSketch, ndv, err := buildFMSketch(sc, s.pk.(*recordSet).data, maxSize)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, int64(100480), ndv)
 	bytes, err = EncodeFMSketch(pkSketch)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	fmsketch, err = DecodeFMSketch(bytes)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, fmsketch.NDV(), pkSketch.NDV())
 }
