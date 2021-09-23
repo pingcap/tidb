@@ -29,7 +29,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -139,6 +138,7 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	TopSQL              TopSQL      `toml:"top-sql" json:"top-sql"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
@@ -370,6 +370,7 @@ type Security struct {
 	// Allow automatic TLS certificate generation
 	AutoTLS       bool   `toml:"auto-tls" json:"auto-tls"`
 	MinTLSVersion string `toml:"tls-version" json:"tls-version"`
+	RSAKeySize    int    `toml:"rsa-key-size" json:"rsa-key-size"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -538,6 +539,12 @@ type StmtSummary struct {
 	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
+// TopSQL is the config for TopSQL.
+type TopSQL struct {
+	// The TopSQL's data receiver address.
+	ReceiverAddress string `toml:"receiver-address" json:"receiver-address"`
+}
+
 // IsolationRead is the config for isolation read.
 type IsolationRead struct {
 	// Engines filters tidb-server access paths by engine type.
@@ -684,6 +691,7 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
 		AutoTLS:                     true,
+		RSAKeySize:                  4096,
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
@@ -811,9 +819,6 @@ func (c *Config) Load(confFile string) error {
 	if metaData.IsDefined("oom-action") {
 		IsOOMActionSetByUser = true
 	}
-	if len(c.ServerVersion) > 0 {
-		mysql.ServerVersion = c.ServerVersion
-	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
 	undecoded := metaData.Undecoded()
@@ -887,8 +892,8 @@ func (c *Config) Valid() error {
 		return err
 	}
 
-	if c.Performance.TxnTotalSizeLimit > 10<<30 {
-		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
+	if c.Performance.TxnTotalSizeLimit > 1<<40 {
+		return fmt.Errorf("txn-total-size-limit should be less than %d", 1<<40)
 	}
 
 	if c.Performance.MemoryUsageAlarmRatio > 1 || c.Performance.MemoryUsageAlarmRatio < 0 {

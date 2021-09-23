@@ -124,6 +124,7 @@ func init() {
 type saveCp struct {
 	tableName string
 	merger    checkpoints.TableCheckpointMerger
+	waitCh    chan<- error
 }
 
 type errorSummary struct {
@@ -256,22 +257,30 @@ type Controller struct {
 	diskQuotaLock  *diskQuotaLock
 	diskQuotaState atomic.Int32
 	compactState   atomic.Int32
+	status         *LightningStatus
+}
+
+type LightningStatus struct {
+	FinishedFileSize atomic.Int64
+	TotalFileSize    atomic.Int64
 }
 
 func NewRestoreController(
 	ctx context.Context,
 	dbMetas []*mydump.MDDatabaseMeta,
 	cfg *config.Config,
+	status *LightningStatus,
 	s storage.ExternalStorage,
 	g glue.Glue,
 ) (*Controller, error) {
-	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, s, DeliverPauser, g)
+	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, status, s, DeliverPauser, g)
 }
 
 func NewRestoreControllerWithPauser(
 	ctx context.Context,
 	dbMetas []*mydump.MDDatabaseMeta,
 	cfg *config.Config,
+	status *LightningStatus,
 	s storage.ExternalStorage,
 	pauser *common.Pauser,
 	g glue.Glue,
@@ -378,6 +387,7 @@ func NewRestoreControllerWithPauser(
 		store:          s,
 		metaMgrBuilder: metaBuilder,
 		diskQuotaLock:  newDiskQuotaLock(),
+		status:         status,
 		taskMgr:        nil,
 	}
 
@@ -903,11 +913,21 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 	return nil
 }
 
-func (rc *Controller) saveStatusCheckpoint(tableName string, engineID int32, err error, statusIfSucceed checkpoints.CheckpointStatus) {
+func firstErr(errors ...error) error {
+	for _, err := range errors {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string, engineID int32, err error, statusIfSucceed checkpoints.CheckpointStatus) error {
 	merger := &checkpoints.StatusCheckpointMerger{Status: statusIfSucceed, EngineID: engineID}
 
-	log.L().Debug("update checkpoint", zap.String("table", tableName), zap.Int32("engine_id", engineID),
-		zap.Uint8("new_status", uint8(statusIfSucceed)), zap.Error(err))
+	logger := log.L().With(zap.String("table", tableName), zap.Int32("engine_id", engineID),
+		zap.String("new_status", statusIfSucceed.MetricName()), zap.Error(err))
+	logger.Debug("update checkpoint")
 
 	switch {
 	case err == nil:
@@ -916,7 +936,7 @@ func (rc *Controller) saveStatusCheckpoint(tableName string, engineID int32, err
 		merger.SetInvalid()
 		rc.errorSummaries.record(tableName, err, statusIfSucceed)
 	default:
-		return
+		return nil
 	}
 
 	if engineID == checkpoints.WholeTableEngineID {
@@ -925,7 +945,18 @@ func (rc *Controller) saveStatusCheckpoint(tableName string, engineID int32, err
 		metric.RecordEngineCount(statusIfSucceed.MetricName(), err)
 	}
 
-	rc.saveCpCh <- saveCp{tableName: tableName, merger: merger}
+	waitCh := make(chan error, 1)
+	rc.saveCpCh <- saveCp{tableName: tableName, merger: merger, waitCh: waitCh}
+
+	select {
+	case saveCpErr := <-waitCh:
+		if saveCpErr != nil {
+			logger.Error("failed to save status checkpoint", log.ShortError(saveCpErr))
+		}
+		return saveCpErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // listenCheckpointUpdates will combine several checkpoints together to reduce database load.
@@ -934,6 +965,7 @@ func (rc *Controller) listenCheckpointUpdates() {
 
 	var lock sync.Mutex
 	coalesed := make(map[string]*checkpoints.TableCheckpointDiff)
+	var waiters []chan<- error
 
 	hasCheckpoint := make(chan struct{}, 1)
 	defer close(hasCheckpoint)
@@ -943,10 +975,18 @@ func (rc *Controller) listenCheckpointUpdates() {
 			lock.Lock()
 			cpd := coalesed
 			coalesed = make(map[string]*checkpoints.TableCheckpointDiff)
+			ws := waiters
+			waiters = nil
 			lock.Unlock()
 
+			//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
+			failpoint.Inject("SlowDownCheckpointUpdate", func() {})
+
 			if len(cpd) > 0 {
-				rc.checkpointsDB.Update(cpd)
+				err := rc.checkpointsDB.Update(cpd)
+				for _, w := range ws {
+					w <- err
+				}
 				web.BroadcastCheckpointDiff(cpd)
 			}
 			rc.checkpointsWg.Done()
@@ -961,6 +1001,9 @@ func (rc *Controller) listenCheckpointUpdates() {
 			coalesed[scp.tableName] = cpd
 		}
 		scp.merger.MergeInto(cpd)
+		if scp.waitCh != nil {
+			waiters = append(waiters, scp.waitCh)
+		}
 
 		if len(hasCheckpoint) == 0 {
 			rc.checkpointsWg.Add(1)
@@ -1452,12 +1495,12 @@ func (tr *TableRestore) restoreTable(
 		// rebase the allocator so it exceeds the number of rows.
 		if tr.tableInfo.Core.PKIsHandle && tr.tableInfo.Core.ContainsAutoRandomBits() {
 			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
-			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(tr.tableInfo.ID, cp.AllocBase, false); err != nil {
+			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(cp.AllocBase, false); err != nil {
 				return false, err
 			}
 		} else {
 			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
-			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(tr.tableInfo.ID, cp.AllocBase, false); err != nil {
+			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(cp.AllocBase, false); err != nil {
 				return false, err
 			}
 		}
@@ -1621,7 +1664,8 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			task := logger.Begin(zap.WarnLevel, "importing large engines for disk quota")
 			var importErr error
 			for _, engine := range largeEngines {
-				if err := rc.backend.UnsafeImportAndReset(ctx, engine); err != nil {
+				// Use a larger split region size to avoid split the same region by many times.
+				if err := rc.backend.UnsafeImportAndReset(ctx, engine, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio)); err != nil {
 					importErr = multierr.Append(importErr, err)
 				}
 			}
@@ -1681,18 +1725,26 @@ func (rc *Controller) isLocalBackend() bool {
 // 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
-	if err := rc.ClusterIsAvailable(ctx); err != nil {
-		return errors.Trace(err)
+	if rc.cfg.App.CheckRequirements {
+		if err := rc.ClusterIsAvailable(ctx); err != nil {
+			return errors.Trace(err)
+		}
+
+		if err := rc.StoragePermission(ctx); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
-	if err := rc.StoragePermission(ctx); err != nil {
-		return errors.Trace(err)
-	}
 	if err := rc.metaMgrBuilder.Init(ctx); err != nil {
 		return err
 	}
 	taskExist := false
-
+	// We still need to sample source data even if this task has existed, because we need to judge whether the
+	// source is in order as row key to decide how to sort local data.
+	source, err := rc.estimateSourceData(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if rc.isLocalBackend() {
 		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
@@ -1700,35 +1752,35 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 
+		// PdController will be closed when `taskMetaMgr` closes.
 		rc.taskMgr = rc.metaMgrBuilder.TaskMetaMgr(pdController)
 		taskExist, err = rc.taskMgr.CheckTaskExist(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if !taskExist {
-			source, err := rc.EstimateSourceData(ctx)
-			if err != nil {
+			if err = rc.taskMgr.InitTask(ctx, source); err != nil {
 				return errors.Trace(err)
 			}
-			err = rc.LocalResource(ctx, source)
-			if err != nil {
-				rc.taskMgr.CleanupTask(ctx)
-				return errors.Trace(err)
-			}
-			if err := rc.ClusterResource(ctx, source); err != nil {
-				rc.taskMgr.CleanupTask(ctx)
-				return errors.Trace(err)
-			}
-			if err := rc.CheckClusterRegion(ctx); err != nil {
-				return errors.Trace(err)
+			if rc.cfg.App.CheckRequirements {
+				err = rc.localResource(source)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if err := rc.clusterResource(ctx, source); err != nil {
+					rc.taskMgr.CleanupTask(ctx)
+					return errors.Trace(err)
+				}
+				if err := rc.checkClusterRegion(ctx); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 	}
-	if rc.tidbGlue.OwnsSQLExecutor() {
-		// print check info at any time.
+
+	if rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements {
 		fmt.Print(rc.checkTemplate.Output())
-		if rc.cfg.App.CheckRequirements && !rc.checkTemplate.Success() {
-			// if check requirements is true, return error.
+		if !rc.checkTemplate.Success() {
 			if !taskExist && rc.taskMgr != nil {
 				rc.taskMgr.CleanupTask(ctx)
 			}
@@ -1820,7 +1872,15 @@ func newChunkRestore(
 	switch chunk.FileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := cfg.Mydumper.CSV.Header && chunk.Chunk.Offset == 0
-		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
+		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
+		if err != nil {
+			return nil, err
+		}
+		parser, err = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader, charsetConvertor)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
