@@ -1,3 +1,3 @@
 # Require review from domain experts when the PR modified significant config files.
-/sessionctx/variable @qw4990 @bb7133 @XuHuaiyu @cfzjywxk @morgo
-/config/config.toml.example @qw4990 @bb7133 @XuHuaiyu @cfzjywxk @morgo
+/sessionctx/variable @pingcap/tidb-configuration-reviewer
+/config/config.toml.example @pingcap/tidb-configuration-reviewer
