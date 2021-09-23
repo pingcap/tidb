@@ -1987,11 +1987,6 @@ func (it *infoschemaTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
 }
 
-// RebaseAutoID implements table.Table RebaseAutoID interface.
-func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
-	return table.ErrUnsupportedOp
-}
-
 // Meta implements table.Table Meta interface.
 func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
@@ -2068,11 +2063,6 @@ func (vt *VirtualTable) UpdateRecord(ctx context.Context, sctx sessionctx.Contex
 // Allocators implements table.Table Allocators interface.
 func (vt *VirtualTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
-}
-
-// RebaseAutoID implements table.Table RebaseAutoID interface.
-func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
-	return table.ErrUnsupportedOp
 }
 
 // Meta implements table.Table Meta interface.
