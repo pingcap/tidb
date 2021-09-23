@@ -2345,10 +2345,22 @@ func (s *testSerialStatsSuite) TestCollectColumnStatsUsage(c *C) {
 	tests := []struct {
 		sql    string
 		result []string
-	} {
+	}{
 		{
 			sql:    "select * from t1 where a > 2",
 			result: []string{"t1 a"},
+		},
+		{
+			sql:    "select * from t1 where b in (2, 5) or c = 5",
+			result: []string{"t1 b", "t1 c"},
+		},
+		{
+			sql:    "select b, count(*) from t1 group by b",
+			result: []string{},
+		},
+		{
+			sql:    "select * from t1 order by c",
+			result: []string{},
 		},
 		{
 			sql:    "select * from t2 where a > 2",
@@ -2357,6 +2369,10 @@ func (s *testSerialStatsSuite) TestCollectColumnStatsUsage(c *C) {
 		{
 			sql:    "select * from t1, t2 where t1.b = t2.c",
 			result: []string{"t1 b", "t2 a", "t2 c"},
+		},
+		{
+			sql:    "select * from t1 where b > all(select b from t2 where c > 2)",
+			result: []string{"t2 c"},
 		},
 	}
 
