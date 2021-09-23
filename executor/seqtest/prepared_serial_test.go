@@ -907,8 +907,7 @@ func TestPreparedIssue17419(t *testing.T) {
 
 	dom.ExpensiveQueryHandle().LogOnQueryExceedMemQuota(tk.Session().GetSessionVars().ConnectionID)
 
-	// After entirely fixing https://github.com/pingcap/tidb/issues/17419
-	// c.Assert(tk1.Se.ShowProcess().Plan, NotNil)
-	// _, ok := tk1.Se.ShowProcess().Plan.(*plannercore.Execute)
-	// require.True(t, ok)
+	require.NotNil(t, tk1.Session().ShowProcess().Plan)
+	_, ok := tk1.Session().ShowProcess().Plan.(*plannercore.Execute)
+	require.True(t, ok)
 }
