@@ -153,3 +153,70 @@ func TestWalkMetaFile(t *testing.T) {
 		require.Equal(t, expect[i], files[i])
 	}
 }
+
+type encryptTest struct {
+	cipher backuppb.CipherInfo
+	ok     bool
+}
+
+func TestEncryptAndDecrypt(t *testing.T) {
+	t.Parallel()
+
+	originalData := "pingcap"
+	testCases := []encryptTest{
+		{
+			backuppb.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_UNKNOWN,
+			},
+			false,
+		},
+		{
+			backuppb.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+			},
+			true,
+		},
+		{
+			backuppb.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_AES128_CTR,
+				CipherKey:  []byte("012345678901234"), // Not right key
+			},
+			false,
+		},
+		{
+			backuppb.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_AES128_CTR,
+				CipherKey:  []byte("0123456789012345"),
+			},
+			true,
+		},
+		{
+			backuppb.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_AES192_CTR,
+				CipherKey:  []byte("012345678901234567890123"),
+			},
+			true,
+		},
+		{
+			backuppb.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+				CipherKey:  []byte("01234567890123456789012345678901"),
+			},
+			true,
+		},
+	}
+
+	for _, v := range testCases {
+		encryptData, err := Encrypt([]byte(originalData), &v.cipher)
+		if !v.ok {
+			require.Error(t, err)
+			continue
+		}
+
+		require.Nil(t, err)
+		decryptData, err := Decrypt(encryptData, &v.cipher)
+		require.Nil(t, err)
+		require.Equal(t, string(decryptData), originalData)
+		require.Equal(t, decryptData, []byte(originalData))
+	}
+}

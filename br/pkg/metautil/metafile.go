@@ -58,7 +58,7 @@ func Decrypt(content []byte, cipher *backuppb.CipherInfo) ([]byte, error) {
 		return content, nil
 	}
 
-	return encrypt.AESDecryptWithECB(content, []byte(cipher.CipherKey))
+	return encrypt.AESDecryptWithECB(content, cipher.CipherKey)
 }
 
 func Encrypt(content []byte, cipher *backuppb.CipherInfo) ([]byte, error) {
@@ -68,7 +68,7 @@ func Encrypt(content []byte, cipher *backuppb.CipherInfo) ([]byte, error) {
 		return content, nil
 	}
 
-	return encrypt.AESEncryptWithECB(content, []byte(cipher.CipherKey))
+	return encrypt.AESEncryptWithECB(content, cipher.CipherKey)
 }
 
 func walkLeafMetaFile(

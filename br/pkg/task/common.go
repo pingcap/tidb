@@ -75,9 +75,9 @@ const (
 	defaultGRPCKeepaliveTime    = 10 * time.Second
 	defaultGRPCKeepaliveTimeout = 3 * time.Second
 
-	flagCrypter        = "crypter.type"
-	flagCipherKey      = "crypter.key"
-	flagCipherFilePath = "crypter.filepath"
+	flagCrypterType       = "crypter.method"
+	flagCipherKey         = "crypter.key"
+	flagCipherKeyFilePath = "crypter.key-filepath"
 
 	unlimited           = 0
 	crypterAES128KeyLen = 16
@@ -215,13 +215,12 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.BoolP(flagSkipCheckPath, "", false, "Skip path verification")
 	_ = flags.MarkHidden(flagSkipCheckPath)
 
-	flags.String(flagCrypter, "NONE",
-		"Encrypt/decrypt algorithm, can be one of ‘NONE|AES128|AES192|AES256’, default: \"NONE\" represent no encrypt/decrypt."+
-			"\nNote: 1. If AES128|AES192|AES256, should fill in one of crypter.key and crypter.filepath with 16|24|32 bytes"+
-			"\n      2. If the key is lost, the backup data cannot be decrypted")
+	flags.String(flagCrypterType, "NONE",
+		"Encrypt/decrypt algorithm, can be one of ‘NONE|AES128|AES192|AES256’, \"NONE\" represent no encrypt/decrypt")
 	flags.String(flagCipherKey, "",
-		"Encrypt/decrypt key, used to generate encrypted data and restore original data")
-	flags.String(flagCipherFilePath, "", "FilePath, its content is used as the cipher-key")
+		"Encrypt/decrypt key, used to encrypt/decrypt the data from backup/restore"+
+			"\nif key is lost, the data can't be decrpted")
+	flags.String(flagCipherKeyFilePath, "", "FilePath, its content is used as the cipher-key")
 
 	storage.DefineFlags(flags)
 }
@@ -290,14 +289,14 @@ func checkCipherKey(cipherKey, cipherFilePath string) error {
 	return nil
 }
 
-func getCipherKeyContent(cipherKey, cipherFilePath string) (string, error) {
-	var keyContent string
+func getCipherKeyContent(cipherKey, cipherFilePath string) ([]byte, error) {
+	var keyContent []byte
 	if err := checkCipherKey(cipherKey, cipherFilePath); err != nil {
 		return keyContent, errors.Trace(err)
 	}
 
 	if len(cipherKey) > 0 {
-		return cipherKey, nil
+		return []byte(cipherKey), nil
 	}
 
 	content, err := os.ReadFile(cipherFilePath)
@@ -305,10 +304,15 @@ func getCipherKeyContent(cipherKey, cipherFilePath string) (string, error) {
 		return keyContent, errors.Annotate(err, "failed to read cipher file")
 	}
 
-	return string(content[:len(content)-1]), nil
+	len := len(content)
+	if len > 0 && content[len-1] == '\n' {
+		content = content[:len-1]
+	}
+
+	return content, nil
 }
 
-func checkCipherTypeAndKey(cipher *backuppb.CipherInfo) bool {
+func checkCipherKeyMatch(cipher *backuppb.CipherInfo) bool {
 	switch cipher.CipherType {
 	case encryptionpb.EncryptionMethod_PLAINTEXT:
 		return true
@@ -324,7 +328,7 @@ func checkCipherTypeAndKey(cipher *backuppb.CipherInfo) bool {
 }
 
 func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
-	crypterStr, err := flags.GetString(flagCrypter)
+	crypterStr, err := flags.GetString(flagCrypterType)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -336,8 +340,7 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 
 	// Set [16]uint8 to CipherIv if cipherType is PlainText
 	if cfg.CipherInfo.CipherType == encryptionpb.EncryptionMethod_PLAINTEXT {
-		var iv [crypterIvLen]uint8
-		cfg.CipherInfo.CipherIv = string(iv[:])
+		cfg.CipherInfo.CipherIv = make([]byte, crypterIvLen)
 		return nil
 	}
 
@@ -346,7 +349,7 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	filePath, err := flags.GetString(flagCipherFilePath)
+	filePath, err := flags.GetString(flagCipherKeyFilePath)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -356,7 +359,7 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if !checkCipherTypeAndKey(&cfg.CipherInfo) {
+	if !checkCipherKeyMatch(&cfg.CipherInfo) {
 		return errors.Annotate(err, "Cipher type and key not match")
 	}
 
