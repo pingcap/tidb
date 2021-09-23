@@ -464,11 +464,38 @@ func TestTiDBMultiStatementMode(t *testing.T) {
 
 func TestReadOnlyNoop(t *testing.T) {
 	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	noopFuncs := GetSysVar(TiDBEnableNoopFuncs)
+
+	// For session scope
 	for _, name := range []string{TxReadOnly, TransactionReadOnly} {
 		sv := GetSysVar(name)
 		val, err := sv.Validate(vars, "on", ScopeSession)
 		require.Equal(t, "[variable:1235]function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", err.Error())
 		require.Equal(t, "OFF", val)
+
+		require.NoError(t, noopFuncs.SetSessionFromHook(vars, "ON"))
+		_, err = sv.Validate(vars, "on", ScopeSession)
+		require.NoError(t, err)
+		require.NoError(t, noopFuncs.SetSessionFromHook(vars, "OFF")) // restore default.
+	}
+
+	// For global scope
+	for _, name := range []string{TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, ReadOnly} {
+		sv := GetSysVar(name)
+		val, err := sv.Validate(vars, "on", ScopeGlobal)
+		if name == OfflineMode {
+			require.Equal(t, "[variable:1235]function OFFLINE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", err.Error())
+		} else {
+			require.Equal(t, "[variable:1235]function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", err.Error())
+		}
+		require.Equal(t, "OFF", val)
+		require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBEnableNoopFuncs, "ON"))
+		_, err = sv.Validate(vars, "on", ScopeGlobal)
+		require.NoError(t, err)
+		require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBEnableNoopFuncs, "OFF"))
 	}
 }
 
@@ -605,6 +632,7 @@ func TestInstanceScopedVars(t *testing.T) {
 // The default values should also be normalized for consistency.
 func TestDefaultValuesAreSettable(t *testing.T) {
 	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor()
 	for _, sv := range GetSysVars() {
 		if sv.HasSessionScope() && !sv.ReadOnly {
 			val, err := sv.Validate(vars, sv.Value, ScopeSession)
@@ -613,11 +641,6 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 		}
 
 		if sv.HasGlobalScope() && !sv.ReadOnly {
-			if sv.Name == TiDBEnableNoopFuncs {
-				// TODO: this requires access to the global var accessor,
-				// which is not available in this test.
-				continue
-			}
 			val, err := sv.Validate(vars, sv.Value, ScopeGlobal)
 			require.Equal(t, val, sv.Value)
 			require.NoError(t, err)
