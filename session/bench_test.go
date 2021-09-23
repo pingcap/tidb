@@ -16,13 +16,8 @@ package session
 
 import (
 	"context"
-	"encoding/json"
-	"flag"
 	"fmt"
 	"math/rand"
-	"os"
-	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -31,9 +26,12 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -1697,59 +1695,121 @@ func BenchmarkInsertIntoSelect(b *testing.B) {
 	b.StopTimer()
 }
 
-type BenchOutput struct {
-	Date   string
-	Commit string
-	Result []BenchResult
-}
+func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
+	// See issue https://github.com/pingcap/tidb/issues/27633
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
 
-type BenchResult struct {
-	Name        string
-	NsPerOp     int64
-	AllocsPerOp int64
-	BytesPerOp  int64
-}
+	mustExecute(se, `CREATE TABLE item1 (
+  a varchar(200) DEFAULT NULL,
+  b varchar(480) DEFAULT NULL,
+  c varchar(200) DEFAULT NULL,
+  d varchar(200) DEFAULT NULL,
+  e varchar(200) DEFAULT NULL,
+  f varchar(200) DEFAULT NULL,
+  g varchar(3999) DEFAULT NULL,
+  h bigint(38) DEFAULT NULL,
+  i varchar(80) DEFAULT NULL,
+  j bigint(38) DEFAULT NULL,
+  k varchar(480) DEFAULT NULL,
+  l varchar(480) DEFAULT NULL,
+  m decimal(18,4) DEFAULT NULL,
+  n decimal(18,4) DEFAULT NULL,
+  o decimal(22,8) DEFAULT NULL,
+  p varchar(8) DEFAULT NULL,
+  q decimal(18,4) DEFAULT NULL,
+  r decimal(18,4) DEFAULT NULL,
+  s varchar(40) DEFAULT NULL,
+  t decimal(18,4) DEFAULT NULL,
+  u decimal(18,4) DEFAULT NULL,
+  v decimal(18,4) DEFAULT NULL,
+  w decimal(18,5) DEFAULT NULL,
+  x decimal(12,8) DEFAULT NULL,
+  y varchar(40) DEFAULT NULL,
+  z decimal(12,8) DEFAULT NULL,
+  a1 decimal(18,4) DEFAULT NULL,
+  b1 decimal(18,4) DEFAULT NULL,
+  c1 decimal(18,4) DEFAULT NULL,
+  d1 decimal(18,4) DEFAULT NULL,
+  e1 decimal(12,8) DEFAULT NULL,
+  f1 varchar(40) DEFAULT NULL,
+  g1 decimal(18,4) DEFAULT NULL,
+  h1 decimal(18,4) DEFAULT NULL,
+  i1 decimal(18,4) DEFAULT NULL,
+  j1 decimal(18,4) DEFAULT NULL,
+  k1 varchar(40) DEFAULT NULL,
+  l1 decimal(14,8) DEFAULT NULL,
+  m1 bigint(38) DEFAULT NULL,
+  n1 varchar(8) DEFAULT NULL,
+  o1 varchar(40) DEFAULT NULL,
+  p1 decimal(12,8) DEFAULT NULL,
+  q1 varchar(480) DEFAULT NULL,
+  r1 varchar(480) DEFAULT NULL,
+  s1 decimal(12,8) DEFAULT NULL,
+  t1 decimal(14,10) DEFAULT NULL,
+  u1 decimal(18,4) DEFAULT NULL,
+  v1 decimal(18,4) DEFAULT NULL,
+  w1 varchar(8) DEFAULT NULL,
+  x1 decimal(18,4) DEFAULT NULL,
+  y1 datetime DEFAULT NULL,
+  z1 datetime DEFAULT NULL,
+  a2 decimal(18,4) DEFAULT NULL,
+  b2 decimal(18,4) DEFAULT NULL,
+  c2 decimal(18,4) DEFAULT NULL,
+  d2 decimal(18,4) DEFAULT NULL,
+  e2 decimal(12,8) DEFAULT NULL,
+  f2 varchar(40) DEFAULT NULL,
+  g2 decimal(18,4) DEFAULT NULL,
+  h2 decimal(18,4) DEFAULT NULL,
+  i2 decimal(18,4) DEFAULT NULL,
+  j2 decimal(18,4) DEFAULT NULL,
+  k2 varchar(40) DEFAULT NULL,
+  l2 decimal(14,8) DEFAULT NULL,
+  m2 bigint(38) DEFAULT NULL,
+  n2 varchar(8) DEFAULT NULL,
+  o2 varchar(40) DEFAULT NULL,
+  p2 decimal(12,8) DEFAULT NULL,
+  q2 varchar(480) DEFAULT NULL,
+  r2 varchar(480) DEFAULT NULL,
+  s2 decimal(12,8) DEFAULT NULL,
+  t2 decimal(14,10) DEFAULT NULL,
+  u2 decimal(18,4) DEFAULT NULL,
+  v2 decimal(18,4) DEFAULT NULL,
+  w2 varchar(8) DEFAULT NULL,
+  x2 decimal(18,4) DEFAULT NULL,
+  y2 datetime DEFAULT NULL,
+  z2 datetime DEFAULT NULL)`)
 
-func benchmarkResultToJSON(name string, r testing.BenchmarkResult) BenchResult {
-	return BenchResult{
-		Name:        name,
-		NsPerOp:     r.NsPerOp(),
-		AllocsPerOp: r.AllocsPerOp(),
-		BytesPerOp:  r.AllocedBytesPerOp(),
+	mustExecute(se, `CREATE TABLE item2 like item1`)
+
+	stmtID, _, _, err := se.PrepareStmt("insert into item2 select * from item1 where a1 = ?")
+	if err != nil {
+		b.Fatal(err)
 	}
-}
 
-func callerName(f func(b *testing.B)) string {
-	fullName := runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
-	idx := strings.LastIndexByte(fullName, '.')
-	if idx > 0 && idx+1 < len(fullName) {
-		return fullName[idx+1:]
+	args := []types.Datum{types.NewDatum(3401544)}
+	is := se.GetInfoSchema()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtID, is.(infoschema.InfoSchema), 0, args)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
-	return fullName
+	b.StopTimer()
 }
-
-var (
-	date       = flag.String("date", "", " commit date")
-	commitHash = flag.String("commit", "unknown", "brief git commit hash")
-	outfile    = flag.String("outfile", "bench-daily.json", "specify the output file")
-)
 
 // TestBenchDaily collects the daily benchmark test result and generates a json output file.
 // The format of the json output is described by the BenchOutput.
 // Used by this command in the Makefile
 // 	make bench-daily TO=xxx.json
 func TestBenchDaily(t *testing.T) {
-	if !flag.Parsed() {
-		flag.Parse()
-	}
-
-	if *date == "" {
-		// Don't run unless 'date' is specified.
-		// Avoiding slow down the CI.
-		return
-	}
-
-	tests := []func(b *testing.B){
+	benchdaily.Run(
 		BenchmarkPreparedPointGet,
 		BenchmarkPointGet,
 		BenchmarkBatchPointGet,
@@ -1774,33 +1834,6 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkHashPartitionPruningPointSelect,
 		BenchmarkHashPartitionPruningMultiSelect,
 		BenchmarkInsertIntoSelect,
-	}
-
-	res := make([]BenchResult, 0, len(tests))
-	for _, t := range tests {
-		name := callerName(t)
-		r1 := testing.Benchmark(t)
-		r2 := benchmarkResultToJSON(name, r1)
-		res = append(res, r2)
-	}
-
-	if *outfile == "" {
-		*outfile = fmt.Sprintf("%s_%s.json", *date, *commitHash)
-	}
-	out, err := os.Create(*outfile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer out.Close()
-
-	output := BenchOutput{
-		Date:   *date,
-		Commit: *commitHash,
-		Result: res,
-	}
-	enc := json.NewEncoder(out)
-	err = enc.Encode(output)
-	if err != nil {
-		t.Fatal(err)
-	}
+		BenchmarkCompileExecutePreparedStmt,
+	)
 }

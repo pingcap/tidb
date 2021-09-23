@@ -998,11 +998,24 @@ func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("www.pingcap 12345 45 2017 01:01"))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', '.', 0), substring_index('www.pingcap.com', '.', 100), substring_index('www.pingcap.com', '.', -100)`)
 	result.Check(testkit.Rows(" www.pingcap.com www.pingcap.com"))
-	tk.MustQuery(`select substring_index('xyz', 'abc', 9223372036854775808)`).Check(testkit.Rows(``))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', 'd', 1), substring_index('www.pingcap.com', '', 1), substring_index('', '.', 1)`)
 	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,,"))
 	result = tk.MustQuery(`select substring_index(null, '.', 1), substring_index('www.pingcap.com', null, 1), substring_index('www.pingcap.com', '.', null)`)
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+
+	// for substring_index with overflow
+	tk.MustQuery(`select substring_index('xyz', 'abc', 9223372036854775808)`).Check(testkit.Rows(`xyz`))
+	tk.MustQuery(`select substring_index("aaa.bbb.ccc.ddd.eee",'.',18446744073709551613);`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee`))
+	tk.MustQuery(`select substring_index("aaa.bbb.ccc.ddd.eee",'.',-18446744073709551613);`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee`))
+	tk.MustQuery(`select substring_index('aaa.bbb.ccc.ddd.eee', '.', 18446744073709551615 - 1 + id) from (select 1 as id) as t1`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee`))
+	tk.MustQuery(`select substring_index('aaa.bbb.ccc.ddd.eee', '.', -18446744073709551615 - 1 + id) from (select 1 as id) as t1`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee`))
+
+	tk.MustExec("set tidb_enable_vectorized_expression = 0;")
+	tk.MustQuery(`select substring_index("aaa.bbb.ccc.ddd.eee",'.',18446744073709551613);`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee`))
+	tk.MustQuery(`select substring_index("aaa.bbb.ccc.ddd.eee",'.',-18446744073709551613);`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee`))
+	tk.MustQuery(`select substring_index('aaa.bbb.ccc.ddd.eee', '.', 18446744073709551615 - 1 + id) from (select 1 as id) as t1`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee`))
+	tk.MustQuery(`select substring_index('aaa.bbb.ccc.ddd.eee', '.', -18446744073709551615 - 1 + id) from (select 1 as id) as t1`).Check(testkit.Rows(`aaa.bbb.ccc.ddd.eee`))
+	tk.MustExec("set tidb_enable_vectorized_expression = 1;")
 
 	// for hex
 	tk.MustExec("drop table if exists t")
@@ -3117,6 +3130,19 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> 4"))
 	result = tk.MustQuery("select * from t where b = case when a is null then 4 when  a = 'str5' then 7 else 9 end")
 	result.Check(testkit.Rows("<nil> 4"))
+	result = tk.MustQuery(`SELECT -Max(+23) * -+Cast(--10 AS SIGNED) * -CASE
+                                               WHEN 0 > 85 THEN NULL
+                                               WHEN NOT
+              CASE +55
+                WHEN +( +82 ) + -89 * -69 THEN +Count(-88)
+                WHEN +CASE 57
+                        WHEN +89 THEN -89 * Count(*)
+                        WHEN 17 THEN NULL
+                      END THEN ( -10 )
+              END IS NULL THEN NULL
+                                               ELSE 83 + 48
+                                             END AS col0; `)
+	result.Check(testkit.Rows("-30130"))
 
 	// return type of case when expr should not include NotNullFlag. issue-23036
 	tk.MustExec("drop table if exists t1")
@@ -4905,7 +4931,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		ret := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
+		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
@@ -6386,6 +6412,15 @@ func (s *testIntegrationSuite) TestCollation(c *C) {
 	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_general_ci"))
 	tk.MustExec("set @test_collate_var = concat(\"a\", \"b\" collate utf8mb4_bin)")
 	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_bin"))
+
+	tk.MustQuery("select locate('1', '123' collate utf8mb4_bin, 2 collate `binary`);").Check(testkit.Rows("0"))
+	tk.MustQuery("select 1 in ('a' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci);").Check(testkit.Rows("0"))
+	tk.MustQuery("select left('abc' collate utf8mb4_bin, 2 collate `binary`);").Check(testkit.Rows("ab"))
+	tk.MustQuery("select right('abc' collate utf8mb4_bin, 2 collate `binary`);").Check(testkit.Rows("bc"))
+	tk.MustQuery("select repeat('abc' collate utf8mb4_bin, 2 collate `binary`);").Check(testkit.Rows("abcabc"))
+	tk.MustQuery("select trim(both 'abc' collate utf8mb4_bin from 'c' collate utf8mb4_general_ci);").Check(testkit.Rows("c"))
+	tk.MustQuery("select substr('abc' collate utf8mb4_bin, 2 collate `binary`);").Check(testkit.Rows("bc"))
+	tk.MustQuery("select replace('abc' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci, 'd' collate utf8mb4_unicode_ci);").Check(testkit.Rows("adc"))
 }
 
 func (s *testIntegrationSuite) TestCoercibility(c *C) {
@@ -6532,7 +6567,7 @@ func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk.MustQuery("select c from t where c = 'b';").Check(testkit.Rows("B"))
 	tk.MustQuery("select c from t where c = 'B';").Check(testkit.Rows("B"))
 
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE `t1` (" +
 		"  `COL1` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL," +
 		"  PRIMARY KEY (`COL1`(5)) clustered" +
@@ -6540,6 +6575,8 @@ func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk.MustExec("INSERT INTO `t1` VALUES ('Ȇ');")
 	tk.MustQuery("select * from t1 where col1 not in (0xc484, 0xe5a4bc, 0xc3b3);").Check(testkit.Rows("Ȇ"))
 	tk.MustQuery("select * from t1 where col1 >= 0xc484 and col1 <= 0xc3b3;").Check(testkit.Rows("Ȇ"))
+
+	tk.MustQuery("select collation(IF('a' < 'B' collate utf8mb4_general_ci, 'smaller', 'greater' collate utf8mb4_unicode_ci));").Check(testkit.Rows("utf8mb4_unicode_ci"))
 }
 
 func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
@@ -6801,7 +6838,7 @@ func (s *testIntegrationSerialSuite) TestMixCollation(c *C) {
 	tk.MustQuery("select coercibility(concat(concat(mb4unicode, mb4general), concat(unicode, general))) from t;").Check(testkit.Rows("1"))
 	tk.MustQuery("select collation(concat(i, 1)) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
 	tk.MustQuery("select coercibility(concat(i, 1)) from t;").Check(testkit.Rows("4"))
-	tk.MustQuery("select collation(concat(i, user())) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(concat(i, user())) from t;").Check(testkit.Rows("utf8mb4_bin"))
 	tk.MustQuery("select coercibility(concat(i, user())) from t;").Check(testkit.Rows("3"))
 	tk.MustGetErrMsg("select * from t where mb4unicode = mb4general;", "[expression:1267]Illegal mix of collations (utf8mb4_unicode_ci,IMPLICIT) and (utf8mb4_general_ci,IMPLICIT) for operation '='")
 	tk.MustGetErrMsg("select * from t where unicode = general;", "[expression:1267]Illegal mix of collations (utf8_unicode_ci,IMPLICIT) and (utf8_general_ci,IMPLICIT) for operation '='")
@@ -8959,7 +8996,7 @@ func (s *testIntegrationSerialSuite) TestLikeWithCollation(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk.MustQuery(`select 'a' like 'A' collate utf8mb4_unicode_ci;`).Check(testkit.Rows("1"))
-	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_unicode_ci;`, "[expression:1270]Illegal mix of collations (utf8mb4_bin,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT), (utf8mb4_bin,NUMERIC) for operation 'like'")
+	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_unicode_ci;`, "[expression:1267]Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_unicode_ci,EXPLICIT) for operation 'like'")
 	tk.MustQuery(`select '😛' collate utf8mb4_general_ci like '😋';`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select '😛' collate utf8mb4_general_ci = '😋';`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci like '😋';`).Check(testkit.Rows("0"))
@@ -9373,6 +9410,12 @@ func (s *testIntegrationSuite) TestEnumPushDown(c *C) {
 		Check(testkit.Rows("c"))
 	tk.MustQuery("select e from t where e > 2").
 		Check(testkit.Rows("a"))
+
+	tk.MustExec("drop table if exists tdm")
+	tk.MustExec("create table tdm(id int, `c12` enum('a','b','c'), PRIMARY KEY (`id`));")
+	tk.MustExec("insert into tdm values (1, 'a');")
+	tk.MustExec("update tdm set c12 = 2 where id = 1;")
+	tk.MustQuery("select * from tdm").Check(testkit.Rows("1 b"))
 }
 
 func (s *testIntegrationSuite) TestJiraSetInnoDBDefaultRowFormat(c *C) {
@@ -10270,4 +10313,28 @@ func (s *testIntegrationSuite) TestIssue26977(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	result := tk.MustQuery("select a + 1 as f from (select cast(0xfffffffffffffff0 as unsigned) as a union select cast(1 as unsigned)) t having f != 2;")
 	result.Check(testkit.Rows("18446744073709551601"))
+}
+
+func (s *testIntegrationSuite) TestIssue27610(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists PK_TCOLLATION3966STROBJSTROBJ;`)
+	tk.MustExec("CREATE TABLE `PK_TCOLLATION3966STROBJSTROBJ` (\n  `COL1` enum('ll','aa','bb','cc','dd','ee') COLLATE utf8_general_ci NOT NULL,\n  `COL2` varchar(20) COLLATE utf8_general_ci DEFAULT NULL,\n  PRIMARY KEY (`COL1`) /*T![clustered_index] CLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
+	tk.MustExec(`insert into PK_TCOLLATION3966STROBJSTROBJ values("ee", "tttt");`)
+	tk.MustQuery("SELECT col1, COL2 FROM PK_TCOLLATION3966STROBJSTROBJ WHERE COL1 IN ('notexist','6') and col2 not in (\"abcd\");").
+		Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestLastInsertId(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists lastinsertid;`)
+	tk.MustExec(`create table lastinsertid (id int not null primary key auto_increment);`)
+	tk.MustQuery("SELECT @@last_insert_id;").Check(testkit.Rows("0"))
+	tk.MustExec(`INSERT INTO lastinsertid VALUES (NULL);`)
+	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("1 1"))
+	tk.MustExec(`INSERT INTO lastinsertid VALUES (NULL);`)
+	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("2 2"))
+	tk.MustExec(`INSERT INTO lastinsertid VALUES (NULL);`)
+	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
 }

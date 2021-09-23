@@ -339,6 +339,16 @@ func (la *LogicalAggregation) HasDistinct() bool {
 	return false
 }
 
+// HasOrderBy shows whether LogicalAggregation has functions with order-by items.
+func (la *LogicalAggregation) HasOrderBy() bool {
+	for _, aggFunc := range la.AggFuncs {
+		if len(aggFunc.OrderByItems) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // CopyAggHints copies the aggHints from another LogicalAggregation.
 func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
 	// TODO: Copy the hint may make the un-applicable hint throw the
@@ -378,10 +388,9 @@ func (la *LogicalAggregation) GetPotentialPartitionKeys() []*property.MPPPartiti
 	groupByCols := make([]*property.MPPPartitionColumn, 0, len(la.GroupByItems))
 	for _, item := range la.GroupByItems {
 		if col, ok := item.(*expression.Column); ok {
-			_, coll := expression.DeriveCollationFromExprs(la.ctx, col)
 			groupByCols = append(groupByCols, &property.MPPPartitionColumn{
 				Col:       col,
-				CollateID: property.GetCollateIDByNameForPartition(coll),
+				CollateID: property.GetCollateIDByNameForPartition(col.GetType().Collate),
 			})
 		}
 	}
@@ -398,6 +407,9 @@ func (la *LogicalAggregation) ExtractCorrelatedCols() []*expression.CorrelatedCo
 		for _, arg := range fun.Args {
 			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
 		}
+		for _, arg := range fun.OrderByItems {
+			corCols = append(corCols, expression.ExtractCorColumns(arg.Expr)...)
+		}
 	}
 	return corCols
 }
@@ -410,6 +422,9 @@ func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
 	for _, aggDesc := range la.AggFuncs {
 		for _, expr := range aggDesc.Args {
 			usedCols = append(usedCols, expression.ExtractColumns(expr)...)
+		}
+		for _, expr := range aggDesc.OrderByItems {
+			usedCols = append(usedCols, expression.ExtractColumns(expr.Expr)...)
 		}
 	}
 	return usedCols

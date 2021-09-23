@@ -711,7 +711,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		}
 		// Use the value if it's not null and not 0.
 		if recordID != 0 {
-			err = e.Table.RebaseAutoID(e.ctx, recordID, true, autoid.RowIDAllocType)
+			err = e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType).Rebase(recordID, true)
 			if err != nil {
 				return nil, err
 			}
@@ -801,7 +801,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		err = e.Table.RebaseAutoID(e.ctx, recordID, true, autoid.RowIDAllocType)
+		err = e.Table.Allocators(e.ctx).Get(autoid.RowIDAllocType).Rebase(recordID, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -915,7 +915,7 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	tableInfo := e.Table.Meta()
 	increment := e.ctx.GetSessionVars().AutoIncrementIncrement
 	offset := e.ctx.GetSessionVars().AutoIncrementOffset
-	_, autoRandomID, err := alloc.Alloc(ctx, tableInfo.ID, 1, int64(increment), int64(offset))
+	_, autoRandomID, err := alloc.Alloc(ctx, 1, int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
@@ -946,7 +946,7 @@ func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.Field
 	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
 	autoRandomID := layout.IncrementalMask() & recordID
 
-	return alloc.Rebase(tableInfo.ID, autoRandomID, true)
+	return alloc.Rebase(autoRandomID, true)
 }
 
 func (e *InsertValues) adjustImplicitRowID(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
@@ -1000,7 +1000,7 @@ func (e *InsertValues) rebaseImplicitRowID(recordID int64) error {
 	layout := autoid.NewShardIDLayout(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits)
 	newTiDBRowIDBase := layout.IncrementalMask() & recordID
 
-	return alloc.Rebase(tableInfo.ID, newTiDBRowIDBase, true)
+	return alloc.Rebase(newTiDBRowIDBase, true)
 }
 
 func (e *InsertValues) handleWarning(err error) {

@@ -111,7 +111,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				if err != nil {
 					return false, err
 				}
-				if err = t.RebaseAutoID(sctx, recordID, true, autoid.RowIDAllocType); err != nil {
+				if err = t.Allocators(sctx).Get(autoid.RowIDAllocType).Rebase(recordID, true); err != nil {
 					return false, err
 				}
 			}
@@ -237,7 +237,7 @@ func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *type
 	layout := autoid.NewShardIDLayout(&col.FieldType, tableInfo.AutoRandomBits)
 	// Set bits except incremental_bits to zero.
 	recordID = recordID & (1<<layout.IncrementalBits - 1)
-	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(tableInfo.ID, recordID, true)
+	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(recordID, true)
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.
