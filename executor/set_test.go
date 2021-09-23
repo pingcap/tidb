@@ -1467,19 +1467,7 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	tk.MustQuery("select @@global.tidb_top_sql_report_interval_seconds;").Check(testkit.Rows("120"))
 	c.Assert(variable.TopSQLVariable.ReportIntervalSeconds.Load(), Equals, int64(120))
 
-	// Top SQL variables are now visible in SHOW VARIABLES
-	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows(
-		"tidb_enable_top_sql OFF",
-		"tidb_top_sql_max_collect 20000",
-		"tidb_top_sql_max_statement_count 20",
-		"tidb_top_sql_precision_seconds 2",
-		"tidb_top_sql_report_interval_seconds 120",
-	))
-	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows(
-		"tidb_enable_top_sql OFF",
-		"tidb_top_sql_max_collect 20000",
-		"tidb_top_sql_max_statement_count 20",
-		"tidb_top_sql_precision_seconds 2",
-		"tidb_top_sql_report_interval_seconds 120",
-	))
+	// Test for hide top sql variable in show variable.
+	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows())
+	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows())
 }
