@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"container/list"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -187,6 +188,9 @@ type stmtSummaryByDigestElement struct {
 	sumPDTotal           time.Duration
 	sumBackoffTotal      time.Duration
 	sumWriteSQLRespTotal time.Duration
+	sumResultRowCount    int64
+	maxResultRowCount    int64
+	minResultRowCount    int64
 	prepared             bool
 	// The first time this type of SQL executes.
 	firstSeen time.Time
@@ -231,6 +235,7 @@ type StmtExecInfo struct {
 	ExecRetryCount uint
 	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
+	ResultRowCount  int64
 	TiKVExecDetails util.ExecDetails
 	Prepared        bool
 }
@@ -646,18 +651,19 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
-		samplePlan:    samplePlan,
-		planHint:      planHint,
-		indexNames:    sei.StmtCtx.IndexNames,
-		minLatency:    sei.TotalLatency,
-		firstSeen:     sei.StartTime,
-		lastSeen:      sei.StartTime,
-		backoffTypes:  make(map[string]int),
-		authUsers:     make(map[string]struct{}),
-		planInCache:   false,
-		planCacheHits: 0,
-		planInBinding: false,
-		prepared:      sei.Prepared,
+		samplePlan:        samplePlan,
+		planHint:          planHint,
+		indexNames:        sei.StmtCtx.IndexNames,
+		minLatency:        sei.TotalLatency,
+		firstSeen:         sei.StartTime,
+		lastSeen:          sei.StartTime,
+		backoffTypes:      make(map[string]int),
+		authUsers:         make(map[string]struct{}),
+		planInCache:       false,
+		planCacheHits:     0,
+		planInBinding:     false,
+		prepared:          sei.Prepared,
+		minResultRowCount: math.MaxInt64,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -862,6 +868,17 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.execRetryCount += sei.ExecRetryCount
 		ssElement.execRetryTime += sei.ExecRetryTime
 	}
+	if sei.ResultRowCount > 0 {
+		ssElement.sumResultRowCount += sei.ResultRowCount
+		if ssElement.maxResultRowCount < sei.ResultRowCount {
+			ssElement.maxResultRowCount = sei.ResultRowCount
+		}
+		if ssElement.minResultRowCount > sei.ResultRowCount {
+			ssElement.minResultRowCount = sei.ResultRowCount
+		}
+	} else {
+		ssElement.minResultRowCount = 0
+	}
 	ssElement.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitKVRespDuration))
 	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.WaitPDRespDuration))
 	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.TiKVExecDetails.BackoffDuration))
@@ -963,6 +980,10 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		avgInt(int64(ssElement.sumPDTotal), ssElement.commitCount),
 		avgInt(int64(ssElement.sumBackoffTotal), ssElement.commitCount),
 		avgInt(int64(ssElement.sumWriteSQLRespTotal), ssElement.commitCount),
+		int64(ssElement.sumResultRowCount),
+		int64(ssElement.maxResultRowCount),
+		int64(ssElement.minResultRowCount),
+		avgInt(int64(ssElement.sumResultRowCount), ssElement.execCount),
 		ssElement.prepared,
 		avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount),
 		types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0),

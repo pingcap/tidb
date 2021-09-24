@@ -680,10 +680,10 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
 	re.Check(testutil.RowsWithSep("|",
-		"2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0||0|1|1|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
+		"2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|0||0|1|1|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0||0|1|1|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|0||0|1|1|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
 
 	// Test for long query.
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
@@ -1401,6 +1401,35 @@ func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
 				int64(2)),
 		))
 	// TODO: Add more tests.
+}
+
+func (s *testClusterTableSuite) TestStmtSummaryResultSet(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval=999999999")
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
+	tk.MustExec("set global tidb_stmt_summary_history_size=24")
+	tk.MustExec("set global tidb_stmt_summary_max_sql_length=4096")
+	tk.MustExec("set global tidb_enable_stmt_summary=0")
+	tk.MustExec("set global tidb_enable_stmt_summary=1")
+	if !config.GetGlobalConfig().EnableCollectExecutionInfo {
+		tk.MustExec("set @@tidb_enable_collect_execution_info=1")
+		defer tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+	}
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	for i := 1; i <= 30; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%v)", i))
+	}
+
+	tk.MustQuery("select * from test.t limit 10;")
+	tk.MustQuery("select * from test.t limit 20;")
+	tk.MustQuery("select * from test.t limit 30;")
+	tk.MustQuery("select SUM_RESULT_SET,MIN_RESULT_SET,MAX_RESULT_SET,AVG_RESULT_SET from information_schema.statements_summary where query_sample_text like 'select%test.t limit%' and SUM_RESULT_SET > 10").
+		Check(testkit.Rows("60 10 30 20"))
+	tk.MustQuery("select SUM_RESULT_SET,MIN_RESULT_SET,MAX_RESULT_SET,AVG_RESULT_SET from information_schema.cluster_statements_summary where query_sample_text like 'select%test.t limit%' and SUM_RESULT_SET > 10").
+		Check(testkit.Rows("60 10 30 20"))
 }
 
 // test stmtSummaryEvictedCount cluster table

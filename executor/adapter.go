@@ -1217,6 +1217,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		PlanInBinding:   sessVars.FoundInBinding,
 		ExecRetryCount:  a.retryCount,
 		StmtExecDetails: stmtDetail,
+		ResultRowCount:  GetResultRowCount(a.Ctx, a.Plan),
 		TiKVExecDetails: tikvExecDetail,
 		Prepared:        a.isPreparedStmt,
 	}
