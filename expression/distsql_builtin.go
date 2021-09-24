@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -964,7 +965,11 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_HexIntArg:
 		f = &builtinHexIntArgSig{base}
 	case tipb.ScalarFuncSig_HexStrArg:
-		f = &builtinHexStrArgSig{base}
+		chs, args := "utf-8", base.getArgs()
+		if len(args) == 1 {
+			chs, _ = args[0].CharsetAndCollation(ctx)
+		}
+		f = &builtinHexStrArgSig{base, charset.NewEncoding(chs)}
 	case tipb.ScalarFuncSig_InsertUTF8:
 		f = &builtinInsertUTF8Sig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_Insert:

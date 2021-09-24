@@ -440,6 +440,7 @@ func (b *builtinHexStrArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
+	var encodedBuf []byte
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
@@ -449,7 +450,15 @@ func (b *builtinHexStrArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(strings.ToUpper(hex.EncodeToString(buf0.GetBytes(i))))
+		buf0Bytes := buf0.GetBytes(i)
+		if b.encoding.Enabled() {
+			encodedBuf, err = b.encoding.Encode(encodedBuf, buf0Bytes)
+			if err != nil {
+				return err
+			}
+			buf0Bytes = encodedBuf
+		}
+		result.AppendString(strings.ToUpper(hex.EncodeToString(buf0Bytes)))
 	}
 	return nil
 }
