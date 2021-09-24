@@ -652,6 +652,7 @@ type slowQueryTuple struct {
 	pdTotal                   float64
 	backoffTotal              float64
 	writeSQLRespTotal         float64
+	resultRowCount            int64
 	plan                      string
 	planDigest                string
 	backoffDetail             string
@@ -823,6 +824,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.backoffTotal, err = strconv.ParseFloat(value, 64)
 	case variable.SlowLogWriteSQLRespTotal:
 		st.writeSQLRespTotal, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogResultSet:
+		st.resultRowCount, err = strconv.ParseInt(value, 10, 64)
 	case variable.SlowLogPrepared:
 		st.prepared, err = strconv.ParseBool(value)
 	case variable.SlowLogRewriteTimeStr:
@@ -905,6 +908,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.pdTotal))
 	record = append(record, types.NewFloat64Datum(st.backoffTotal))
 	record = append(record, types.NewFloat64Datum(st.writeSQLRespTotal))
+	record = append(record, types.NewIntDatum(st.resultRowCount))
 	record = append(record, types.NewStringDatum(st.backoffDetail))
 	if st.prepared {
 		record = append(record, types.NewIntDatum(1))
