@@ -717,16 +717,25 @@ func (tr *TableRestore) postProcess(
 		// 4.5. do duplicate detection.
 		hasDupe := false
 		if rc.cfg.TikvImporter.DuplicateDetection {
-			hasLocalDupe, err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable)
+			var err error
+			hasDupe, err = rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
 			}
+		}
+
+		needChecksum, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
+		if err != nil {
+			return false, err
+		}
+
+		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateDetection {
 			hasRemoteDupe, err := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable)
 			if err != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(err))
 				err = nil
 			}
-			hasDupe = hasLocalDupe || hasRemoteDupe
+			hasDupe = hasDupe || hasRemoteDupe
 		}
 
 		if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
@@ -735,9 +744,8 @@ func (tr *TableRestore) postProcess(
 				return false, errors.Trace(err)
 			}
 		} else if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
-			needChecksum, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum)
-			if err != nil || !needChecksum {
-				return false, err
+			if !needChecksum {
+				return false, nil
 			}
 			if cp.Checksum.SumKVS() > 0 || baseTotalChecksum.SumKVS() > 0 {
 				localChecksum.Add(&cp.Checksum)

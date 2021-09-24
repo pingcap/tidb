@@ -95,6 +95,7 @@ const (
 		total_bytes 		BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
 		checksum 			BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
 		status 				VARCHAR(32) NOT NULL,
+		has_duplicates		BOOL NOT NULL DEFAULT 0,
 		PRIMARY KEY (table_id, task_id)
 	);`
 	// CreateTaskMetaTable stores the pre-lightning metadata used by TiDB Lightning
