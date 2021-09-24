@@ -888,7 +888,7 @@ func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types
 	case types.ETReal:
 		fc = &getRealVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
 	case types.ETDatetime:
-		fc = &getTimeVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}, retType.Tp == mysql.TypeDatetime}
+		fc = &getTimeVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
 	default:
 		fc = &getStringVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
 	}
@@ -1098,7 +1098,6 @@ func (b *builtinGetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 
 type getTimeVarFunctionClass struct {
 	getVarFunctionClass
-	isDatetime bool
 }
 
 func (c *getTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
@@ -1109,7 +1108,7 @@ func (c *getTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	if c.isDatetime {
+	if c.tp.Tp == mysql.TypeDatetime {
 		fsp := c.tp.Flen - mysql.MaxDatetimeWidthNoFsp
 		if fsp > 0 {
 			fsp--
