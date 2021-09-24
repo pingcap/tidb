@@ -247,19 +247,38 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
-	var opt *ast.CharsetOpt
+	var charOpt *ast.CharsetOpt
+	var directPlacementOpts *model.PlacementSettings
+	var placementPolicyRef *model.PolicyRefInfo
 	if len(s.Options) != 0 {
-		opt = &ast.CharsetOpt{}
+		charOpt = &ast.CharsetOpt{}
 		for _, val := range s.Options {
 			switch val.Tp {
 			case ast.DatabaseOptionCharset:
-				opt.Chs = val.Value
+				charOpt.Chs = val.Value
 			case ast.DatabaseOptionCollate:
-				opt.Col = val.Value
+				charOpt.Col = val.Value
+			case ast.DatabaseOptionPlacementPrimaryRegion, ast.DatabaseOptionPlacementRegions,
+				ast.DatabaseOptionPlacementFollowerCount, ast.DatabaseOptionPlacementLeaderConstraints,
+				ast.DatabaseOptionPlacementLearnerCount, ast.DatabaseOptionPlacementVoterCount,
+				ast.DatabaseOptionPlacementSchedule, ast.DatabaseOptionPlacementConstraints,
+				ast.DatabaseOptionPlacementFollowerConstraints, ast.DatabaseOptionPlacementVoterConstraints,
+				ast.DatabaseOptionPlacementLearnerConstraints:
+				if directPlacementOpts == nil {
+					directPlacementOpts = &model.PlacementSettings{}
+				}
+				err := ddl.SetDirectPlacementOpt(directPlacementOpts, ast.PlacementOptionType(val.Tp), val.Value, val.UintValue)
+				if err != nil {
+					return err
+				}
+			case ast.DatabaseOptionPlacementPolicy:
+				placementPolicyRef = &model.PolicyRefInfo{
+					Name: model.NewCIStr(val.Value),
+				}
 			}
 		}
 	}
-	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt)
+	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), charOpt, directPlacementOpts, placementPolicyRef)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
 			err = nil
@@ -295,7 +314,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return err
 	}
 
-	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate)
+	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate, dbInfo.PlacementPolicyRef, dbInfo.DirectPlacementOpts)
 	if err != nil {
 		return err
 	}
