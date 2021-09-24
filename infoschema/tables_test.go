@@ -1403,7 +1403,7 @@ func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
 	// TODO: Add more tests.
 }
 
-func (s *testClusterTableSuite) TestStmtSummaryResultSet(c *C) {
+func (s *testClusterTableSuite) TestStmtSummaryResultRows(c *C) {
 	tk := s.newTestKitWithRoot(c)
 	tk.MustExec("set global tidb_stmt_summary_refresh_interval=999999999")
 	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
