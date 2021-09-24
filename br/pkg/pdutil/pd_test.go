@@ -25,6 +25,8 @@ import (
 )
 
 func TestScheduler(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -36,7 +38,7 @@ func TestScheduler(t *testing.T) {
 	pdController := &PdController{addrs: []string{"", ""}, schedulerPauseCh: schedulerPauseCh}
 
 	_, err := pdController.pauseSchedulersAndConfigWith(ctx, []string{scheduler}, nil, mock)
-	require.Regexp(t, "^failed$", err.Error())
+	require.EqualError(t, err, "failed")
 
 	go func() {
 		<-schedulerPauseCh
@@ -51,7 +53,7 @@ func TestScheduler(t *testing.T) {
 		"max-pending-peer-count":      uint64(16),
 	}
 	_, err = pdController.pauseSchedulersAndConfigWith(ctx, []string{}, cfg, mock)
-	require.Regexp(t, "^failed to update PD.*$", err.Error())
+	require.Regexp(t, "^failed to update PD.*", err.Error())
 	go func() {
 		<-schedulerPauseCh
 	}()
@@ -59,7 +61,7 @@ func TestScheduler(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = pdController.listSchedulersWith(ctx, mock)
-	require.Regexp(t, "^failed$", err.Error())
+	require.EqualError(t, err, "failed")
 
 	mock = func(context.Context, string, string, *http.Client, string, io.Reader) ([]byte, error) {
 		return []byte(`["` + scheduler + `"]`), nil
@@ -127,7 +129,7 @@ func TestRegionCount(t *testing.T) {
 		EndKey:      codec.EncodeBytes(nil, []byte{3, 4}),
 		RegionEpoch: &metapb.RegionEpoch{},
 	}, nil))
-	require.Len(t, regions, 3)
+	require.Equal(t, 3, regions.Len())
 
 	mock := func(
 		_ context.Context, addr string, prefix string, _ *http.Client, _ string, _ io.Reader,
