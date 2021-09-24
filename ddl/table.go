@@ -71,18 +71,51 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
 		return ver, errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
 	}
+	var bundle *placement.Bundle
 	if tbInfo.DirectPlacementOpts != nil {
 		// check the direct placement option compatibility.
 		if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
 			return ver, errors.Trace(err)
 		}
+		// build bundle from direct placement options.
+		bundle, err = placement.NewBundleFromOptions(tbInfo.DirectPlacementOpts)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 	if tbInfo.PlacementPolicyRef != nil {
 		// placement policy reference will override the direct placement options.
-		_, err = checkPlacementPolicyExistAndCancelNonExistJob(t, job, tbInfo.PlacementPolicyRef.ID)
+		po, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, tbInfo.PlacementPolicyRef.ID)
 		if err != nil {
 			return ver, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
 		}
+		// build bundle from placement policy.
+		bundle, err = placement.NewBundleFromOptions(po.PlacementSettings)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+	if bundle == nil {
+		// get the default bundle from DB or PD.
+		bundle = infoschema.GetBundle(d.infoCache.GetLatest(), []int64{schemaID})
+	}
+	// Do the http request only when the rules is existed.
+	syncPlacementRules := func() error {
+		if bundle.Rules == nil {
+			return nil
+		}
+		err = bundle.Tidy()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// todo: partitions should use the default table level placement rules or it's specified one.
+		bundle.Reset(tbInfo.ID)
+		err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+		return nil
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -105,6 +138,10 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 				failpoint.Return(ver, errors.New("mock create table error"))
 			}
 		})
+		// Send the placement bundle to PD.
+		if err = syncPlacementRules(); err != nil {
+			return ver, errors.Trace(err)
+		}
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -190,10 +227,16 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	}
 }
 
-func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	var physicalTableIDs = []int64{tblInfo.ID}
+	if tblInfo.Partition != nil {
+		for _, p := range tblInfo.Partition.Definitions {
+			physicalTableIDs = append(physicalTableIDs, p.ID)
+		}
 	}
 
 	originalState := job.SchemaState
@@ -219,6 +262,7 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		oldIDs := getPartitionIDs(tblInfo)
 		ruleIDs := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
 		job.CtxVars = []interface{}{oldIDs}
+
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -235,6 +279,13 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 				break
 			}
 		}
+		// Clean the placement bundle to PD.
+		err = dropRuleBundles(d, physicalTableIDs)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)

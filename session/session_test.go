@@ -3813,7 +3813,9 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	tk.MustQuery("SELECT @@div_precision_increment;").Check(testkit.Rows("4"))
 
 	tk.Se.GetSessionVars().SetSystemVar("sql_auto_is_null", "0")
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "1")
 	tk.MustQuery("SELECT /*+ SET_VAR(sql_auto_is_null=1) */ @@sql_auto_is_null;").Check(testkit.Rows("1"))
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "0")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@sql_auto_is_null;").Check(testkit.Rows("0"))
 
@@ -3974,7 +3976,7 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	defer failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil)
+	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil, nil, nil)
 	c.Assert(err.Error(), Equals, "context canceled")
 }
 
@@ -5744,10 +5746,11 @@ func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
 
 func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_read_staleness='-5s'")
-	err := tk.ExecToErr("set @@tidb_read_staleness='-5'")
+	tk.MustExec("set @@tidb_read_staleness='-5'")
+	err := tk.ExecToErr("set @@tidb_read_staleness='-5s'")
 	c.Assert(err, NotNil)
 	err = tk.ExecToErr("set @@tidb_read_staleness='foo'")
 	c.Assert(err, NotNil)
 	tk.MustExec("set @@tidb_read_staleness=''")
+	tk.MustExec("set @@tidb_read_staleness='0'")
 }
