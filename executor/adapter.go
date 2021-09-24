@@ -1057,6 +1057,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 }
 
+// GetResultRowCount gets the count of the statement result rows.
 func GetResultRowCount(sctx sessionctx.Context, p plannercore.Plan) int64 {
 	runtimeStatsColl := sctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 	if runtimeStatsColl == nil {
