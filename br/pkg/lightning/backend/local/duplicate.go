@@ -233,7 +233,8 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Contex
 			return err
 		})
 	}
-	return atomicHasDupe.Load(), errors.Trace(g.Wait())
+	err = errors.Trace(g.Wait())
+	return atomicHasDupe.Load(), err
 }
 
 func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
