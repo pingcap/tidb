@@ -22,6 +22,14 @@ type MockGlobalAccessor struct {
 
 // NewMockGlobalAccessor implements GlobalVarAccessor interface.
 func NewMockGlobalAccessor() *MockGlobalAccessor {
+	return new(MockGlobalAccessor)
+}
+
+// NewMockGlobalAccessor4Tests creates a new MockGlobalAccessor for use in the testsuite.
+// It behaves like the real GlobalVarAccessor and has a list of sessionvars.
+// Because we use the real GlobalVarAccessor outside of tests,
+// this is unsafe to use by default (performance regression).
+func NewMockGlobalAccessor4Tests() *MockGlobalAccessor {
 	tmp := new(MockGlobalAccessor)
 	tmp.vals = make(map[string]string)
 

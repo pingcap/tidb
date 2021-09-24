@@ -22,7 +22,7 @@ import (
 
 func TestMockAPI(t *testing.T) {
 	vars := NewSessionVars()
-	mock := NewMockGlobalAccessor()
+	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
 
