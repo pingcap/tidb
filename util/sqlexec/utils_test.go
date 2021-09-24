@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -96,6 +97,8 @@ func TestEscapeBackslash(t *testing.T) {
 		},
 	}
 	for _, v := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		v := v
 		t.Run(v.name, func(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, v.output, escapeBytesBackslash(nil, v.input))
@@ -386,6 +389,8 @@ func TestEscapeSQL(t *testing.T) {
 		},
 	}
 	for _, v := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		v := v
 		t.Run(v.name, func(t *testing.T) {
 			t.Parallel()
 			r3 := new(strings.Builder)

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -74,11 +75,11 @@ type TableReaderExecutor struct {
 	ranges []*ranger.Range
 
 	// kvRanges are only use for union scan.
-	kvRanges    []kv.KeyRange
-	dagPB       *tipb.DAGRequest
-	startTS     uint64
-	txnScope    string
-	isStaleness bool
+	kvRanges         []kv.KeyRange
+	dagPB            *tipb.DAGRequest
+	startTS          uint64
+	readReplicaScope string
+	isStaleness      bool
 	// columns are only required by union scan and virtual column.
 	columns []*model.ColumnInfo
 
@@ -326,7 +327,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.streaming).
-			SetTxnScope(e.txnScope).
+			SetReadReplicaScope(e.readReplicaScope).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(e.memTracker).
@@ -358,7 +359,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
-		SetTxnScope(e.txnScope).
+		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).

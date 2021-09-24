@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -544,7 +545,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 	// Lexpr cannot compare with rexpr by different collate
 	opString := new(strings.Builder)
 	v.Op.Format(opString)
-	er.err = expression.CheckIllegalMixCollation(opString.String(), []expression.Expression{lexpr, rexpr}, 0)
+	_, _, er.err = expression.CheckAndDeriveCollationFromExprs(er.sctx, opString.String(), types.ETInt, lexpr, rexpr)
 	if er.err != nil {
 		return v, true
 	}
@@ -893,11 +894,13 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	} else {
 		args := make([]expression.Expression, 0, np.Schema().Len())
 		for i, col := range np.Schema().Columns {
-			larg := expression.GetFuncArg(lexpr, i)
-			if !expression.ExprNotNull(larg) || !expression.ExprNotNull(col) {
-				rarg := *col
-				rarg.InOperand = true
-				col = &rarg
+			if v.Not || asScalar {
+				larg := expression.GetFuncArg(lexpr, i)
+				if !expression.ExprNotNull(larg) || !expression.ExprNotNull(col) {
+					rarg := *col
+					rarg.InOperand = true
+					col = &rarg
+				}
 			}
 			args = append(args, col)
 		}
@@ -1099,11 +1102,14 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
+		castFunction := expression.BuildCastFunction(er.sctx, arg, v.Tp)
 		if v.Tp.EvalType() == types.ETString {
-			arg.SetCoercibility(expression.CoercibilityImplicit)
+			castFunction.SetCoercibility(expression.CoercibilityImplicit)
+		} else {
+			castFunction.SetCoercibility(expression.CoercibilityNumeric)
 		}
 
-		er.ctxStack[len(er.ctxStack)-1] = expression.BuildCastFunction(er.sctx, arg, v.Tp)
+		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.PatternLikeExpr:
 		er.patternLikeToExpression(v)
@@ -1633,17 +1639,26 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 
 	expr, lexp, rexp := er.wrapExpWithCast()
 
-	var op string
-	var l, r expression.Expression
-	l, er.err = er.newFunction(ast.GE, &v.Type, expr, lexp)
-	if er.err == nil {
-		r, er.err = er.newFunction(ast.LE, &v.Type, expr, rexp)
-	}
-	op = ast.LogicAnd
+	dstCharset, dstCollation, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "BETWEEN", types.ETInt, expr, lexp, rexp)
+	er.err = err
 	if er.err != nil {
 		return
 	}
-	function, err := er.newFunction(op, &v.Type, l, r)
+
+	var l, r expression.Expression
+	l, er.err = expression.NewFunctionBase(er.sctx, ast.GE, &v.Type, expr, lexp)
+	if er.err != nil {
+		return
+	}
+	r, er.err = expression.NewFunctionBase(er.sctx, ast.LE, &v.Type, expr, rexp)
+	if er.err != nil {
+		return
+	}
+	l.SetCharsetAndCollation(dstCharset, dstCollation)
+	r.SetCharsetAndCollation(dstCharset, dstCollation)
+	l = expression.FoldConstant(l)
+	r = expression.FoldConstant(r)
+	function, err := er.newFunction(ast.LogicAnd, &v.Type, l, r)
 	if err != nil {
 		er.err = err
 		return

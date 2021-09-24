@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
@@ -65,7 +67,9 @@ func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *RemoteTopSQLReporter {
 	variable.TopSQLVariable.MaxStatementCount.Store(int64(maxStatementsNum))
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(int64(interval))
-	variable.TopSQLVariable.AgentAddress.Store(addr)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.ReceiverAddress = addr
+	})
 
 	rc := NewGRPCReportClient(mockPlanBinaryDecoderFunc)
 	ts := NewRemoteTopSQLReporter(rc)

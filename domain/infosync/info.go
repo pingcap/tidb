@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,7 +24,6 @@ import (
 	"os"
 	"path"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -86,16 +86,17 @@ var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusA
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
-	etcdCli         *clientv3.Client
-	info            *ServerInfo
-	serverInfoPath  string
-	minStartTS      uint64
-	minStartTSPath  string
-	manager         util2.SessionManager
-	session         *concurrency.Session
-	topologySession *concurrency.Session
-	prometheusAddr  string
-	modifyTime      time.Time
+	etcdCli          *clientv3.Client
+	info             *ServerInfo
+	serverInfoPath   string
+	minStartTS       uint64
+	minStartTSPath   string
+	manager          util2.SessionManager
+	session          *concurrency.Session
+	topologySession  *concurrency.Session
+	prometheusAddr   string
+	modifyTime       time.Time
+	labelRuleManager LabelRuleManager
 }
 
 // ServerInfo is server static information.
@@ -174,6 +175,11 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	if err != nil {
 		return nil, err
 	}
+	if etcdCli != nil {
+		is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
+	} else {
+		is.labelRuleManager = initLabelRuleManager([]string{})
+	}
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -198,6 +204,13 @@ func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
 // GetSessionManager get the session manager.
 func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 	return is.manager
+}
+
+func initLabelRuleManager(addrs []string) LabelRuleManager {
+	if len(addrs) == 0 {
+		return &mockLabelManager{labelRules: map[string][]byte{}}
+	}
+	return &PDLabelManager{addrs: addrs}
 }
 
 // GetServerInfo gets self server static information.
@@ -311,13 +324,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 	var req *http.Request
 	var res *http.Response
 	for _, addr := range addrs {
-		var url string
-		if strings.HasPrefix(addr, "http") {
-			url = fmt.Sprintf("%s%s", addr, route)
-		} else {
-			url = fmt.Sprintf("%s://%s%s", util2.InternalHTTPSchema(), addr, route)
-		}
-
+		url := util2.ComposeURL(addr, route)
 		req, err = http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
 			return nil, err
@@ -683,15 +690,9 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	if !clientAvailable || len(pdAddrs) == 0 {
 		return "", errors.Errorf("pd unavailable")
 	}
-
 	// Get prometheus address from pdApi.
-	var url, res string
-	if strings.HasPrefix(pdAddrs[0], "http://") {
-		url = fmt.Sprintf("%s%s", pdAddrs[0], pdapi.Config)
-	} else {
-		url = fmt.Sprintf("http://%s%s", pdAddrs[0], pdapi.Config)
-	}
-	resp, err := http.Get(url)
+	url := util2.ComposeURL(pdAddrs[0], pdapi.Config)
+	resp, err := util2.InternalHTTPClient().Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -701,7 +702,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	res = metricStorage.PDServer.MetricStorage
+	res := metricStorage.PDServer.MetricStorage
 
 	// Get prometheus address from etcdApi.
 	if res == "" {
@@ -816,22 +817,52 @@ func PutLabelRule(ctx context.Context, rule *label.Rule) error {
 	if err != nil {
 		return err
 	}
+	if is.labelRuleManager == nil {
+		return nil
+	}
+	return is.labelRuleManager.PutLabelRule(ctx, rule)
+}
 
-	if is.etcdCli == nil {
+// UpdateLabelRules synchronizes the label rule to PD.
+func UpdateLabelRules(ctx context.Context, patch *label.RulePatch) error {
+	if patch == nil || (len(patch.DeleteRules) == 0 && len(patch.SetRules) == 0) {
 		return nil
 	}
 
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return errors.Errorf("pd unavailable")
-	}
-
-	r, err := json.Marshal(rule)
+	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
 	}
+	if is.labelRuleManager == nil {
+		return nil
+	}
+	return is.labelRuleManager.UpdateLabelRules(ctx, patch)
+}
 
-	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "region-label", "rule"), "POST", bytes.NewReader(r))
-	return err
+// GetAllLabelRules gets all label rules from PD.
+func GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	if is.labelRuleManager == nil {
+		return nil, nil
+	}
+	return is.labelRuleManager.GetAllLabelRules(ctx)
+}
+
+// GetLabelRules gets the label rules according to the given IDs from PD.
+func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rule, error) {
+	if len(ruleIDs) == 0 {
+		return nil, nil
+	}
+
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	if is.labelRuleManager == nil {
+		return nil, nil
+	}
+	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }

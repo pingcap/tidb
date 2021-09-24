@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -133,6 +135,11 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d t
 // if timestamp session variable set, use session variable as current time, otherwise use cached time
 // during one sql statement, the "current_time" should be the same
 func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
+	failpoint.Inject("injectNow", func(val failpoint.Value) {
+		v := time.Unix(int64(val.(int)), 0)
+		failpoint.Return(v, nil)
+	})
+
 	now := time.Now()
 
 	if ctx == nil {

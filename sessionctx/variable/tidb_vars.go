@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,7 +19,7 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/uber-go/atomic"
+	"go.uber.org/atomic"
 )
 
 /*
@@ -26,13 +27,7 @@ import (
 
 	1. Add a new variable name with comment in this file.
 	2. Add the default value of the new variable in this file.
-	3. Add SysVar instance in 'defaultSysVars' slice with the default value.
-	4. Add a field in `SessionVars`.
-	5. Update the `NewSessionVars` function to set the field to its default value.
-	6. Update the `variable.SetSessionSystemVar` function to use the new value when SET statement is executed.
-	7. If it is a global variable, add it in `session.loadCommonGlobalVarsSQL`.
-	8. Update ValidateSetSystemVar if the variable's value need to be validated.
-	9. Use this variable to control the behavior in code.
+	3. Add SysVar instance in 'defaultSysVars' slice.
 */
 
 // TiDB system variable names that only in session scope.
@@ -213,6 +208,9 @@ const (
 
 	// TiDBTxnReadTS indicates the next transaction should be staleness transaction and provide the startTS
 	TiDBTxnReadTS = "tx_read_ts"
+
+	// TiDBReadStaleness indicates the staleness duration for following statement
+	TiDBReadStaleness = "tidb_read_staleness"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -320,6 +318,10 @@ const (
 	// Value set to `true` means enforce use mpp.
 	// Note if you want to set `tidb_enforce_mpp` to `true`, you must set `tidb_allow_mpp` to `true` first.
 	TiDBEnforceMPPExecution = "tidb_enforce_mpp"
+
+	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
+	// TiFlash even though the failed TiFlash node has been recovered.
+	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
 
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
@@ -564,9 +566,6 @@ const (
 	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
 	TiDBEnableTopSQL = "tidb_enable_top_sql"
 
-	// TiDBTopSQLAgentAddress indicates the top SQL agent address.
-	TiDBTopSQLAgentAddress = "tidb_top_sql_agent_address"
-
 	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
 	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
 
@@ -674,6 +673,7 @@ const (
 	DefTiDBAllowMPPExecution              = true
 	DefTiDBHashExchangeWithNewCollation   = true
 	DefTiDBEnforceMPPExecution            = false
+	DefTiDBMPPStoreFailTTL                = "60s"
 	DefTiDBTxnMode                        = ""
 	DefTiDBRowFormatV1                    = 1
 	DefTiDBRowFormatV2                    = 2
@@ -736,7 +736,6 @@ const (
 	DefTiDBEnableExchangePartition        = false
 	DefCTEMaxRecursionDepth               = 1000
 	DefTiDBTopSQLEnable                   = false
-	DefTiDBTopSQLAgentAddress             = ""
 	DefTiDBTopSQLPrecisionSeconds         = 1
 	DefTiDBTopSQLMaxStatementCount        = 200
 	DefTiDBTopSQLMaxCollect               = 10000
@@ -771,7 +770,6 @@ var (
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 	TopSQLVariable                        = TopSQL{
 		Enable:                atomic.NewBool(DefTiDBTopSQLEnable),
-		AgentAddress:          atomic.NewString(DefTiDBTopSQLAgentAddress),
 		PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
 		MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
 		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
@@ -785,8 +783,6 @@ var (
 type TopSQL struct {
 	// Enable top-sql or not.
 	Enable *atomic.Bool
-	// AgentAddress indicate the collect agent address.
-	AgentAddress *atomic.String
 	// The refresh interval of top-sql.
 	PrecisionSeconds *atomic.Int64
 	// The maximum number of statements kept in memory.
@@ -799,5 +795,5 @@ type TopSQL struct {
 
 // TopSQLEnabled uses to check whether enabled the top SQL feature.
 func TopSQLEnabled() bool {
-	return TopSQLVariable.Enable.Load() && TopSQLVariable.AgentAddress.Load() != ""
+	return TopSQLVariable.Enable.Load() && config.GetGlobalConfig().TopSQL.ReceiverAddress != ""
 }

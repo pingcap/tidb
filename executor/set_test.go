@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -539,6 +540,16 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec(`set tidb_opt_limit_push_down_threshold = 20`)
 	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
 	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
+
+	tk.MustQuery("select @@tidb_opt_prefer_range_scan").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_opt_prefer_range_scan = 1")
+	tk.MustQuery("select @@global.tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_opt_prefer_range_scan = 0")
+	tk.MustQuery("select @@global.tidb_opt_prefer_range_scan").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_opt_prefer_range_scan = 1")
+	tk.MustQuery("select @@session.tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_opt_prefer_range_scan = 0")
+	tk.MustQuery("select @@session.tidb_opt_prefer_range_scan").Check(testkit.Rows("0"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
@@ -715,7 +726,6 @@ func (s *testSuite5) TestSetCollationAndCharset(c *C) {
 }
 
 func (s *testSuite5) TestValidateSetVar(c *C) {
-	c.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
 	tk := testkit.NewTestKit(c, s.store)
 
 	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
@@ -1074,7 +1084,6 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 }
 
 func (s *testSuite5) TestSelectGlobalVar(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210624")
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("151"))
@@ -1334,7 +1343,8 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 	c.Assert(tk.ExecToErr("set config xxx log.level='info'"), ErrorMatches, "unknown type xxx")
 	c.Assert(tk.ExecToErr("set config tidb log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
 	c.Assert(tk.ExecToErr("set config '127.0.0.1:1111' log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
-	c.Assert(tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), ErrorMatches, "invalid instance 127.a.b.c:1234")
+	c.Assert(tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), ErrorMatches, "invalid instance 127.a.b.c:1234")                          // name doesn't resolve.
+	c.Assert(tk.ExecToErr("set config 'example.com:1111' log.level='info'"), ErrorMatches, "instance example.com:1111 is not found in this cluster") // name resolves.
 	c.Assert(tk.ExecToErr("set config tikv log.level=null"), ErrorMatches, "can't set config to null")
 	c.Assert(tk.ExecToErr("set config '1.1.1.1:1111' log.level='info'"), ErrorMatches, "instance 1.1.1.1:1111 is not found in this cluster")
 
@@ -1412,13 +1422,6 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	tk.MustExec("set @@global.tidb_enable_top_sql='off';")
 	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("0"))
 	c.Assert(variable.TopSQLVariable.Enable.Load(), IsFalse)
-
-	tk.MustExec("set @@tidb_top_sql_agent_address='127.0.0.1:4001';")
-	tk.MustQuery("select @@tidb_top_sql_agent_address;").Check(testkit.Rows("127.0.0.1:4001"))
-	c.Assert(variable.TopSQLVariable.AgentAddress.Load(), Equals, "127.0.0.1:4001")
-	tk.MustExec("set @@tidb_top_sql_agent_address='';")
-	tk.MustQuery("select @@tidb_top_sql_agent_address;").Check(testkit.Rows(""))
-	c.Assert(variable.TopSQLVariable.AgentAddress.Load(), Equals, "")
 
 	tk.MustExec("set @@global.tidb_top_sql_precision_seconds=2;")
 	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,6 +22,7 @@ import (
 
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/reporter"
@@ -109,7 +111,9 @@ func TestTopSQLReporter(t *testing.T) {
 	require.NoError(t, err)
 	variable.TopSQLVariable.MaxStatementCount.Store(200)
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
-	variable.TopSQLVariable.AgentAddress.Store(server.Address())
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.ReceiverAddress = server.Address()
+	})
 
 	client := reporter.NewGRPCReportClient(mockPlanBinaryDecoderFunc)
 	report := reporter.NewRemoteTopSQLReporter(client)

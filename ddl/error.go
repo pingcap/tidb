@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -258,6 +259,12 @@ var (
 	// ErrInvalidPlacementPolicyCheck is returned when txn_scope and commit data changing do not meet the placement policy
 	ErrInvalidPlacementPolicyCheck = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyCheck)
 
+	// ErrPlacementPolicyWithDirectOption is returned when create/alter table with both placement policy and placement options existed.
+	ErrPlacementPolicyWithDirectOption = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyWithDirectOption)
+
+	// ErrPlacementPolicyInUse is returned when placement policy is in use in drop/alter.
+	ErrPlacementPolicyInUse = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyInUse)
+
 	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
 	ErrMultipleDefConstInListPart = dbterror.ClassDDL.NewStd(mysql.ErrMultipleDefConstInListPart)
 
@@ -286,8 +293,14 @@ var (
 	errUnsupportedEngineTemporary       = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support this kind of engine for temporary table", nil))
 	errUnsupportedClusteredSecondaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil))
 
+	// ErrUnsupportedLocalTempTableDDL returns when ddl operation unsupported for local temporary table
+	ErrUnsupportedLocalTempTableDDL = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support %s for local temporary table", nil))
 	// ErrInvalidAttributesSpec is returned when meeting invalid attributes.
 	ErrInvalidAttributesSpec = dbterror.ClassDDL.NewStd(mysql.ErrInvalidAttributesSpec)
-	// ErrFunctionalIndexOnJSONOrGeometryFunction returns when creating expression index and the type of the expression is JSON.
-	ErrFunctionalIndexOnJSONOrGeometryFunction = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	// errFunctionalIndexOnJSONOrGeometryFunction returns when creating expression index and the type of the expression is JSON.
+	errFunctionalIndexOnJSONOrGeometryFunction = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnJSONOrGeometryFunction)
+	// errDependentByFunctionalIndex returns when the dropped column depends by expression index.
+	errDependentByFunctionalIndex = dbterror.ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
+	// errFunctionalIndexOnBlob when the expression of expression index returns blob or text.
+	errFunctionalIndexOnBlob = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnBlob)
 )

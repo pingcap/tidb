@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -535,7 +536,6 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Command: byte(1),
 		Digest:  "abc1",
 		State:   1,
-		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
 	}
 	sm.processInfoMap[2] = &util.ProcessInfo{
 		ID:            2,
@@ -545,7 +545,6 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Digest:        "abc2",
 		State:         2,
 		Info:          strings.Repeat("x", 101),
-		StmtCtx:       tk.Se.GetSessionVars().StmtCtx,
 		CurTxnStartTS: 410090409861578752,
 	}
 	tk.Se.SetSessionManager(sm)
@@ -1150,51 +1149,61 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from information_schema.statements_summary`,
 	).Check(testkit.Rows())
 
-	// Create a new session to test
-	tk = s.newTestKitWithRoot(c)
-
 	tk.MustExec("set global tidb_enable_stmt_summary = on")
 	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
+}
+
+func (s *testTableSuite) TestStmtSummaryTablePriv(c *C) {
+	tk := s.newTestKitWithRoot(c)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
+	defer tk.MustExec("drop table if exists t")
+
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+	// Clear all statements.
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 
 	// Create a new user to test statements summary table privilege
+	tk.MustExec("drop user if exists 'test_user'@'localhost'")
 	tk.MustExec("create user 'test_user'@'localhost'")
-	tk.MustExec("grant select on *.* to 'test_user'@'localhost'")
-	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "root",
-		Hostname:     "%",
-		AuthUsername: "root",
-		AuthHostname: "%",
-	}, nil, nil)
+	defer tk.MustExec("drop user if exists 'test_user'@'localhost'")
+	tk.MustExec("grant select on test.t to 'test_user'@'localhost'")
 	tk.MustExec("select * from t where a=1")
 	result := tk.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
-	// Super user can query all records.
 	c.Assert(len(result.Rows()), Equals, 1)
 	result = tk.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
 	c.Assert(len(result.Rows()), Equals, 1)
-	tk.Se.Auth(&auth.UserIdentity{
+
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.Se.Auth(&auth.UserIdentity{
 		Username:     "test_user",
 		Hostname:     "localhost",
 		AuthUsername: "test_user",
 		AuthHostname: "localhost",
 	}, nil, nil)
-	result = tk.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
+
+	result = tk1.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
 	// Ordinary users can not see others' records
 	c.Assert(len(result.Rows()), Equals, 0)
-	result = tk.MustQuery("select *	from information_schema.statements_summary_history where digest_text like 'select * from `t`%'")
+	result = tk1.MustQuery("select *	from information_schema.statements_summary_history where digest_text like 'select * from `t`%'")
 	c.Assert(len(result.Rows()), Equals, 0)
-	tk.MustExec("select * from t where a=1")
-	result = tk.MustQuery("select *	from information_schema.statements_summary	where digest_text like 'select * from `t`%'")
+	tk1.MustExec("select * from t where b=1")
+	result = tk1.MustQuery("select *	from information_schema.statements_summary	where digest_text like 'select * from `t`%'")
+	// Ordinary users can see his own records
 	c.Assert(len(result.Rows()), Equals, 1)
-	tk.MustExec("select * from t where a=1")
-	result = tk.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
+	result = tk1.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
 	c.Assert(len(result.Rows()), Equals, 1)
-	// use root user to set variables back
-	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "root",
-		Hostname:     "%",
-		AuthUsername: "root",
-		AuthHostname: "%",
-	}, nil, nil)
+
+	tk.MustExec("grant process on *.* to 'test_user'@'localhost'")
+	result = tk1.MustQuery("select *	from information_schema.statements_summary	where digest_text like 'select * from `t`%'")
+	// Users with 'PROCESS' privileges can query all records.
+	c.Assert(len(result.Rows()), Equals, 2)
+	result = tk1.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
+	c.Assert(len(result.Rows()), Equals, 2)
 }
 
 func (s *testTableSuite) TestIssue18845(c *C) {
@@ -1263,6 +1272,11 @@ func (s *testClusterTableSuite) TestStmtSummaryHistoryTable(c *C) {
 // Test statements_summary_history.
 func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	tk := s.newTestKitWithRoot(c)
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
@@ -1303,7 +1317,7 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 		"where digest_text like \"select `original_sql` , `bind_sql` , `default_db` , status%\""
 	tk.MustQuery(sql).Check(testkit.Rows(
 		"select `original_sql` , `bind_sql` , `default_db` , status , `create_time` , `update_time` , charset , " +
-			"collation , source from `mysql` . `bind_info` where `update_time` > ? order by `update_time`"))
+			"collation , source from `mysql` . `bind_info` where `update_time` > ? order by `update_time` , `create_time`"))
 
 	// Test for issue #21642.
 	tk.MustQuery(`select tidb_version()`)
@@ -1749,9 +1763,14 @@ func (s *testTableSuite) TestInfoschemaClientErrors(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RELOAD privilege(s) for this operation")
 }
 
-func (s *testTableSuite) TestTrx(c *C) {
+func (s *testTableSuite) TestTiDBTrx(c *C) {
 	tk := s.newTestKitWithRoot(c)
-	_, digest := parser.NormalizeDigest("select * from trx for update;")
+	tk.MustExec("drop table if exists test_tidb_trx")
+	tk.MustExec("create table test_tidb_trx(i int)")
+	// Execute the statement once so that the statement will be collected into statements_summary and able to be found
+	// by digest.
+	tk.MustExec("update test_tidb_trx set i = i + 1")
+	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
 	sm := &mockSessionManager{nil, make([]*txninfo.TxnInfo, 2)}
 	sm.txnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
@@ -1767,7 +1786,7 @@ func (s *testTableSuite) TestTrx(c *C) {
 	sm.txnInfo[1] = &txninfo.TxnInfo{
 		StartTS:          425070846483628033,
 		CurrentSQLDigest: "",
-		AllSQLDigests:    []string{"sql1", "sql2"},
+		AllSQLDigests:    []string{"sql1", "sql2", digest.String()},
 		State:            txninfo.TxnLockWaiting,
 		ConnectionID:     10,
 		Username:         "user1",
@@ -1776,9 +1795,19 @@ func (s *testTableSuite) TestTrx(c *C) {
 	sm.txnInfo[1].BlockStartTime.Valid = true
 	sm.txnInfo[1].BlockStartTime.Time = blockTime2
 	tk.Se.SetSessionManager(sm)
+
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
-		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" <nil> Idle <nil> 1 19 2 root test []",
-		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [\"sql1\",\"sql2\"]"))
+		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test []",
+		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"]"))
+
+	// Test the all_sql_digests column can be directly passed to the tidb_decode_sql_digests function.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal"), IsNil)
+	}()
+	tk.MustQuery("select tidb_decode_sql_digests(all_sql_digests) from information_schema.tidb_trx").Check(testkit.Rows(
+		"[]",
+		"[null,null,\"update `test_tidb_trx` set `i` = `i` + ?\"]"))
 }
 
 func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
@@ -1800,6 +1829,20 @@ func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
 		Hostname: "localhost",
 	}, nil, nil), IsTrue)
 	_ = tk.MustQuery("select * from information_schema.deadlocks")
+}
+
+func (s *testTableSuite) TestRegionLabel(c *C) {
+	// test the failpoint for testing
+	fpName := "github.com/pingcap/tidb/executor/mockOutputOfRegionLabel"
+	tk := s.newTestKitWithRoot(c)
+	tk.MustQuery("select * from information_schema.region_label").Check(testkit.Rows())
+
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	tk.MustQuery(`select * from information_schema.region_label`).Check(testkit.Rows(
+		`schema/test/test_label key-range "merge_option=allow" 7480000000000000ff395f720000000000fa 7480000000000000ff3a5f720000000000fa`,
+	))
 }
 
 func (s *testClusterTableSuite) TestDataLockWaits(c *C) {
@@ -1849,4 +1892,16 @@ func (s *testClusterTableSuite) TestDataLockWaitsPrivilege(c *C) {
 		Hostname: "localhost",
 	}, nil, nil), IsTrue)
 	_ = tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS")
+}
+
+func (s *testTableSuite) TestReferentialConstraints(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("CREATE DATABASE referconstraints")
+	tk.MustExec("use referconstraints")
+
+	tk.MustExec("CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY)")
+	tk.MustExec("CREATE TABLE t2 (id INT NOT NULL PRIMARY KEY, t1_id INT DEFAULT NULL, INDEX (t1_id), CONSTRAINT `fk_to_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`))")
+
+	tk.MustQuery(`SELECT * FROM information_schema.referential_constraints WHERE table_name='t2'`).Check(testkit.Rows("def referconstraints fk_to_t1 def referconstraints PRIMARY NONE NO ACTION NO ACTION t2 t1"))
 }

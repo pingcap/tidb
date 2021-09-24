@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -191,8 +193,8 @@ type ExecStmt struct {
 	SnapshotTS uint64
 	// IsStaleness means whether this statement use stale read.
 	IsStaleness bool
-	// TxnScope indicates the scope the store selector scope the request visited
-	TxnScope string
+	// ReplicaReadScope indicates the scope the store selector scope the request visited
+	ReplicaReadScope string
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
@@ -247,7 +249,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		}
 	}
 	if a.PsStmt.Executor == nil {
-		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.SnapshotTS, a.IsStaleness, a.TxnScope)
+		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.SnapshotTS, a.IsStaleness, a.ReplicaReadScope)
 		newExecutor := b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -293,7 +295,10 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	a.InfoSchema = ret.InfoSchema
 	a.SnapshotTS = ret.LastSnapshotTS
 	a.IsStaleness = ret.IsStaleness
-	a.TxnScope = ret.TxnScope
+	a.ReplicaReadScope = ret.ReadReplicaScope
+	if a.Ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && a.ReplicaReadScope == kv.GlobalReplicaScope {
+		logutil.BgLogger().Warn(fmt.Sprintf("tidb can't read closest replicas due to it haven't %s label", placement.DCLabelKey))
+	}
 	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
 	if err != nil {
 		return 0, err
@@ -337,22 +342,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}()
 
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
-		if n, ok := val.(int); ok {
+		if n, ok := val.(int); ok && a.IsStaleness {
 			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if n != int(startTS) {
 				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
-			failpoint.Return()
-		}
-	})
-	failpoint.Inject("assertStaleTSOWithTolerance", func(val failpoint.Value) {
-		if n, ok := val.(int); ok {
-			// Convert to seconds
-			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
-			if int(startTS) <= n-1 || n+1 <= int(startTS) {
-				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
-			}
-			failpoint.Return()
 		}
 	})
 	sctx := a.Ctx
@@ -567,6 +561,12 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	var err error
+	defer func() {
+		terror.Log(e.Close())
+		a.logAudit()
+	}()
+
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -580,12 +580,6 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 			return nil, errors.New("can not execute write statement when 'tidb_low_resolution_tso' is set")
 		}
 	}
-
-	var err error
-	defer func() {
-		terror.Log(e.Close())
-		a.logAudit()
-	}()
 
 	err = Next(ctx, e, newFirstChunk(e))
 	if err != nil {
@@ -796,7 +790,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.IsStaleness, a.TxnScope)
+	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.IsStaleness, a.ReplicaReadScope)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
@@ -829,12 +823,13 @@ func (a *ExecStmt) logAudit() {
 	if sessVars.InRestrictedSQL {
 		return
 	}
+
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
 			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
-			audit.OnGeneralEvent(ctx, sessVars, plugin.Log, cmd)
+			audit.OnGeneralEvent(ctx, sessVars, plugin.Completed, cmd)
 		}
 		return nil
 	})
@@ -1094,9 +1089,6 @@ func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n
 	}
 	if genHint {
 		hints := plannercore.GenHintsFromPhysicalPlan(p)
-		if n != nil {
-			hints = append(hints, hint.ExtractTableHintsFromStmtNode(n, nil)...)
-		}
 		hintStr = hint.RestoreOptimizerHints(hints)
 		sctx.GetSessionVars().StmtCtx.SetPlanHint(hintStr)
 	}

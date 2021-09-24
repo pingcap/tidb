@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -745,6 +746,12 @@ func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chu
 			continue
 		}
 
+		// when count > MaxInt64, returns whole string.
+		if count < 0 && mysql.HasUnsignedFlag(b.args[2].GetType().Flag) {
+			result.AppendString(str)
+			continue
+		}
+
 		strs := strings.Split(str, delim)
 		start, end := int64(0), int64(len(strs))
 		if count > 0 {
@@ -756,8 +763,8 @@ func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chu
 			// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
 			count = -count
 			if count < 0 {
-				// -count overflows max int64, returns an empty string.
-				result.AppendString("")
+				// -count overflows max int64, returns whole string.
+				result.AppendString(str)
 				continue
 			}
 

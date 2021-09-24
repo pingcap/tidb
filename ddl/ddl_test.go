@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -55,6 +57,11 @@ func (d *ddl) SetInterceptor(i Interceptor) {
 // generalWorker returns the general worker.
 func (d *ddl) generalWorker() *worker {
 	return d.workers[generalWorker]
+}
+
+// GetMaxRowID is used for test.
+func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
+	return getRangeEndKey(store, priority, t, startHandle, endHandle)
 }
 
 func TestT(t *testing.T) {
@@ -177,6 +184,17 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 			[]*ast.IndexPartSpecification{{
 				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
 				Length: types.UnspecifiedLength}}},
+	}
+}
+
+func buildModifyColJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+	newCol := table.ToColumn(tblInfo.Columns[0])
+	return &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionModifyColumn,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{&newCol, newCol.Name, ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0},
 	}
 }
 

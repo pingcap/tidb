@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/tikv/client-go/v2/tikv"
@@ -71,8 +73,9 @@ const (
 	// TablePartitions is the string constant of infoschema table.
 	TablePartitions = "PARTITIONS"
 	// TableKeyColumn is the string constant of KEY_COLUMN_USAGE.
-	TableKeyColumn  = "KEY_COLUMN_USAGE"
-	tableReferConst = "REFERENTIAL_CONSTRAINTS"
+	TableKeyColumn = "KEY_COLUMN_USAGE"
+	// TableReferConst is the string constant of REFERENTIAL_CONSTRAINTS.
+	TableReferConst = "REFERENTIAL_CONSTRAINTS"
 	// TableSessionVar is the string constant of SESSION_VARIABLES.
 	TableSessionVar = "SESSION_VARIABLES"
 	tablePlugins    = "PLUGINS"
@@ -104,6 +107,8 @@ const (
 	TableTiDBIndexes = "TIDB_INDEXES"
 	// TableTiDBHotRegions is the string constant of infoschema table
 	TableTiDBHotRegions = "TIDB_HOT_REGIONS"
+	// TableTiDBHotRegionsHistory is the string constant of infoschema table
+	TableTiDBHotRegionsHistory = "TIDB_HOT_REGIONS_HISTORY"
 	// TableTiKVStoreStatus is the string constant of infoschema table
 	TableTiKVStoreStatus = "TIKV_STORE_STATUS"
 	// TableAnalyzeStatus is the string constant of Analyze Status
@@ -172,6 +177,8 @@ const (
 	TableDeadlocks = "DEADLOCKS"
 	// TableDataLockWaits is current lock waiting status table.
 	TableDataLockWaits = "DATA_LOCK_WAITS"
+	// TableRegionLabel is the string constant of region label table.
+	TableRegionLabel = "REGION_LABEL"
 )
 
 const (
@@ -202,7 +209,7 @@ var tableIDMap = map[string]int64{
 	TableProfiling:                          autoid.InformationSchemaDBID + 10,
 	TablePartitions:                         autoid.InformationSchemaDBID + 11,
 	TableKeyColumn:                          autoid.InformationSchemaDBID + 12,
-	tableReferConst:                         autoid.InformationSchemaDBID + 13,
+	TableReferConst:                         autoid.InformationSchemaDBID + 13,
 	TableSessionVar:                         autoid.InformationSchemaDBID + 14,
 	tablePlugins:                            autoid.InformationSchemaDBID + 15,
 	TableConstraints:                        autoid.InformationSchemaDBID + 16,
@@ -266,6 +273,8 @@ var tableIDMap = map[string]int64{
 	TableDataLockWaits:                      autoid.InformationSchemaDBID + 74,
 	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 75,
 	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
+	TableRegionLabel:                        autoid.InformationSchemaDBID + 77,
+	TableTiDBHotRegionsHistory:              autoid.InformationSchemaDBID + 78,
 }
 
 type columnInfo struct {
@@ -873,6 +882,26 @@ var TableTiDBHotRegionsCols = []columnInfo{
 	{name: "FLOW_BYTES", tp: mysql.TypeLonglong, size: 21},
 }
 
+// TableTiDBHotRegionsHistoryCols is TiDB hot region history mem table columns.
+var TableTiDBHotRegionsHistoryCols = []columnInfo{
+	{name: "UPDATE_TIME", tp: mysql.TypeTimestamp, size: 26, decimal: 6},
+	{name: "DB_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "INDEX_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "REGION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "STORE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "PEER_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "IS_LEARNER", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "IS_LEADER", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
+	{name: "HOT_DEGREE", tp: mysql.TypeLonglong, size: 21},
+	{name: "FLOW_BYTES", tp: mysql.TypeDouble, size: 22},
+	{name: "KEY_RATE", tp: mysql.TypeDouble, size: 22},
+	{name: "QUERY_RATE", tp: mysql.TypeDouble, size: 22},
+}
+
 // TableTiKVStoreStatusCols is TiDB kv store status columns.
 var TableTiKVStoreStatusCols = []columnInfo{
 	{name: "STORE_ID", tp: mysql.TypeLonglong, size: 21},
@@ -1389,19 +1418,20 @@ var tableTiDBTrxCols = []columnInfo{
 }
 
 var tableDeadlocksCols = []columnInfo{
-	{name: "DEADLOCK_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The ID to distinguish different deadlock events"},
-	{name: "OCCUR_TIME", tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "The physical time when the deadlock occurs"},
-	{name: "RETRYABLE", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the deadlock is retryable. Retryable deadlocks are usually not reported to the client"},
-	{name: "TRY_LOCK_TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction ID (start ts) of the transaction that's trying to acquire the lock"},
-	{name: "CURRENT_SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "The digest of the SQL that's being blocked"},
-	{name: "KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The key on which a transaction is waiting for another"},
-	{name: "KEY_INFO", tp: mysql.TypeBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag, comment: "Information of the key"},
-	{name: "TRX_HOLDING_LOCK", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction ID (start ts) of the transaction that's currently holding the lock"},
+	{name: deadlockhistory.ColDeadlockIDStr, tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The ID to distinguish different deadlock events"},
+	{name: deadlockhistory.ColOccurTimeStr, tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "The physical time when the deadlock occurs"},
+	{name: deadlockhistory.ColRetryableStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the deadlock is retryable. Retryable deadlocks are usually not reported to the client"},
+	{name: deadlockhistory.ColTryLockTrxIDStr, tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction ID (start ts) of the transaction that's trying to acquire the lock"},
+	{name: deadlockhistory.ColCurrentSQLDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "The digest of the SQL that's being blocked"},
+	{name: deadlockhistory.ColCurrentSQLDigestTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The normalized SQL that's being blocked"},
+	{name: deadlockhistory.ColKeyStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The key on which a transaction is waiting for another"},
+	{name: deadlockhistory.ColKeyInfoStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Information of the key"},
+	{name: deadlockhistory.ColTrxHoldingLockStr, tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction ID (start ts) of the transaction that's currently holding the lock"},
 }
 
 var tableDataLockWaitsCols = []columnInfo{
 	{name: DataLockWaitsColumnKey, tp: mysql.TypeBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag, comment: "The key that's being waiting on"},
-	{name: DataLockWaitsColumnKeyInfo, tp: mysql.TypeBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag, comment: "Information of the key"},
+	{name: DataLockWaitsColumnKeyInfo, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Information of the key"},
 	{name: DataLockWaitsColumnTrxID, tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Current transaction that's waiting for the lock"},
 	{name: DataLockWaitsColumnCurrentHoldingTrxID, tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction that's holding the lock and blocks the current transaction"},
 	{name: DataLockWaitsColumnSQLDigest, tp: mysql.TypeVarchar, size: 64, comment: "Digest of the SQL that's trying to acquire the lock"},
@@ -1412,6 +1442,14 @@ var tableStatementsSummaryEvictedCols = []columnInfo{
 	{name: "BEGIN_TIME", tp: mysql.TypeTimestamp, size: 26},
 	{name: "END_TIME", tp: mysql.TypeTimestamp, size: 26},
 	{name: "EVICTED_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+}
+
+var tableRegionLabelCols = []columnInfo{
+	{name: "RULE_ID", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "RULE_TYPE", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag},
+	{name: "REGION_LABEL", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
+	{name: "START_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
+	{name: "END_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1739,7 +1777,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableProfiling:                          profilingCols,
 	TablePartitions:                         partitionsCols,
 	TableKeyColumn:                          keyColumnUsageCols,
-	tableReferConst:                         referConstCols,
+	TableReferConst:                         referConstCols,
 	TableSessionVar:                         sessionVarCols,
 	tablePlugins:                            pluginsCols,
 	TableConstraints:                        tableConstraintsCols,
@@ -1763,6 +1801,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
 	TableTiDBHotRegions:                     TableTiDBHotRegionsCols,
+	TableTiDBHotRegionsHistory:              TableTiDBHotRegionsHistoryCols,
 	TableTiKVStoreStatus:                    TableTiKVStoreStatusCols,
 	TableAnalyzeStatus:                      tableAnalyzeStatusCols,
 	TableTiKVRegionStatus:                   TableTiKVRegionStatusCols,
@@ -1796,6 +1835,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBTrx:                            tableTiDBTrxCols,
 	TableDeadlocks:                          tableDeadlocksCols,
 	TableDataLockWaits:                      tableDataLockWaitsCols,
+	TableRegionLabel:                        tableRegionLabelCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -1837,7 +1877,6 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	sort.Sort(SchemasSorter(dbs))
 	switch it.meta.Name.O {
 	case tableFiles:
-	case tableReferConst:
 	case tablePlugins, tableTriggers:
 	case tableRoutines:
 	// TODO: Fill the following tables.
@@ -1948,11 +1987,6 @@ func (it *infoschemaTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
 }
 
-// RebaseAutoID implements table.Table RebaseAutoID interface.
-func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
-	return table.ErrUnsupportedOp
-}
-
 // Meta implements table.Table Meta interface.
 func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
@@ -2029,11 +2063,6 @@ func (vt *VirtualTable) UpdateRecord(ctx context.Context, sctx sessionctx.Contex
 // Allocators implements table.Table Allocators interface.
 func (vt *VirtualTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
-}
-
-// RebaseAutoID implements table.Table RebaseAutoID interface.
-func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
-	return table.ErrUnsupportedOp
 }
 
 // Meta implements table.Table Meta interface.

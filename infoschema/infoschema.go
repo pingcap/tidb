@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -37,6 +38,7 @@ type InfoSchema interface {
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
+	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
 	TableByID(id int64) (table.Table, bool)
 	AllocByID(id int64) (autoid.Allocators, bool)
 	AllSchemaNames() []string
@@ -55,6 +57,8 @@ type InfoSchema interface {
 	SetBundle(*placement.Bundle)
 	// RuleBundles will return a copy of all rule bundles.
 	RuleBundles() []*placement.Bundle
+	// AllPlacementPolicies returns all placement policies
+	AllPlacementPolicies() []*model.PolicyInfo
 }
 
 type sortedTables []table.Table
@@ -93,6 +97,10 @@ type infoSchema struct {
 	ruleBundleMutex sync.RWMutex
 	ruleBundleMap   map[string]*placement.Bundle
 
+	// policyMap stores all placement policies.
+	policyMutex sync.RWMutex
+	policyMap   map[string]*model.PolicyInfo
+
 	schemaMap map[string]*schemaTables
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
@@ -106,6 +114,7 @@ type infoSchema struct {
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
+	result.policyMap = make(map[string]*model.PolicyInfo)
 	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
@@ -130,6 +139,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
+	result.policyMap = make(map[string]*model.PolicyInfo)
 	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
@@ -204,6 +214,16 @@ func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
 		}
 	}
 	return false
+}
+
+func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
+	// TODO: use another hash map to avoid traveling on the policy map
+	for _, v := range is.policyMap {
+		if v.ID == id {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
@@ -346,6 +366,25 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 	return false, ""
 }
 
+// PolicyByName is used to find the policy.
+func (is *infoSchema) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
+	is.policyMutex.RLock()
+	defer is.policyMutex.RUnlock()
+	t, r := is.policyMap[name.L]
+	return t, r
+}
+
+// AllPlacementPolicies returns all placement policies
+func (is *infoSchema) AllPlacementPolicies() []*model.PolicyInfo {
+	is.policyMutex.RLock()
+	defer is.policyMutex.RUnlock()
+	policies := make([]*model.PolicyInfo, 0, len(is.policyMap))
+	for _, policy := range is.policyMap {
+		policies = append(policies, policy)
+	}
+	return policies
+}
+
 func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
 	is.ruleBundleMutex.RLock()
 	defer is.ruleBundleMutex.RUnlock()
@@ -361,6 +400,18 @@ func (is *infoSchema) RuleBundles() []*placement.Bundle {
 		bundles = append(bundles, bundle)
 	}
 	return bundles
+}
+
+func (is *infoSchema) setPolicy(policy *model.PolicyInfo) {
+	is.policyMutex.Lock()
+	defer is.policyMutex.Unlock()
+	is.policyMap[policy.Name.L] = policy
+}
+
+func (is *infoSchema) deletePolicy(name string) {
+	is.policyMutex.Lock()
+	defer is.policyMutex.Unlock()
+	delete(is.policyMap, name)
 }
 
 func (is *infoSchema) SetBundle(bundle *placement.Bundle) {
