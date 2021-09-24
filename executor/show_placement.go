@@ -133,11 +133,6 @@ func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowPlacementForTable(_ context.Context) (err error) {
-	dbInfo, ok := e.is.SchemaByName(e.DBName)
-	if !ok {
-		return ErrBadDB.GenWithStackByArgs(e.DBName)
-	}
-
 	tbl, err := e.getTable()
 	if err != nil {
 		return err
@@ -150,7 +145,7 @@ func (e *ShowExec) fetchShowPlacementForTable(_ context.Context) (err error) {
 	}
 
 	if placement != nil {
-		ident := ast.Ident{Schema: dbInfo.Name, Name: tblInfo.Name}
+		ident := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
 		e.appendRow([]interface{}{"Table " + ident.String(), placement.String()})
 	}
 
