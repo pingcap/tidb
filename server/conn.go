@@ -187,7 +187,7 @@ type clientConn struct {
 	lastActive   time.Time         // last active time
 	authPlugin   string            // default authentication plugin
 	isUnixSocket bool              // connection is Unix Socket file
-	textDumper   *textDumper
+	textDumper   *textDumper       // textDumper is used to encode the string result to different charsets.
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
