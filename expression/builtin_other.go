@@ -888,7 +888,7 @@ func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types
 	case types.ETReal:
 		fc = &getRealVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
 	case types.ETDatetime:
-		fc = &getTimeVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
+		fc = &getTimeVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}, retType.Tp == mysql.TypeDatetime}
 	default:
 		fc = &getStringVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
 	}
@@ -1098,6 +1098,7 @@ func (b *builtinGetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 
 type getTimeVarFunctionClass struct {
 	getVarFunctionClass
+	isDatetime bool
 }
 
 func (c *getTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
@@ -1108,11 +1109,15 @@ func (c *getTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	fsp := args[0].GetType().Flen - mysql.MaxDatetimeWidthNoFsp
-	if fsp > 0 {
-		fsp--
+	if c.isDatetime {
+		fsp := c.tp.Flen - mysql.MaxDatetimeWidthNoFsp
+		if fsp > 0 {
+			fsp--
+		}
+		bf.setDecimalAndFlenForDatetime(fsp)
+	} else {
+		bf.setDecimalAndFlenForDate()
 	}
-	bf.setDecimalAndFlenForDatetime(fsp)
 	sig = &builtinGetTimeVarSig{bf}
 	return sig, nil
 }

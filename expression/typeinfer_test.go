@@ -102,6 +102,11 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 	)`
 	testKit.MustExec(sql)
 	testKit.MustExec(`set tidb_enable_noop_functions=1;`)
+	testKit.MustExec("set @a=cast('2000-01-01' as date);")
+	testKit.MustExec("set @b=cast('2000-01-01 01:02:03.1234' as datetime);")
+	testKit.MustExec("set @c=cast('2000-01-01 01:02:03' as datetime);")
+	testKit.MustExec("set @d=cast('2000-01-01 01:02:03.1234' as datetime(4));")
+	testKit.MustExec("set @e=cast('2000-01-01 01:02:03' as datetime(3));")
 
 	var tests []typeInferTestCase
 	tests = append(tests, s.createTestCase4Constants()...)
@@ -124,6 +129,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4Literals()...)
 	tests = append(tests, s.createTestCase4JSONFuncs()...)
 	tests = append(tests, s.createTestCase4MiscellaneousFunc()...)
+	tests = append(tests, s.createTestCase4GetVarFunc()...)
 
 	sctx := testKit.Se.(sessionctx.Context)
 	c.Assert(sctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, mysql.DefaultCharset), IsNil)
@@ -1962,5 +1968,15 @@ func (s *testInferTypeSuite) createTestCase4MiscellaneousFunc() []typeInferTestC
 		{"release_lock(c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"release_lock(c_varchar)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"release_lock(c_text_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
+	}
+}
+
+func (s *testInferTypeSuite) createTestCase4GetVarFunc() []typeInferTestCase {
+	return []typeInferTestCase{
+		{"@a", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"@b", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
+		{"@c", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
+		{"@d", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 24, 4},
+		{"@e", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
 	}
 }
