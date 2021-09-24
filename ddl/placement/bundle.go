@@ -365,8 +365,9 @@ func (b *Bundle) Tidy() error {
 // Reset resets the bundle ID and keyrange of all rules.
 func (b *Bundle) Reset(newID int64) *Bundle {
 	b.ID = GroupID(newID)
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(newID)))
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(newID+1)))
+	// Involve all the table level objects.
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
 	for _, rule := range b.Rules {
 		rule.GroupID = b.ID
 		rule.StartKeyHex = startKey
