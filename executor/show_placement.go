@@ -22,7 +22,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -176,6 +178,9 @@ func (e *ShowExec) fetchAllPlacementPolicies() error {
 }
 
 func (e *ShowExec) fetchAllTablePlacements() error {
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+
 	dbs := e.is.AllSchemas()
 	sort.Slice(dbs, func(i, j int) bool { return dbs[i].Name.O < dbs[j].Name.O })
 
@@ -186,10 +191,13 @@ func (e *ShowExec) fetchAllTablePlacements() error {
 		}, 0)
 
 		for _, tbl := range e.is.SchemaTables(dbInfo.Name) {
-			var rows [][]interface{}
 			tblInfo := tbl.Meta()
-			ident := ast.Ident{Schema: dbInfo.Name, Name: tblInfo.Name}
+			if checker != nil && !checker.RequestVerification(activeRoles, dbInfo.Name.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
+				continue
+			}
 
+			var rows [][]interface{}
+			ident := ast.Ident{Schema: dbInfo.Name, Name: tblInfo.Name}
 			placement, err := e.getTablePlacement(tblInfo)
 			if err != nil {
 				return err

@@ -2356,7 +2356,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if p.DBName == "" {
 			return nil, ErrNoDB
 		}
-	case ast.ShowCreateTable, ast.ShowCreateSequence:
+	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable:
 		user := b.ctx.GetSessionVars().User
 		var err error
 		if user != nil {
