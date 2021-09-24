@@ -43,6 +43,14 @@ github.com/Jeffail/gabs/v2 v2.5.1/go.mod h1:xCn81vdHKxFUuWWAaD5jCTQDNPBMh5pPs9IJ
 github.com/Joker/hpp v1.0.0/go.mod h1:8x5n+M1Hp5hC0g8okX3sR3vFQwynaX/UgSOM9MeBKzY=
 github.com/Joker/jade v1.0.1-0.20190614124447-d475f43051e7/go.mod h1:6E6s8o2AE4KhCrqr6GRJjdC/gNfTdxkIXvuGZZda2VM=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20210923124339-1aeb2ed696c6 h1:QR0PLCWPcgSKCumbzqEClU7XOmsWRpwcu2F7uziah2s=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20210923124339-1aeb2ed696c6/go.mod h1:epcMoGX7EqwWTftB/w04XHWBcSUsOli4Um7Sj+im5tQ=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20210924084513-3e087faeaeb7 h1:8OtZpeKwHRKubx3XGLjBwLzICYvZsunPkgZNM3/0fxs=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20210924084513-3e087faeaeb7/go.mod h1:epcMoGX7EqwWTftB/w04XHWBcSUsOli4Um7Sj+im5tQ=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20210924091241-0428ec811cd9 h1:bXBvEaD8kmv6/hWkaXl0nrvim5KukiYZBBbJuzUzpLg=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20210924091241-0428ec811cd9/go.mod h1:epcMoGX7EqwWTftB/w04XHWBcSUsOli4Um7Sj+im5tQ=
+github.com/MyonKeminta/kvproto v0.0.0-20210923075221-e706d94c441f h1:t9nSokV/gREYTUJ5qjSbm+vQ7ZZlijTssDPfqrmiVac=
+github.com/MyonKeminta/kvproto v0.0.0-20210923075221-e706d94c441f/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/OneOfOne/xxhash v1.2.2 h1:KMrpdQIwFcEqXDklaen+P1axHaj9BSKzvpUUfnHldSE=
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
 github.com/PuerkitoBio/purell v1.1.0/go.mod h1:c11w/QuzBsJSee3cPx9rAFu61PvFxuPbtSwDGJws/X0=

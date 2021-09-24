@@ -28,6 +28,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -420,6 +421,14 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	if err = memBuffer.Set(key, value); err != nil {
 		return err
 	}
+	failpoint.Inject("updateRecordForceAssertNotExist", func() {
+		if sctx.GetSessionVars().ConnectionID != 0 {
+			logutil.BgLogger().Info("[failpoint] force asserting not exist on UpdateRecord", zap.Uint64("startTS", txn.StartTS()))
+			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
+				failpoint.Return(err)
+			}
+		}
+	})
 	if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
 		return err
 	}
@@ -823,6 +832,14 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		return nil, err
 	}
 
+	failpoint.Inject("addRecordForceAssertExist", func() {
+		if sctx.GetSessionVars().ConnectionID != 0 {
+			logutil.BgLogger().Info("[failpoint] force asserting exist on AddRecord", zap.Uint64("startTS", txn.StartTS()))
+			if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
+				failpoint.Return(nil, err)
+			}
+		}
+	})
 	if setPresume && !txn.IsPessimistic() {
 		err = txn.SetAssertion(key, kv.SetAssertUnknown)
 	} else {
