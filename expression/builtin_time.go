@@ -453,8 +453,6 @@ func (c *timeDiffFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 	var sig builtinFunc
 	// arg0 and arg1 must be the same time type(compatible), or timediff will return NULL.
-	// all the time type, and use filed type to distinguish datetime, date, timestamp or time(duration).
-	// With the duration type, we are hard to port all the MySQL behavior.
 	switch arg0Tp {
 	case types.ETDuration:
 		switch arg1Tp {
