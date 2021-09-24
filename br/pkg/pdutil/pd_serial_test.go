@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/coreos/go-semver/semver"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
@@ -81,8 +82,6 @@ func TestScheduler(t *testing.T) {
 }
 
 func TestGetClusterVersion(t *testing.T) {
-	t.Parallel()
-
 	pdController := &PdController{addrs: []string{"", ""}} // two endpoints
 	counter := 0
 	mock := func(context.Context, string, string, *http.Client, string, io.Reader) ([]byte, error) {
@@ -106,8 +105,6 @@ func TestGetClusterVersion(t *testing.T) {
 }
 
 func TestRegionCount(t *testing.T) {
-	t.Parallel()
-
 	regions := core.NewRegionsInfo()
 	regions.SetRegion(core.NewRegionInfo(&metapb.Region{
 		Id:          1,
@@ -162,8 +159,6 @@ func TestRegionCount(t *testing.T) {
 }
 
 func TestPDVersion(t *testing.T) {
-	t.Parallel()
-
 	v := []byte("\"v4.1.0-alpha1\"\n")
 	r := parseVersion(v)
 	expectV := semver.New("4.1.0-alpha1")
@@ -173,13 +168,17 @@ func TestPDVersion(t *testing.T) {
 }
 
 func TestPDRequestRetry(t *testing.T) {
-	t.Parallel()
-
 	ctx := context.Background()
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/pdutil/FastRetry", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/pdutil/FastRetry"))
+	}()
+
 	count := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		count++
-		if count <= 5 {
+		if count <= pdRequestRetryTime-1 {
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
 		}
@@ -193,7 +192,7 @@ func TestPDRequestRetry(t *testing.T) {
 	count = 0
 	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		count++
-		if count <= 11 {
+		if count <= pdRequestRetryTime+1 {
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
 		}
@@ -206,8 +205,6 @@ func TestPDRequestRetry(t *testing.T) {
 }
 
 func TestStoreInfo(t *testing.T) {
-	t.Parallel()
-
 	storeInfo := api.StoreInfo{
 		Status: &api.StoreStatus{
 			Capacity:  typeutil.ByteSize(1024),
