@@ -225,7 +225,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # PD_total: 11
 # Backoff_total: 12
 # Write_sql_response_total: 1
-# Result_set: 12345
+# Result_rows: 12345
 # Succ: true`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
