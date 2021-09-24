@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	transaction "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -333,7 +334,7 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 				return err
 			}
 
-			iter, err = NewUnionIter(iter, snapIter, false)
+			iter, err = transaction.NewUnionIter(iter, snapIter, false)
 			if err != nil {
 				return err
 			}

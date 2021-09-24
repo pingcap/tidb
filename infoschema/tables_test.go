@@ -1841,11 +1841,7 @@ func (s *testTableSuite) TestRegionLabel(c *C) {
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
 	tk.MustQuery(`select * from information_schema.region_label`).Check(testkit.Rows(
-		`schema/test/test_label key-range "nomerge" 7480000000000000ff395f720000000000fa 7480000000000000ff3a5f720000000000fa`,
-	))
-
-	tk.MustQuery(`select rule_id, region_label from information_schema.region_label`).Check(testkit.Rows(
-		`schema/test/test_label "nomerge"`,
+		`schema/test/test_label key-range "merge_option=allow" 7480000000000000ff395f720000000000fa 7480000000000000ff3a5f720000000000fa`,
 	))
 }
 
@@ -1953,5 +1949,10 @@ func (s *testClusterTableSuite) TestIssue26379(c *C) {
 	tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest in ('%s', '%s', '%s', '%s')", digest1.String(), digest2.String(), digest3.String(), digest4.String())).Sort().Check(testkit.Rows(digest1.String(), digest4.String(), digest2.String(), digest3.String()))
 	fillStatementCache()
 	tk.MustQuery("select count(*) from information_schema.statements_summary where digest=''").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from information_schema.statements_summary where digest is null").Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from information_schema.cluster_statements_summary where digest=''").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from information_schema.cluster_statements_summary where digest is null").Check(testkit.Rows("1"))
+
+	// Test explain
+	tk.MustQuery("explain select digest from information_schema.statements_summary where digest is null").Check(testkit.Rows(`Selection_5 8000.00 root  isnull(Column#5)`, `└─MemTableScan_6 10000.00 root table:STATEMENTS_SUMMARY `))
 }
