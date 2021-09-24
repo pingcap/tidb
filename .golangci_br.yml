@@ -29,7 +29,7 @@ linters:
     - gosec
     - errorlint
     - wrapcheck
-
+    - gomoddirectives
     - bodyclose
     - unused
     - unparam
