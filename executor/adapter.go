@@ -1006,7 +1006,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PDTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitPDRespDuration)),
 		BackoffTotal:      time.Duration(atomic.LoadInt64(&tikvExecDetail.BackoffDuration)),
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
-		ResultRowCount:    GetResultRowCount(a.Ctx, a.Plan),
+		ResultRows:        GetResultRowsCount(a.Ctx, a.Plan),
 		ExecRetryCount:    a.retryCount,
 	}
 	if a.retryCount > 0 {
@@ -1057,8 +1057,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 }
 
-// GetResultRowCount gets the count of the statement result rows.
-func GetResultRowCount(sctx sessionctx.Context, p plannercore.Plan) int64 {
+// GetResultRowsCount gets the count of the statement result rows.
+func GetResultRowsCount(sctx sessionctx.Context, p plannercore.Plan) int64 {
 	runtimeStatsColl := sctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 	if runtimeStatsColl == nil {
 		return 0
@@ -1218,7 +1218,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		PlanInBinding:   sessVars.FoundInBinding,
 		ExecRetryCount:  a.retryCount,
 		StmtExecDetails: stmtDetail,
-		ResultRowCount:  GetResultRowCount(a.Ctx, a.Plan),
+		ResultRows:      GetResultRowsCount(a.Ctx, a.Plan),
 		TiKVExecDetails: tikvExecDetail,
 		Prepared:        a.isPreparedStmt,
 	}

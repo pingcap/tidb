@@ -8711,7 +8711,7 @@ func (s *testSuite) TestEmptyTableSampleTemporaryTable(c *C) {
 	tk.MustExec("commit")
 }
 
-func (s *testSuite) TestGetResultRowCount(c *C) {
+func (s *testSuite) TestGetResultRowsCount(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -8741,7 +8741,7 @@ func (s *testSuite) TestGetResultRowCount(c *C) {
 		c.Assert(info, NotNil)
 		p, ok := info.Plan.(plannercore.Plan)
 		c.Assert(ok, IsTrue)
-		cnt := executor.GetResultRowCount(tk.Se, p)
+		cnt := executor.GetResultRowsCount(tk.Se, p)
 		c.Assert(ca.row, Equals, cnt, Commentf("sql: %v", ca.sql))
 	}
 }

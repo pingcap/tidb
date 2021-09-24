@@ -252,7 +252,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		PDTotal:           11 * time.Second,
 		BackoffTotal:      12 * time.Second,
 		WriteSQLRespTotal: 1 * time.Second,
-		ResultRowCount:    12345,
+		ResultRows:        12345,
 		Succ:              true,
 		RewriteInfo: variable.RewritePhaseInfo{
 			DurationRewrite:            3,

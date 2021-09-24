@@ -1426,10 +1426,10 @@ func (s *testClusterTableSuite) TestStmtSummaryResultSet(c *C) {
 	tk.MustQuery("select * from test.t limit 10;")
 	tk.MustQuery("select * from test.t limit 20;")
 	tk.MustQuery("select * from test.t limit 30;")
-	tk.MustQuery("select SUM_RESULT_SET,MIN_RESULT_SET,MAX_RESULT_SET,AVG_RESULT_SET from information_schema.statements_summary where query_sample_text like 'select%test.t limit%' and SUM_RESULT_SET > 10").
-		Check(testkit.Rows("60 10 30 20"))
-	tk.MustQuery("select SUM_RESULT_SET,MIN_RESULT_SET,MAX_RESULT_SET,AVG_RESULT_SET from information_schema.cluster_statements_summary where query_sample_text like 'select%test.t limit%' and SUM_RESULT_SET > 10").
-		Check(testkit.Rows("60 10 30 20"))
+	tk.MustQuery("select MIN_RESULT_ROWS,MAX_RESULT_ROWS,AVG_RESULT_ROWS from information_schema.statements_summary where query_sample_text like 'select%test.t limit%' and MAX_RESULT_ROWS > 10").
+		Check(testkit.Rows("10 30 20"))
+	tk.MustQuery("select MIN_RESULT_ROWS,MAX_RESULT_ROWS,AVG_RESULT_ROWS from information_schema.cluster_statements_summary where query_sample_text like 'select%test.t limit%' and MAX_RESULT_ROWS > 10").
+		Check(testkit.Rows("10 30 20"))
 }
 
 // test stmtSummaryEvictedCount cluster table

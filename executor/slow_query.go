@@ -824,7 +824,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.backoffTotal, err = strconv.ParseFloat(value, 64)
 	case variable.SlowLogWriteSQLRespTotal:
 		st.writeSQLRespTotal, err = strconv.ParseFloat(value, 64)
-	case variable.SlowLogResultSet:
+	case variable.SlowLogResultRows:
 		st.resultRowCount, err = strconv.ParseInt(value, 10, 64)
 	case variable.SlowLogPrepared:
 		st.prepared, err = strconv.ParseBool(value)
