@@ -419,8 +419,21 @@ func TestTxnIsolation(t *testing.T) {
 	_, err = sv.Validate(vars, "read-uncommitted", ScopeSession)
 	require.Equal(t, "[variable:8048]The isolation level 'READ-UNCOMMITTED' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", err.Error())
 
-	vars.systems[TiDBSkipIsolationLevelCheck] = "ON"
+	// Enable global skip isolation check doesn't affect current session
+	require.Nil(t, GetSysVar(TiDBSkipIsolationLevelCheck).SetGlobalFromHook(vars, "ON", true))
+	_, err = sv.Validate(vars, "Serializable", ScopeSession)
+	require.Equal(t, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", err.Error())
 
+	// Enable session skip isolation check
+	require.Nil(t, GetSysVar(TiDBSkipIsolationLevelCheck).SetSessionFromHook(vars, "ON"))
+
+	val, err = sv.Validate(vars, "Serializable", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "SERIALIZABLE", val)
+
+	// Init TiDBSkipIsolationLevelCheck like what loadCommonGlobalVariables does
+	vars = NewSessionVars()
+	require.NoError(t, vars.SetSystemVarWithRelaxedValidation(TiDBSkipIsolationLevelCheck, "1"))
 	val, err = sv.Validate(vars, "Serializable", ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "SERIALIZABLE", val)
@@ -451,11 +464,38 @@ func TestTiDBMultiStatementMode(t *testing.T) {
 
 func TestReadOnlyNoop(t *testing.T) {
 	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	noopFuncs := GetSysVar(TiDBEnableNoopFuncs)
+
+	// For session scope
 	for _, name := range []string{TxReadOnly, TransactionReadOnly} {
 		sv := GetSysVar(name)
 		val, err := sv.Validate(vars, "on", ScopeSession)
 		require.Equal(t, "[variable:1235]function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", err.Error())
 		require.Equal(t, "OFF", val)
+
+		require.NoError(t, noopFuncs.SetSessionFromHook(vars, "ON"))
+		_, err = sv.Validate(vars, "on", ScopeSession)
+		require.NoError(t, err)
+		require.NoError(t, noopFuncs.SetSessionFromHook(vars, "OFF")) // restore default.
+	}
+
+	// For global scope
+	for _, name := range []string{TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, ReadOnly} {
+		sv := GetSysVar(name)
+		val, err := sv.Validate(vars, "on", ScopeGlobal)
+		if name == OfflineMode {
+			require.Equal(t, "[variable:1235]function OFFLINE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", err.Error())
+		} else {
+			require.Equal(t, "[variable:1235]function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", err.Error())
+		}
+		require.Equal(t, "OFF", val)
+		require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBEnableNoopFuncs, "ON"))
+		_, err = sv.Validate(vars, "on", ScopeGlobal)
+		require.NoError(t, err)
+		require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBEnableNoopFuncs, "OFF"))
 	}
 }
 
@@ -592,6 +632,7 @@ func TestInstanceScopedVars(t *testing.T) {
 // The default values should also be normalized for consistency.
 func TestDefaultValuesAreSettable(t *testing.T) {
 	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor()
 	for _, sv := range GetSysVars() {
 		if sv.HasSessionScope() && !sv.ReadOnly {
 			val, err := sv.Validate(vars, sv.Value, ScopeSession)
@@ -600,11 +641,6 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 		}
 
 		if sv.HasGlobalScope() && !sv.ReadOnly {
-			if sv.Name == TiDBEnableNoopFuncs {
-				// TODO: this requires access to the global var accessor,
-				// which is not available in this test.
-				continue
-			}
 			val, err := sv.Validate(vars, sv.Value, ScopeGlobal)
 			require.Equal(t, val, sv.Value)
 			require.NoError(t, err)
@@ -651,4 +687,50 @@ func TestValidateWithRelaxedValidation(t *testing.T) {
 	vars := NewSessionVars()
 	val := sv.ValidateWithRelaxedValidation(vars, "1", ScopeGlobal)
 	require.Equal(t, "ON", val)
+}
+
+func TestTiDBReplicaRead(t *testing.T) {
+	sv := GetSysVar(TiDBReplicaRead)
+	vars := NewSessionVars()
+	val, err := sv.Validate(vars, "follower", ScopeGlobal)
+	require.Equal(t, val, "follower")
+	require.NoError(t, err)
+}
+
+func TestSQLAutoIsNull(t *testing.T) {
+	svSQL, svNoop := GetSysVar(SQLAutoIsNull), GetSysVar(TiDBEnableNoopFuncs)
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor()
+	_, err := svSQL.Validate(vars, "ON", ScopeSession)
+	require.True(t, terror.ErrorEqual(err, ErrFunctionsNoopImpl))
+	// change tidb_enable_noop_functions to 1, it will success
+	require.NoError(t, svNoop.SetSessionFromHook(vars, "ON"))
+	_, err = svSQL.Validate(vars, "ON", ScopeSession)
+	require.NoError(t, err)
+	require.NoError(t, svSQL.SetSessionFromHook(vars, "ON"))
+	res, ok := vars.GetSystemVar(SQLAutoIsNull)
+	require.True(t, ok)
+	require.Equal(t, "ON", res)
+	// restore tidb_enable_noop_functions to 0 failed, as sql_auto_is_null is 1
+	_, err = svNoop.Validate(vars, "OFF", ScopeSession)
+	require.True(t, terror.ErrorEqual(err, errValueNotSupportedWhen))
+	// after set sql_auto_is_null to 0, restore success
+	require.NoError(t, svSQL.SetSessionFromHook(vars, "OFF"))
+	require.NoError(t, svNoop.SetSessionFromHook(vars, "OFF"))
+
+	// Only test validate as MockGlobalAccessor do not support SetGlobalSysVar
+	_, err = svSQL.Validate(vars, "ON", ScopeGlobal)
+	require.True(t, terror.ErrorEqual(err, ErrFunctionsNoopImpl))
+}
+
+func TestLastInsertID(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := GetSessionOrGlobalSystemVar(vars, LastInsertID)
+	require.NoError(t, err)
+	require.Equal(t, val, "0")
+
+	vars.StmtCtx.PrevLastInsertID = 21
+	val, err = GetSessionOrGlobalSystemVar(vars, LastInsertID)
+	require.NoError(t, err)
+	require.Equal(t, val, "21")
 }
