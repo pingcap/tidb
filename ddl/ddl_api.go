@@ -388,6 +388,7 @@ func typesNeedCharset(tp byte) bool {
 }
 
 func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate string) error {
+	var err error
 	if typesNeedCharset(tp.Tp) {
 		tp.Charset = colCharset
 		tp.Collate = colCollate
@@ -398,6 +399,9 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate 
 
 	// Use default value for flen or decimal when they are unspecified.
 	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(tp.Tp)
+	if tp.Decimal == types.UnspecifiedLength {
+		tp.Decimal = defaultDecimal
+	}
 	if tp.Flen == types.UnspecifiedLength {
 		tp.Flen = defaultFlen
 		if mysql.HasUnsignedFlag(tp.Flag) && tp.Tp != mysql.TypeLonglong && mysql.IsIntegerType(tp.Tp) {
@@ -407,12 +411,9 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate 
 		}
 	} else {
 		// Adjust the field type for blob/text types if the flen is set.
-		adjustBlobTypesFlen(tp, colCharset)
+		err = adjustBlobTypesFlen(tp, colCharset)
 	}
-	if tp.Decimal == types.UnspecifiedLength {
-		tp.Decimal = defaultDecimal
-	}
-	return nil
+	return err
 }
 
 // buildColumnAndConstraint builds table.Column and ast.Constraint from the parameters.
@@ -558,11 +559,11 @@ func processColumnFlags(col *table.Column) {
 	}
 }
 
-func adjustBlobTypesFlen(tp *types.FieldType, colCharset string) {
+func adjustBlobTypesFlen(tp *types.FieldType, colCharset string) error {
 	cs, err := charset.GetCharsetInfo(colCharset)
 	// when we meet the unsupported charset, we do not adjust.
 	if err != nil {
-		return
+		return err
 	}
 	l := tp.Flen * cs.Maxlen
 	if tp.Tp == mysql.TypeBlob {
@@ -582,6 +583,7 @@ func adjustBlobTypesFlen(tp *types.FieldType, colCharset string) {
 			tp.Tp = mysql.TypeLongBlob
 		}
 	}
+	return nil
 }
 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.

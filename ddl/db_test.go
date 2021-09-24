@@ -7635,12 +7635,19 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 		"  `d` tinytext DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
+	// Ref: https://dev.mysql.com/doc/refman/8.0/en/storage-requirements.html
+	// TINYBLOB, TINYTEXT	L + 1 bytes, where L < 2^8
+	// BLOB, TEXT	L + 2 bytes, where L < 2^16
+	// MEDIUMBLOB, MEDIUMTEXT	L + 3 bytes, where L < 2^24
+	// LONGBLOB, LONGTEXT	L + 4 bytes, where L < 2^32
 	tk.MustExec("alter table t change column d d text(100);")
+	tk.MustExec("alter table t change column c c text(30000);")
+	tk.MustExec("alter table t change column b b text(10000000);")
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
 		"  `a` tinytext DEFAULT NULL,\n"+
-		"  `b` text DEFAULT NULL,\n"+
-		"  `c` text DEFAULT NULL,\n"+
+		"  `b` longtext DEFAULT NULL,\n"+
+		"  `c` mediumtext DEFAULT NULL,\n"+
 		"  `d` text DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table if exists t")
