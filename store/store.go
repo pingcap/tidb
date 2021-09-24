@@ -64,16 +64,10 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	}
 
 	name := strings.ToLower(storeURL.Scheme)
-
-	storesLock.RLock()
-
-	d, ok := stores[name]
+	d, ok := loadDriver(name)
 	if !ok {
-		storesLock.RUnlock()
 		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
 	}
-
-	storesLock.RUnlock()
 
 	var s kv.Storage
 	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
@@ -88,4 +82,11 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 		logutil.BgLogger().Warn("new store with retry failed", zap.Error(err))
 	}
 	return s, errors.Trace(err)
+}
+
+func loadDriver(name string) (kv.Driver, bool) {
+	storesLock.RLock()
+	defer storesLock.RUnlock()
+	d, ok := stores[name]
+	return d, ok
 }
