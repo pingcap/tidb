@@ -1508,6 +1508,9 @@ func (s *testIntegrationSuite) TestIssue27648(c *C) {
 	tk.MustExec("update t set b = b + 2 where '' or 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(3))
+
+	tk.MustQuery("select * from t where ''").Check(testkit.Rows())
+	tk.MustQuery("select * from t where '   '").Check(testkit.Rows())
 }
 
 // for issue #14822
