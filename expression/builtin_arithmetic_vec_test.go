@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
@@ -182,6 +183,55 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinArithmeticFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinArithmeticCases)
+}
+
+func (s *testEvaluatorSuite) TestVectorizedErrOverflow(c *C) {
+	testCases := []vecExprBenchCase{
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal},
+			geners: []dataGenerator{
+				newRangeDecimalGener(8.1e80, 8.1e80, 0),
+				newRangeDecimalGener(8.1e80, 8.1e80, 0),
+			},
+			chunkSize: 1,
+		},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal},
+			geners: []dataGenerator{
+				newRangeDecimalGener(8.1e80, 8.1e80, 0),
+				newRangeDecimalGener(-8.1e80, -8.1e80, 0),
+			},
+			chunkSize: 1,
+		},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal},
+			geners: []dataGenerator{
+				newRangeDecimalGener(8.1e80, 8.1e80, 0),
+				newRangeDecimalGener(8.1e80, 8.1e80, 0),
+			},
+			chunkSize: 1,
+		},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal},
+			geners: []dataGenerator{
+				newRangeDecimalGener(8.1e80, 8.1e80, 0),
+				newRangeDecimalGener(0.1, 0.1, 0),
+			},
+			chunkSize: 1,
+		},
+	}
+	errStrs := []string{
+		"[types:1690]DECIMAL value is out of range in '(Column#0 + Column#0)'",
+		"[types:1690]DECIMAL value is out of range in '(Column#0 - Column#0)'",
+		"[types:1690]DECIMAL value is out of range in '(Column#0 * Column#0)'",
+		"[types:1690]DECIMAL value is out of range in '(Column#0 / Column#0)'",
+	}
+	opds := []string{ast.Plus, ast.Minus, ast.Mul, ast.Div}
+	idx := 0
+	for _, testCase := range testCases {
+		ctx := mock.NewContext()
+
+		baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, opds[idx], testCase)
+		err := baseFunc.vecEvalDecimal(input, output)
+		c.Assert(err.Error(), Equals, errStrs[idx])
+		idx++
+	}
 }
 
 func BenchmarkVectorizedBuiltinArithmeticFunc(b *testing.B) {
