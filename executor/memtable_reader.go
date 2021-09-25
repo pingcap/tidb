@@ -38,6 +38,8 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -697,4 +699,158 @@ func (e *clusterLogRetriever) close() error {
 
 func (e *clusterLogRetriever) getRuntimeStats() execdetails.RuntimeStats {
 	return nil
+}
+
+type tikvRegionStatusRetriever struct {
+	retrieved bool
+	isDrained bool
+	extractor *plannercore.TikvRegionStatusExtractor
+	rows      [][]types.Datum
+}
+
+func (e *tikvRegionStatusRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.extractor.SkipRequest || e.isDrained {
+		return nil, nil
+	}
+	dbNames := e.extractor.DBNames
+	tableNames := e.extractor.TableNames
+	indexNames := e.extractor.IndexNames
+	tableIDs := e.extractor.TableIDs
+	indexIDs := e.extractor.IndexIDs
+	infoSchema := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	startKeys, endKeys := e.extractStartKeysAndEndKeys(dbNames, tableNames, indexNames, tableIDs, indexIDs, infoSchema)
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
+	if !ok {
+		return nil, errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+	for i := range startKeys {
+		regionsInfo, err := tikvHelper.GetRegionsInfoByStartKeyAndEndKey(startKeys[i], endKeys[i])
+		if err != nil {
+			return nil, err
+		}
+		tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, infoSchema.AllSchemas())
+		for _, region := range regionsInfo.Regions {
+			tableList := tableInfos[region.ID]
+			if len(tableList) == 0 {
+				e.setNewTiKVRegionStatusCol(&region, nil)
+			}
+			for _, table := range tableList {
+				e.setNewTiKVRegionStatusCol(&region, &table)
+			}
+		}
+	}
+	return e.rows, nil
+}
+
+func (e *tikvRegionStatusRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) {
+	row := make([]types.Datum, len(infoschema.TableTiKVRegionStatusCols))
+	row[0].SetInt64(region.ID)
+	row[1].SetString(region.StartKey, mysql.DefaultCollationName)
+	row[2].SetString(region.EndKey, mysql.DefaultCollationName)
+	if table != nil {
+		row[3].SetInt64(table.Table.ID)
+		row[4].SetString(table.DB.Name.O, mysql.DefaultCollationName)
+		row[5].SetString(table.Table.Name.O, mysql.DefaultCollationName)
+		if table.IsIndex {
+			row[6].SetInt64(1)
+			row[7].SetInt64(table.Index.ID)
+			row[8].SetString(table.Index.Name.O, mysql.DefaultCollationName)
+		} else {
+			row[6].SetInt64(0)
+		}
+	}
+	row[9].SetInt64(region.Epoch.ConfVer)
+	row[10].SetInt64(region.Epoch.Version)
+	row[11].SetUint64(region.WrittenBytes)
+	row[12].SetUint64(region.ReadBytes)
+	row[13].SetInt64(region.ApproximateSize)
+	row[14].SetInt64(region.ApproximateKeys)
+	if region.ReplicationStatus != nil {
+		row[15].SetString(region.ReplicationStatus.State, mysql.DefaultCollationName)
+		row[16].SetInt64(region.ReplicationStatus.StateID)
+	}
+	e.rows = append(e.rows, row)
+}
+
+func (e *tikvRegionStatusRetriever) extractStartKeysAndEndKeys(dbNames, tableNames, indexNames set.StringSet,
+	tableIDs, indexIDs set.Int64Set, infoSchema infoschema.InfoSchema) ([][]byte, [][]byte) {
+	var dbSchemas []*model.DBInfo
+	var tableInfos []*model.TableInfo
+	var startKeys, endKeys [][]byte
+	if len(dbNames) == 0 {
+		dbSchemas = infoSchema.AllSchemas()
+	} else {
+		for dbName := range dbNames {
+			if dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr(dbName)); ok {
+				dbSchemas = append(dbSchemas, dbInfo)
+			}
+		}
+	}
+	for _, dbSchema := range dbSchemas {
+		for _, tableInfo := range dbSchema.Tables {
+			tableInfos = append(tableInfos, tableInfo)
+		}
+	}
+	if len(tableNames) != 0 {
+		var tmpTableInfos []*model.TableInfo
+		for _, tableInfo := range tableInfos {
+			if tableNames.Exist(tableInfo.Name.L) {
+				tmpTableInfos = append(tmpTableInfos, tableInfo)
+			}
+		}
+		tableInfos = tmpTableInfos
+	}
+	if len(tableIDs) != 0 {
+		var tmpTableInfos []*model.TableInfo
+		for _, tableInfo := range tableInfos {
+			if tableIDs.Exist(tableInfo.ID) {
+				tmpTableInfos = append(tmpTableInfos, tableInfo)
+			}
+		}
+		tableInfos = tmpTableInfos
+	}
+	tableToPhysicalIDs := make(map[*model.TableInfo][]int64)
+	for _, tableInfo := range tableInfos {
+		if pi := tableInfo.GetPartitionInfo(); pi != nil {
+			physicalIDs := []int64{}
+			for _, def := range pi.Definitions {
+				physicalIDs = append(physicalIDs, def.ID)
+			}
+			tableToPhysicalIDs[tableInfo] = physicalIDs
+		}
+	}
+	// If there is no requirement for index,extract startkeys and endkeys return.
+	if len(indexIDs) == 0 && len(indexNames) == 0 {
+		for tableInfo, physicalIDs := range tableToPhysicalIDs {
+			for _, physicalID := range physicalIDs {
+				startKey, endKey := tablecodec.GetTableHandleKeyRange(physicalID)
+				startKeys = append(startKeys, startKey)
+				endKeys = append(endKeys, endKey)
+				for _, indexInfo := range tableInfo.Indices {
+					startKey, endKey := tablecodec.GetTableIndexKeyRange(physicalID, indexInfo.ID)
+					startKeys = append(startKeys, startKey)
+					endKeys = append(endKeys, endKey)
+				}
+			}
+		}
+		return startKeys, endKeys
+	}
+	for _, tableInfo := range tableInfos {
+		for _, indexInfo := range tableInfo.Indices {
+			if (len(indexNames) == 0 || indexNames.Exist(indexInfo.Name.L)) &&
+				(len(indexIDs) == 0 || indexIDs.Exist(indexInfo.ID)) {
+				physicalIDs := tableToPhysicalIDs[tableInfo]
+				for _, physicalID := range physicalIDs {
+					startKey, endKey := tablecodec.GetTableIndexKeyRange(physicalID, indexInfo.ID)
+					startKeys = append(startKeys, startKey)
+					endKeys = append(endKeys, endKey)
+				}
+			}
+		}
+	}
+	return startKeys, endKeys
 }
