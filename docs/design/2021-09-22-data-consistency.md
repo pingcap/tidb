@@ -61,7 +61,7 @@ While the data is modified, the KV pair modified to memDB is additionally set wi
 - MustExist(10): Key must exist in storage, subsequent modifications within the transaction cannot be overwritten
 - MustNotExist(01): Key must not exist in the storage, subsequent modifications within the transaction cannot be overwritten
 
-The flags in MemDB, like the KV data, are first set to the current stage of the statement. After that, if the statement reports an error and the statement rolls back, the flags will be invalidated. If the statement is executed successfully and the is submitted, the flags will take effect in the transaction. The assertion information is sent to TiKV in the prewrite stage of 2PC. TiKV performs additional checks based on the assertions before modifying data. If the assertions fail, TiKV rejects the request.
+The flags in MemDB, like the KV data, are first set to the current stage of the statement. After that, if the statement reports an error and the statement rolls back, the flags will be invalidated. If the statement is executed successfully and is submitted, the flags will take effect in the transaction. The assertion information is sent to TiKV in the prewrite stage of 2PC. TiKV performs additional checks based on the assertions before modifying data. If the assertions fail, TiKV rejects the request.
 
 ### Check Mutations
 
