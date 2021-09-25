@@ -4505,12 +4505,11 @@ func (s *testIntegrationSuite) TestIssue28154(c *C) {
 	result = tk.MustQuery("select * from t where from_base64('invalidbase64')")
 	result.Check(testkit.Rows())
 	tk.MustExec("update t set a = 'hig' where from_base64('invalidbase64')")
-	c.Assert(err, nil)
 	result = tk.MustQuery("select * from t where from_base64('test')")
 	result.Check(testkit.Rows())
 	_, err = tk.Exec("update t set a = 'xyz' where from_base64('test')")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect DOUBLE value: '??-'")
+	c.Assert(err, ErrorMatches, "\\[types:1292\\]Truncated incorrect DOUBLE value.*")
 	result = tk.MustQuery("select * from t")
 	result.Check(testkit.Rows("abc"))
 }
