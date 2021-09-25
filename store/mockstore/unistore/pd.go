@@ -111,8 +111,8 @@ func (c *pdClient) ScatterRegions(ctx context.Context, regionsID []uint64, opts 
 }
 
 func (c *pdClient) SplitRegions(ctx context.Context, splitKeys [][]byte, opts ...pd.RegionsOption) (*pdpb.SplitRegionsResponse, error) {
-	regionsId, err := c.MockPD.SplitRegions(ctx, splitKeys)
-	resp := &pdpb.SplitRegionsResponse{RegionsId: regionsId}
+	regionsID, err := c.MockPD.SplitRegions(ctx, splitKeys)
+	resp := &pdpb.SplitRegionsResponse{RegionsId: regionsID}
 	return resp, err
 }
 

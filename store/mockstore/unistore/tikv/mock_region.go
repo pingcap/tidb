@@ -761,13 +761,13 @@ func (pd *MockPD) SplitRegions(ctx context.Context, SplitKeys [][]byte) ([]uint6
 		return nil, err
 	}
 
-	regionsId := make([]uint64, len(newRegions))
+	regionsID := make([]uint64, len(newRegions))
 
 	for _, regCtx := range newRegions {
-		regionsId = append(regionsId, regCtx.meta.Id)
+		regionsID = append(regionsID, regCtx.meta.Id)
 	}
 
-	return regionsId, nil
+	return regionsID, nil
 }
 
 // AskBatchSplit implements gRPC PDServer.
