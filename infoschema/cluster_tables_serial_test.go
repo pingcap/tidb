@@ -48,14 +48,13 @@ import (
 )
 
 type clusterTablesSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
+	store      kv.Storage
+	dom        *domain.Domain
 	rpcserver  *grpc.Server
 	httpServer *httptest.Server
 	mockAddr   string
 	listenAddr string
 	startTime  time.Time
-
 }
 
 func TestClusterTables(t *testing.T) {
