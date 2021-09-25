@@ -52,6 +52,7 @@ func TestScheduler(t *testing.T) {
 		"max-pending-peer-count":      uint64(16),
 	}
 	_, err = pdController.pauseSchedulersAndConfigWith(ctx, []string{}, cfg, mock)
+	require.Error(t, err)
 	require.Regexp(t, "^failed to update PD.*", err.Error())
 	go func() {
 		<-schedulerPauseCh
@@ -131,7 +132,7 @@ func TestRegionCount(t *testing.T) {
 	) ([]byte, error) {
 		query := fmt.Sprintf("%s/%s", addr, prefix)
 		u, e := url.Parse(query)
-		require.NoError(t, e)
+		require.NoError(t, e, query)
 		start := u.Query().Get("start_key")
 		end := u.Query().Get("end_key")
 		t.Log(hex.EncodeToString([]byte(start)))
