@@ -294,6 +294,19 @@ func extractStringFromStringSet(set set.StringSet) string {
 	return strings.Join(l, ",")
 }
 
+// extractStringFromStringSet helps extract string info from set.StringSet.
+func extractStringFromInt64Set(set set.Int64Set) string {
+	if len(set) < 1 {
+		return ""
+	}
+	l := make([]string, 0, len(set))
+	for k := range set {
+		l = append(l, fmt.Sprintf(`"%d"`, k))
+	}
+	sort.Strings(l)
+	return strings.Join(l, ",")
+}
+
 func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bool {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {

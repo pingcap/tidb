@@ -1174,3 +1174,90 @@ func (e *TiFlashSystemTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	}
 	return s
 }
+
+// TikvRegionStatusExtractor is used to extract some predicates of cluster table.
+type TikvRegionStatusExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+
+	// DBNames, TableNames, IndexNames, TableIDs, IndexIDs will be filtered in TiDB,
+	// because PD can't parse schema info.
+	// DBNames represents database names applied to, and we should apply all databases' hot regions if there is no database specified.
+	// e.g: SELECT * FROM tikv_region_status WHERE db_name in ('mysql', 'test')
+	DBNames set.StringSet
+	// TableNames represents table names applied to, and we should apply all tables' hot regions if there is no table specified.
+	// e.g: SELECT * FROM tikv_region_status WHERE table_name in ('tables_priv', 'stats_meta')
+	TableNames set.StringSet
+	// IndexNames represents index names applied to, and we should apply all indexes' hot regions if there is no index specified.
+	// e.g: SELECT * FROM tikv_region_status WHERE index_name in ('idx_ver', 'tbl')
+	IndexNames set.StringSet
+	// TableID(IndexID) represents all table(index) ids we should filter in TiDB
+	// e.g:
+	// 1. SELECT * FROM tikv_region_status WHERE table_id=11
+	// 2. SELECT * FROM tikv_region_status WHERE table_id in (11, 21)
+	TableIDs set.Int64Set
+	IndexIDs set.Int64Set
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TikvRegionStatusExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	remained, dbNameSkipRequest, dbNames := e.extractCol(schema, names, predicates, "db_name", true)
+	remained, tableNameSkipRequest, tableNames := e.extractCol(schema, names, remained, "table_name", true)
+	remained, indexNameSkipRequest, indexNames := e.extractCol(schema, names, remained, "index_name", true)
+	e.SkipRequest = dbNameSkipRequest || tableNameSkipRequest || indexNameSkipRequest
+	if e.SkipRequest {
+		return nil
+	}
+	remained, tableIDSkipRequest, tableIDs := e.extractCol(schema, names, remained, "table_id", false)
+	remained, indexIDSkipRequest, indexIDs := e.extractCol(schema, names, remained, "index_id", false)
+	e.SkipRequest = tableIDSkipRequest || indexIDSkipRequest
+	if e.SkipRequest {
+		return nil
+	}
+	e.DBNames, e.TableNames, e.IndexNames = dbNames, tableNames, indexNames
+	tableIDSlice, indexIDSlice := e.parseUint64(tableIDs), e.parseUint64(indexIDs)
+	// Intset is convinient to check exist
+	e.TableIDs = set.NewInt64Set()
+	e.IndexIDs = set.NewInt64Set()
+	for _, tbl := range tableIDSlice {
+		e.TableIDs.Insert(int64(tbl))
+	}
+	for _, idx := range indexIDSlice {
+		e.IndexIDs.Insert(int64(idx))
+	}
+	return remained
+}
+
+func (e *TikvRegionStatusExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.DBNames) > 0 {
+		r.WriteString(fmt.Sprintf("DB_names:[%s], ", extractStringFromStringSet(e.DBNames)))
+	}
+	if len(e.TableNames) > 0 {
+		r.WriteString(fmt.Sprintf("table_names:[%s], ", extractStringFromStringSet(e.TableNames)))
+	}
+	if len(e.IndexNames) > 0 {
+		r.WriteString(fmt.Sprintf("index_names:[%s], ", extractStringFromStringSet(e.IndexNames)))
+	}
+	if len(e.TableIDs) > 0 {
+		r.WriteString(fmt.Sprintf("table_ids:[%s], ", extractStringFromInt64Set(e.TableIDs)))
+	}
+	if len(e.IndexIDs) > 0 {
+		r.WriteString(fmt.Sprintf("index_ids:[%s], ", extractStringFromInt64Set(e.IndexIDs)))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
