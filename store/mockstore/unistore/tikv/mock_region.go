@@ -745,6 +745,31 @@ func (pd *MockPD) AskSplit(ctx context.Context, region *metapb.Region) (*pdpb.As
 	panic("unimplemented")
 }
 
+// SplitRegions mock split regions by keys
+func (pd *MockPD) SplitRegions(ctx context.Context, SplitKeys [][]byte) ([]uint64, error) {
+	splitKeys := make([][]byte, 0, len(SplitKeys))
+	for _, rawKey := range SplitKeys {
+		splitKeys = append(splitKeys, codec.EncodeBytes(nil, rawKey))
+	}
+	sort.Slice(splitKeys, func(i, j int) bool {
+		return bytes.Compare(splitKeys[i], splitKeys[j]) < 0
+	})
+
+	newRegions, err := pd.rm.splitKeys(splitKeys)
+
+	if err != nil {
+		return nil, err
+	}
+
+	regionsId := make([]uint64, len(newRegions))
+
+	for _, regCtx := range newRegions {
+		regionsId = append(regionsId, regCtx.meta.Id)
+	}
+
+	return regionsId, nil
+}
+
 // AskBatchSplit implements gRPC PDServer.
 func (pd *MockPD) AskBatchSplit(ctx context.Context, region *metapb.Region, count int) (*pdpb.AskBatchSplitResponse, error) {
 	panic("unimplemented")
