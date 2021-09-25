@@ -1,8 +1,8 @@
-# **Optimise TIKV_REGION_STATUS and TiKV_REGION_PEERS**
+# **Push down optimisation of  TIKV_REGION_STATUS and TiKV_REGION_PEERS**
 
 - Author(s): @qidi1, @IcePigZDB
-- Discussion PR: [https://github.com/pingcap/tidb/pull/XXX](https://github.com/pingcap/tidb/pull/XXX)
-- Tracking Issue: [https://github.com/pingcap/tidb/issues/XXX](https://github.com/pingcap/tidb/issues/XXX)
+- Discussion PR: [https://github.com/pingcap/tidb/pull/28331](https://github.com/pingcap/tidb/pull/28331)
+- Tracking Issue: [https://github.com/pingcap/tidb/issues/28330](https://github.com/pingcap/tidb/issues/28330)
 
 ## **Table of Contents**
 
