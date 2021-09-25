@@ -3813,7 +3813,9 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	tk.MustQuery("SELECT @@div_precision_increment;").Check(testkit.Rows("4"))
 
 	tk.Se.GetSessionVars().SetSystemVar("sql_auto_is_null", "0")
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "1")
 	tk.MustQuery("SELECT /*+ SET_VAR(sql_auto_is_null=1) */ @@sql_auto_is_null;").Check(testkit.Rows("1"))
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "0")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@sql_auto_is_null;").Check(testkit.Rows("0"))
 
