@@ -1476,14 +1476,12 @@
         ],
         "Plan": [
           "Sort 12500.00 root  test.t1.c_int, test.t2.c_str",
-          "└─MergeJoin 12500.00 root  inner join, left key:test.t1.c_int, test.t1.c_int, right key:test.t2.c_int, test.t2.c_int",
-          "  ├─Sort(Build) 10000.00 root  test.t2.c_int, test.t2.c_int",
-          "  │ └─UnionScan 10000.00 root  ",
-          "  │   └─TableReader 10000.00 root  data:TableFullScan",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─Sort(Probe) 10000.00 root  test.t1.c_int, test.t1.c_int",
-          "    └─TableReader 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─MergeJoin 12500.00 root  inner join, left key:test.t1.c_int, right key:test.t2.c_int",
+          "  ├─UnionScan(Build) 10000.00 root  ",
+          "  │ └─TableReader 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]
       }
     ]
