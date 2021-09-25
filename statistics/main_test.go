@@ -17,25 +17,15 @@ package statistics
 import (
 	"testing"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
-	"go.uber.org/zap"
 )
 
-var suite *testStatisticsSuite
-var err error
-
 func TestMain(m *testing.M) {
-
-	suite, err = createTestStatisticsSuite()
-	if err != nil {
-		log.Error("createTestStatisticsSuite failed", zap.Error(err))
-		return
-	}
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -44,8 +34,16 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func createTestStatisticsSuite() (*testStatisticsSuite, error) {
-	s := &testStatisticsSuite{}
+func TestStatistics(t *testing.T) {
+	s := createTestStatisticsSuite(t)
+	t.Run("TestSketch", SubTestSketch(s))
+	t.Run("TestSketchProtoConversion", SubTestSketchProtoConversion(s))
+	t.Run("TestFMSketchCoding", SubTestFMSketchCoding(s))
+}
+
+func createTestStatisticsSuite(t *testing.T) *testStatisticsSuite {
+	s := new(testStatisticsSuite)
+
 	s.count = 100000
 	samples := make([]*SampleItem, 10000)
 	for i := 0; i < len(samples); i++ {
@@ -66,11 +64,10 @@ func createTestStatisticsSuite() (*testStatisticsSuite, error) {
 		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 2)
 	}
 	sc := new(stmtctx.StatementContext)
-	samples, err := SortSampleItems(sc, samples)
-	if err != nil {
-		return s, err
-	}
-	s.samples = samples
+
+	var err error
+	s.samples, err = SortSampleItems(sc, samples)
+	require.NoError(t, err)
 
 	rc := &recordSet{
 		data:   make([]types.Datum, s.count),
@@ -91,10 +88,8 @@ func createTestStatisticsSuite() (*testStatisticsSuite, error) {
 	for i := start; i < rc.count; i += 5 {
 		rc.data[i].SetInt64(rc.data[i].GetInt64() + 2)
 	}
-	err = types.SortDatums(sc, rc.data)
-	if err != nil {
-		return s, err
-	}
+	require.NoError(t, types.SortDatums(sc, rc.data))
+
 	s.rc = rc
 
 	pk := &recordSet{
@@ -107,5 +102,6 @@ func createTestStatisticsSuite() (*testStatisticsSuite, error) {
 		pk.data[i].SetInt64(int64(i))
 	}
 	s.pk = pk
-	return s, nil
+
+	return s
 }

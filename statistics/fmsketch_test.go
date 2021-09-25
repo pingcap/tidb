@@ -33,79 +33,85 @@ func extractSampleItemsDatums(items []*SampleItem) []types.Datum {
 	return datums
 }
 
-func TestSketch(t *testing.T) {
-	t.Parallel()
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	maxSize := 1000
-	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(suite.samples), maxSize)
-	require.NoError(t, err)
-	require.Equal(t, int64(6232), ndv)
+func SubTestSketch(s *testStatisticsSuite) func(*testing.T) {
+	return func(t *testing.T) {
+		t.Parallel()
+		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		maxSize := 1000
+		sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(6232), ndv)
 
-	rcSketch, ndv, err := buildFMSketch(sc, suite.rc.(*recordSet).data, maxSize)
-	require.NoError(t, err)
-	require.Equal(t, int64(73344), ndv)
+		rcSketch, ndv, err := buildFMSketch(sc, s.rc.(*recordSet).data, maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(73344), ndv)
 
-	pkSketch, ndv, err := buildFMSketch(sc, suite.pk.(*recordSet).data, maxSize)
-	require.NoError(t, err)
-	require.Equal(t, int64(100480), ndv)
+		pkSketch, ndv, err := buildFMSketch(sc, s.pk.(*recordSet).data, maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(100480), ndv)
 
-	sampleSketch.MergeFMSketch(pkSketch)
-	sampleSketch.MergeFMSketch(rcSketch)
-	require.Equal(t, int64(100480), sampleSketch.NDV())
+		sampleSketch.MergeFMSketch(pkSketch)
+		sampleSketch.MergeFMSketch(rcSketch)
+		require.Equal(t, int64(100480), sampleSketch.NDV())
 
-	maxSize = 2
-	sketch := NewFMSketch(maxSize)
-	sketch.insertHashValue(1)
-	sketch.insertHashValue(2)
-	require.Equal(t, maxSize, len(sketch.hashset))
-	sketch.insertHashValue(4)
-	require.LessOrEqual(t, maxSize, len(sketch.hashset))
-}
-
-func TestSketchProtoConversion(t *testing.T) {
-	t.Parallel()
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	maxSize := 1000
-	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(suite.samples), maxSize)
-	require.NoError(t, err)
-	require.Equal(t, int64(6232), ndv)
-	p := FMSketchToProto(sampleSketch)
-	f := FMSketchFromProto(p)
-	require.Equal(t, f.mask, sampleSketch.mask)
-	require.Equal(t, len(f.hashset), len(sampleSketch.hashset))
-	for val := range sampleSketch.hashset {
-		require.True(t, f.hashset[val])
+		maxSize = 2
+		sketch := NewFMSketch(maxSize)
+		sketch.insertHashValue(1)
+		sketch.insertHashValue(2)
+		require.Equal(t, maxSize, len(sketch.hashset))
+		sketch.insertHashValue(4)
+		require.LessOrEqual(t, maxSize, len(sketch.hashset))
 	}
 }
 
-func TestFMSketchCoding(t *testing.T) {
-	t.Parallel()
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	maxSize := 1000
-	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(suite.samples), maxSize)
-	require.NoError(t, err)
-	require.Equal(t, int64(6232), ndv)
-	bytes, err := EncodeFMSketch(sampleSketch)
-	require.NoError(t, err)
-	fmsketch, err := DecodeFMSketch(bytes)
-	require.NoError(t, err)
-	require.Equal(t, fmsketch.NDV(), sampleSketch.NDV())
+func SubTestSketchProtoConversion(s *testStatisticsSuite) func(*testing.T) {
+	return func(t *testing.T) {
+		t.Parallel()
+		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		maxSize := 1000
+		sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(6232), ndv)
+		p := FMSketchToProto(sampleSketch)
+		f := FMSketchFromProto(p)
+		require.Equal(t, f.mask, sampleSketch.mask)
+		require.Equal(t, len(f.hashset), len(sampleSketch.hashset))
+		for val := range sampleSketch.hashset {
+			require.True(t, f.hashset[val])
+		}
+	}
+}
 
-	rcSketch, ndv, err := buildFMSketch(sc, suite.rc.(*recordSet).data, maxSize)
-	require.NoError(t, err)
-	require.Equal(t, int64(73344), ndv)
-	bytes, err = EncodeFMSketch(rcSketch)
-	require.NoError(t, err)
-	fmsketch, err = DecodeFMSketch(bytes)
-	require.NoError(t, err)
-	require.Equal(t, fmsketch.NDV(), rcSketch.NDV())
+func SubTestFMSketchCoding(s *testStatisticsSuite) func(*testing.T) {
+	return func(t *testing.T) {
+		t.Parallel()
+		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		maxSize := 1000
+		sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(6232), ndv)
+		bytes, err := EncodeFMSketch(sampleSketch)
+		require.NoError(t, err)
+		fmsketch, err := DecodeFMSketch(bytes)
+		require.NoError(t, err)
+		require.Equal(t, fmsketch.NDV(), sampleSketch.NDV())
 
-	pkSketch, ndv, err := buildFMSketch(sc, suite.pk.(*recordSet).data, maxSize)
-	require.NoError(t, err)
-	require.Equal(t, int64(100480), ndv)
-	bytes, err = EncodeFMSketch(pkSketch)
-	require.NoError(t, err)
-	fmsketch, err = DecodeFMSketch(bytes)
-	require.NoError(t, err)
-	require.Equal(t, fmsketch.NDV(), pkSketch.NDV())
+		rcSketch, ndv, err := buildFMSketch(sc, s.rc.(*recordSet).data, maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(73344), ndv)
+		bytes, err = EncodeFMSketch(rcSketch)
+		require.NoError(t, err)
+		fmsketch, err = DecodeFMSketch(bytes)
+		require.NoError(t, err)
+		require.Equal(t, fmsketch.NDV(), rcSketch.NDV())
+
+		pkSketch, ndv, err := buildFMSketch(sc, s.pk.(*recordSet).data, maxSize)
+		require.NoError(t, err)
+		require.Equal(t, int64(100480), ndv)
+		bytes, err = EncodeFMSketch(pkSketch)
+		require.NoError(t, err)
+		fmsketch, err = DecodeFMSketch(bytes)
+		require.NoError(t, err)
+		require.Equal(t, fmsketch.NDV(), pkSketch.NDV())
+	}
 }
