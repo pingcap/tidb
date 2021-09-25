@@ -53,7 +53,12 @@ func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
 	}
 }
 
-// Session return a session
+// SetSession set the session of testkit
+func (tk *TestKit) SetSession(session session.Session) {
+	tk.session = session
+}
+
+// Session return the session associated with the testkit
 func (tk *TestKit) Session() session.Session {
 	return tk.session
 }
@@ -176,6 +181,13 @@ func newSession(t *testing.T, store kv.Storage) session.Session {
 	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())
 	return se
+}
+
+// RefreshConnectionID refresh the connection ID for session of the testkit
+func (tk *TestKit) RefreshConnectionID() {
+	if tk.session != nil {
+		tk.session.SetConnectionID(testKitIDGenerator.Inc())
+	}
 }
 
 // MustGetErrCode executes a sql statement and assert it's error code.
