@@ -148,12 +148,24 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 	if followers == 0 {
 		followers = uint64(len(regions))
 	}
+	if followers == 0 {
+		followers = 3
+	}
 	schedule := options.Schedule
 
+	var Rules []*Rule
 	var constraints Constraints
 	var err error
 
-	Rules := []*Rule{}
+	if len(regions) == 0 {
+		constraints, err  = NewConstraints(nil)
+		if err != nil {
+			return nil, err
+		}
+		Rules = append(Rules, NewRule(Voter, followers, constraints))
+		return &Bundle{Rules: Rules}, nil
+	}
+
 	switch strings.ToLower(schedule) {
 	case "", "even":
 		constraints, err = NewConstraints([]string{fmt.Sprintf("+region=%s", primaryRegion)})
@@ -177,27 +189,19 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacementOptions, schedule)
 	}
 
-	if len(regions) == 0 {
-		constraints, err := NewConstraints(nil)
+	count := followers / uint64(len(regions))
+	rem := followers - count*uint64(len(regions))
+	for _, region := range regions {
+		constraints, err = NewConstraints([]string{fmt.Sprintf("+region=%s", region)})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: invalid region of 'Regions', '%s'", err, region)
 		}
-		Rules = append(Rules, NewRule(Follower, followers, constraints))
-	} else {
-		count := followers / uint64(len(regions))
-		rem := followers - count*uint64(len(regions))
-		for _, region := range regions {
-			constraints, err = NewConstraints([]string{fmt.Sprintf("+region=%s", region)})
-			if err != nil {
-				return nil, fmt.Errorf("%w: invalid region of 'Regions', '%s'", err, region)
-			}
-			replica := count
-			if rem > 0 {
-				replica += 1
-				rem--
-			}
-			Rules = append(Rules, NewRule(Follower, replica, constraints))
+		replica := count
+		if rem > 0 {
+			replica += 1
+			rem--
 		}
+		Rules = append(Rules, NewRule(Follower, replica, constraints))
 	}
 
 	return &Bundle{Rules: Rules}, nil
