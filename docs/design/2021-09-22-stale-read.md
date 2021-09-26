@@ -84,7 +84,7 @@ COMMIT;
 SELECT * FROM t AS OF TIMESTAMP NOW() - INTERVAL 20 SECOND WHERE id = 1;
 ```
 
-6. Use Stale Read with given max tolerant staleness in interactive transaction:
+6. Use Stale Read with given max tolerant staleness in an interactive transaction:
 
 ```sql
 START TRANSACTION READ ONLY AS OF timestamp NOW() - INTERVAL 20 SECOND;
