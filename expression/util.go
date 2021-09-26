@@ -909,8 +909,10 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // for the statement when we enable the plan cache.
 // In some situations, some optimizations maybe over-optimize and cache an
 // overOptimized plan. The cached plan may not get the correct result when we
-// reuse the plan for other statements. So we need to do the check here.
-// The check includes the following aspects:
+// reuse the plan for other statements.
+// For example, `pk>=$a and pk<=$b` can be optimized to a PointGet when
+// `$a==$b`, but it will cause wrong results when `$a!=$b`.
+// So we need to do the check here. The check includes the following aspects:
 // 1. Whether the plan cache switch is enable.
 // 2. Whether the expressions contain a lazy constant.
 // TODO: Do more careful check here.
