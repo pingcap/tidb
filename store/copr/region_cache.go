@@ -113,9 +113,9 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 
 func minInt(a int, b int) int {
 	if a < b {
-		return b
+		return a
 	}
-	return a
+	return b
 }
 
 // OnSendFailForBatchRegions handles send request fail logic.
