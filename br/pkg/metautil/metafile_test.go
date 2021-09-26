@@ -155,68 +155,68 @@ func TestWalkMetaFile(t *testing.T) {
 }
 
 type encryptTest struct {
-	cipher backuppb.CipherInfo
-	ok     bool
+	method   encryptionpb.EncryptionMethod
+	rightKey string
+	wrongKey string
 }
 
 func TestEncryptAndDecrypt(t *testing.T) {
 	t.Parallel()
 
-	originalData := "pingcap"
+	originalData := []byte("pingcap")
 	testCases := []encryptTest{
 		{
-			backuppb.CipherInfo{
-				CipherType: encryptionpb.EncryptionMethod_UNKNOWN,
-			},
-			false,
+			method: encryptionpb.EncryptionMethod_UNKNOWN,
 		},
 		{
-			backuppb.CipherInfo{
-				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
-			},
-			true,
+			method: encryptionpb.EncryptionMethod_PLAINTEXT,
 		},
 		{
-			backuppb.CipherInfo{
-				CipherType: encryptionpb.EncryptionMethod_AES128_CTR,
-				CipherKey:  []byte("012345678901234"), // Not right key
-			},
-			false,
+			method:   encryptionpb.EncryptionMethod_AES128_CTR,
+			rightKey: "0123456789012345",
+			wrongKey: "012345678901234",
 		},
 		{
-			backuppb.CipherInfo{
-				CipherType: encryptionpb.EncryptionMethod_AES128_CTR,
-				CipherKey:  []byte("0123456789012345"),
-			},
-			true,
+			method:   encryptionpb.EncryptionMethod_AES192_CTR,
+			rightKey: "012345678901234567890123",
+			wrongKey: "0123456789012345678901234",
 		},
 		{
-			backuppb.CipherInfo{
-				CipherType: encryptionpb.EncryptionMethod_AES192_CTR,
-				CipherKey:  []byte("012345678901234567890123"),
-			},
-			true,
-		},
-		{
-			backuppb.CipherInfo{
-				CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
-				CipherKey:  []byte("01234567890123456789012345678901"),
-			},
-			true,
+			method:   encryptionpb.EncryptionMethod_AES256_CTR,
+			rightKey: "01234567890123456789012345678901",
+			wrongKey: "01234567890123456789012345678902",
 		},
 	}
 
 	for _, v := range testCases {
-		encryptData, err := Encrypt([]byte(originalData), &v.cipher)
-		if !v.ok {
-			require.Error(t, err)
-			continue
+		cipher := backuppb.CipherInfo{
+			CipherType: v.method,
+			CipherKey:  []byte(v.rightKey),
 		}
+		encryptData, err := Encrypt(originalData, &cipher)
+		if v.method == encryptionpb.EncryptionMethod_UNKNOWN {
+			require.Error(t, err)
+		} else if v.method == encryptionpb.EncryptionMethod_PLAINTEXT {
+			require.Nil(t, err)
+			require.Equal(t, originalData, encryptData)
 
-		require.Nil(t, err)
-		decryptData, err := Decrypt(encryptData, &v.cipher)
-		require.Nil(t, err)
-		require.Equal(t, string(decryptData), originalData)
-		require.Equal(t, decryptData, []byte(originalData))
+			decryptData, err := Decrypt(encryptData, &cipher)
+			require.Nil(t, err)
+			require.Equal(t, decryptData, originalData)
+		} else {
+			require.Nil(t, err)
+			require.NotEqual(t, originalData, encryptData)
+
+			decryptData, err := Decrypt(encryptData, &cipher)
+			require.Nil(t, err)
+			require.Equal(t, decryptData, originalData)
+
+			wrongCipher := backuppb.CipherInfo{
+				CipherType: v.method,
+				CipherKey:  []byte(v.wrongKey),
+			}
+			_, err = Decrypt(encryptData, &wrongCipher)
+			require.Error(t, err)
+		}
 	}
 }

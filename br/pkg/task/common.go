@@ -3,6 +3,7 @@
 package task
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"net/url"
@@ -304,11 +305,7 @@ func getCipherKeyContent(cipherKey, cipherFilePath string) ([]byte, error) {
 		return keyContent, errors.Annotate(err, "failed to read cipher file")
 	}
 
-	len := len(content)
-	if len > 0 && content[len-1] == '\n' {
-		content = content[:len-1]
-	}
-
+	content = bytes.TrimSuffix(content, []byte("\n"))
 	return content, nil
 }
 
