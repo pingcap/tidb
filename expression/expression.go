@@ -1089,6 +1089,11 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		default:
 			return false
 		}
+	case ast.Lower:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_Lower:
+			return true
+		}
 	}
 	return false
 }
