@@ -65,9 +65,7 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	leaderConstraints := options.LeaderConstraints
 	learnerConstraints := options.LearnerConstraints
 	followerConstraints := options.FollowerConstraints
-	voterConstraints := options.VoterConstraints
 	followerCount := options.Followers
-	voterCount := options.Voters
 	learnerCount := options.Learners
 
 	CommonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
@@ -88,21 +86,6 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	}
 	if len(LeaderConstraints) > 0 {
 		Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
-	}
-
-	if voterCount > 0 {
-		VoterRules, err := NewRules(Voter, voterCount, voterConstraints)
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid VoterConstraints", err)
-		}
-		for _, rule := range VoterRules {
-			for _, cnst := range CommonConstraints {
-				if err := rule.Constraints.Add(cnst); err != nil {
-					return nil, fmt.Errorf("%w: VoterConstraints conflicts with Constraints", err)
-				}
-			}
-		}
-		Rules = append(Rules, VoterRules...)
 	}
 
 	if followerCount > 0 {
@@ -144,7 +127,7 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		return nil, fmt.Errorf("%w: options can not be nil", ErrInvalidPlacementOptions)
 	}
 
-	if len(options.LeaderConstraints) > 0 || len(options.LearnerConstraints) > 0 || len(options.FollowerConstraints) > 0 || len(options.VoterConstraints) > 0 || options.Learners > 0 || options.Voters > 0 {
+	if len(options.LeaderConstraints) > 0 || len(options.LearnerConstraints) > 0 || len(options.FollowerConstraints) > 0 || options.Learners > 0 {
 		return nil, fmt.Errorf("%w: should be PRIMARY_REGION=.. REGIONS=.. FOLLOWERS=.. SCHEDULE=.., mixed other constraints into options %s", ErrInvalidPlacementOptions, options)
 	}
 
