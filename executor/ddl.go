@@ -247,19 +247,38 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
-	var opt *ast.CharsetOpt
+	var charOpt *ast.CharsetOpt
+	var directPlacementOpts *model.PlacementSettings
+	var placementPolicyRef *model.PolicyRefInfo
 	if len(s.Options) != 0 {
-		opt = &ast.CharsetOpt{}
+		charOpt = &ast.CharsetOpt{}
 		for _, val := range s.Options {
 			switch val.Tp {
 			case ast.DatabaseOptionCharset:
-				opt.Chs = val.Value
+				charOpt.Chs = val.Value
 			case ast.DatabaseOptionCollate:
-				opt.Col = val.Value
+				charOpt.Col = val.Value
+			case ast.DatabaseOptionPlacementPrimaryRegion, ast.DatabaseOptionPlacementRegions,
+				ast.DatabaseOptionPlacementFollowerCount, ast.DatabaseOptionPlacementLeaderConstraints,
+				ast.DatabaseOptionPlacementLearnerCount, ast.DatabaseOptionPlacementVoterCount,
+				ast.DatabaseOptionPlacementSchedule, ast.DatabaseOptionPlacementConstraints,
+				ast.DatabaseOptionPlacementFollowerConstraints, ast.DatabaseOptionPlacementVoterConstraints,
+				ast.DatabaseOptionPlacementLearnerConstraints:
+				if directPlacementOpts == nil {
+					directPlacementOpts = &model.PlacementSettings{}
+				}
+				err := ddl.SetDirectPlacementOpt(directPlacementOpts, ast.PlacementOptionType(val.Tp), val.Value, val.UintValue)
+				if err != nil {
+					return err
+				}
+			case ast.DatabaseOptionPlacementPolicy:
+				placementPolicyRef = &model.PolicyRefInfo{
+					Name: model.NewCIStr(val.Value),
+				}
 			}
 		}
 	}
-	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt)
+	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), charOpt, directPlacementOpts, placementPolicyRef)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
 			err = nil
@@ -295,7 +314,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return err
 	}
 
-	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate)
+	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate, dbInfo.PlacementPolicyRef, dbInfo.DirectPlacementOpts)
 	if err != nil {
 		return err
 	}
@@ -540,7 +559,11 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}
 
-	autoIncID, autoRandID, err := e.getTableAutoIDsFromSnapshot(job)
+	m, err := domain.GetDomain(e.ctx).GetSnapshotMeta(job.StartTS)
+	if err != nil {
+		return err
+	}
+	autoIDs, err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Get()
 	if err != nil {
 		return err
 	}
@@ -550,30 +573,13 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
 		SnapshotTS:    job.StartTS,
-		CurAutoIncID:  autoIncID,
-		CurAutoRandID: autoRandID,
+		AutoIDs:       autoIDs,
+		OldSchemaName: job.SchemaName,
+		OldTableName:  tblInfo.Name.L,
 	}
 	// Call DDL RecoverTable.
 	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, recoverInfo)
 	return err
-}
-
-func (e *DDLExec) getTableAutoIDsFromSnapshot(job *model.Job) (autoIncID, autoRandID int64, err error) {
-	// Get table original autoIDs before table drop.
-	dom := domain.GetDomain(e.ctx)
-	m, err := dom.GetSnapshotMeta(job.StartTS)
-	if err != nil {
-		return 0, 0, err
-	}
-	autoIncID, err = m.GetAutoTableID(job.SchemaID, job.TableID)
-	if err != nil {
-		return 0, 0, errors.Errorf("recover table_id: %d, get original autoIncID from snapshot meta err: %s", job.TableID, err.Error())
-	}
-	autoRandID, err = m.GetAutoRandomID(job.SchemaID, job.TableID)
-	if err != nil {
-		return 0, 0, errors.Errorf("recover table_id: %d, get original autoRandID from snapshot meta err: %s", job.TableID, err.Error())
-	}
-	return autoIncID, autoRandID, nil
 }
 
 func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
@@ -720,7 +726,11 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been flashback to '%-.192s', can't be flashback repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}
 
-	autoIncID, autoRandID, err := e.getTableAutoIDsFromSnapshot(job)
+	m, err := domain.GetDomain(e.ctx).GetSnapshotMeta(job.StartTS)
+	if err != nil {
+		return err
+	}
+	autoIDs, err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Get()
 	if err != nil {
 		return err
 	}
@@ -729,8 +739,9 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
 		SnapshotTS:    job.StartTS,
-		CurAutoIncID:  autoIncID,
-		CurAutoRandID: autoRandID,
+		AutoIDs:       autoIDs,
+		OldSchemaName: job.SchemaName,
+		OldTableName:  s.Table.Name.L,
 	}
 	// Call DDL RecoverTable.
 	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, recoverInfo)

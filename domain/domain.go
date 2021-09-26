@@ -80,7 +80,7 @@ type Domain struct {
 	sysSessionPool       *sessionPool
 	exit                 chan struct{}
 	etcdClient           *clientv3.Client
-	sysVarCache          SysVarCache // replaces GlobalVariableCache
+	sysVarCache          sysVarCache // replaces GlobalVariableCache
 	slowQuery            *topNSlowQueries
 	expensiveQueryHandle *expensivequery.Handle
 	wg                   sync.WaitGroup
@@ -92,6 +92,8 @@ type Domain struct {
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
+
+	onClose func()
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -151,7 +153,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store()).InitWithDBInfos(schemas, bundles, neededSchemaVersion)
+	policies, err := do.fetchPolicies(m)
+	if err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
+
+	newISBuilder, err := infoschema.NewBuilder(do.Store()).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -163,6 +170,14 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	is := newISBuilder.Build()
 	do.infoCache.Insert(is, startTS)
 	return is, false, currentSchemaVersion, nil, nil
+}
+
+func (do *Domain) fetchPolicies(m *meta.Meta) ([]*model.PolicyInfo, error) {
+	allPolicies, err := m.ListPolicies()
+	if err != nil {
+		return nil, err
+	}
+	return allPolicies, nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
@@ -629,13 +644,17 @@ func (do *Domain) Close() {
 	do.cancel()
 	do.wg.Wait()
 	do.sysSessionPool.Close()
+	variable.UnregisterStatistics(do.bindHandle)
+	if do.onClose != nil {
+		do.onClose()
+	}
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, factory pools.Factory) *Domain {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, factory pools.Factory, onClose func()) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
 		store:               store,
@@ -645,6 +664,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoCache:           infoschema.NewCache(16),
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
+		onClose:             onClose,
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -913,7 +933,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
 // it should be called only once in BootstrapSession.
 func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
-	err := do.sysVarCache.RebuildSysVarCache(ctx)
+	err := do.rebuildSysVarCache()
 	if err != nil {
 		return err
 	}
@@ -962,7 +982,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			}
 			count = 0
 			logutil.BgLogger().Debug("Rebuilding sysvar cache from etcd watch event.")
-			err := do.sysVarCache.RebuildSysVarCache(ctx)
+			err := do.rebuildSysVarCache()
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
@@ -1403,7 +1423,7 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
 // clients are subscribed to for updates. For the caller, the cache is also built
 // synchronously so that the effect is immediate.
-func (do *Domain) NotifyUpdateSysVarCache(ctx sessionctx.Context) {
+func (do *Domain) NotifyUpdateSysVarCache() {
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), sysVarCacheKey, "")
@@ -1412,7 +1432,7 @@ func (do *Domain) NotifyUpdateSysVarCache(ctx sessionctx.Context) {
 		}
 	}
 	// update locally
-	if err := do.sysVarCache.RebuildSysVarCache(ctx); err != nil {
+	if err := do.rebuildSysVarCache(); err != nil {
 		logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 	}
 }

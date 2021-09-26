@@ -545,7 +545,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 	// Lexpr cannot compare with rexpr by different collate
 	opString := new(strings.Builder)
 	v.Op.Format(opString)
-	er.err = expression.CheckIllegalMixCollation(opString.String(), []expression.Expression{lexpr, rexpr}, 0)
+	_, _, er.err = expression.CheckAndDeriveCollationFromExprs(er.sctx, opString.String(), types.ETInt, lexpr, rexpr)
 	if er.err != nil {
 		return v, true
 	}
@@ -1102,11 +1102,14 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
+		castFunction := expression.BuildCastFunction(er.sctx, arg, v.Tp)
 		if v.Tp.EvalType() == types.ETString {
-			arg.SetCoercibility(expression.CoercibilityImplicit)
+			castFunction.SetCoercibility(expression.CoercibilityImplicit)
+		} else {
+			castFunction.SetCoercibility(expression.CoercibilityNumeric)
 		}
 
-		er.ctxStack[len(er.ctxStack)-1] = expression.BuildCastFunction(er.sctx, arg, v.Tp)
+		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.PatternLikeExpr:
 		er.patternLikeToExpression(v)
@@ -1421,8 +1424,8 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		er.ctxStackAppend(expression.NewNull(), types.EmptyName)
 		return
 	}
-	containMut := expression.ContainMutableConst(er.sctx, args)
-	if !containMut && leftEt == types.ETInt {
+	maybeOverOptimized := expression.MaybeOverOptimized4PlanCache(er.sctx, args)
+	if !maybeOverOptimized && leftEt == types.ETInt {
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
@@ -1636,12 +1639,11 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 
 	expr, lexp, rexp := er.wrapExpWithCast()
 
-	er.err = expression.CheckIllegalMixCollation("between", []expression.Expression{expr, lexp, rexp}, types.ETInt)
+	dstCharset, dstCollation, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "BETWEEN", types.ETInt, expr, lexp, rexp)
+	er.err = err
 	if er.err != nil {
 		return
 	}
-
-	dstCharset, dstCollation := expression.DeriveCollationFromExprs(er.sctx, expr, lexp, rexp)
 
 	var l, r expression.Expression
 	l, er.err = expression.NewFunctionBase(er.sctx, ast.GE, &v.Type, expr, lexp)
@@ -1654,6 +1656,8 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	}
 	l.SetCharsetAndCollation(dstCharset, dstCollation)
 	r.SetCharsetAndCollation(dstCharset, dstCollation)
+	l = expression.FoldConstant(l)
+	r = expression.FoldConstant(r)
 	function, err := er.newFunction(ast.LogicAnd, &v.Type, l, r)
 	if err != nil {
 		er.err = err

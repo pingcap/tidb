@@ -160,6 +160,9 @@ func TestConfig(t *testing.T) {
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
+	defer func(configFile string) {
+		require.NoError(t, os.Remove(configFile))
+	}(configFile)
 
 	// Make sure the server refuses to start if there's an unrecognized configuration option
 	_, err = f.WriteString(`
@@ -231,6 +234,8 @@ spilled-file-encryption-method = "plaintext"
 [pessimistic-txn]
 deadlock-history-capacity = 123
 deadlock-history-collect-retryable = true
+[top-sql]
+receiver-address = "127.0.0.1:10100"
 `)
 
 	require.NoError(t, err)
@@ -286,6 +291,7 @@ deadlock-history-collect-retryable = true
 	require.Equal(t, uint(123), conf.PessimisticTxn.DeadlockHistoryCapacity)
 	require.True(t, conf.PessimisticTxn.DeadlockHistoryCollectRetryable)
 	require.False(t, conf.Experimental.EnableNewCharset)
+	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 
 	_, err = f.WriteString(`
 [log.file]
