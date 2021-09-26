@@ -1150,12 +1150,12 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 	newPartIDs := getPartitionIDs(tblInfo)
 	newRules := make([]*label.Rule, 0, len(oldIDs)+1)
 	if tr, ok := rules[tableID]; ok {
-		newRules = append(newRules, tr.Clone().Reset(append([]int64{tblInfo.ID}, newPartIDs...), job.SchemaName, tblInfo.Name.L))
+		newRules = append(newRules, tr.Clone().Reset(job.SchemaName, tblInfo.Name.L, "", append(newPartIDs, tblInfo.ID)...))
 	}
 
 	for idx, newPartition := range newPartitions {
 		if pr, ok := rules[oldPartRules[idx]]; ok {
-			newRules = append(newRules, pr.Clone().Reset([]int64{newPartition.ID}, job.SchemaName, tblInfo.Name.L, newPartition.Name.L))
+			newRules = append(newRules, pr.Clone().Reset(job.SchemaName, tblInfo.Name.L, newPartition.Name.L, newPartition.ID))
 		}
 	}
 
@@ -1363,14 +1363,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	var setRules []*label.Rule
 	var deleteRules []string
 	if ntr != nil && ptr != nil {
-		setRules = append(setRules, ntr.Clone().Reset([]int64{partDef.ID}, job.SchemaName, pt.Name.L, partDef.Name.L))
-		setRules = append(setRules, ptr.Clone().Reset(append([]int64{nt.ID}, partIDs...), job.SchemaName, nt.Name.L))
+		setRules = append(setRules, ntr.Clone().Reset(job.SchemaName, pt.Name.L, partDef.Name.L, partDef.ID))
+		setRules = append(setRules, ptr.Clone().Reset(job.SchemaName, nt.Name.L, "", append(partIDs, nt.ID)...))
 	} else if ptr != nil {
-		setRules = append(setRules, ptr.Clone().Reset(append([]int64{nt.ID}, partIDs...), job.SchemaName, nt.Name.L))
+		setRules = append(setRules, ptr.Clone().Reset(job.SchemaName, nt.Name.L, "", append(partIDs, nt.ID)...))
 		// delete ptr
 		deleteRules = append(deleteRules, ptrID)
 	} else if ntr != nil {
-		setRules = append(setRules, ntr.Clone().Reset([]int64{partDef.ID}, job.SchemaName, pt.Name.L, partDef.Name.L))
+		setRules = append(setRules, ntr.Clone().Reset(job.SchemaName, pt.Name.L, partDef.Name.L, partDef.ID))
 		// delete ntr
 		deleteRules = append(deleteRules, ntrID)
 	}

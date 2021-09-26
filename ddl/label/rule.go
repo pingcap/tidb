@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/tablecodec"
@@ -99,10 +100,10 @@ func (r *Rule) Clone() *Rule {
 }
 
 // Reset will reset the label rule for a table/partition with a given ID and names.
-func (r *Rule) Reset(ids []int64, dbName, tableName string, partName ...string) *Rule {
-	isPartition := len(partName) != 0
+func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
+	isPartition := partName != ""
 	if isPartition {
-		r.ID = fmt.Sprintf(PartitionIDFormat, IDPrefix, dbName, tableName, partName[0])
+		r.ID = fmt.Sprintf(PartitionIDFormat, IDPrefix, dbName, tableName, partName)
 	} else {
 		r.ID = fmt.Sprintf(TableIDFormat, IDPrefix, dbName, tableName)
 	}
@@ -120,7 +121,7 @@ func (r *Rule) Reset(ids []int64, dbName, tableName string, partName ...string) 
 			hasTableKey = true
 		case partitionKey:
 			if isPartition {
-				r.Labels[i].Value = partName[0]
+				r.Labels[i].Value = partName
 				hasPartitionKey = true
 			}
 		default:
@@ -136,10 +137,11 @@ func (r *Rule) Reset(ids []int64, dbName, tableName string, partName ...string) 
 	}
 
 	if isPartition && !hasPartitionKey {
-		r.Labels = append(r.Labels, Label{Key: partitionKey, Value: partName[0]})
+		r.Labels = append(r.Labels, Label{Key: partitionKey, Value: partName})
 	}
 	r.RuleType = ruleType
 	r.Data = []interface{}{}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	for i := 0; i < len(ids); i++ {
 		data := map[string]string{
 			"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(ids[i]))),

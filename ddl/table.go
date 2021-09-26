@@ -1315,7 +1315,7 @@ func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[str
 	if tblInfo.GetPartitionInfo() != nil {
 		for idx, def := range tblInfo.GetPartitionInfo().Definitions {
 			if r, ok := oldRules[partRuleIDs[idx]]; ok {
-				newRules = append(newRules, r.Clone().Reset([]int64{def.ID}, job.SchemaName, tblInfo.Name.L, def.Name.L))
+				newRules = append(newRules, r.Clone().Reset(job.SchemaName, tblInfo.Name.L, def.Name.L, def.ID))
 			}
 		}
 	}
@@ -1326,7 +1326,7 @@ func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[str
 				ids = append(ids, def.ID)
 			}
 		}
-		newRules = append(newRules, r.Clone().Reset(ids, job.SchemaName, tblInfo.Name.L))
+		newRules = append(newRules, r.Clone().Reset(job.SchemaName, tblInfo.Name.L, "", ids...))
 	}
 
 	patch := label.NewRulePatch(newRules, oldRuleIDs)

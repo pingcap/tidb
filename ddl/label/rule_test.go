@@ -59,7 +59,7 @@ func TestDefaultOrEmpty(t *testing.T) {
 		err := rule.ApplyAttributesSpec(specs[i])
 		require.NoError(t, err)
 
-		rule.Reset([]int64{1}, "db", "t")
+		rule.Reset("db", "t", "", 1)
 		require.Len(t, rule.Labels, 0)
 	}
 }
@@ -71,7 +71,7 @@ func TestReset(t *testing.T) {
 	rule := NewRule()
 	require.NoError(t, rule.ApplyAttributesSpec(spec))
 
-	rule.Reset([]int64{1, 2, 3}, "db1", "t1")
+	rule.Reset("db1", "t1", "", 1, 2, 3)
 	require.Equal(t, "schema/db1/t1", rule.ID)
 	require.Equal(t, ruleType, rule.RuleType)
 	require.Len(t, rule.Labels, 3)
@@ -93,7 +93,7 @@ func TestReset(t *testing.T) {
 	r1 := rule.Clone()
 	require.Equal(t, r1, rule)
 
-	r2 := rule.Reset([]int64{2}, "db2", "t2", "p2")
+	r2 := rule.Reset("db2", "t2", "p2", 2)
 	require.Equal(t, "schema/db2/t2/p2", r2.ID)
 	require.Len(t, rule.Labels, 4)
 	require.Equal(t, "value", rule.Labels[0].Value)
@@ -111,6 +111,6 @@ func TestReset(t *testing.T) {
 	rule, expected := NewRule(), NewRule()
 	expected.ID, expected.Labels = "schema/db3/t3/p3", []Label{}
 	require.NoError(t, rule.ApplyAttributesSpec(spec))
-	r3 := rule.Reset([]int64{3}, "db3", "t3", "p3")
+	r3 := rule.Reset("db3", "t3", "p3", 3)
 	require.Equal(t, r3, expected)
 }
