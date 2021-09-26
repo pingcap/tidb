@@ -273,7 +273,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		logutil.BgLogger().Info("TiFlash found " + strconv.Itoa(len(realResp.RetryRegions)) + " stale regions.")
 		for index, retry := range realResp.RetryRegions {
 			id := tikv.NewRegionVerID(retry.Id, retry.RegionEpoch.ConfVer, retry.RegionEpoch.Version)
-			if index < 10 || log.GetLevel() >= zap.DebugLevel {
+			if index < 10 || log.GetLevel() <= zap.DebugLevel {
 				logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
 			}
 			m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
