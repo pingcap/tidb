@@ -18,42 +18,42 @@
 
 ## Introduction
 
-This proposal aims to support Stale Read and descirbe what Stale Read looks like and how to keep compatibility with other queries.
+This proposal aims to support Stale Read and describe what Stale Read looks like and how to keep compatibility with other queries.
 
 ## Motivation or Background
 
-Currently, TiDB support Follower Read to read data from follower replicas in order to increase the query throughput. TiDB also support Snapshot Read to read old data with given snapshot timestamp. 
+Currently, TiDB supports Follower Read to read data from follower replicas in order to increase the query throughput. TiDB also supports Snapshot Read to read old data with a given snapshot timestamp. 
 
-However, Follower Read still require an rpc calling between follower replica and leader replica during querying which also increased query latency. 
+However, Follower Read still requires an RPC calling between follower replica and leader replica during querying which also increased query latency. 
 
-For Snapshot Read, it only read data from leader replica which might be bottleneck especially in hot spot cases.
+For Snapshot Read, it only reads data from leader replica which might be a bottleneck, especially in hot spot cases.
 
-Stale Read is more like the combination of Follower Read and Snapshot Read. It supports tidb to read data from both leader replicas and follower replicas with no extra rpc calling during followers and leader. 
+Stale Read is more like the combination of Follower Read and Snapshot Read. It supports TiDB to read data from both leader replicas and follower replicas with no extra RPC calling during followers and leaders. 
 
-It also supports read data with given snapshot timestamp like Snapshot Read.
+It also supports read data with a given snapshot timestamp like Snapshot Read.
 
 ## Detailed Design
 
 ### Implementation Overview
 
-Normally, tidb will send data query request to the storage with given timestamp to the leader replicas. 
+Normally, TiDB will send data query requests to the storage with a given timestamp to the leader replicas. 
 
-In Stale Read, each replica could handle the data query request because every replica maintain the resolved timestamp from leader replica. 
+In Stale Read, each replica could handle the data query request because every replica maintains the resolved timestamp from the leader replica. 
 
-This makes each store could know the smallest resoleved timestamp they could handle. Thus, tidb could send data request with staleness timestamp to get the  data they want.
+This makes each store could know the smallest resolved timestamp they could handle. Thus, TiDB could send data requests with a staleness timestamp to get the data they want.
 
 ### New Syntax Overview
 
 Here we will introduce how to use Stale Read in TiDB. 
 
-1. Use Stale Read with given specific timestamp in single statement:
+1. Use Stale Read with given specific timestamp in a single statement:
 
 ```sql
 SELECT * FROM t AS OF TIMESTAMP '2021-09-22 15:04:05' WHERE id = 1;
 SELECT * FROM t AS OF TIMESTAMP NOW() - INTERVAL 20 SECOND WHERE id = 1;
 ```
 
-2. Use Stale Read with given specific timestamp in single interactive transaction:
+2. Use Stale Read with a given timestamp in a single interactive transaction:
 
 ```sql
 START TRANSACTION READ ONLY AS OF TIMESTAMP '2021-09-22 15:04:05';
@@ -68,7 +68,7 @@ COMMIT;
 SELECT * FROM t AS OF TIMESTAMP NOW() - INTERVAL 20 SECOND WHERE id = 1;
 ```
 
-4. Use Stale Read with given exact seconds ago staleness in interactive statement:
+4. Use Stale Read with given exact seconds ago staleness in an interactive statement:
 
 ```sql
 // query data with exact 20 seconds ago timestamp
@@ -77,7 +77,7 @@ SELECT * FROM t where id = 1;
 COMMIT;
 ```
 
-5. Use Stale Read with given max tolerant staleness in single statement:
+5. Use Stale Read with given max tolerant staleness in a single statement:
 
 ```sql
 // query data with at most 20 seconds staleness
@@ -92,7 +92,7 @@ SELECT * FROM t WHERE id = 1;
 COMMIT;
 ```
 
-7. Use Stale Read by `SET TRANSACTION` statement to affect next query.
+7. Use Stale Read by `SET TRANSACTION` statement to affect the next query.
 
 ```sql
 SET TRANSACTION READ ONLY AS OF TIMESTAMP '2021-09-22 15:04:05';
