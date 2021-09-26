@@ -146,7 +146,7 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 
 	followers := options.Followers
 	if followers == 0 {
-		followers = 2
+		followers = uint64(len(regions))
 	}
 	schedule := options.Schedule
 
@@ -175,10 +175,6 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		followers = followers - followersInPrimary
 	default:
 		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacementOptions, schedule)
-	}
-
-	if uint64(len(regions)) > followers {
-		return nil, fmt.Errorf("%w: remain %d region to schedule, only %d follower left", ErrInvalidPlacementOptions, uint64(len(regions)), followers)
 	}
 
 	if len(regions) == 0 {
