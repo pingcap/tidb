@@ -84,6 +84,9 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	// Do the http request only when the rules is existed.
 	syncPlacementRules := func() error {
 		// bundle being nil means there is no specified or inherited placement rules.
+		if bundle == nil {
+			return nil
+		}
 		if bundle.Rules == nil {
 			return nil
 		}
