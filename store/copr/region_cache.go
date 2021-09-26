@@ -16,9 +16,9 @@ package copr
 
 import (
 	"bytes"
-	"github.com/cznic/mathutil"
 	"strconv"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
