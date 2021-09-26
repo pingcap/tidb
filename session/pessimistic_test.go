@@ -2215,7 +2215,6 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 }
 
 func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
-	c.Skip("Skip this unstable test(#25986) and bring it back before 2021-07-29.")
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")

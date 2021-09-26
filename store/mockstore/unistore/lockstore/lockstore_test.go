@@ -83,7 +83,6 @@ func TestIterator(t *testing.T) {
 	t.Parallel()
 
 	_ = checkKey
-	t.Skip("Skip this unstable test(#26235) and bring it back before 2021-07-29.")
 	ls := NewMemStore(1 << 10)
 	hint := new(Hint)
 	for i := 10; i < 1000; i += 10 {

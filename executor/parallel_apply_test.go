@@ -571,10 +571,6 @@ func (s *testSuite) TestApplyCacheRatio(c *C) {
 }
 
 func (s *testSuite) TestApplyGoroutinePanic(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("race detected, skip it temporarily and fix it before 20210619")
-	}
-
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 	tk.MustExec("drop table if exists t1, t2")

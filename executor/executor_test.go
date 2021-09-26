@@ -8589,9 +8589,6 @@ func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
 }
 
 func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("unstable, skip it and fix it before 20210622")
-	}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")

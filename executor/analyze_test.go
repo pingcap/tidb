@@ -242,7 +242,6 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 
 func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 	_ = checkHistogram
-	c.Skip("unstable, skip it and fix it before 20210618")
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer func() {
@@ -397,7 +396,6 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 }
 
 func (s *testFastAnalyze) TestFastAnalyze(c *C) {
-	c.Skip("Skip this unstable test(#25782) and bring it back before 2021-07-29.")
 	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
@@ -1039,7 +1037,6 @@ func (s *testSerialSuite2) TestAnalyzeClusteredIndexPrimary(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210624")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists sampling_index_virtual_col")

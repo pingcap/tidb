@@ -2973,7 +2973,6 @@ PARTITION BY RANGE (a) (
 }
 
 func (s *testSuiteWithData) TestRangePartitionBoundariesBetweenS(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210624")
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("CREATE DATABASE IF NOT EXISTS TestRangePartitionBoundariesBetweenS")
