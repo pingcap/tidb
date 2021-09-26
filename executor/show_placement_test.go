@@ -73,9 +73,9 @@ func (s *testSuite5) TestShowPlacement(c *C) {
 		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\"",
 		"POLICY pb1 CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\"",
-		"Table db2.t2 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2",
-		"Table test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
-		"Table test.t2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2",
+		"TABLE db2.t2 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2",
+		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
+		"TABLE test.t2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2",
 	))
 
 	tk.MustQuery("show placement like 'POLICY%'").Check(testkit.Rows(
@@ -142,7 +142,7 @@ func (s *testSuite5) TestShowPlacementPrivilege(c *C) {
 	// after grant
 	tk1.MustQuery("show placement").Check(testkit.Rows(
 		"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
-		"Table test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
+		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 	))
 }
 
@@ -163,14 +163,14 @@ func (s *testSuite5) TestShowPlacementForTable(c *C) {
 	tk.MustExec("create table t1 (id int) placement policy p1")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustQuery("show placement for table t1").Check(testkit.Rows(
-		"Table test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
+		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 	))
 
 	// direct setting
 	tk.MustExec("create table t2 (id int) LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2")
 	defer tk.MustExec("drop table if exists t2")
 	tk.MustQuery("show placement for table t2").Check(testkit.Rows(
-		"Table test.t2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2",
+		"TABLE test.t2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2",
 	))
 
 	// no placement
@@ -184,7 +184,7 @@ func (s *testSuite5) TestShowPlacementForTable(c *C) {
 	tk.MustExec("create table db2.t1 (id int) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2")
 	defer tk.MustExec("drop table if exists db2.t1")
 	tk.MustQuery("show placement for table db2.t1").Check(testkit.Rows(
-		"Table db2.t1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2",
+		"TABLE db2.t1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2",
 	))
 
 	// not exists
@@ -252,11 +252,11 @@ func (s *testSuite5) TestShowPlacementForTablePrivilege(c *C) {
 	// after grant
 	tk1.MustQuery("show placement").Check(testkit.Rows(
 		"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
-		"Table test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
+		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 	))
 
 	tk1.MustQuery("show placement for table test.t1").Check(testkit.Rows(
-		"Table test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
+		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 	))
 
 	err = tk1.ExecToErr("show placement for table test.t2")

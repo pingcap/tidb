@@ -146,7 +146,7 @@ func (e *ShowExec) fetchShowPlacementForTable(_ context.Context) (err error) {
 
 	if placement != nil {
 		ident := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
-		e.appendRow([]interface{}{"Table " + ident.String(), placement.String()})
+		e.appendRow([]interface{}{"TABLE " + ident.String(), placement.String()})
 	}
 
 	return nil
@@ -199,7 +199,7 @@ func (e *ShowExec) fetchAllTablePlacements() error {
 			}
 
 			if placement != nil {
-				rows = append(rows, []interface{}{"Table " + ident.String(), placement.String()})
+				rows = append(rows, []interface{}{"TABLE " + ident.String(), placement.String()})
 			}
 
 			// TODO: Add partition placement rules
