@@ -648,7 +648,7 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestErrOverflow(c *C) {
+func (s *testEvaluatorSuite) TestDecimalErrOverflow(c *C) {
 	testCases := []struct {
 		args   []float64
 		opd    string

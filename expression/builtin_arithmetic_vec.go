@@ -104,7 +104,7 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 					return err
 				}
 			}
-		} else if terror.ErrorEqual(err, types.ErrOverflow) {
+		} else if err == types.ErrOverflow {
 			return types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s / %s)", b.args[0].String(), b.args[1].String()))
 		} else {
 			return err
@@ -358,7 +358,7 @@ func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, re
 			continue
 		}
 		if err = types.DecimalSub(&x[i], &y[i], &to); err != nil {
-			if terror.ErrorEqual(err, types.ErrOverflow) {
+			if err == types.ErrOverflow {
 				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
 			}
 			return err
@@ -560,7 +560,7 @@ func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(input *chunk.Chunk,
 		}
 		err = types.DecimalMul(&x[i], &y[i], &to)
 		if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
-			if terror.ErrorEqual(err, types.ErrOverflow) {
+			if err == types.ErrOverflow {
 				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
 			}
 			return err
@@ -1005,7 +1005,7 @@ func (b *builtinArithmeticPlusDecimalSig) vecEvalDecimal(input *chunk.Chunk, res
 			continue
 		}
 		if err = types.DecimalAdd(&x[i], &y[i], to); err != nil {
-			if terror.ErrorEqual(err, types.ErrOverflow) {
+			if err == types.ErrOverflow {
 				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 			}
 			return err
