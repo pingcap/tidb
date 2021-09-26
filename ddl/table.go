@@ -136,13 +136,22 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 }
 
 func getBundleFromDBInfo(t *meta.Meta, job *model.Job, dbInfo *model.DBInfo) (*placement.Bundle, error) {
+	dbBundleWrapper := func(bundle *placement.Bundle) *placement.Bundle {
+		bundle.Index = placement.RuleIndexDatabase
+		bundle.Override = true
+		return bundle
+	}
 	if dbInfo.DirectPlacementOpts != nil {
 		// check the direct placement option compatibility.
 		if err := checkPolicyValidation(dbInfo.DirectPlacementOpts); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// build bundle from direct placement options.
-		return placement.NewBundleFromOptions(dbInfo.DirectPlacementOpts)
+		bundle, err := placement.NewBundleFromOptions(dbInfo.DirectPlacementOpts)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return dbBundleWrapper(bundle), nil
 	}
 	if dbInfo.PlacementPolicyRef != nil {
 		// placement policy reference will override the direct placement options.
@@ -151,19 +160,32 @@ func getBundleFromDBInfo(t *meta.Meta, job *model.Job, dbInfo *model.DBInfo) (*p
 			return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(dbInfo.PlacementPolicyRef.Name))
 		}
 		// build bundle from placement policy.
-		return placement.NewBundleFromOptions(po.PlacementSettings)
+		bundle, err := placement.NewBundleFromOptions(po.PlacementSettings)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return dbBundleWrapper(bundle), nil
 	}
 	return nil, nil
 }
 
 func getBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, dbInfo *model.DBInfo) (*placement.Bundle, error) {
+	tableBundleWrapper := func(bundle *placement.Bundle) *placement.Bundle {
+		bundle.Index = placement.RuleIndexTable
+		bundle.Override = true
+		return bundle
+	}
 	if tbInfo.DirectPlacementOpts != nil {
 		// check the direct placement option compatibility.
 		if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// build bundle from direct placement options.
-		return placement.NewBundleFromOptions(tbInfo.DirectPlacementOpts)
+		bundle, err := placement.NewBundleFromOptions(tbInfo.DirectPlacementOpts)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return tableBundleWrapper(bundle), nil
 	}
 	if tbInfo.PlacementPolicyRef != nil {
 		// placement policy reference will override the direct placement options.
@@ -172,7 +194,11 @@ func getBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo,
 			return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
 		}
 		// build bundle from placement policy.
-		return placement.NewBundleFromOptions(po.PlacementSettings)
+		bundle, err := placement.NewBundleFromOptions(po.PlacementSettings)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return tableBundleWrapper(bundle), nil
 	}
 	return getBundleFromDBInfo(t, job, dbInfo)
 }
