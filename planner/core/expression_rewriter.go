@@ -1203,7 +1203,7 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 }
 
 func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
-	if ft.EvalType() == types.ETDuration && ft.Decimal > int(types.MaxFsp) {
+	if ft.EvalType() == types.ETDuration && ft.Decimal > types.MaxFsp {
 		return errTooBigPrecision.GenWithStackByArgs(ft.Decimal, "CAST", types.MaxFsp)
 	}
 	return nil

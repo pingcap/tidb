@@ -318,7 +318,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	var sig builtinFunc
 
 	durationColumn := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
-	durationColumn.RetType.Decimal = int(types.DefaultFsp)
+	durationColumn.RetType.Decimal = types.DefaultFsp
 	// Test cast as Decimal.
 	castToDecCases := []struct {
 		before *Column
@@ -812,7 +812,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	for i, t := range castToTimeCases {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDatetime)
-		tp.Decimal = int(types.DefaultFsp)
+		tp.Decimal = types.DefaultFsp
 		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		c.Assert(err, IsNil)
 		timeFunc.tp = tp
@@ -979,7 +979,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	for i, t := range castToDurationCases {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
-		tp.Decimal = int(types.DefaultFsp)
+		tp.Decimal = types.DefaultFsp
 		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		c.Assert(err, IsNil)
 		durationFunc.tp = tp
@@ -1160,7 +1160,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	ctx := s.ctx
 
 	durationColumn0 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
-	durationColumn0.RetType.Decimal = int(types.DefaultFsp)
+	durationColumn0.RetType.Decimal = types.DefaultFsp
 	durationColumn3 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
 	durationColumn3.RetType.Decimal = 3
 	cases := []struct {
