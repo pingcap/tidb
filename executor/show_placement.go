@@ -20,7 +20,11 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -128,13 +132,32 @@ func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowPlacement(_ context.Context) error {
-	err := e.fetchAllPlacementPolicies()
+func (e *ShowExec) fetchShowPlacementForTable(_ context.Context) (err error) {
+	tbl, err := e.getTable()
 	if err != nil {
 		return err
 	}
 
+	tblInfo := tbl.Meta()
+	placement, err := e.getTablePlacement(tblInfo)
+	if err != nil {
+		return err
+	}
+
+	if placement != nil {
+		ident := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
+		e.appendRow([]interface{}{"TABLE " + ident.String(), placement.String()})
+	}
+
 	return nil
+}
+
+func (e *ShowExec) fetchShowPlacement(_ context.Context) error {
+	if err := e.fetchAllPlacementPolicies(); err != nil {
+		return err
+	}
+
+	return e.fetchAllTablePlacements()
 }
 
 func (e *ShowExec) fetchAllPlacementPolicies() error {
@@ -143,8 +166,83 @@ func (e *ShowExec) fetchAllPlacementPolicies() error {
 	for _, policy := range policies {
 		name := policy.Name
 		settings := policy.PlacementSettings
-		e.appendRow([]interface{}{"POLICY " + name.String(), settings.String(), "SCHEDULED"})
+		e.appendRow([]interface{}{"POLICY " + name.String(), settings.String()})
 	}
 
 	return nil
+}
+
+func (e *ShowExec) fetchAllTablePlacements() error {
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+
+	dbs := e.is.AllSchemas()
+	sort.Slice(dbs, func(i, j int) bool { return dbs[i].Name.O < dbs[j].Name.O })
+
+	for _, dbInfo := range dbs {
+		tableRowSets := make([]struct {
+			name string
+			rows [][]interface{}
+		}, 0)
+
+		for _, tbl := range e.is.SchemaTables(dbInfo.Name) {
+			tblInfo := tbl.Meta()
+			if checker != nil && !checker.RequestVerification(activeRoles, dbInfo.Name.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
+				continue
+			}
+
+			var rows [][]interface{}
+			ident := ast.Ident{Schema: dbInfo.Name, Name: tblInfo.Name}
+			placement, err := e.getTablePlacement(tblInfo)
+			if err != nil {
+				return err
+			}
+
+			if placement != nil {
+				rows = append(rows, []interface{}{"TABLE " + ident.String(), placement.String()})
+			}
+
+			// TODO: Add partition placement rules
+
+			if len(rows) > 0 {
+				tableRowSets = append(tableRowSets, struct {
+					name string
+					rows [][]interface{}
+				}{
+					name: tblInfo.Name.String(),
+					rows: rows,
+				})
+			}
+		}
+
+		sort.Slice(tableRowSets, func(i, j int) bool { return tableRowSets[i].name < tableRowSets[j].name })
+		for _, rowSet := range tableRowSets {
+			for _, row := range rowSet.rows {
+				e.appendRow(row)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (e *ShowExec) getTablePlacement(tblInfo *model.TableInfo) (*model.PlacementSettings, error) {
+	placement := tblInfo.DirectPlacementOpts
+	if placement != nil {
+		return placement, nil
+	}
+
+	return e.getPolicyPlacement(tblInfo.PlacementPolicyRef)
+}
+
+func (e *ShowExec) getPolicyPlacement(policyRef *model.PolicyRefInfo) (settings *model.PlacementSettings, err error) {
+	if policyRef == nil {
+		return nil, nil
+	}
+
+	policy, ok := e.is.PolicyByName(policyRef.Name)
+	if !ok {
+		return nil, errors.Errorf("Policy with name '%s' not found", policyRef.Name)
+	}
+	return policy.PlacementSettings, nil
 }
