@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -964,6 +965,18 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	return v, true
 }
 
+// ScalarSubquery contains a non-correlated scalar subquery, which may be evaluated
+// before the query optimization.
+// This struct is used to generate explain info for the suqbuery.
+type ScalarSubquery struct {
+	// The physical plan for the subquery.
+	child PhysicalPlan
+	// The result expression for the subquery.
+	// For `explain` statement, this is a special expression as a placeholder.
+	// For `explain analyze` statement, this is the real result of the subquery.
+	expr expression.Expression
+}
+
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.SubqueryExpr) (ast.Node, bool) {
 	ci := er.b.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
@@ -992,38 +1005,76 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		return v, true
 	}
 	// We don't want nth_plan hint to affect separately executed subqueries here, so disable nth_plan temporarily.
-	NthPlanBackup := er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
-	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
+	stmtCtx := er.sctx.GetSessionVars().StmtCtx
+	NthPlanBackup := stmtCtx.StmtHints.ForceNthPlan
+	stmtCtx.StmtHints.ForceNthPlan = -1
 	physicalPlan, _, err := DoOptimize(ctx, er.sctx, er.b.optFlag, np)
-	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = NthPlanBackup
+	stmtCtx.StmtHints.ForceNthPlan = NthPlanBackup
 	if err != nil {
 		er.err = err
 		return v, true
 	}
-	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, er.b.is, er.b.ctx)
-	if err != nil {
-		er.err = err
-		return v, true
-	}
-	if np.Schema().Len() > 1 {
-		newCols := make([]expression.Expression, 0, np.Schema().Len())
-		for i, data := range row {
-			newCols = append(newCols, &expression.Constant{
-				Value:   data,
-				RetType: np.Schema().Columns[i].GetType()})
-		}
-		expr, err1 := er.newFunction(ast.RowFunc, newCols[0].GetType(), newCols...)
-		if err1 != nil {
-			er.err = err1
+	var expr expression.Expression
+	if !stmtCtx.InExplainStmt || stmtCtx.IsExplainAnalyze {
+		row, err := EvalSubqueryFirstRow(ctx, physicalPlan, er.b.is, er.b.ctx)
+		if err != nil {
+			er.err = err
 			return v, true
 		}
-		er.ctxStackAppend(expr, types.EmptyName)
+
+		if np.Schema().Len() > 1 {
+			newCols := make([]expression.Expression, 0, np.Schema().Len())
+			for i, data := range row {
+				newCols = append(newCols, &expression.Constant{
+					Value:   data,
+					RetType: np.Schema().Columns[i].GetType()})
+			}
+			var err1 error
+			expr, err1 = er.newFunction(ast.RowFunc, newCols[0].GetType(), newCols...)
+			if err1 != nil {
+				er.err = err1
+				return v, true
+			}
+		} else {
+			expr = &expression.Constant{
+				Value:   row[0],
+				RetType: np.Schema().Columns[0].GetType(),
+			}
+		}
 	} else {
-		er.ctxStackAppend(&expression.Constant{
-			Value:   row[0],
-			RetType: np.Schema().Columns[0].GetType(),
-		}, types.EmptyName)
+		// We don't execute the subquery in an explain statement.
+		// So we build a mocked expression to replace the subquery.
+		numSubqueries := len(stmtCtx.ScalarSubqueries)
+		if np.Schema().Len() > 1 {
+			newExprs := make([]expression.Expression, 0, np.Schema().Len())
+			for i := 0; i < np.Schema().Len(); i++ {
+				exprName := fmt.Sprintf("ScalarSubquery%d-%d", numSubqueries, i)
+				newExprs = append(newExprs, &expression.ScalarFunction{
+					FuncName: model.NewCIStr(exprName),
+					Function: expression.NewScalarSubqueryResult(),
+					RetType:  np.Schema().Columns[i].GetType(),
+				})
+			}
+			var err1 error
+			expr, err1 = er.newFunction(ast.RowFunc, newExprs[0].GetType(), newExprs...)
+			if err1 != nil {
+				er.err = err1
+				return v, true
+			}
+		} else {
+			expr = &expression.ScalarFunction{
+				FuncName: model.NewCIStr(fmt.Sprintf("ScalarSubquery%d-0", numSubqueries)),
+				Function: expression.NewScalarSubqueryResult(),
+				RetType:  np.Schema().Columns[0].GetType(),
+			}
+		}
 	}
+	er.ctxStackAppend(expr, types.EmptyName)
+
+	subquery := &ScalarSubquery{child: physicalPlan, expr: expr}
+
+	stmtCtx.ScalarSubqueries = append(stmtCtx.ScalarSubqueries, subquery)
+
 	return v, true
 }
 

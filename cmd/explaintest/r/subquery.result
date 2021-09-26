@@ -46,3 +46,35 @@ create table t1(a int(11));
 create table t2(a decimal(40,20) unsigned, b decimal(40,20));
 select count(*) as x from t1 group by a having x not in (select a from t2 where x = t2.b);
 x
+drop table if exists t;
+create table t(a int primary key, b int, c int, d int);
+explain select b from t where t.c = (select t2.d from t t2 limit 1);
+id	estRows	task	access object	operator info
+Projection_17	8000.00	root		test.t.b
+└─Selection_18	8000.00	root		eq(test.t.c, scalarsubquery0-0())
+  └─TableReader_20	10000.00	root		data:TableFullScan_19
+    └─TableFullScan_19	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+ScalarSubquery_0	1.00	root		output:scalarsubquery0-0()
+└─MaxOneRow_9	1.00	root		
+  └─Limit_11	1.00	root		offset:0, count:1
+    └─TableReader_15	1.00	root		data:Limit_14
+      └─Limit_14	1.00	cop[tikv]		offset:0, count:1
+        └─TableFullScan_13	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select b from t where t.c = (select t2.d from t t2 limit 1) and t.d = (select t2.c from t t2 limit 1);
+id	estRows	task	access object	operator info
+Projection_30	8000.00	root		test.t.b
+└─Selection_31	8000.00	root		eq(test.t.c, scalarsubquery0-0()), eq(test.t.d, scalarsubquery1-0())
+  └─TableReader_33	10000.00	root		data:TableFullScan_32
+    └─TableFullScan_32	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+ScalarSubquery_0	1.00	root		output:scalarsubquery0-0()
+└─MaxOneRow_9	1.00	root		
+  └─Limit_11	1.00	root		offset:0, count:1
+    └─TableReader_15	1.00	root		data:Limit_14
+      └─Limit_14	1.00	cop[tikv]		offset:0, count:1
+        └─TableFullScan_13	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+ScalarSubquery_1	1.00	root		output:scalarsubquery1-0()
+└─MaxOneRow_22	1.00	root		
+  └─Limit_24	1.00	root		offset:0, count:1
+    └─TableReader_28	1.00	root		data:Limit_27
+      └─Limit_27	1.00	cop[tikv]		offset:0, count:1
+        └─TableFullScan_26	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo

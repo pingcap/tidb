@@ -1081,6 +1081,10 @@ func (e *Explain) RenderResult() error {
 			if err != nil {
 				return err
 			}
+			err = e.explainPlanInRowFormatScalarSubquery()
+			if err != nil {
+				return err
+			}
 		}
 	case types.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
@@ -1114,6 +1118,38 @@ func (e *Explain) explainPlanInRowFormatCTE() (err error) {
 	}
 
 	return
+}
+
+func (e *Explain) explainPlanInRowFormatScalarSubquery() (err error) {
+	if e.TargetPlan == nil || e.TargetPlan.SCtx() == nil {
+		return nil
+	}
+	subqueries := e.TargetPlan.SCtx().GetSessionVars().StmtCtx.ScalarSubqueries
+	format := strings.ToLower(e.Format)
+	for i := range subqueries {
+		subquery := subqueries[i].(*ScalarSubquery)
+		id := fmt.Sprintf("ScalarSubquery_%d", i)
+		operatorInfo := fmt.Sprintf("output:%s", subquery.expr.ExplainInfo())
+		var row []string
+		switch {
+		case (format == types.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == types.ExplainFormatBrief):
+			// "id", "estRows", "task", "access object", "operator info"
+			row = []string{id, "1.00", "root", "", operatorInfo}
+		case format == types.ExplainFormatVerbose:
+			// "id", "estRows", "estCost", "task", "access object", "operator info"
+			row = []string{id, "1.00", "", "root", "", operatorInfo}
+		case format == types.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
+			// "id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"
+			row = []string{id, "1.00", "1", "root", "", "", operatorInfo, "", ""}
+		}
+		e.Rows = append(e.Rows, row)
+		childIndent := texttree.Indent4Child("", true)
+		err = e.explainPlanInRowFormat(subquery.child, "root", "", childIndent, true)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.

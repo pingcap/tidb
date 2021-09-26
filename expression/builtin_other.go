@@ -1487,3 +1487,22 @@ func (b *builtinGetParamStringSig) evalString(row chunk.Row) (string, bool, erro
 	}
 	return str, false, nil
 }
+
+type builtinScalarSubqueryResult struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinScalarSubqueryResult) Clone() builtinFunc {
+	newSig := &builtinScalarSubqueryResult{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinScalarSubqueryResult) vectorized() bool {
+	return false
+}
+
+// NewScalarSubqueryResult creates a new ScalarSubqueryResult func.
+func NewScalarSubqueryResult() builtinFunc {
+	return &builtinScalarSubqueryResult{}
+}

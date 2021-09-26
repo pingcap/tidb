@@ -718,9 +718,23 @@ value desc;
 id	estRows	task	access object	operator info
 Projection	1304801.67	root		tpch.partsupp.ps_partkey, Column#35
 └─Sort	1304801.67	root		Column#35:desc
-  └─Selection	1304801.67	root		gt(Column#35, NULL)
+  └─Selection	1304801.67	root		gt(Column#35, scalarsubquery0-0())
     └─HashAgg	1631002.09	root		group by:Column#61, funcs:sum(Column#59)->Column#35, funcs:firstrow(Column#60)->tpch.partsupp.ps_partkey
       └─Projection	1631002.09	root		mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty, decimal(20,0) BINARY))->Column#59, tpch.partsupp.ps_partkey, tpch.partsupp.ps_partkey
+        └─HashJoin	1631002.09	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
+          ├─HashJoin(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
+          │ ├─TableReader(Build)	1.00	root		data:Selection
+          │ │ └─Selection	1.00	cop[tikv]		eq(tpch.nation.n_name, "MOZAMBIQUE")
+          │ │   └─TableFullScan	25.00	cop[tikv]	table:nation	keep order:false
+          │ └─TableReader(Probe)	500000.00	root		data:TableFullScan
+          │   └─TableFullScan	500000.00	cop[tikv]	table:supplier	keep order:false
+          └─TableReader(Probe)	40000000.00	root		data:TableFullScan
+            └─TableFullScan	40000000.00	cop[tikv]	table:partsupp	keep order:false
+ScalarSubquery_0	1.00	root		output:scalarsubquery0-0()
+└─MaxOneRow	1.00	root		
+  └─Projection	1.00	root		mul(Column#53, 0.0001000000)->Column#54
+    └─StreamAgg	1.00	root		funcs:sum(Column#56)->Column#53
+      └─Projection	1631002.09	root		mul(tpch.partsupp.ps_supplycost, cast(tpch.partsupp.ps_availqty, decimal(20,0) BINARY))->Column#56
         └─HashJoin	1631002.09	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
           ├─HashJoin(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
           │ ├─TableReader(Build)	1.00	root		data:Selection
@@ -1294,14 +1308,20 @@ cntrycode
 order by
 cntrycode;
 id	estRows	task	access object	operator info
-Sort	1.00	root		Column#27
-└─Projection	1.00	root		Column#27, Column#28, Column#29
-  └─HashAgg	1.00	root		group by:Column#33, funcs:count(1)->Column#28, funcs:sum(Column#31)->Column#29, funcs:firstrow(Column#32)->Column#27
-    └─Projection	0.00	root		tpch.customer.c_acctbal, substring(tpch.customer.c_phone, 1, 2)->Column#32, substring(tpch.customer.c_phone, 1, 2)->Column#33
-      └─HashJoin	0.00	root		anti semi join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
+Sort	3840000.00	root		Column#27
+└─Projection	3840000.00	root		Column#27, Column#28, Column#29
+  └─HashAgg	3840000.00	root		group by:Column#33, funcs:count(1)->Column#28, funcs:sum(Column#31)->Column#29, funcs:firstrow(Column#32)->Column#27
+    └─Projection	3840000.00	root		tpch.customer.c_acctbal, substring(tpch.customer.c_phone, 1, 2)->Column#32, substring(tpch.customer.c_phone, 1, 2)->Column#33
+      └─HashJoin	3840000.00	root		anti semi join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
         ├─TableReader(Build)	75000000.00	root		data:TableFullScan
         │ └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
-        └─Selection(Probe)	0.00	root		in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
-          └─TableReader	0.00	root		data:Selection
-            └─Selection	0.00	cop[tikv]		gt(tpch.customer.c_acctbal, NULL)
-              └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
+        └─Selection(Probe)	4800000.00	root		gt(tpch.customer.c_acctbal, scalarsubquery0-0()), in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
+          └─TableReader	7500000.00	root		data:TableFullScan
+            └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
+ScalarSubquery_0	1.00	root		output:scalarsubquery0-0()
+└─MaxOneRow	1.00	root		
+  └─StreamAgg	1.00	root		funcs:avg(tpch.customer.c_acctbal)->Column#17
+    └─Selection	5473531.00	root		in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
+      └─TableReader	6841913.75	root		data:Selection
+        └─Selection	6841913.75	cop[tikv]		gt(tpch.customer.c_acctbal, 0.00)
+          └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
