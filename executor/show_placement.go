@@ -209,7 +209,7 @@ func (e *ShowExec) fetchAllDBPlacements() error {
 	sort.Slice(dbs, func(i, j int) bool { return dbs[i].Name.O < dbs[j].Name.O })
 
 	for _, dbInfo := range dbs {
-		if e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(activeRoles, dbInfo.Name.O) {
+		if e.ctx.GetSessionVars().User != nil && checker != nil && !checker.DBIsVisible(activeRoles, dbInfo.Name.O) {
 			continue
 		}
 
