@@ -983,10 +983,10 @@ func (s *testBundleSuite) TestReset(c *C) {
 	c.Assert(bundle.Rules, HasLen, 1)
 	c.Assert(bundle.Rules[0].GroupID, Equals, bundle.ID)
 
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(3)))
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(3)))
 	c.Assert(bundle.Rules[0].StartKeyHex, Equals, startKey)
 
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(4)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(4)))
 	c.Assert(bundle.Rules[0].EndKeyHex, Equals, endKey)
 }
 
