@@ -1515,7 +1515,7 @@ func (b *builtinCastDurationAsRealSig) evalReal(row chunk.Row) (res float64, isN
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if val.Fsp, err = types.CheckFsp(int(val.Fsp)); err != nil {
+	if val.Fsp, err = types.CheckFsp(val.Fsp); err != nil {
 		return res, false, err
 	}
 	res, err = val.ToNumber().ToFloat64()
@@ -1537,7 +1537,7 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(row chunk.Row) (res *types
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if val.Fsp, err = types.CheckFsp(int(val.Fsp)); err != nil {
+	if val.Fsp, err = types.CheckFsp(val.Fsp); err != nil {
 		return res, false, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx

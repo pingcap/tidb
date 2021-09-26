@@ -935,7 +935,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 	c.Assert(err, IsNil)
 	res, _, err := du.add(s.ctx, now, "1", "MICROSECOND")
 	c.Assert(err, IsNil)
-	c.Assert(res.Fsp(), Equals, int8(6))
+	c.Assert(res.Fsp(), Equals, 6)
 
 	tbl = []struct {
 		Input         string
@@ -1167,13 +1167,13 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte, fsp int8) (d types.Datum, err error) {
+func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
 	if fsp > types.MaxFsp {
 		fsp = types.MaxFsp
 	}
 
 	f := types.NewFieldType(tp)
-	f.Decimal = int(fsp)
+	f.Decimal = fsp
 
 	d, err = arg.ConvertTo(sc, f)
 	if err != nil {
@@ -1582,7 +1582,7 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		args       []interface{}
 		expectStr  string
 		isNil      bool
-		fsp        int8
+		fsp        int
 		flen       int
 		getWarning bool
 	}{
@@ -1967,7 +1967,7 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	testDurations := []struct {
 		fc       functionClass
 		dur      string
-		fsp      int8
+		fsp      int
 		unit     string
 		format   interface{}
 		expected string

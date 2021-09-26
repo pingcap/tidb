@@ -285,9 +285,9 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.Tp = mysql.TypeDuration
 		tp.Flen = len(x.String())
 		if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
-			tp.Flen = int(x.Fsp) + 1
+			tp.Flen = x.Fsp + 1
 		}
-		tp.Decimal = int(x.Fsp)
+		tp.Decimal = x.Fsp
 		SetBinChsClnFlag(tp)
 	case *MyDecimal:
 		tp.Tp = mysql.TypeNewDecimal

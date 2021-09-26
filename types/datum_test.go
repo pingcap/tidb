@@ -208,7 +208,7 @@ func TestToFloat64(t *testing.T) {
 }
 
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
-func mustParseTimeIntoDatum(s string, tp byte, fsp int8) (d Datum) {
+func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
 	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, s, tp, fsp)
 	if err != nil {
 		panic("ParseTime fail")

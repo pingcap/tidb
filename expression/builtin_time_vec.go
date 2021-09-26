@@ -810,7 +810,7 @@ func (b *builtinSysDateWithFspSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if result.IsNull(i) {
 			continue
 		}
-		t, err := convertTimeToMysqlTime(now, int8(ds[i]), types.ModeHalfEven)
+		t, err := convertTimeToMysqlTime(now, int(ds[i]), types.ModeHalfEven)
 		if err != nil {
 			return err
 		}
@@ -1134,7 +1134,7 @@ func (b *builtinExtractDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	i64s := result.Int64s()
 	durIs := dur.GoDurations()
 	var duration types.Duration
-	duration.Fsp = int8(b.args[1].GetType().Decimal)
+	duration.Fsp = b.args[1].GetType().Decimal
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1307,7 +1307,7 @@ func (b *builtinNowWithoutArgSig) vectorized() bool {
 
 func (b *builtinNowWithoutArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	nowTs, isNull, err := evalNowWithFsp(b.ctx, int8(0))
+	nowTs, isNull, err := evalNowWithFsp(b.ctx, 0)
 	if err != nil {
 		return err
 	}
@@ -1466,7 +1466,7 @@ func (b *builtinUTCTimestampWithArgSig) vecEvalTime(input *chunk.Chunk, result *
 		if fsp < int64(types.MinFsp) {
 			return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 		}
-		res, isNull, err := evalUTCTimestampWithFsp(b.ctx, int8(fsp))
+		res, isNull, err := evalUTCTimestampWithFsp(b.ctx, int(fsp))
 		if err != nil {
 			return err
 		}
@@ -2470,7 +2470,7 @@ func (b *builtinTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Colum
 		if tmpFsp, err = types.CheckFsp(fsp); err != nil {
 			return err
 		}
-		fsp = int(tmpFsp)
+		fsp = tmpFsp
 
 		res, err := types.ParseDuration(sc, expr, fsp)
 		if types.ErrTruncatedWrongVal.Equal(err) {

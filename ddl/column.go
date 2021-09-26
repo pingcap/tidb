@@ -1857,9 +1857,9 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 
 	if odValue == strings.ToUpper(ast.CurrentTimestamp) {
 		if col.Tp == mysql.TypeTimestamp {
-			odValue = types.NewTime(types.FromGoTime(time.Now().UTC()), col.Tp, int8(col.Decimal)).String()
+			odValue = types.NewTime(types.FromGoTime(time.Now().UTC()), col.Tp, col.Decimal).String()
 		} else if col.Tp == mysql.TypeDatetime {
-			odValue = types.NewTime(types.FromGoTime(time.Now()), col.Tp, int8(col.Decimal)).String()
+			odValue = types.NewTime(types.FromGoTime(time.Now()), col.Tp, col.Decimal).String()
 		}
 	}
 	return odValue, nil

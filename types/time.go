@@ -253,7 +253,7 @@ const (
 	microsecondBitFieldMask uint64 = ((1 << microsecondBitFieldWidth) - 1) << microsecondBitFieldOffset
 	fspTtBitFieldMask       uint64 = ((1 << fspTtBitFieldWidth) - 1) << fspTtBitFieldOffset
 
-	fspTtForDate         uint  = 0b1110
+	fspTtForDate         uint   = 0b1110
 	fspBitFieldMask      uint64 = 0b1110
 	coreTimeBitFieldMask        = ^fspTtBitFieldMask
 )
@@ -1490,7 +1490,7 @@ func (d Duration) RoundFrac(fsp int, loc *gotime.Location) (Duration, error) {
 	}
 
 	n := gotime.Date(0, 0, 0, 0, 0, 0, 0, tz)
-	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond).Sub(n)
+	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond).Sub(n)
 	return Duration{Duration: nd, Fsp: fsp}, nil
 }
 
@@ -1661,7 +1661,7 @@ func matchFrac(str string, fsp int) (bool, int, string, error) {
 }
 
 func matchDuration(str string, fsp int) (Duration, error) {
-	fsp, err := CheckFsp(int(fsp))
+	fsp, err := CheckFsp(fsp)
 	if err != nil {
 		return ZeroDuration, errors.Trace(err)
 	}

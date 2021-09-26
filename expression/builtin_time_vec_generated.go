@@ -316,7 +316,7 @@ func (b *builtinAddStringAndDurationSig) vecEvalString(input *chunk.Chunk, resul
 		// calculate
 
 		sc := b.ctx.GetSessionVars().StmtCtx
-		fsp1 := int8(b.args[1].GetType().Decimal)
+		fsp1 := b.args[1].GetType().Decimal
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
 		var isNull bool
@@ -498,8 +498,8 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(input *chunk.Chunk, result 
 
 		// calculate
 
-		fsp0 := int8(b.args[0].GetType().Decimal)
-		fsp1 := int8(b.args[1].GetType().Decimal)
+		fsp0 := b.args[0].GetType().Decimal
+		fsp1 := b.args[1].GetType().Decimal
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
@@ -576,7 +576,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(input *chunk.Chunk, result *c
 			return err
 		}
 
-		fsp0 := int8(b.args[0].GetType().Decimal)
+		fsp0 := b.args[0].GetType().Decimal
 
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
 
@@ -940,7 +940,7 @@ func (b *builtinSubStringAndDurationSig) vecEvalString(input *chunk.Chunk, resul
 		// calculate
 
 		sc := b.ctx.GetSessionVars().StmtCtx
-		fsp1 := int8(b.args[1].GetType().Decimal)
+		fsp1 := b.args[1].GetType().Decimal
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
 		var isNull bool
@@ -1122,8 +1122,8 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(input *chunk.Chunk, result 
 
 		// calculate
 
-		fsp0 := int8(b.args[0].GetType().Decimal)
-		fsp1 := int8(b.args[1].GetType().Decimal)
+		fsp0 := b.args[0].GetType().Decimal
+		fsp1 := b.args[1].GetType().Decimal
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
@@ -1200,7 +1200,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(input *chunk.Chunk, result *c
 			return err
 		}
 
-		fsp0 := int8(b.args[0].GetType().Decimal)
+		fsp0 := b.args[0].GetType().Decimal
 
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
 
@@ -1301,7 +1301,7 @@ func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 			continue
 		}
 		lhsTime := arg0[i]
-		_, rhsTime, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), int8(b.tp.Decimal))
+		_, rhsTime, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), b.tp.Decimal)
 		if err != nil {
 			return err
 		}
@@ -1356,7 +1356,7 @@ func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 			continue
 		}
 		lhs.Duration = arg0[i]
-		rhsDur, _, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), int8(b.tp.Decimal))
+		rhsDur, _, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), b.tp.Decimal)
 		if err != nil {
 			return err
 		}
@@ -1460,7 +1460,7 @@ func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(input *chunk.Chunk, resul
 		if result.IsNull(i) {
 			continue
 		}
-		_, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
+		_, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), b.tp.Decimal)
 		if err != nil {
 			return err
 		}
@@ -1515,7 +1515,7 @@ func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(input *chunk.Chunk, r
 		if result.IsNull(i) {
 			continue
 		}
-		lhsDur, _, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
+		lhsDur, _, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), b.tp.Decimal)
 		if err != nil {
 			return err
 		}
@@ -1571,11 +1571,11 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(input *chunk.Chunk, res
 		if result.IsNull(i) {
 			continue
 		}
-		lhsDur, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
+		lhsDur, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), b.tp.Decimal)
 		if err != nil {
 			return err
 		}
-		rhsDur, rhsTime, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), int8(b.tp.Decimal))
+		rhsDur, rhsTime, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), b.tp.Decimal)
 		if err != nil {
 			return err
 		}

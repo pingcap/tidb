@@ -52,12 +52,12 @@ func TestCheckFsp(t *testing.T) {
 	require.Equal(t, MaxFsp, obtained)
 	require.NoError(t, err)
 
-	obtained, err = CheckFsp((MaxFsp+MinFsp) / 2)
+	obtained, err = CheckFsp((MaxFsp + MinFsp) / 2)
 	require.Equal(t, (MaxFsp+MinFsp)/2, obtained)
 	require.NoError(t, err)
 
 	obtained, err = CheckFsp(5)
-	require.Equal(t, int8(5), obtained)
+	require.Equal(t, 5, obtained)
 	require.NoError(t, err)
 }
 

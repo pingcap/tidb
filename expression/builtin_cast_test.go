@@ -841,7 +841,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToTimeCases2 := []struct {
 		before *Column
 		after  types.Time
-		fsp    int8
+		fsp    int
 		tp     byte
 		row    chunk.MutRow
 	}{
@@ -897,7 +897,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	for i, t := range castToTimeCases2 {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(t.tp)
-		tp.Decimal = int(t.fsp)
+		tp.Decimal = t.fsp
 		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		c.Assert(err, IsNil)
 		timeFunc.tp = tp
@@ -921,7 +921,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		resAfter := t.after.String()
 		if t.fsp > 0 {
 			resAfter += "."
-			for i := 0; i < int(t.fsp); i++ {
+			for i := 0; i < t.fsp; i++ {
 				resAfter += "0"
 			}
 		}

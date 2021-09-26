@@ -44,7 +44,7 @@ func (b *builtinCastIntAsDurationSig) vecEvalDuration(input *chunk.Chunk, result
 		if result.IsNull(i) {
 			continue
 		}
-		dur, err := types.NumberToDuration(i64s[i], int8(b.tp.Decimal))
+		dur, err := types.NumberToDuration(i64s[i], b.tp.Decimal)
 		if err != nil {
 			if types.ErrOverflow.Equal(err) {
 				err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)

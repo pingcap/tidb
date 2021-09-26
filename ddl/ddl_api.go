@@ -499,7 +499,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
 		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.Tp) {
 		if vv, ok := value.(string); ok {
-			timeValue, err := expression.GetTimeValue(ctx, vv, col.Tp, int8(col.Decimal))
+			timeValue, err := expression.GetTimeValue(ctx, vv, col.Tp, col.Decimal)
 			if err != nil {
 				return hasDefaultValue, value, errors.Trace(err)
 			}
@@ -524,7 +524,7 @@ func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interfac
 	}
 	if vv, ok := defaultVal.(string); ok {
 		if vv != types.ZeroDatetimeStr && !strings.EqualFold(vv, ast.CurrentTimestamp) {
-			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, int8(col.Decimal))
+			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, col.Decimal)
 			if err != nil {
 				return defaultVal, errors.Trace(err)
 			}
@@ -732,7 +732,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 				}
 			}
 		}
-		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, int8(fsp))
+		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
 		if err != nil {
 			return nil, false, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)

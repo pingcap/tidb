@@ -110,7 +110,7 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 
 type dateTimeGenerWithFsp struct {
 	defaultGener
-	fsp int8
+	fsp int
 }
 
 func (g *dateTimeGenerWithFsp) gen() interface{} {
