@@ -16,13 +16,13 @@ package copr
 
 import (
 	"context"
-	"github.com/cznic/mathutil"
 	"io"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
