@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -35,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/mock"
@@ -263,6 +266,13 @@ func (g *defaultGener) gen() interface{} {
 	case types.ETDatetime, types.ETTimestamp:
 		gt := getRandomTime(g.randGen.Rand)
 		t := types.NewTime(gt, convertETType(g.eType), 0)
+		// TiDB has DST time problem, and it causes ErrWrongValue.
+		// We should ignore ambiguous Time. See https://timezonedb.com/time-zones/Asia/Shanghai.
+		for _, err := t.GoTime(time.Local); err != nil; {
+			gt = getRandomTime(g.randGen.Rand)
+			t = types.NewTime(gt, convertETType(g.eType), 0)
+			_, err = t.GoTime(time.Local)
+		}
 		return t
 	case types.ETDuration:
 		d := types.Duration{
@@ -625,6 +635,27 @@ func (g *ipv4MappedByteGener) gen() interface{} {
 		ip[i] = uint8(g.randGen.Intn(256)) // reset the last 4 bytes
 	}
 	return string(ip[:net.IPv6len])
+}
+
+// uuidStrGener is used to generate uuid strings.
+type uuidStrGener struct {
+	randGen *defaultRandGen
+}
+
+func (g *uuidStrGener) gen() interface{} {
+	u, _ := uuid.NewUUID()
+	return u.String()
+}
+
+// uuidBinGener is used to generate uuid binarys.
+type uuidBinGener struct {
+	randGen *defaultRandGen
+}
+
+func (g *uuidBinGener) gen() interface{} {
+	u, _ := uuid.NewUUID()
+	bin, _ := u.MarshalBinary()
+	return string(bin)
 }
 
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).
@@ -1775,7 +1806,7 @@ func (s *testVectorizeSuite2) TestVecEvalBool(c *C) {
 			it := chunk.NewIterator4Chunk(input)
 			i := 0
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				ok, null, err := EvalBool(mock.NewContext(), exprs, row)
+				ok, null, err := EvalBool(ctx, exprs, row)
 				c.Assert(err, IsNil)
 				c.Assert(null, Equals, nulls[i])
 				c.Assert(ok, Equals, selected[i])
@@ -1991,4 +2022,13 @@ func (s *testVectorizeSuite2) TestVectorizedFilterConsiderNull(c *C) {
 		}
 	}
 	ctx.GetSessionVars().EnableVectorizedExpression = dafaultEnableVectorizedExpressionVar
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkCastIntAsIntRow,
+		BenchmarkCastIntAsIntVec,
+		BenchmarkVectorizedExecute,
+		BenchmarkScalarFunctionClone,
+	)
 }

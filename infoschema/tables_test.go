@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,6 +29,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
+	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -46,9 +48,11 @@ import (
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -229,7 +233,7 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='timeschema'").
 		Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 4", "<nil> <nil> <nil> <nil> <nil>"))
 	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='strschema'").
-		Check(testkit.Rows("3 3 <nil> <nil> <nil>", "3 3 <nil> <nil> <nil>", "255 255 <nil> <nil> <nil>", "255 255 <nil> <nil> <nil>"))
+		Check(testkit.Rows("3 12 <nil> <nil> <nil>", "3 12 <nil> <nil> <nil>", "255 255 <nil> <nil> <nil>", "255 1020 <nil> <nil> <nil>"))
 	tk.MustQuery("select NUMERIC_SCALE from information_schema.COLUMNS where table_name='floatschema'").
 		Check(testkit.Rows("<nil>", "3"))
 
@@ -532,7 +536,6 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Command: byte(1),
 		Digest:  "abc1",
 		State:   1,
-		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
 	}
 	sm.processInfoMap[2] = &util.ProcessInfo{
 		ID:            2,
@@ -542,7 +545,6 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Digest:        "abc2",
 		State:         2,
 		Info:          strings.Repeat("x", 101),
-		StmtCtx:       tk.Se.GetSessionVars().StmtCtx,
 		CurTxnStartTS: 410090409861578752,
 	}
 	tk.Se.SetSessionManager(sm)
@@ -933,7 +935,7 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
 	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
 	for i, v := range defaultVersions {
-		version := infoschema.FormatVersion(v, true)
+		version := infoschema.FormatTiDBVersion(v, true)
 		c.Assert(version, Equals, defaultRes[i])
 	}
 
@@ -941,9 +943,17 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	versions := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
 	res := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
 	for i, v := range versions {
-		version := infoschema.FormatVersion(v, false)
+		version := infoschema.FormatTiDBVersion(v, false)
 		c.Assert(version, Equals, res[i])
 	}
+
+	versions = []string{"v4.0.12", "4.0.12", "v5.0.1"}
+	resultVersion := []string{"4.0.12", "4.0.12", "5.0.1"}
+
+	for i, versionString := range versions {
+		c.Assert(resultVersion[i], Equals, infoschema.FormatStoreServerVersion(versionString))
+	}
+
 }
 
 // Test statements_summary.
@@ -1139,51 +1149,61 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from information_schema.statements_summary`,
 	).Check(testkit.Rows())
 
-	// Create a new session to test
-	tk = s.newTestKitWithRoot(c)
-
 	tk.MustExec("set global tidb_enable_stmt_summary = on")
 	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
+}
+
+func (s *testTableSuite) TestStmtSummaryTablePriv(c *C) {
+	tk := s.newTestKitWithRoot(c)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
+	defer tk.MustExec("drop table if exists t")
+
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+	// Clear all statements.
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 
 	// Create a new user to test statements summary table privilege
+	tk.MustExec("drop user if exists 'test_user'@'localhost'")
 	tk.MustExec("create user 'test_user'@'localhost'")
-	tk.MustExec("grant select on *.* to 'test_user'@'localhost'")
-	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "root",
-		Hostname:     "%",
-		AuthUsername: "root",
-		AuthHostname: "%",
-	}, nil, nil)
+	defer tk.MustExec("drop user if exists 'test_user'@'localhost'")
+	tk.MustExec("grant select on test.t to 'test_user'@'localhost'")
 	tk.MustExec("select * from t where a=1")
 	result := tk.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
-	// Super user can query all records.
 	c.Assert(len(result.Rows()), Equals, 1)
 	result = tk.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
 	c.Assert(len(result.Rows()), Equals, 1)
-	tk.Se.Auth(&auth.UserIdentity{
+
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.Se.Auth(&auth.UserIdentity{
 		Username:     "test_user",
 		Hostname:     "localhost",
 		AuthUsername: "test_user",
 		AuthHostname: "localhost",
 	}, nil, nil)
-	result = tk.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
+
+	result = tk1.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
 	// Ordinary users can not see others' records
 	c.Assert(len(result.Rows()), Equals, 0)
-	result = tk.MustQuery("select *	from information_schema.statements_summary_history where digest_text like 'select * from `t`%'")
+	result = tk1.MustQuery("select *	from information_schema.statements_summary_history where digest_text like 'select * from `t`%'")
 	c.Assert(len(result.Rows()), Equals, 0)
-	tk.MustExec("select * from t where a=1")
-	result = tk.MustQuery("select *	from information_schema.statements_summary	where digest_text like 'select * from `t`%'")
+	tk1.MustExec("select * from t where b=1")
+	result = tk1.MustQuery("select *	from information_schema.statements_summary	where digest_text like 'select * from `t`%'")
+	// Ordinary users can see his own records
 	c.Assert(len(result.Rows()), Equals, 1)
-	tk.MustExec("select * from t where a=1")
-	result = tk.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
+	result = tk1.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
 	c.Assert(len(result.Rows()), Equals, 1)
-	// use root user to set variables back
-	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "root",
-		Hostname:     "%",
-		AuthUsername: "root",
-		AuthHostname: "%",
-	}, nil, nil)
+
+	tk.MustExec("grant process on *.* to 'test_user'@'localhost'")
+	result = tk1.MustQuery("select *	from information_schema.statements_summary	where digest_text like 'select * from `t`%'")
+	// Users with 'PROCESS' privileges can query all records.
+	c.Assert(len(result.Rows()), Equals, 2)
+	result = tk1.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
+	c.Assert(len(result.Rows()), Equals, 2)
 }
 
 func (s *testTableSuite) TestIssue18845(c *C) {
@@ -1252,6 +1272,11 @@ func (s *testClusterTableSuite) TestStmtSummaryHistoryTable(c *C) {
 // Test statements_summary_history.
 func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	tk := s.newTestKitWithRoot(c)
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
@@ -1292,7 +1317,7 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 		"where digest_text like \"select `original_sql` , `bind_sql` , `default_db` , status%\""
 	tk.MustQuery(sql).Check(testkit.Rows(
 		"select `original_sql` , `bind_sql` , `default_db` , status , `create_time` , `update_time` , charset , " +
-			"collation , source from `mysql` . `bind_info` where `update_time` > ? order by `update_time`"))
+			"collation , source from `mysql` . `bind_info` where `update_time` > ? order by `update_time` , `create_time`"))
 
 	// Test for issue #21642.
 	tk.MustQuery(`select tidb_version()`)
@@ -1359,6 +1384,233 @@ func (s *testTableSuite) TestStmtSummarySensitiveQuery(c *C) {
 			"alter user {user_sensitive@% password = ***}",
 			"create user {user_sensitive@% password = ***}",
 			"set password for user user_sensitive@%",
+		))
+}
+
+// test stmtSummaryEvictedCount
+func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
+	now := time.Now().Unix()
+	interval := int64(1800)
+	beginTimeForCurInterval := now - now%interval
+	tk := s.newTestKitWithPlanCache(c)
+	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
+
+	// no evict happens now, evicted count should be empty
+	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").Check(testkit.Rows("0"))
+
+	// clean up side effects
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+	defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	// statements summary evicted is also disabled when set tidb_enable_stmt_summary to off
+	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	// first sql
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+	// second sql
+	tk.MustQuery("show databases;")
+	// query `evicted table` is also a SQL, passing it leads to the eviction of the previous SQLs.
+	tk.MustQuery("select * from `information_schema`.`STATEMENTS_SUMMARY_EVICTED`;").
+		Check(testkit.Rows(
+			fmt.Sprintf("%s %s %v",
+				time.Unix(beginTimeForCurInterval, 0).Format("2006-01-02 15:04:05"),
+				time.Unix(beginTimeForCurInterval+interval, 0).Format("2006-01-02 15:04:05"),
+				int64(2)),
+		))
+
+	// test too much intervals
+	tk.MustExec("use test;")
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_stmt_summary_refresh_interval=%v", interval))
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+	historySize := 24
+	fpPath := "github.com/pingcap/tidb/util/stmtsummary/mockTimeForStatementsSummary"
+	for i := int64(0); i < 100; i++ {
+		err := failpoint.Enable(fpPath, fmt.Sprintf(`return("%v")`, time.Now().Unix()+interval*i))
+		if err != nil {
+			panic(err.Error())
+		}
+		tk.MustExec(fmt.Sprintf("create table if not exists th%v (p bigint key, q int);", i))
+	}
+	err := failpoint.Disable(fpPath)
+	if err != nil {
+		panic(err.Error())
+	}
+	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").
+		Check(testkit.Rows(fmt.Sprintf("%v", historySize)))
+
+	// test discrete intervals
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
+	tk.MustExec("set @@global.tidb_stmt_summary_max_stmt_count=1;")
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+	for i := int64(0); i < 3; i++ {
+		tk.MustExec(fmt.Sprintf("select count(*) from th%v", i))
+	}
+	err = failpoint.Enable(fpPath, fmt.Sprintf(`return("%v")`, time.Now().Unix()+2*interval))
+	if err != nil {
+		panic(err.Error())
+	}
+	for i := int64(0); i < 3; i++ {
+		tk.MustExec(fmt.Sprintf("select count(*) from th%v", i))
+	}
+	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").Check(testkit.Rows("2"))
+	tk.MustQuery("select BEGIN_TIME from information_schema.statements_summary_evicted;").
+		Check(testkit.
+			Rows(time.Unix(beginTimeForCurInterval+2*interval, 0).Format("2006-01-02 15:04:05"),
+				time.Unix(beginTimeForCurInterval, 0).Format("2006-01-02 15:04:05")))
+	failpoint.Disable(fpPath)
+	// TODO: Add more tests.
+}
+
+// test stmtSummaryEvictedCount cluster table
+func (s *testClusterTableSuite) TestStmtSummaryEvictedCountTable(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	// disable refreshing
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval=9999")
+	// set information_schema.statements_summary's size to 1
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+	// no evict happened, no record in cluster evicted table.
+	tk.MustQuery("select count(*) from information_schema.cluster_statements_summary_evicted;").Check(testkit.Rows("0"))
+	// clean up side effects
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+	defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
+	// clear information_schema.statements_summary
+	tk.MustExec("set global tidb_enable_stmt_summary=0")
+	// statements_summary is off, statements_summary_evicted is empty.
+	tk.MustQuery("select count(*) from information_schema.cluster_statements_summary_evicted;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_stmt_summary=1")
+
+	// make a new session for test...
+	tk = s.newTestKitWithRoot(c)
+	// first sql
+	tk.MustExec("show databases;")
+	// second sql, evict former sql from stmt_summary
+	tk.MustQuery("select evicted_count from information_schema.cluster_statements_summary_evicted;").
+		Check(testkit.Rows("1"))
+	// after executed the sql above
+	tk.MustQuery("select evicted_count from information_schema.cluster_statements_summary_evicted;").
+		Check(testkit.Rows("2"))
+	// TODO: Add more tests.
+
+	tk.MustExec("create user 'testuser'@'localhost'")
+	tk.MustExec("create user 'testuser2'@'localhost'")
+	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
+	tk1 := s.newTestKitWithRoot(c)
+	defer tk1.MustExec("drop user 'testuser'@'localhost'")
+	defer tk1.MustExec("drop user 'testuser2'@'localhost'")
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser",
+		Hostname: "localhost",
+	}, nil, nil), Equals, true)
+
+	err := tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED")
+	c.Assert(err, NotNil)
+	// This error is come from cop(TiDB) fetch from rpc server.
+	c.Assert(err.Error(), Equals, "other error: [planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser2",
+		Hostname: "localhost",
+	}, nil, nil), Equals, true)
+	err = tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED")
+	c.Assert(err, IsNil)
+}
+
+func (s *testTableSuite) TestStmtSummaryEvictedPointGet(c *C) {
+	interval := int64(1800)
+	tk := s.newTestKitWithRoot(c)
+	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval=%v;", interval))
+	tk.MustExec("create database point_get;")
+	tk.MustExec("use point_get;")
+	for i := 0; i < 6; i++ {
+		tk.MustExec(fmt.Sprintf("create table if not exists th%v ("+
+			"p bigint key,"+
+			"q int);", i))
+	}
+
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=0;")
+	tk.MustExec("set @@global.tidb_stmt_summary_max_stmt_count=5;")
+	defer tk.MustExec("set @@global.tidb_stmt_summary_max_stmt_count=100;")
+	// first SQL
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=1;")
+
+	for i := int64(0); i < 1000; i++ {
+		// six SQLs
+		tk.MustExec(fmt.Sprintf("select p from th%v where p=2333;", i%6))
+	}
+	tk.MustQuery("select EVICTED_COUNT from information_schema.statements_summary_evicted;").
+		Check(testkit.Rows("7"))
+
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=0;")
+	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").
+		Check(testkit.Rows("0"))
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=1;")
+}
+
+func (s *testTableSuite) TestStmtSummaryTableOther(c *C) {
+	interval := int64(1800)
+	tk := s.newTestKitWithRoot(c)
+	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval=%v", interval))
+	tk.MustExec("set global tidb_enable_stmt_summary=0")
+	tk.MustExec("set global tidb_enable_stmt_summary=1")
+	// set stmt size to 1
+	// first sql
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count=1")
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count=100")
+	// second sql, evict first sql from stmt_summary
+	tk.MustExec("show databases;")
+	// third sql, evict second sql from stmt_summary
+	tk.MustQuery("SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;").
+		Check(testkit.Rows(
+			// digest in cache
+			// "show databases ;"
+			"show databases ; dcd020298c5f79e8dc9d63b3098083601614a04a52db458738347d15ea5712a1",
+			// digest evicted
+			" <nil>",
+		))
+	// forth sql, evict third sql from stmt_summary
+	tk.MustQuery("SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;").
+		Check(testkit.Rows(
+			// digest in cache
+			"test", // select xx from yy;
+			// digest evicted
+			"<nil>",
+		))
+}
+
+func (s *testTableSuite) TestStmtSummaryHistoryTableOther(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	// disable refreshing summary
+	interval := int64(9999)
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
+	defer tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", 1800))
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	// first sql
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count=1")
+	// second sql, evict first sql from stmt_summary
+	tk.MustExec("show databases;")
+	// third sql, evict second sql from stmt_summary
+	tk.MustQuery("SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;").
+		Check(testkit.Rows(
+			// digest in cache
+			// "show databases ;"
+			"show databases ; dcd020298c5f79e8dc9d63b3098083601614a04a52db458738347d15ea5712a1",
+			// digest evicted
+			" <nil>",
+		))
+	// forth sql, evict third sql from stmt_summary
+	tk.MustQuery("SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;").
+		Check(testkit.Rows(
+			// digest in cache
+			"test", // select xx from yy;
+			// digest evicted
+			"<nil>",
 		))
 }
 
@@ -1511,25 +1763,51 @@ func (s *testTableSuite) TestInfoschemaClientErrors(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RELOAD privilege(s) for this operation")
 }
 
-func (s *testTableSuite) TestTrx(c *C) {
+func (s *testTableSuite) TestTiDBTrx(c *C) {
 	tk := s.newTestKitWithRoot(c)
-	_, digest := parser.NormalizeDigest("select * from trx for update;")
-	sm := &mockSessionManager{nil, make([]*txninfo.TxnInfo, 1)}
+	tk.MustExec("drop table if exists test_tidb_trx")
+	tk.MustExec("create table test_tidb_trx(i int)")
+	// Execute the statement once so that the statement will be collected into statements_summary and able to be found
+	// by digest.
+	tk.MustExec("update test_tidb_trx set i = i + 1")
+	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
+	sm := &mockSessionManager{nil, make([]*txninfo.TxnInfo, 2)}
 	sm.txnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
 		CurrentSQLDigest: digest.String(),
-		State:            txninfo.TxnRunningNormal,
-		BlockStartTime:   nil,
+		State:            txninfo.TxnIdle,
 		EntriesCount:     1,
 		EntriesSize:      19,
 		ConnectionID:     2,
 		Username:         "root",
 		CurrentDB:        "test",
 	}
+	blockTime2 := time.Date(2021, 05, 20, 13, 18, 30, 123456000, time.Local)
+	sm.txnInfo[1] = &txninfo.TxnInfo{
+		StartTS:          425070846483628033,
+		CurrentSQLDigest: "",
+		AllSQLDigests:    []string{"sql1", "sql2", digest.String()},
+		State:            txninfo.TxnLockWaiting,
+		ConnectionID:     10,
+		Username:         "user1",
+		CurrentDB:        "db1",
+	}
+	sm.txnInfo[1].BlockStartTime.Valid = true
+	sm.txnInfo[1].BlockStartTime.Time = blockTime2
 	tk.Se.SetSessionManager(sm)
-	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(
-		testkit.Rows("424768545227014155 2021-05-07 12:56:48 " + digest.String() + " Normal <nil> 1 19 2 root test"),
-	)
+
+	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
+		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test []",
+		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"]"))
+
+	// Test the all_sql_digests column can be directly passed to the tidb_decode_sql_digests function.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal"), IsNil)
+	}()
+	tk.MustQuery("select tidb_decode_sql_digests(all_sql_digests) from information_schema.tidb_trx").Check(testkit.Rows(
+		"[]",
+		"[null,null,\"update `test_tidb_trx` set `i` = `i` + ?\"]"))
 }
 
 func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
@@ -1551,4 +1829,79 @@ func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
 		Hostname: "localhost",
 	}, nil, nil), IsTrue)
 	_ = tk.MustQuery("select * from information_schema.deadlocks")
+}
+
+func (s *testTableSuite) TestRegionLabel(c *C) {
+	// test the failpoint for testing
+	fpName := "github.com/pingcap/tidb/executor/mockOutputOfRegionLabel"
+	tk := s.newTestKitWithRoot(c)
+	tk.MustQuery("select * from information_schema.region_label").Check(testkit.Rows())
+
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	tk.MustQuery(`select * from information_schema.region_label`).Check(testkit.Rows(
+		`schema/test/test_label key-range "merge_option=allow" 7480000000000000ff395f720000000000fa 7480000000000000ff3a5f720000000000fa`,
+	))
+}
+
+func (s *testClusterTableSuite) TestDataLockWaits(c *C) {
+	_, digest1 := parser.NormalizeDigest("select * from test_data_lock_waits for update")
+	_, digest2 := parser.NormalizeDigest("update test_data_lock_waits set f1=1 where id=2")
+	s.store.(mockstorage.MockLockWaitSetter).SetMockLockWaits([]*deadlock.WaitForEntry{
+		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest1, nil)},
+		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest2, nil)},
+		// Invalid digests
+		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(nil, nil)},
+		{Txn: 7, WaitForTxn: 8, Key: []byte("key4"), ResourceGroupTag: []byte("asdfghjkl")},
+	})
+
+	tk := s.newTestKitWithRoot(c)
+
+	// Execute one of the query once so it's stored into statements_summary.
+	tk.MustExec("create table test_data_lock_waits (id int primary key, f1 int)")
+	tk.MustExec("select * from test_data_lock_waits for update")
+
+	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS").Check(testkit.Rows(
+		"6B657931 <nil> 1 2 "+digest1.String()+" select * from `test_data_lock_waits` for update",
+		"6B657932 <nil> 3 4 "+digest2.String()+" <nil>",
+		"6B657933 <nil> 5 6 <nil> <nil>",
+		"6B657934 <nil> 7 8 <nil> <nil>"))
+}
+
+func (s *testClusterTableSuite) TestDataLockWaitsPrivilege(c *C) {
+	dropUserTk := s.newTestKitWithRoot(c)
+
+	tk := s.newTestKitWithRoot(c)
+	tk.MustExec("create user 'testuser'@'localhost'")
+	defer dropUserTk.MustExec("drop user 'testuser'@'localhost'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser",
+		Hostname: "localhost",
+	}, nil, nil), IsTrue)
+	err := tk.QueryToErr("select * from information_schema.DATA_LOCK_WAITS")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	tk = s.newTestKitWithRoot(c)
+	tk.MustExec("create user 'testuser2'@'localhost'")
+	defer dropUserTk.MustExec("drop user 'testuser2'@'localhost'")
+	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser2",
+		Hostname: "localhost",
+	}, nil, nil), IsTrue)
+	_ = tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS")
+}
+
+func (s *testTableSuite) TestReferentialConstraints(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("CREATE DATABASE referconstraints")
+	tk.MustExec("use referconstraints")
+
+	tk.MustExec("CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY)")
+	tk.MustExec("CREATE TABLE t2 (id INT NOT NULL PRIMARY KEY, t1_id INT DEFAULT NULL, INDEX (t1_id), CONSTRAINT `fk_to_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`))")
+
+	tk.MustQuery(`SELECT * FROM information_schema.referential_constraints WHERE table_name='t2'`).Check(testkit.Rows("def referconstraints fk_to_t1 def referconstraints PRIMARY NONE NO ACTION NO ACTION t2 t1"))
 }

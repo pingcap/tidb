@@ -38,6 +38,18 @@ StreamAgg	8000.00	root		group by:Column#7, funcs:group_concat(Column#5, Column#6
 └─Projection	10000.00	root		cast(test.t.a, var_string(20))->Column#5, cast(test.t.b, var_string(20))->Column#6, test.t.id
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+explain format = TRADITIONAL select group_concat(a, b) from t group by id;
+id	estRows	task	access object	operator info
+StreamAgg_8	8000.00	root		group by:Column#7, funcs:group_concat(Column#5, Column#6 separator ",")->Column#4
+└─Projection_18	10000.00	root		cast(test.t.a, var_string(20))->Column#5, cast(test.t.b, var_string(20))->Column#6, test.t.id
+  └─TableReader_15	10000.00	root		data:TableFullScan_14
+    └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+explain format = 'row' select group_concat(a, b) from t group by id;
+id	estRows	task	access object	operator info
+StreamAgg_8	8000.00	root		group by:Column#7, funcs:group_concat(Column#5, Column#6 separator ",")->Column#4
+└─Projection_18	10000.00	root		cast(test.t.a, var_string(20))->Column#5, cast(test.t.b, var_string(20))->Column#6, test.t.id
+  └─TableReader_15	10000.00	root		data:TableFullScan_14
+    └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
 drop table t;
 drop view if exists v;
 create view v as select cast(replace(substring_index(substring_index("",',',1),':',-1),'"','') as CHAR(32)) as event_id;

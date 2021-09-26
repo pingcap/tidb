@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,18 +18,20 @@ import (
 	"context"
 	"crypto/tls"
 
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	driver "github.com/pingcap/tidb/store/driver/txn"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/tikv/client-go/v2/config"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // Wraps tikv.KVStore and make it compatible with kv.Storage.
 type mockStorage struct {
 	*tikv.KVStore
 	*copr.Store
-	memCache kv.MemManager
+	memCache  kv.MemManager
+	LockWaits []*deadlockpb.WaitForEntry
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
@@ -43,7 +46,6 @@ func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
 		Store:    coprStore,
 		memCache: kv.NewCacheDB(),
 	}, nil
-
 }
 
 func (s *mockStorage) EtcdAddrs() ([]string, error) {
@@ -111,7 +113,21 @@ func newTiKVTxn(txn *tikv.KVTxn, err error) (kv.Transaction, error) {
 	return driver.NewTiKVTxn(txn), nil
 }
 
+func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
+	return s.LockWaits, nil
+}
+
 func (s *mockStorage) Close() error {
 	s.Store.Close()
 	return s.KVStore.Close()
+}
+
+// MockLockWaitSetter is used to set the mocked lock wait information, which helps implementing tests that uses the
+// GetLockWaits function.
+type MockLockWaitSetter interface {
+	SetMockLockWaits(lockWaits []*deadlockpb.WaitForEntry)
+}
+
+func (s *mockStorage) SetMockLockWaits(lockWaits []*deadlockpb.WaitForEntry) {
+	s.LockWaits = lockWaits
 }

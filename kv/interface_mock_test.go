@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,9 +17,11 @@ package kv
 import (
 	"context"
 
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
@@ -135,6 +138,14 @@ func (t *mockTxn) GetTableInfo(id int64) *model.TableInfo {
 	return nil
 }
 
+func (t *mockTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	//TODO nothing
+}
+
+func (t *mockTxn) ClearDiskFullOpt() {
+	//TODO nothing
+}
+
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
 	return &mockTxn{
@@ -210,6 +221,10 @@ func (s *mockStorage) GetMemCache() MemManager {
 	return nil
 }
 
+func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
+	return nil, nil
+}
+
 func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
 	return 0
 }
@@ -255,3 +270,7 @@ func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
 }
 
 func (s *mockSnapshot) SetOption(opt int, val interface{}) {}
+
+func (s *mockSnapshot) GetLockWaits() []deadlockpb.WaitForEntry {
+	return nil
+}

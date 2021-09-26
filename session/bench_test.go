@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,9 +24,14 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -36,6 +42,10 @@ var smallCount = 100
 var bigCount = 10000
 
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.Log.EnableSlowLog = false
+	})
+
 	store, err := mockstore.NewMockStore()
 	if err != nil {
 		logutil.BgLogger().Fatal(err.Error())
@@ -108,8 +118,8 @@ func BenchmarkBasic(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -127,8 +137,8 @@ func BenchmarkTableScan(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
@@ -147,8 +157,8 @@ func BenchmarkExplainTableScan(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "int", "%v", 0)
 	b.ResetTimer()
@@ -167,8 +177,8 @@ func BenchmarkTableLookup(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "int", "%d", smallCount)
 	b.ResetTimer()
@@ -187,8 +197,8 @@ func BenchmarkExplainTableLookup(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "int", "%d", 0)
 	b.ResetTimer()
@@ -207,8 +217,8 @@ func BenchmarkStringIndexScan(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "varchar(255)", "'hello %d'", smallCount)
 	b.ResetTimer()
@@ -227,8 +237,8 @@ func BenchmarkExplainStringIndexScan(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "varchar(255)", "'hello %d'", 0)
 	b.ResetTimer()
@@ -242,13 +252,91 @@ func BenchmarkExplainStringIndexScan(b *testing.B) {
 	b.StopTimer()
 }
 
+func BenchmarkPointGet(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table t (pk int primary key)")
+	mustExecute(se, "insert t values (61),(62),(63),(64)")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t where pk = 64")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+}
+
+func BenchmarkBatchPointGet(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table t (pk int primary key)")
+	mustExecute(se, "insert t values (61),(62),(63),(64)")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t where pk in (61, 64, 67)")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+}
+
+func BenchmarkPreparedPointGet(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table t (pk int primary key)")
+	mustExecute(se, "insert t values (61),(62),(63),(64)")
+
+	stmtID, _, _, err := se.PrepareStmt("select * from t where pk = ?")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(64)})
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+}
+
 func BenchmarkStringIndexLookup(b *testing.B) {
 	ctx := context.Background()
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "varchar(255)", "'hello %d'", smallCount)
 	b.ResetTimer()
@@ -267,8 +355,8 @@ func BenchmarkIntegerIndexScan(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
@@ -287,8 +375,8 @@ func BenchmarkIntegerIndexLookup(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
@@ -307,8 +395,8 @@ func BenchmarkDecimalIndexScan(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "decimal(32,6)", "%v.1234", smallCount)
 	b.ResetTimer()
@@ -327,8 +415,8 @@ func BenchmarkDecimalIndexLookup(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareBenchData(se, "decimal(32,6)", "%v.1234", smallCount)
 	b.ResetTimer()
@@ -346,8 +434,8 @@ func BenchmarkInsertWithIndex(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, "create table t (pk int primary key, col int, index idx (col))")
@@ -362,8 +450,8 @@ func BenchmarkInsertNoIndex(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, "create table t (pk int primary key, col int)")
@@ -379,8 +467,8 @@ func BenchmarkSort(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareSortBenchData(se, "int", "%v", bigCount)
 	b.ResetTimer()
@@ -399,8 +487,8 @@ func BenchmarkJoin(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareJoinBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
@@ -419,8 +507,8 @@ func BenchmarkJoinLimit(b *testing.B) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
-		st.Close()
 		do.Close()
+		st.Close()
 	}()
 	prepareJoinBenchData(se, "int", "%v", smallCount)
 	b.ResetTimer()
@@ -1578,4 +1666,174 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 		}
 	}
 	b.StopTimer()
+}
+
+func BenchmarkInsertIntoSelect(b *testing.B) {
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+
+	mustExecute(se, `set @@tidb_enable_global_temporary_table = 1`)
+	mustExecute(se, `set @@tmp_table_size = 1000000000`)
+	mustExecute(se, `create global temporary table tmp (id int, dt varchar(512)) on commit delete rows`)
+	mustExecute(se, `create table src (id int, dt varchar(512))`)
+	for i := 0; i < 100; i++ {
+		mustExecute(se, "begin")
+		for lines := 0; lines < 100; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 512)), (66, repeat('x', 512))")
+		}
+		mustExecute(se, "commit")
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mustExecute(se, "insert into tmp select * from src")
+	}
+	b.StopTimer()
+}
+
+func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
+	// See issue https://github.com/pingcap/tidb/issues/27633
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+
+	mustExecute(se, `CREATE TABLE item1 (
+  a varchar(200) DEFAULT NULL,
+  b varchar(480) DEFAULT NULL,
+  c varchar(200) DEFAULT NULL,
+  d varchar(200) DEFAULT NULL,
+  e varchar(200) DEFAULT NULL,
+  f varchar(200) DEFAULT NULL,
+  g varchar(3999) DEFAULT NULL,
+  h bigint(38) DEFAULT NULL,
+  i varchar(80) DEFAULT NULL,
+  j bigint(38) DEFAULT NULL,
+  k varchar(480) DEFAULT NULL,
+  l varchar(480) DEFAULT NULL,
+  m decimal(18,4) DEFAULT NULL,
+  n decimal(18,4) DEFAULT NULL,
+  o decimal(22,8) DEFAULT NULL,
+  p varchar(8) DEFAULT NULL,
+  q decimal(18,4) DEFAULT NULL,
+  r decimal(18,4) DEFAULT NULL,
+  s varchar(40) DEFAULT NULL,
+  t decimal(18,4) DEFAULT NULL,
+  u decimal(18,4) DEFAULT NULL,
+  v decimal(18,4) DEFAULT NULL,
+  w decimal(18,5) DEFAULT NULL,
+  x decimal(12,8) DEFAULT NULL,
+  y varchar(40) DEFAULT NULL,
+  z decimal(12,8) DEFAULT NULL,
+  a1 decimal(18,4) DEFAULT NULL,
+  b1 decimal(18,4) DEFAULT NULL,
+  c1 decimal(18,4) DEFAULT NULL,
+  d1 decimal(18,4) DEFAULT NULL,
+  e1 decimal(12,8) DEFAULT NULL,
+  f1 varchar(40) DEFAULT NULL,
+  g1 decimal(18,4) DEFAULT NULL,
+  h1 decimal(18,4) DEFAULT NULL,
+  i1 decimal(18,4) DEFAULT NULL,
+  j1 decimal(18,4) DEFAULT NULL,
+  k1 varchar(40) DEFAULT NULL,
+  l1 decimal(14,8) DEFAULT NULL,
+  m1 bigint(38) DEFAULT NULL,
+  n1 varchar(8) DEFAULT NULL,
+  o1 varchar(40) DEFAULT NULL,
+  p1 decimal(12,8) DEFAULT NULL,
+  q1 varchar(480) DEFAULT NULL,
+  r1 varchar(480) DEFAULT NULL,
+  s1 decimal(12,8) DEFAULT NULL,
+  t1 decimal(14,10) DEFAULT NULL,
+  u1 decimal(18,4) DEFAULT NULL,
+  v1 decimal(18,4) DEFAULT NULL,
+  w1 varchar(8) DEFAULT NULL,
+  x1 decimal(18,4) DEFAULT NULL,
+  y1 datetime DEFAULT NULL,
+  z1 datetime DEFAULT NULL,
+  a2 decimal(18,4) DEFAULT NULL,
+  b2 decimal(18,4) DEFAULT NULL,
+  c2 decimal(18,4) DEFAULT NULL,
+  d2 decimal(18,4) DEFAULT NULL,
+  e2 decimal(12,8) DEFAULT NULL,
+  f2 varchar(40) DEFAULT NULL,
+  g2 decimal(18,4) DEFAULT NULL,
+  h2 decimal(18,4) DEFAULT NULL,
+  i2 decimal(18,4) DEFAULT NULL,
+  j2 decimal(18,4) DEFAULT NULL,
+  k2 varchar(40) DEFAULT NULL,
+  l2 decimal(14,8) DEFAULT NULL,
+  m2 bigint(38) DEFAULT NULL,
+  n2 varchar(8) DEFAULT NULL,
+  o2 varchar(40) DEFAULT NULL,
+  p2 decimal(12,8) DEFAULT NULL,
+  q2 varchar(480) DEFAULT NULL,
+  r2 varchar(480) DEFAULT NULL,
+  s2 decimal(12,8) DEFAULT NULL,
+  t2 decimal(14,10) DEFAULT NULL,
+  u2 decimal(18,4) DEFAULT NULL,
+  v2 decimal(18,4) DEFAULT NULL,
+  w2 varchar(8) DEFAULT NULL,
+  x2 decimal(18,4) DEFAULT NULL,
+  y2 datetime DEFAULT NULL,
+  z2 datetime DEFAULT NULL)`)
+
+	mustExecute(se, `CREATE TABLE item2 like item1`)
+
+	stmtID, _, _, err := se.PrepareStmt("insert into item2 select * from item1 where a1 = ?")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	args := []types.Datum{types.NewDatum(3401544)}
+	is := se.GetInfoSchema()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtID, is.(infoschema.InfoSchema), 0, args)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+}
+
+// TestBenchDaily collects the daily benchmark test result and generates a json output file.
+// The format of the json output is described by the BenchOutput.
+// Used by this command in the Makefile
+// 	make bench-daily TO=xxx.json
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkPreparedPointGet,
+		BenchmarkPointGet,
+		BenchmarkBatchPointGet,
+		BenchmarkBasic,
+		BenchmarkTableScan,
+		BenchmarkTableLookup,
+		BenchmarkExplainTableLookup,
+		BenchmarkStringIndexScan,
+		BenchmarkExplainStringIndexScan,
+		BenchmarkStringIndexLookup,
+		BenchmarkIntegerIndexScan,
+		BenchmarkIntegerIndexLookup,
+		BenchmarkDecimalIndexScan,
+		BenchmarkDecimalIndexLookup,
+		BenchmarkInsertWithIndex,
+		BenchmarkInsertNoIndex,
+		BenchmarkSort,
+		BenchmarkJoin,
+		BenchmarkJoinLimit,
+		BenchmarkPartitionPruning,
+		BenchmarkRangeColumnPartitionPruning,
+		BenchmarkHashPartitionPruningPointSelect,
+		BenchmarkHashPartitionPruningMultiSelect,
+		BenchmarkInsertIntoSelect,
+		BenchmarkCompileExecutePreparedStmt,
+	)
 }

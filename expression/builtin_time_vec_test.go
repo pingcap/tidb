@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -516,7 +517,8 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETDatetime,
 			childrenTypes: []types.EvalType{types.ETInt},
-			geners:        []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
+			// TiDB has DST time problem. Change the random ranges to [2000-01-01 00:00:01, +inf]
+			geners: []dataGenerator{newRangeInt64Gener(248160190726144000, math.MaxInt64)},
 		},
 	},
 	// Todo: how to inject the safeTS for better testing.

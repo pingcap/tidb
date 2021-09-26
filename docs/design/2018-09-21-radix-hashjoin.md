@@ -11,7 +11,7 @@ This proposal proposes to implement radix hash join in TiDB, aimed to improve th
 
 Currently, TiDB uses `non-partitioning hash join` to implement `HashJoinExec`. This algorithm starts by building a **single global hash table** for the inner relation which is known as the `build phase`. After the hash table is built, `probe phase` assigns equal-sized sub-relations (chunks) of the outer relation to multiple threads to probe against the global hash table simultaneously.
 
-[Shatdal et al.](http://www.inf.uni-konstanz.de/dbis/teaching/ws0203/main-memory-dbms/download/CCA.pdf) identify that when the hash table is larger than the cache size, almost every access to the
+[Shatdal et al.](https://web.archive.org/web/20180417031602/http://www.inf.uni-konstanz.de/dbis/teaching/ws0203/main-memory-dbms/download/CCA.pdf) identify that when the hash table is larger than the cache size, almost every access to the
 hash table results in a cache miss. So the `build phase` and `probe phase` of `non-partitioning hash join` might cause considerable cache miss when writing or reading the single global hash table.
 
 Partitioning the hash table into cache-sized chunks can reduce cache misses and improve performance, `partition-based hash join` introduces the `partition phase ` for hash join. `Partition phase` partitions the input relations into small pairs of partitions where one of the partitions typically **fits into one of the CPU caches**. During the `build phase`, a **separate hash table** is built for each partition respectively. During the `probe phase`, a sub-partition of outer relation will only be probed against the corresponding hash table which can be totally stored in the CPU cache.

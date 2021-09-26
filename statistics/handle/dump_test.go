@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -287,10 +288,10 @@ func (s *testStatsSuite) TestDumpExtendedStats(c *C) {
 	assertTableEqual(c, loadTblInStorage, tbl)
 }
 
-func (s *testStatsSuite) TestDumpVer3Stats(c *C) {
+func (s *testStatsSuite) TestDumpVer2Stats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_analyze_version = 3")
+	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10))")

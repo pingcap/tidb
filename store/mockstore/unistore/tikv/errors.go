@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +17,7 @@ package tikv
 import (
 	"fmt"
 
-	deadlockPB "github.com/pingcap/kvproto/pkg/deadlock"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 )
@@ -91,7 +92,7 @@ type ErrDeadlock struct {
 	LockKey         []byte
 	LockTS          uint64
 	DeadlockKeyHash uint64
-	WaitChain       []*deadlockPB.WaitForEntry
+	WaitChain       []*deadlockpb.WaitForEntry
 }
 
 func (e ErrDeadlock) Error() string {
