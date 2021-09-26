@@ -876,9 +876,8 @@ outer:
 	level := Warn
 	if hasUniqueField && len(rows) > 1 {
 		level = Critical
-	}
-	// if there are only 1 csv file or there is not unique key, try to check if all columns are compatible with string value
-	if !checkFieldCompatibility(tableInfo.Core, rows[0]) {
+	} else if !checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0]) {
+		// if there are only 1 csv file or there is not unique key, try to check if all columns are compatible with string value
 		level = Critical
 	}
 	rc.checkTemplate.Collect(level, false, msg)
@@ -886,11 +885,15 @@ outer:
 	return nil
 }
 
-func checkFieldCompatibility(tbl *model.TableInfo, values []types.Datum) bool {
+func checkFieldCompatibility(tbl *model.TableInfo, ignoreCols map[string]struct{}, values []types.Datum) bool {
 	se := kv.NewSession(&kv.SessionOptions{
 		SQLMode: mysql.ModeStrictTransTables,
 	})
 	for i, col := range tbl.Columns {
+		// do not check ignored columns
+		if _, ok := ignoreCols[col.Name.L]; ok {
+			continue
+		}
 		if i >= len(values) {
 			break
 		}

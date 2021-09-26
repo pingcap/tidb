@@ -245,6 +245,29 @@ func (s *checkInfoSuite) TestCheckCSVHeader(c *C) {
 				},
 			},
 		},
+		// non unique key, but ignore inconsistent field
+		{
+			[]*config.IgnoreColumns{
+				{
+					DB:      "db",
+					Table:   "tbl1",
+					Columns: []string{"a"},
+				},
+			},
+			Warn,
+			map[string][]*tableSource{
+				"db": {
+					{
+						"tbl1",
+						"create table tbl1 (a bigint, b varchar(8));",
+						[]string{
+							"a,b\r\ntest1,test2\r\n",
+							"a,b\r\ntest3,test4\r\n",
+						},
+					},
+				},
+			},
+		},
 		// multiple tables, test the choose priority
 		{
 			nil,
