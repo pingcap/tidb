@@ -2649,16 +2649,17 @@ func (s *testIntegrationSuite3) TestAutoIncrementForce(c *C) {
 	}
 	// Rebase _tidb_row_id.
 	tk.MustExec("create table t (a int);")
+	tk.MustExec("alter table t force auto_increment = 2;")
 	tk.MustExec("insert into t values (1),(2);")
-	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 2", "2 3"))
 	// Cannot set next global ID to 0.
 	tk.MustGetErrCode("alter table t force auto_increment = 0;", errno.ErrAutoincReadFailed)
 	tk.MustExec("alter table t force auto_increment = 1;")
 	c.Assert(getNextGlobalID(), Equals, uint64(1))
 	// inserting new rows can overwrite the existing data.
 	tk.MustExec("insert into t values (3);")
-	tk.MustExec("insert into t values (3);")
-	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "3 2"))
+	c.Assert(tk.ExecToErr("insert into t values (3);").Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'PRIMARY'")
+	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "1 2", "2 3"))
 
 	// Rebase auto_increment.
 	tk.MustExec("drop table if exists t;")
@@ -2891,11 +2892,8 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustGetErrCode("create global temporary table t (id int) on commit preserve rows", errno.ErrUnsupportedDDLOperation)
 	// Engine type can only be 'memory' or empty for now.
 	tk.MustGetErrCode("create global temporary table t (id int) engine = 'innodb' on commit delete rows", errno.ErrUnsupportedDDLOperation)
-	// Follow the behaviour of the old version TiDB: parse and ignore the 'temporary' keyword.
-	tk.MustGetErrCode("create temporary table t(id int)", errno.ErrNotSupportedYet)
 
 	// Create local temporary table.
-	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 	tk.MustExec("create database tmp_db")
 	tk.MustExec("use tmp_db")
 	tk.MustExec("create temporary table t1 (id int)")
@@ -2962,7 +2960,6 @@ func (s *testIntegrationSuite3) TestAvoidCreateViewOnLocalTemporaryTable(c *C) {
 	tk.MustExec("drop table if exists tt1")
 	tk.MustExec("drop table if exists tt2")
 
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("create table tt0 (a int, b int)")
 	tk.MustExec("create view v0 as select * from tt0")
 	tk.MustExec("create temporary table tt1 (a int, b int)")
@@ -3032,7 +3029,6 @@ func (s *testIntegrationSuite3) TestAvoidCreateViewOnLocalTemporaryTable(c *C) {
 func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 
 	// Check drop temporary table(include meta data and real data.
 	tk.MustExec("create temporary table if not exists b_local_temp_table (id int)")
@@ -3161,7 +3157,6 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	clearSQL := "drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2"
 	tk.MustExec(clearSQL)
@@ -3236,7 +3231,6 @@ func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
 func (s *testIntegrationSuite3) TestDropWithLocalTemporaryTableKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	clearSQL := "drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2, testt.ltemp3"
 	tk.MustExec(clearSQL)
@@ -3320,7 +3314,6 @@ func (s *testIntegrationSuite3) TestDropWithLocalTemporaryTableKeyWord(c *C) {
 func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 
 	tk.MustExec("drop table if exists t1, tn")
 	tk.MustExec("create table t1 (id int)")
