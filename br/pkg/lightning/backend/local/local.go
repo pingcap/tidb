@@ -2411,10 +2411,10 @@ func (local *local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterCon
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engineFile := e.(*File)
-	return openLocalWriter(ctx, cfg, engineFile, local.localWriterMemCacheSize)
+	return openLocalWriter(cfg, engineFile, local.localWriterMemCacheSize)
 }
 
-func openLocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, f *File, cacheSize int64) (*Writer, error) {
+func openLocalWriter(cfg *backend.LocalWriterConfig, f *File, cacheSize int64) (*Writer, error) {
 	w := &Writer{
 		local:              f,
 		memtableSizeLimit:  cacheSize,
