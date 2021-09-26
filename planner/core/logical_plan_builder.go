@@ -987,7 +987,11 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
-				if err != nil || ret {
+				if err != nil {
+					p.SCtx().GetSessionVars().StmtCtx.AppendWarning(err)
+				}
+
+				if ret {
 					continue
 				}
 				// If there is condition which is always false, return dual plan directly.

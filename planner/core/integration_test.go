@@ -1538,6 +1538,30 @@ func (s *testIntegrationSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("admin check index t i_a")
 }
 
+func (s *testIntegrationSuite) TestIssue27648(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+
+	tk.MustExec("insert into t values(1,1),(2,3),(4,5)")
+	tk.MustExec("update t set b = b + 1 where ''")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(0))
+
+	tk.MustExec("update t set b = b + 2 where '   '")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(0))
+
+	tk.MustExec("update t set b = b + 2 where '' or 1")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(3))
+
+	tk.MustQuery("select * from t where ''").Check(testkit.Rows())
+	tk.MustQuery("select * from t where '   '").Check(testkit.Rows())
+}
+
 // for issue #14822
 func (s *testIntegrationSuite) TestIndexJoinTableRange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
