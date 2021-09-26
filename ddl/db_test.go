@@ -3381,7 +3381,6 @@ func (s *testDBSuite2) TestTemporaryTableForeignKey(c *C) {
 	tk.MustExec("create table t1 (a int, b int);")
 	tk.MustExec("drop table if exists t1_tmp;")
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
-	tk.MustExec("set tidb_enable_noop_functions=1")
 	tk.MustExec("create global temporary table t1_tmp (a int, b int) on commit delete rows;")
 	tk.MustExec("create temporary table t2_tmp (a int, b int)")
 	// test add foreign key.
@@ -3894,7 +3893,6 @@ func (s *testDBSuite3) TestVirtualColumnDDL(c *C) {
 	c.Assert(err, IsNil)
 
 	// for local temporary table
-	tk.MustExec("set @@tidb_enable_noop_functions=1;")
 	tk.MustExec(`create temporary table test_local_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);`)
 	defer tk.MustExec("drop table if exists test_local_gv_ddl")
 	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
@@ -5777,7 +5775,6 @@ func (s *testSerialDBSuite) TestSetTiFlashReplicaForTemporaryTable(c *C) {
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
-	tk.MustExec("set tidb_enable_noop_functions = 1")
 	tk.MustExec("drop table if exists temp, temp2")
 	tk.MustExec("drop table if exists temp")
 	tk.MustExec("create global temporary table temp(id int) on commit delete rows")
@@ -5794,7 +5791,6 @@ func (s *testSerialDBSuite) TestSetTiFlashReplicaForTemporaryTable(c *C) {
 	tk.MustExec("create global temporary table temp like normal on commit delete rows")
 	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='temp'").Check(testkit.Rows())
 	tk.MustExec("drop table temp")
-	tk.MustExec("set tidb_enable_noop_functions = 1")
 	tk.MustExec("create temporary table temp like normal")
 	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='temp'").Check(testkit.Rows())
 }
@@ -5853,7 +5849,6 @@ func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
 	_, err = tk.Exec("alter table shard_row_id_temporary shard_row_id_bits = 4;")
 	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
 	// for local temporary table
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	tk.MustExec("drop table if exists local_shard_row_id_temporary")
 	_, err = tk.Exec("create temporary table local_shard_row_id_temporary (a int) shard_row_id_bits = 5;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())

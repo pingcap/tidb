@@ -1620,7 +1620,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
+		if (job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization) && i < 3 {
 			if !once {
 				once = true
 				tbl := testGetTableByName(c, tk1.Se, "test", "t")
