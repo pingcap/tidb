@@ -72,35 +72,18 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
 	}
 	var bundle *placement.Bundle
-	if tbInfo.DirectPlacementOpts != nil {
-		// check the direct placement option compatibility.
-		if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
-			return ver, errors.Trace(err)
-		}
-		// build bundle from direct placement options.
-		bundle, err = placement.NewBundleFromOptions(tbInfo.DirectPlacementOpts)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
-	if tbInfo.PlacementPolicyRef != nil {
-		// placement policy reference will override the direct placement options.
-		po, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, tbInfo.PlacementPolicyRef.ID)
-		if err != nil {
-			return ver, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
-		}
-		// build bundle from placement policy.
-		bundle, err = placement.NewBundleFromOptions(po.PlacementSettings)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+	bundle, err = getBundleFromTblInfo(t, job, tbInfo, dbInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
-	if bundle == nil {
-		// get the default bundle from DB or PD.
-		bundle = infoschema.GetBundle(d.infoCache.GetLatest(), []int64{schemaID})
-	}
+
 	// Do the http request only when the rules is existed.
 	syncPlacementRules := func() error {
+		// bundle being nil means there is no specified or inherited placement rules.
 		if bundle.Rules == nil {
 			return nil
 		}
@@ -150,6 +133,48 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	default:
 		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
+}
+
+func getBundleFromDBInfo(t *meta.Meta, job *model.Job, dbInfo *model.DBInfo) (*placement.Bundle, error) {
+	if dbInfo.DirectPlacementOpts != nil {
+		// check the direct placement option compatibility.
+		if err := checkPolicyValidation(dbInfo.DirectPlacementOpts); err != nil {
+			return nil, errors.Trace(err)
+		}
+		// build bundle from direct placement options.
+		return placement.NewBundleFromOptions(dbInfo.DirectPlacementOpts)
+	}
+	if dbInfo.PlacementPolicyRef != nil {
+		// placement policy reference will override the direct placement options.
+		po, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, dbInfo.PlacementPolicyRef.ID)
+		if err != nil {
+			return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(dbInfo.PlacementPolicyRef.Name))
+		}
+		// build bundle from placement policy.
+		return placement.NewBundleFromOptions(po.PlacementSettings)
+	}
+	return nil, nil
+}
+
+func getBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, dbInfo *model.DBInfo) (*placement.Bundle, error) {
+	if tbInfo.DirectPlacementOpts != nil {
+		// check the direct placement option compatibility.
+		if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
+			return nil, errors.Trace(err)
+		}
+		// build bundle from direct placement options.
+		return placement.NewBundleFromOptions(tbInfo.DirectPlacementOpts)
+	}
+	if tbInfo.PlacementPolicyRef != nil {
+		// placement policy reference will override the direct placement options.
+		po, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, tbInfo.PlacementPolicyRef.ID)
+		if err != nil {
+			return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+		}
+		// build bundle from placement policy.
+		return placement.NewBundleFromOptions(po.PlacementSettings)
+	}
+	return getBundleFromDBInfo(t, job, dbInfo)
 }
 
 func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
