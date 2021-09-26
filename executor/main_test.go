@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
@@ -29,13 +28,7 @@ import (
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
 
-	logLevel := os.Getenv("log_level")
-	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
-	if err != nil {
-		panic(err.Error())
-	}
 	autoid.SetStep(5000)
-
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowThreshold = 30000 // 30s
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
