@@ -5266,7 +5266,6 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 
 	// Test show table regions and split table on local temporary table
 	tk.MustExec("drop table if exists t_regions_local_temporary_table")
-	tk.MustExec("set @@tidb_enable_noop_functions=1;")
 	tk.MustExec("create temporary table t_regions_local_temporary_table (a int key, b int, c int, index idx(b), index idx2(c));")
 	// Test show table regions.
 	_, err = tk.Exec("show table t_regions_local_temporary_table regions")
@@ -6076,7 +6075,6 @@ func (s *testRecoverTable) TestRecoverTempTable(c *C) {
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t_recover (a int) on commit delete rows;")
 
-	tk.MustExec("set @@tidb_enable_noop_functions=1;")
 	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists tmp2_recover")
 	tk.MustExec("create temporary table tmp2_recover (a int);")
@@ -8834,7 +8832,6 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	tk.MustExec("create global temporary table tmp1 " +
 		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
 		"on commit delete rows")
-	tk.MustExec("set @@tidb_enable_noop_functions=1;")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tmp2")
 	tk.MustExec("create temporary table tmp2 (id int not null primary key, code int not null, value int default null, unique key code(code));")
@@ -8958,7 +8955,6 @@ func (s *testSuite) TestEmptyTableSampleTemporaryTable(c *C) {
 		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
 		"on commit delete rows")
 
-	tk.MustExec("set @@tidb_enable_noop_functions=1;")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tmp2")
 	tk.MustExec("create temporary table tmp2 (id int not null primary key, code int not null, value int default null, unique key code(code));")
