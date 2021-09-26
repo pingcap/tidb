@@ -285,7 +285,6 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd]\"")
 
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
@@ -297,7 +296,7 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
 		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
 		c.Assert(policySetting.Followers, Equals, uint64(2))
-		c.Assert(policySetting.FollowerConstraints, Equals, "[+zone=cn-east-1]")
+		c.Assert(policySetting.FollowerConstraints, Equals, "")
 		c.Assert(policySetting.Voters, Equals, uint64(0))
 		c.Assert(policySetting.VoterConstraints, Equals, "")
 		c.Assert(policySetting.Learners, Equals, uint64(0))
@@ -313,7 +312,6 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd]\" " +
 		"PLACEMENT POLICY=\"x\"")
 	c.Assert(err, NotNil)
@@ -326,7 +324,6 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
 	tk.MustExec("create table t(a int)" +
 		"PLACEMENT POLICY=\"x\"")
@@ -352,7 +349,6 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
 
 	tbl = testGetTableByName(c, tk.Se, "test", "t")
@@ -363,7 +359,7 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
 		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
 		c.Assert(policySetting.Followers, Equals, uint64(2))
-		c.Assert(policySetting.FollowerConstraints, Equals, "[+zone=cn-east-1]")
+		c.Assert(policySetting.FollowerConstraints, Equals, "")
 		c.Assert(policySetting.Voters, Equals, uint64(0))
 		c.Assert(policySetting.VoterConstraints, Equals, "")
 		c.Assert(policySetting.Learners, Equals, uint64(0))
@@ -426,4 +422,115 @@ func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 		err = tk.ExecToErr(fmt.Sprintf("drop placement policy if exists %s", policyName))
 		c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:8241]Placement policy '%s' is still in use", policyName))
 	}
+}
+
+func testGetPolicyByName(c *C, ctx sessionctx.Context, name string, mustExist bool) *model.PolicyInfo {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	po, ok := dom.InfoSchema().PolicyByName(model.NewCIStr(name))
+	if mustExist {
+		c.Assert(ok, Equals, true)
+	}
+	return po
+}
+
+func testGetPolicyDependency(storage kv.Storage, name string) []int64 {
+	ids := make([]int64, 0, 32)
+	err1 := kv.RunInNewTxn(context.Background(), storage, false, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		dbs, err := t.ListDatabases()
+		if err != nil {
+			return err
+		}
+		for _, db := range dbs {
+			tbls, err := t.ListTables(db.ID)
+			if err != nil {
+				return err
+			}
+			for _, tbl := range tbls {
+				if tbl.PlacementPolicyRef != nil && tbl.PlacementPolicyRef.Name.L == name {
+					ids = append(ids, tbl.ID)
+				}
+			}
+		}
+		return nil
+	})
+	if err1 != nil {
+		return []int64{}
+	}
+	return ids
+}
+
+func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop placement policy if exists x")
+
+	// Test policy cache.
+	tk.MustExec("create placement policy x primary_region=\"r1\" regions=\"r1,r2\" schedule=\"EVEN\";")
+	po := testGetPolicyByName(c, tk.Se, "x", true)
+	c.Assert(po, NotNil)
+	tk.MustQuery("show placement").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" SCHEDULED"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int) placement policy \"x\"")
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+
+	// Test policy dependency cache.
+	dependencies := testGetPolicyDependency(s.store, "x")
+	c.Assert(dependencies, NotNil)
+	c.Assert(len(dependencies), Equals, 1)
+	c.Assert(dependencies[0], Equals, tbl.Meta().ID)
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a int) placement policy \"x\"")
+	tbl2 := testGetTableByName(c, tk.Se, "test", "t2")
+
+	dependencies = testGetPolicyDependency(s.store, "x")
+	c.Assert(dependencies, NotNil)
+	c.Assert(len(dependencies), Equals, 2)
+	in := func() bool {
+		for _, one := range dependencies {
+			if one == tbl2.Meta().ID {
+				return true
+			}
+		}
+		return false
+	}
+	c.Assert(in(), Equals, true)
+
+	// Test drop policy can't succeed cause there are still some table depend on them.
+	_, err := tk.Exec("drop placement policy x")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8241]Placement policy 'x' is still in use")
+
+	// Drop depended table t firstly.
+	tk.MustExec("drop table if exists t")
+	dependencies = testGetPolicyDependency(s.store, "x")
+	c.Assert(dependencies, NotNil)
+	c.Assert(len(dependencies), Equals, 1)
+	c.Assert(dependencies[0], Equals, tbl2.Meta().ID)
+
+	_, err = tk.Exec("drop placement policy x")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8241]Placement policy 'x' is still in use")
+
+	// Drop depended table t2 secondly.
+	tk.MustExec("drop table if exists t2")
+	dependencies = testGetPolicyDependency(s.store, "x")
+	c.Assert(dependencies, NotNil)
+	c.Assert(len(dependencies), Equals, 0)
+
+	po = testGetPolicyByName(c, tk.Se, "x", true)
+	c.Assert(po, NotNil)
+
+	tk.MustExec("drop placement policy x")
+
+	po = testGetPolicyByName(c, tk.Se, "x", false)
+	c.Assert(po, IsNil)
+	dependencies = testGetPolicyDependency(s.store, "x")
+	c.Assert(dependencies, NotNil)
+	c.Assert(len(dependencies), Equals, 0)
 }
