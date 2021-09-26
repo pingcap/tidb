@@ -19,6 +19,7 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -1065,6 +1066,12 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " ON COMMIT DELETE ROWS")
 	}
 
+	if tableInfo.PlacementPolicyRef != nil {
+		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=`%s` */", tableInfo.PlacementPolicyRef.Name.String())
+	}
+
+	// add direct placement info here
+	appendDirectPlacementInfo(tableInfo.DirectPlacementOpts, buf)
 	// add partition info here.
 	appendPartitionInfo(tableInfo.Partition, buf)
 	return nil
@@ -1196,6 +1203,27 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
 
+func appendDirectPlacementInfo(directPlacementOpts *model.PlacementSettings, buf *bytes.Buffer) {
+	if directPlacementOpts == nil {
+		return
+	}
+	opts := reflect.ValueOf(*directPlacementOpts)
+	typeOpts := opts.Type()
+	fmt.Fprintf(buf, " /*T![placement]")
+	for i := 0; i < opts.NumField(); i++ {
+		if !opts.Field(i).IsZero() {
+			v := opts.Field(i).Interface()
+			switch v.(type) {
+			case string:
+				fmt.Fprintf(buf, ` %s="%s"`, strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
+			case uint64:
+				fmt.Fprintf(buf, " %s=%d", strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
+			}
+		}
+	}
+	fmt.Fprintf(buf, " */")
+}
+
 func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {
 	if partitionInfo == nil {
 		return
@@ -1286,9 +1314,7 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
 		}
 		fmt.Fprint(buf, "*/")
-		return nil
-	}
-	if dbInfo.Collate != "" {
+	} else if dbInfo.Collate != "" {
 		collInfo, err := collate.GetCollationByName(dbInfo.Collate)
 		if err != nil {
 			return errors.Trace(err)
@@ -1298,10 +1324,15 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
 		}
 		fmt.Fprint(buf, "*/")
-		return nil
 	}
 	// MySQL 5.7 always show the charset info but TiDB may ignore it, which makes a slight difference. We keep this
 	// behavior unchanged because it is trivial enough.
+	if dbInfo.DirectPlacementOpts != nil {
+		fmt.Fprintf(buf, " %s", dbInfo.DirectPlacementOpts)
+	}
+	if dbInfo.PlacementPolicyRef != nil {
+		fmt.Fprintf(buf, " PLACEMENT POLICY = %s", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
+	}
 	return nil
 }
 

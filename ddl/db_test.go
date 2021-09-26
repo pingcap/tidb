@@ -2862,6 +2862,58 @@ func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 	c.Assert(t1.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID})
 }
 
+func (s *testSerialDBSuite) TestCreateTableWithSpecialComment(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// case for direct options
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
+		"/*T![placement] PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"CONSTRAINTS=\"[+disk=ssd]\" */",
+	)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PRIMARY_REGION=\"cn-east-1\" "+
+			"REGIONS=\"cn-east-1, cn-east-2\" "+
+			"FOLLOWERS=2 "+
+			"CONSTRAINTS=\"[+disk=ssd]\" */",
+	))
+
+	// case for policy
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create placement policy x " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"CONSTRAINTS=\"[+disk=ssd]\" ")
+	tk.MustExec("create table t(a int)" +
+		"/*T![placement] PLACEMENT POLICY=`x` */")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PLACEMENT POLICY=`x` */",
+	))
+
+	// case for policy with quotes
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create table t(a int)" +
+		"/*T![placement] PLACEMENT POLICY=\"x\" */")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PLACEMENT POLICY=`x` */",
+	))
+}
+
 func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4897,7 +4949,7 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
 	s.mustExec(tk, c, "alter table t1 drop column if exists b") // only `a` exists now
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|column b doesn't exist"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|Can't DROP 'b'; check that column/key exists"))
 
 	// CHANGE COLUMN
 	sql = "alter table t1 change column b c int"
@@ -5556,16 +5608,16 @@ type testModifyColumnTimeCase struct {
 
 func testModifyColumnTime(c *C, store kv.Storage, tests []testModifyColumnTimeCase) {
 	limit := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(3)
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
 
 	// Set time zone to UTC.
 	originalTz := tk.Se.GetSessionVars().TimeZone
 	tk.Se.GetSessionVars().TimeZone = time.UTC
 	defer func() {
-		variable.SetDDLErrorCountLimit(limit)
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", limit))
 		tk.Se.GetSessionVars().TimeZone = originalTz
 	}()
 

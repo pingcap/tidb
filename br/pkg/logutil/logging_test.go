@@ -239,7 +239,7 @@ func (s *testLoggingSuite) TestContextual(c *C) {
 	ctx := context.Background()
 	l0 := logutil.LoggerFromContext(ctx)
 	l0.Info("going to take an adventure?", zap.Int("HP", 50), zap.Int("HP-MAX", 50), zap.String("character", "solte"))
-	lctx := logutil.ContextWithField(ctx, zap.Strings("firends", []string{"firo", "seren", "black"}))
+	lctx := logutil.ContextWithField(ctx, zap.Strings("friends", []string{"firo", "seren", "black"}))
 	l := logutil.LoggerFromContext(lctx)
 	l.Info("let's go!", zap.String("character", "solte"))
 
@@ -247,7 +247,7 @@ func (s *testLoggingSuite) TestContextual(c *C) {
 	checkLog(c, observedLogs[0],
 		"going to take an adventure?", zap.Int("HP", 50), zap.Int("HP-MAX", 50), zap.String("character", "solte"))
 	checkLog(c, observedLogs[1],
-		"let's go!", zap.Strings("firends", []string{"firo", "seren", "black"}), zap.String("character", "solte"))
+		"let's go!", zap.Strings("friends", []string{"firo", "seren", "black"}), zap.String("character", "solte"))
 }
 
 func checkLog(c *C, actual observer.LoggedEntry, message string, fields ...zap.Field) {
