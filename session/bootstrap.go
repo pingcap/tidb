@@ -348,6 +348,14 @@ const (
 		key idx(filter_type),
 		primary key(id)
 	);`
+	// CreateOptimizerTrace stores the baseline capture filter rules.
+	CreateOptimizerTrace = `CREATE TABLE IF NOT EXISTS mysql.optimizer_trace (
+		type varchar(255),
+		db_name varchar(255),
+		table_name varchar(255),
+		key varchar(255),
+		value varchar(255)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -509,11 +517,12 @@ const (
 	version72 = 72
 	// version73 adds mysql.capture_plan_baselines_blacklist table
 	version73 = 73
+	version74 = 74
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version73
+var currentBootstrapVersion int64 = version74
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -590,6 +599,7 @@ var (
 		upgradeToVer71,
 		upgradeToVer72,
 		upgradeToVer73,
+		upgradeToVer74,
 	}
 )
 
@@ -1545,6 +1555,12 @@ func upgradeToVer73(s Session, ver int64) {
 	}
 	doReentrantDDL(s, CreateCapturePlanBaselinesBlacklist)
 }
+func upgradeToVer74(s Session, ver int64) {
+	if ver >= version74 {
+		return
+	}
+	doReentrantDDL(s, CreateOptimizerTrace)
+}
 
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
@@ -1626,6 +1642,7 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGlobalGrantsTable)
 	// Create capture_plan_baselines_blacklist
 	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
+	mustExecute(s, CreateOptimizerTrace)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

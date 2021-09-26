@@ -15,6 +15,7 @@
 package stmtctx
 
 import (
+	"github.com/pingcap/tidb/planner/trace"
 	"math"
 	"sort"
 	"strconv"
@@ -187,7 +188,8 @@ type StatementContext struct {
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
 	// EnableCETrace indicate if Cardinality Estimation module need to trace its internal progress.
-	EnableCETrace bool
+	EnableCETrace   bool
+	CETraceRecordCh chan *trace.Record
 }
 
 // StmtHints are SessionVars related sql hints.

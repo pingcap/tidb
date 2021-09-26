@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/planner/trace"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -86,6 +87,7 @@ type Domain struct {
 	statsUpdating        sync2.AtomicInt32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
+	OptTraceHandle       *trace.Handle
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -1116,6 +1118,19 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 			case <-time.After(telemetry.SubWindowSize):
 				telemetry.RotateSubWindow()
 			}
+		}
+	}()
+}
+
+func (do *Domain) OptimizerTraceWorker(ctx sessionctx.Context) {
+	h := trace.NewHandle(ctx)
+	do.OptTraceHandle = h
+	go func() {
+		select {
+		case rec := <-h.RecordCh:
+			h.Run(rec)
+		case <-do.exit:
+			return
 		}
 	}()
 }

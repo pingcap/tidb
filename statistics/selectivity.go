@@ -15,6 +15,7 @@
 package statistics
 
 import (
+	"github.com/pingcap/tidb/planner/trace"
 	"math"
 	"math/bits"
 	"sort"
@@ -360,7 +361,17 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	}
 	if ctx.GetSessionVars().EnableCETrace {
 		totalExpr := expression.ComposeCNFCondition(ctx, exprs...)
-		logutil.BgLogger().Info(">>> CE Trace: Selectivity", zap.Stringer("expr", totalExpr), zap.Float64("selectivity", ret))
+		logutil.BgLogger().Info(">>> CE Trace: Selectivity", zap.String("expr", trace.ExprToString(totalExpr)), zap.Float64("Row count", ret*float64(coll.Count)))
+		CERecord := trace.CETraceRecord{
+			Type:     "Selectivity",
+			Expr:     trace.ExprToString(totalExpr),
+			RowCount: uint64(ret * float64(coll.Count)),
+		}
+		rec := trace.Record{
+			TableID: coll.PhysicalID,
+			CETrace: []trace.CETraceRecord{CERecord},
+		}
+		ctx.GetSessionVars().StmtCtx.CETraceRecordCh <- &rec
 	}
 	return ret, nodes, nil
 }
