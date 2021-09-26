@@ -954,7 +954,6 @@ func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd]\"")
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
@@ -963,8 +962,7 @@ func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 			"/*T![placement] PRIMARY_REGION=\"cn-east-1\" "+
 			"REGIONS=\"cn-east-1, cn-east-2\" "+
 			"FOLLOWERS=2 "+
-			"CONSTRAINTS=\"[+disk=ssd]\" "+
-			"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" */",
+			"CONSTRAINTS=\"[+disk=ssd]\" */",
 	))
 
 	// case for policy
@@ -973,7 +971,6 @@ func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
 	tk.MustExec("create table t(a int)" +
 		"PLACEMENT POLICY=\"x\"")

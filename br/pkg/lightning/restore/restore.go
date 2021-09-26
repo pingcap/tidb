@@ -1739,6 +1739,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		return err
 	}
 	taskExist := false
+
 	// We still need to sample source data even if this task has existed, because we need to judge whether the
 	// source is in order as row key to decide how to sort local data.
 	source, err := rc.estimateSourceData(ctx)
