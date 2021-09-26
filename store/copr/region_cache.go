@@ -16,6 +16,7 @@ package copr
 
 import (
 	"bytes"
+	"github.com/cznic/mathutil"
 	"strconv"
 
 	"github.com/pingcap/log"
@@ -111,13 +112,6 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 	return res, nil
 }
 
-func minInt(a int, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // OnSendFailForBatchRegions handles send request fail logic.
 func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *tikv.Store, regionInfos []RegionInfo, scheduleReload bool, err error) {
 	metrics.RegionCacheCounterWithSendFail.Add(float64(len(regionInfos)))
@@ -125,7 +119,7 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *tikv.Store
 		logutil.Logger(bo.GetCtx()).Info("Should not reach here, OnSendFailForBatchRegions only support TiFlash")
 		return
 	}
-	logutil.Logger(bo.GetCtx()).Info("Send fail for " + strconv.Itoa(len(regionInfos)) + " regions, will switch region peer for these regions. Only first " + strconv.Itoa(minInt(10, len(regionInfos))) + " regions will be logged if the log level is higher than Debug")
+	logutil.Logger(bo.GetCtx()).Info("Send fail for " + strconv.Itoa(len(regionInfos)) + " regions, will switch region peer for these regions. Only first " + strconv.Itoa(mathutil.Min(10, len(regionInfos))) + " regions will be logged if the log level is higher than Debug")
 	for index, ri := range regionInfos {
 		if ri.Meta == nil {
 			continue
