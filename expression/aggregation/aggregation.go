@@ -212,6 +212,13 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 	return ret
 }
 
+
+// CanAggArgsPushDown return true if all the args in aggFunc can be pushed down
+func CanAggArgsPushDown(sc *stmtctx.StatementContext, aggFuncName string, exprs []expression.Expression, client kv.Client, storeType kv.StoreType) bool {
+	_, remained := expression.PushDownAggArgs(sc, aggFuncName, exprs, client, storeType)
+	return len(remained) == 0
+}
+
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
 func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
 	switch aggFunc.Name {

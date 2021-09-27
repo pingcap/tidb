@@ -1453,7 +1453,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 			ret = false
 			break
 		}
-		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
+		if !aggregation.CanAggArgsPushDown(sc, aggFunc.Name, aggFunc.Args, client, storeType) {
 			reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs"
 			ret = false
 			break

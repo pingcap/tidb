@@ -1212,11 +1212,11 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bo
 				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Duration type"))
 			}
 			return false
-		//case mysql.TypeEnum:
-		//	if pc.sc.InExplainStmt {
-		//		pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Enum type"))
-		//	}
-		//	return false
+		case mysql.TypeEnum:
+			if pc.sc.InExplainStmt {
+				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Enum type"))
+			}
+			return false
 		default:
 		}
 	}
@@ -1233,11 +1233,33 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bo
 	return false
 }
 
+func canAggArgExprPushDown(aggFuncName string, expr Expression, pc PbConverter, storeType kv.StoreType) bool {
+	if storeType == kv.TiFlash && aggFuncName == ast.AggFuncSum && expr.GetType().Tp == mysql.TypeEnum {
+		return true
+	} else {
+		return canExprPushDown(expr, pc, storeType)
+	}
+
+}
+
 // PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
 func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
 	pc := PbConverter{sc: sc, client: client}
 	for _, expr := range exprs {
 		if canExprPushDown(expr, pc, storeType) {
+			pushed = append(pushed, expr)
+		} else {
+			remained = append(remained, expr)
+		}
+	}
+	return
+}
+
+// PushDownAggArgs split the input agg args into pushed and remained, pushed include all the exprs that can be pushed down
+func PushDownAggArgs(sc *stmtctx.StatementContext, aggFuncName string, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+	pc := PbConverter{sc: sc, client: client}
+	for _, expr := range exprs {
+		if canAggArgExprPushDown(aggFuncName, expr, pc, storeType) {
 			pushed = append(pushed, expr)
 		} else {
 			remained = append(remained, expr)
