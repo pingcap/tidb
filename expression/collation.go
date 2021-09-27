@@ -322,7 +322,7 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 				return false
 			}
 		} else {
-			if !(arg.GetType().Collate == charset.CharsetBin || ec.Charset == charset.CharsetBinary || isUnicodeCollation(ec.Charset)) {
+			if arg.GetType().Collate != charset.CharsetBin && ec.Charset != charset.CharsetBin && !isUnicodeCollation(ec.Charset) {
 				return false
 			}
 		}

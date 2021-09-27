@@ -660,7 +660,7 @@ func (col *Column) Coercibility() Coercibility {
 	return col.collationInfo.Coercibility()
 }
 
-// Repertoire ...
+// Repertoire returns the repertoire value which is used to check collations.
 func (col *Column) Repertoire() Repertoire {
 	if col.RetType.EvalType() != types.ETString {
 		return ASCII
