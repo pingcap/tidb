@@ -175,7 +175,7 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
      }
      ```
 
-     `HistoryHotRegion` wraps hot region info, it is storage format of `hotRegionStorage`. The unserialized size of  mock `HistoryHotRegion` (random value, 20 bytes `StartKey`, 20bytes `Endkey`, without `EncryptionMeta`) before is 144 Bytes, after serialization, the size is 353 bytes.
+     `HistoryHotRegion` wraps hot region info, it is storage format of `hotRegionStorage`. The unserialized size of  mock `HistoryHotRegion` (random value, 20 bytes `StartKey`, 20bytes `Endkey`, without `EncryptionMeta`) is 144 Bytes, after serialization, the size is 353 bytes.
 
      * Data size estimation 
 
@@ -195,7 +195,7 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
          | --------------------- | ---------------------- | ------------------------ |
          | 43.75                 | 313.66                 | 1351.35                  |
          
-         Because of the compression of LevelDB, the actual data sizes of all three time dimensions are close to and slightly smaller than the estimated data sizes. Given the size of the data, we set `HisHotRegionTTL` to 7 days. If the data survival time exceeds the preservation time,it will be delete from LevelDB,but really delete happend in every month data compaction. 
+         Because of the compression of LevelDB, the actual data sizes of all three time dimensions are close to and slightly smaller than the estimated data sizes. Given the size of the data, we set `HisHotRegionTTL` to 7 days. If the data survival time exceeds the preservation time,it will be delete from LevelDB,but really delete happend in every month data compaction and LevelDB's auto compation. 
 
 6. PD-CTL
    Support history hot regions in pd-ctl.
