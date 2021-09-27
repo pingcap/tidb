@@ -15,14 +15,13 @@
 package ddltest
 
 import (
+	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/util/testbridge"
-	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-	opts := []goleak.Option{}
-	goleak.VerifyTestMain(m, opts...)
+	os.Exit(m.Run())
 }
