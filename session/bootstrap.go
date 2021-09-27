@@ -353,8 +353,8 @@ const (
 		type varchar(255),
 		db_name varchar(255),
 		table_name varchar(255),
-		key varchar(255),
-		value varchar(255)
+		expr varchar(16383),
+		value varchar(16383)
 	);`
 )
 

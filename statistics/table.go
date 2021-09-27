@@ -358,7 +358,11 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 			TableID: coll.PhysicalID,
 			CETrace: []trace.CETraceRecord{CERecord},
 		}
-		sc.CETraceRecordCh <- &rec
+		select {
+		case sc.CETraceRecordCh <- &rec:
+		default:
+			logutil.BgLogger().Info("[CE Trace] dropped one record")
+		}
 	}
 	return result, errors.Trace(err)
 }
@@ -383,7 +387,11 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 			TableID: coll.PhysicalID,
 			CETrace: []trace.CETraceRecord{CERecord},
 		}
-		sc.CETraceRecordCh <- &rec
+		select {
+		case sc.CETraceRecordCh <- &rec:
+		default:
+			logutil.BgLogger().Info("[CE Trace] dropped one record")
+		}
 	}
 	return result, errors.Trace(err)
 }
@@ -422,7 +430,11 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 			TableID: coll.PhysicalID,
 			CETrace: []trace.CETraceRecord{CERecord},
 		}
-		sc.CETraceRecordCh <- &rec
+		select {
+		case sc.CETraceRecordCh <- &rec:
+		default:
+			logutil.BgLogger().Info("[CE Trace] dropped one record")
+		}
 	}
 	return result, errors.Trace(err)
 }

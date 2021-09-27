@@ -15,7 +15,12 @@
 package statistics
 
 import (
+	"bytes"
+	"fmt"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/tidb/planner/trace"
+	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/chunk"
 	"math"
 	"math/bits"
 	"sort"
@@ -361,17 +366,21 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	}
 	if ctx.GetSessionVars().EnableCETrace {
 		totalExpr := expression.ComposeCNFCondition(ctx, exprs...)
-		logutil.BgLogger().Info(">>> CE Trace: Selectivity", zap.String("expr", trace.ExprToString(totalExpr)), zap.Float64("Row count", ret*float64(coll.Count)))
+		logutil.BgLogger().Info(">>> CE Trace: Selectivity", zap.String("expr", ExprToString(totalExpr)), zap.Float64("Row count", ret*float64(coll.Count)))
 		CERecord := trace.CETraceRecord{
 			Type:     "Selectivity",
-			Expr:     trace.ExprToString(totalExpr),
+			Expr:     ExprToString(totalExpr),
 			RowCount: uint64(ret * float64(coll.Count)),
 		}
 		rec := trace.Record{
 			TableID: coll.PhysicalID,
 			CETrace: []trace.CETraceRecord{CERecord},
 		}
-		ctx.GetSessionVars().StmtCtx.CETraceRecordCh <- &rec
+		select {
+		case ctx.GetSessionVars().StmtCtx.CETraceRecordCh <- &rec:
+		default:
+			logutil.BgLogger().Info("[CE Trace] dropped one record")
+		}
 	}
 	return ret, nodes, nil
 }
@@ -493,4 +502,47 @@ func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64, cached
 		return retCols
 	}
 	return expression.FindPrefixOfIndex(cols, idxColIDs)
+}
+
+func ExprToString(e expression.Expression) string {
+	switch expr := e.(type) {
+	case *expression.ScalarFunction:
+		var buffer bytes.Buffer
+		fmt.Fprintf(&buffer, "`%s`(", expr.FuncName.L)
+		switch expr.FuncName.L {
+		case ast.Cast:
+			for _, arg := range expr.GetArgs() {
+				buffer.WriteString(ExprToString(arg))
+				buffer.WriteString(", ")
+				buffer.WriteString(expr.RetType.String())
+			}
+		default:
+			for i, arg := range expr.GetArgs() {
+				buffer.WriteString(ExprToString(arg))
+				if i+1 != len(expr.GetArgs()) {
+					buffer.WriteString(", ")
+				}
+			}
+		}
+		buffer.WriteString(")")
+		return buffer.String()
+	case *expression.Column:
+		return expr.String()
+	case *expression.CorrelatedColumn:
+		return expr.String()
+	case *expression.Constant:
+		value, err := expr.Eval(chunk.Row{})
+		if err != nil {
+			logutil.BgLogger().Warn("[CE Trace] Error when eval constant", zap.Error(err))
+		}
+		valueExpr := driver.ValueExpr{Datum: value}
+		var buffer bytes.Buffer
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buffer)
+		err = valueExpr.Restore(restoreCtx)
+		if err != nil {
+			logutil.BgLogger().Warn("[CE Trace] Error when restoring value expr", zap.Error(err))
+		}
+		return buffer.String()
+	}
+	return ""
 }

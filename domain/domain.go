@@ -1146,11 +1146,33 @@ func (do *Domain) OptimizerTraceWorker(ctx sessionctx.Context) {
 	h := trace.NewHandle(ctx)
 	do.OptTraceHandle = h
 	go func() {
-		select {
-		case rec := <-h.RecordCh:
-			h.Run(rec)
-		case <-do.exit:
-			return
+		for {
+			select {
+			case recI := <-h.RecordCh:
+				rec, ok := recI.(*trace.Record)
+				if !ok {
+					logutil.BgLogger().Warn("[CE Trace] channel receive invalid record",
+						zap.String("received", fmt.Sprintf("%v", recI)))
+				}
+				is := h.Session.GetInfoSchema().(infoschema.InfoSchema)
+				tbl, ok := is.TableByID(rec.TableID)
+				if !ok {
+					logutil.BgLogger().Warn("[CE Trace] Failed to find table in infoschema",
+						zap.Int64("table id", rec.TableID))
+				}
+				tblInfo := tbl.Meta()
+				tableName := tblInfo.Name.O
+				dbInfo, ok := is.SchemaByTable(tblInfo)
+				if !ok {
+					logutil.BgLogger().Warn("[CE Trace] Failed to find db in infoschema",
+						zap.Int64("table id", rec.TableID),
+						zap.String("table name", tableName))
+				}
+				dbName := dbInfo.Name.O
+				h.Run(rec, dbName, tableName)
+			case <-do.exit:
+				return
+			}
 		}
 	}()
 }
