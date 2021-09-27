@@ -198,7 +198,33 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "div_precision_increment", Value: "4", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_lru_scan_depth", Value: "1024"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_rseg_truncate_frequency", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: SQLAutoIsNull, Value: Off, Type: TypeBool, IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLAutoIsNull, Value: Off, Type: TypeBool, IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		// checkSQLAutoIsNull requires TiDBEnableNoopFuncs>0 for the same scope otherwise an error will be returned.
+		// See also https://github.com/pingcap/tidb/issues/28230
+		feature := "sql_auto_is_null"
+		if TiDBOptOn(normalizedValue) {
+			if scope == ScopeSession {
+				if vars.NoopFuncsMode == OffInt {
+					return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+				}
+				if vars.NoopFuncsMode == WarnInt {
+					vars.StmtCtx.AppendWarning(ErrFunctionsNoopImpl.GenWithStackByArgs(feature))
+				}
+			} else {
+				val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
+				if err != nil {
+					return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
+				}
+				if val == Off {
+					return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+				}
+				if val == Warn {
+					vars.StmtCtx.AppendWarning(ErrFunctionsNoopImpl.GenWithStackByArgs(feature))
+				}
+			}
+		}
+		return normalizedValue, nil
+	}},
 	{Scope: ScopeNone, Name: "innodb_api_enable_binlog", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "innodb_ft_user_stopword_table", Value: ""},
 	{Scope: ScopeNone, Name: "server_id_bits", Value: "32"},

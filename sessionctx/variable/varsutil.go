@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -135,15 +136,24 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 		feature = "OFFLINE MODE"
 	}
 	if TiDBOptOn(normalizedValue) {
-		if vars.NoopFuncsMode == OffInt && scope == ScopeSession {
-			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
-		}
-		val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
-		if err != nil {
-			return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
-		}
-		if scope == ScopeGlobal && !TiDBOptOn(val) {
-			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+		if scope == ScopeSession {
+			if vars.NoopFuncsMode == OffInt {
+				return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+			}
+			if vars.NoopFuncsMode == WarnInt {
+				vars.StmtCtx.AppendWarning(ErrFunctionsNoopImpl.GenWithStackByArgs(feature))
+			}
+		} else {
+			val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
+			if err != nil {
+				return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
+			}
+			if val == Off {
+				return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+			}
+			if val == Warn {
+				vars.StmtCtx.AppendWarning(ErrFunctionsNoopImpl.GenWithStackByArgs(feature))
+			}
 		}
 	}
 	return normalizedValue, nil
@@ -436,6 +446,22 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 	s.SnapshotTS = 0
 	s.SnapshotInfoschema = nil
 	return err
+}
+
+func setReadStaleness(s *SessionVars, sVal string) error {
+	if sVal == "" || sVal == "0" {
+		s.ReadStaleness = 0
+		return nil
+	}
+	sValue, err := strconv.ParseInt(sVal, 10, 32)
+	if err != nil {
+		return err
+	}
+	if sValue > 0 {
+		return fmt.Errorf("%s's value should be less than 0", TiDBReadStaleness)
+	}
+	s.ReadStaleness = time.Duration(sValue) * time.Second
+	return nil
 }
 
 // serverGlobalVariable is used to handle variables that acts in server and global scope.
