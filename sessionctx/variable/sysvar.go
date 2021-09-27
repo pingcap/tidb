@@ -1799,6 +1799,15 @@ var defaultSysVars = []*SysVar{
 		s.EnableStableResultMode = TiDBOptOn(val)
 		return nil
 	}},
+
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMPPBalanceWithContinuity, Type: TypeBool, Value: BoolToOnOff(DefEnableMPPBalanceWithContinuity), SetSession: func(s *SessionVars, val string) error {
+		s.EnableMPPBalanceWithContinuity = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMPPBalanceContinuousRegionCount, Value: strconv.Itoa(DefMPPBalanceContinuousRegionCount), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: 10000, AllowEmpty: true, SetSession: func(s *SessionVars, val string) error {
+		s.MPPBalanceContinuousRegionCount = tidbOptInt64(val, DefMPPBalanceContinuousRegionCount)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

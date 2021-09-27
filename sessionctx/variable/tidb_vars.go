@@ -584,6 +584,11 @@ const (
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// TiDBEnableMPPBalanceWithContinuity indicates whether MPP balance logic will take account of region's continuity in TiFlash.
+	TiDBEnableMPPBalanceWithContinuity = "tidb_enable_mpp_balance_with_continuity"
+	// TiDBMPPBalanceContinuousRegionCount indicates the continuous region count that balance logic assigns to a TiFlash instance each time.
+	TiDBMPPBalanceContinuousRegionCount = "tidb_mpp_balance_continuous_region_count"
 )
 
 // TiDB vars that have only global scope
@@ -744,6 +749,8 @@ const (
 	DefTMPTableSize                       = 16777216
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBEnableOrderedResultMode        = false
+	DefEnableMPPBalanceWithContinuity     = true
+	DefMPPBalanceContinuousRegionCount    = 10
 )
 
 // Process global variables.
