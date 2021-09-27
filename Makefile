@@ -113,9 +113,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 else
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -v -cover $(PACKAGES_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
-	@echo "timeout-check"
-	grep 'PASS:' gotest.log | go run tools/check/check-timeout.go || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 
@@ -134,6 +132,13 @@ ifeq ($(TARGET), "")
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server tidb-server/main.go
 else
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
+endif
+
+server_debug:
+ifeq ($(TARGET), "")
+	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-debug tidb-server/main.go
+else
+	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
 endif
 
 server_check:
@@ -235,8 +240,16 @@ endif
 # Usage:
 #	make bench-daily TO=/path/to/file.json
 bench-daily:
-	cd ./session && \
-	go test -run TestBenchDaily --date `git log -n1 --date=unix --pretty=format:%cd` --commit `git log -n1 --pretty=format:%h` --outfile $(TO)
+	go test github.com/pingcap/tidb/session -run TestBenchDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/executor -run TestBenchDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/tablecodec -run TestBenchDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/expression -run TestBenchDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/codec -run TestBenchDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/benchdaily -run TestBenchDaily \
+		-date `git log -n1 --date=unix --pretty=format:%cd` \
+		-commit `git log -n1 --pretty=format:%h` \
+		-outfile $(TO)
 
 build_tools: build_br build_lightning build_lightning-ctl
 

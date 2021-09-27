@@ -947,6 +947,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
+			if tblInfo.IsView() {
+				continue
+			}
 			pi := tblInfo.GetPartitionInfo()
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)

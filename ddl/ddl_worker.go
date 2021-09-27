@@ -508,6 +508,12 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			if job == nil || err != nil {
 				return errors.Trace(err)
 			}
+
+			// only general ddls allowed to be executed when TiKV is disk full.
+			if w.tp == addIdxWorker && job.IsRunning() {
+				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+			}
+
 			w.setDDLLabelForTopSQL(job)
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
 				return errors.Trace(err1)
@@ -530,16 +536,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.RLock()
 			d.mu.hook.OnJobRunBefore(job)
 			d.mu.RUnlock()
-
-			// Meta related txn default is DiskFullOpt_AllowedOnAlmostFull to support
-			// all the ddl job queue operations or other meta change. But we only want
-			// to support the Drop Table like ddls to be executed when TiKV is disk full.
-			switch job.Type {
-			case model.ActionDropSchema, model.ActionDropTable, model.ActionDropIndex, model.ActionTruncateTable, model.ActionDropTablePartition, model.ActionDropView, model.ActionDropSequence, model.ActionDropIndexes, model.ActionTruncateTablePartition:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			default:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
-			}
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
@@ -755,7 +751,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionCreateView:
 		ver, err = onCreateView(d, t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		ver, err = onDropTableOrView(t, job)
+		ver, err = onDropTableOrView(d, t, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(d, t, job)
 	case model.ActionTruncateTablePartition:
@@ -833,9 +829,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionCreatePlacementPolicy:
 		ver, err = onCreatePlacementPolicy(d, t, job)
 	case model.ActionDropPlacementPolicy:
-		ver, err = onDropPlacementPolicy(t, job)
+		ver, err = onDropPlacementPolicy(d, t, job)
 	case model.ActionAlterPlacementPolicy:
-		ver, err = onAlterPlacementPolicy(t, job)
+		ver, err = onAlterPlacementPolicy(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

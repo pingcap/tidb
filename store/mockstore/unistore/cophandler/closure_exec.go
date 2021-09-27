@@ -330,10 +330,6 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 	for i, col := range colInfos[:e.idxScanCtx.columnLen] {
 		colIDs[col.ID] = i
 	}
-	e.scanCtx.newCollationIds = colIDs
-
-	// We don't need to decode handle here, and colIDs >= 0 always.
-	e.scanCtx.newCollationRd = rowcodec.NewByteDecoder(colInfos[:e.idxScanCtx.columnLen], []int64{-1}, nil, nil)
 }
 
 func isCountAgg(pbAgg *tipb.Aggregation) bool {
@@ -515,9 +511,7 @@ type scanCtx struct {
 	desc    bool
 	decoder *rowcodec.ChunkDecoder
 
-	newCollationRd  *rowcodec.BytesDecoder
-	newCollationIds map[int64]int
-	execDetail      *execDetail
+	execDetail *execDetail
 }
 
 type idxScanCtx struct {
