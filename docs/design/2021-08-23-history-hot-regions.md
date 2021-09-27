@@ -156,30 +156,46 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
    
 5. GC
 
+     ```go
+     type HistoryHotRegion struct {
+     	UpdateTime    int64   `json:"update_time,omitempty"`
+     	RegionID      uint64  `json:"region_id,omitempty"`
+     	PeerID        uint64  `json:"peer_id,omitempty"`
+     	StoreID       uint64  `json:"store_id,omitempty"`
+     	IsLeader      bool    `json:"is_leader,omitempty"`
+     	IsLearner     bool    `json:"is_learner,omitempty"`
+     	HotRegionType string  `json:"hot_region_type,omitempty"`
+     	HotDegree     int64   `json:"hot_degree,omitempty"`
+     	FlowBytes     float64 `json:"flow_bytes,omitempty"`
+     	KeyRate       float64 `json:"key_rate,omitempty"`
+     	QueryRate     float64 `json:"query_rate,omitempty"`
+     	StartKey      []byte  `json:"start_key,omitempty"`
+     	EndKey        []byte  `json:"end_key,omitempty"`
+     	EncryptionMeta *encryptionpb.EncryptionMeta `json:"encryption_meta,omitempty"`
+     }
+     ```
+
+     `HistoryHotRegion` wraps hot region info, it is storage format of `hotRegionStorage`. The unserialized size of  mock `HistoryHotRegion` (random value, 20 bytes `StartKey`, 20bytes `Endkey`, without `EncryptionMeta`) before is 144 Bytes, after serialization, the size is 353 bytes.
+
      * Data size estimation 
 
-         one record size:
+         The following formulas show data size per day, per week and per month respectively with default write interval 10 minutes, given the maximum number of hotspot regions is 1000:
 
-         > M of [varchar(M)](https://docs.pingcap.com/tidb/stable/data-type-string#varchar-type) represents the maximum column length in characters (not bytes). The space occupied by a single character might differ for different character sets, form 1 to 4 bytes. 
+         one day data write =  24(hours) * 6 (writes/hour)  * 1000 (max regions numbers/write) * 353 B (each region size)= 48.48 MB
 
-         minimum： 1 * 4B(timestamp) + 2 * 1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64 * 1B(varchar(64)) = 334B
+         one week data write = 7(days) * 48.48MB(one day data write) = 339.34 MB
 
-         maximum： 1 * 4B(timestamp) + 1 * 1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64 * 4B(varchar(64)) = 1102B
+         one month data write = 30(days) * 48.48MB(one day data write) = 1454.32 MB
 
-         Below table show data size per day and per month with 10 minutes interval, given the maximum number of hotspot regions is 1000, Note that varchar is used to store the name of table index.the really data size is much smaller than the calculated value because of datat compaction and so on
+     * Actual data size.
 
-         | Record Length (B) | Time Interval (Min) | Data Size Per Day (MB) | Data Size Per Week (MB) | Data Size Per Month (MB) |
-         | ----------------- | ------------------- | ---------------------- | ----------------------- | ------------------------ |
-         | 334               | 10                  | 45.86791992            | 321.0754395             | 1376.037598              |
-         | 1102              | 10                  | 151.3366699            | 1059.356689             | 4540.100098              |
-
-     * The amount of data stored for one month is as follows.
-
-         | Time Interval (Min) | Only Insert Data Size Per Month (MB) | Insert And Delete Data Size Per Month (MB) |
-         | ------------------- | ------------------------------------ | ------------------------------------------ |
-         | 10                  | 550                                  | 880                                        |
-
-         If the data survival time exceeds the preservation time,it will be delete from LevelDB,but really delete happend in every month data compaction. This work takes 1.7s to complete.
+         The following table shows the actual size of data stored in LevelDB per day, per week and per month, again, using 10 minutes as the write interval and using 1000 as the maximum number of hotspot regions :
+         
+         | Data Size Per Day(MB) | Data Size Per Week(MB) | Data Size Per Month (MB) |
+         | --------------------- | ---------------------- | ------------------------ |
+         | 43.75                 | 313.66                 | 1351.35                  |
+         
+         Because of the compression of LevelDB, the actual data sizes of all three time dimensions are close to and slightly smaller than the estimated data sizes. Given the size of the data, we set `HisHotRegionTTL` to 7 days. If the data survival time exceeds the preservation time,it will be delete from LevelDB,but really delete happend in every month data compaction. 
 
 6. PD-CTL
    Support history hot regions in pd-ctl.
