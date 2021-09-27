@@ -53,10 +53,12 @@ function check_db_row(){
 }
 
 function test_crypter_none(){
+    echo "backup with crypter method of NONE"
     run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB/NONE" --crypter.method "NONE"
 
     drop_db
 
+    echo "restore with crypter method of NONE"
     run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/NONE" --crypter.method "NONE"
 
     check_db_row
@@ -69,13 +71,13 @@ function test_crypter(){
     CRYPTER_KEY_FILE=$TEST_DIR/$DB/$CRYPTER_METHOD-cipher-key
     CRYPTER_WRONG_KEY_FILE=$TEST_DIR/$DB/$CRYPTER_METHOD-wrong-cipher-key
 
-    echo "backup crypter with key"
+    echo "backup crypter method of $CRYPTER_METHOD with the key of $CRYPTER_KEY"
     run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB/$CRYPTER_METHOD" \
         --crypter.method $CRYPTER_METHOD  --crypter.key $CRYPTER_KEY 
 
     drop_db
 
-    echo "restore crypter with wrong key"
+    echo "restore crypter method of $CRYPTER_METHOD with wrong key of $CRYPTER_WRONG_KEY"
     restore_fail=0
     run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/$CRYPTER_METHOD" \
         --crypter.method $CRYPTER_METHOD  --crypter.key $CRYPTER_WRONG_KEY || backup_fail=1
@@ -84,7 +86,7 @@ function test_crypter(){
         exit 1
     fi
 
-    echo "restore crypter with key"
+    echo "restore crypter method of $CRYPTER_METHOD with the key of $CRYPTER_KEY"
     run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/$CRYPTER_METHOD" \
         --crypter.method $CRYPTER_METHOD  --crypter.key $CRYPTER_KEY
 
@@ -93,13 +95,13 @@ function test_crypter(){
     echo $CRYPTER_KEY > $CRYPTER_KEY_FILE
     echo $CRYPTER_WRONG_KEY > $CRYPTER_WRONG_KEY_FILE
 
-    echo "backup crypter with key-filepath"
+    echo "backup crypter method of $CRYPTER_METHOD with the key-file of $CRYPTER_KEY_FILE"
     run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
         --crypter.method $CRYPTER_METHOD  --crypter.key-filepath $CRYPTER_KEY_FILE
 
     drop_db
 
-    echo "restore crypter with wrong key-filepath"
+    echo "backup crypter method of $CRYPTER_METHOD with the wrong key-file of $CRYPTER_WRONG_KEY_FILE"
     restore_fail=0
     run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
         --crypter.method $CRYPTER_METHOD  --crypter.key-filepath $CRYPTER_WRONG_KEY_FILE || backup_fail=1
@@ -108,7 +110,7 @@ function test_crypter(){
         exit 1
     fi
 
-    echo "restore crypter with key-filepath"
+    echo "restore crypter method of $CRYPTER_METHOD with the key-file of $CRYPTER_KEY_FILE"
     run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
         --crypter.method $CRYPTER_METHOD --crypter.key-filepath $CRYPTER_KEY_FILE
 
@@ -130,6 +132,16 @@ test_crypter_none
 METHOD=AES128
 KEY="0123456789012345"
 WRONG_KEY="0123456789012346"
+test_crypter $METHOD $KEY $WRONG_KEY
+
+METHOD=AES192
+KEY="012345678901234567890123"
+WRONG_KEY="01234567890123456789012"
+test_crypter $METHOD $KEY $WRONG_KEY
+
+METHOD=AES256
+KEY="01234567890123456789012345678901"
+WRONG_KEY="012345678901234567890123456789012"
 test_crypter $METHOD $KEY $WRONG_KEY
 
 # Drop dbs finally
