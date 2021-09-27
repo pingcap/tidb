@@ -186,7 +186,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinArithmeticFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinArithmeticCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedErrOverflow(c *C) {
+func (s *testEvaluatorSuite) TestVectorizedDecimalErrOverflow(c *C) {
 	ctx := mock.NewContext()
 	testCases := []struct {
 		args     []float64
