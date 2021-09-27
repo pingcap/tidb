@@ -119,7 +119,7 @@ func (*testSuite) TestT(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	builder, err := infoschema.NewBuilder(dom.Store()).InitWithDBInfos(dbInfos, nil, 1)
+	builder, err := infoschema.NewBuilder(dom.Store()).InitWithDBInfos(dbInfos, nil, nil, 1)
 	c.Assert(err, IsNil)
 
 	txn, err := store.Begin()
@@ -266,7 +266,7 @@ func (*testSuite) TestInfoTables(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(nil, nil, 0)
+	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(nil, nil, nil, 0)
 	c.Assert(err, IsNil)
 	is := builder.Build()
 
@@ -331,7 +331,7 @@ func (*testSuite) TestGetBundle(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(nil, nil, 0)
+	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(nil, nil, nil, 0)
 	c.Assert(err, IsNil)
 	is := builder.Build()
 
@@ -401,6 +401,10 @@ func (*testSuite) TestGetBundle(c *C) {
 func (*testSuite) TestLocalTemporaryTables(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	createNewSchemaInfo := func(schemaName string) *model.DBInfo {
 		schemaID, err := genGlobalID(store)
