@@ -206,6 +206,7 @@ func (a *nodeAllocator) getNode(addr memdbArenaAddr) *memdbNode {
 	if addr.isNull() {
 		return &a.nullNode
 	}
+	addr.debugCheck()
 
 	return (*memdbNode)(unsafe.Pointer(&a.blocks[addr.idx].buf[addr.off]))
 }
@@ -286,6 +287,7 @@ func (l *memdbVlog) appendValue(nodeAddr memdbArenaAddr, oldValue memdbArenaAddr
 }
 
 func (l *memdbVlog) getValue(addr memdbArenaAddr) []byte {
+	addr.debugCheck()
 	lenOff := addr.off - memdbVlogHdrSize
 	block := l.blocks[addr.idx].buf
 	valueLen := endian.Uint32(block[lenOff:])
