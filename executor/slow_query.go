@@ -491,10 +491,12 @@ func getLineIndex(offset offset, index int) int {
 	return fileLine
 }
 
+// kvSplitRegex: it was just for split "field: value field: value..."
+var kvSplitRegex = regexp.MustCompile(`\w+: `)
+
 // splitByColon split a line like "field: value field: value..."
 func splitByColon(line string) (fields []string, values []string) {
-	re := regexp.MustCompile(`\w+: `)
-	matches := re.FindAllStringIndex(line, -1)
+	matches := kvSplitRegex.FindAllStringIndex(line, -1)
 	fields = make([]string, 0, len(matches))
 	values = make([]string, 0, len(matches))
 
