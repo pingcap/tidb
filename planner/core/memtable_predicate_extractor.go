@@ -472,6 +472,20 @@ func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 
 	return quantiles
 }
 
+func (helper extractHelper) parseUint64(uint64Set set.StringSet) []uint64 {
+	uint64s := make([]uint64, 0, len(uint64Set))
+	for k := range uint64Set {
+		v, err := strconv.ParseUint(k, 10, 64)
+		if err != nil {
+			// ignore the parse error won't affect result.
+			continue
+		}
+		uint64s = append(uint64s, v)
+	}
+	sort.Slice(uint64s, func(i, j int) bool { return uint64s[i] < uint64s[j] })
+	return uint64s
+}
+
 func (helper extractHelper) extractCols(
 	schema *expression.Schema,
 	names []*types.FieldName,
@@ -654,6 +668,133 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 		r.WriteString(fmt.Sprintf("log_levels:[%s], ", extractStringFromStringSet(e.LogLevels)))
 	}
 
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+// HotRegionsHistoryTableExtractor is used to extract some predicates of `tidb_hot_regions_history`
+type HotRegionsHistoryTableExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any pd server.
+	SkipRequest bool
+
+	// StartTime represents the beginning time of update time.
+	// e.g: SELECT * FROM tidb_hot_regions_history WHERE update_time>'2019-10-10 10:10:10.999'
+	StartTime int64
+	// EndTime represents the ending time of update time.
+	// e.g: SELECT * FROM tidb_hot_regions_history WHERE update_time<'2019-10-11 10:10:10.999'
+	EndTime int64
+
+	// RegionIDs/StoreIDs/PeerIDs represents all region/store/peer ids we should filter in PD to reduce network IO.
+	// e.g:
+	// 1. SELECT * FROM tidb_hot_regions_history WHERE region_id=1
+	// 2. SELECT * FROM tidb_hot_regions_history WHERE table_id in (11, 22)
+	// Leave range operation to above selection executor.
+	RegionIDs []uint64
+	StoreIDs  []uint64
+	PeerIDs   []uint64
+	// IsLearners/IsLeaders represents whether we should request for learner/leader role in PD to reduce network IO.
+	// e.g:
+	// 1. SELECT * FROM tidb_hot_regions_history WHERE is_learner=1
+	// 2. SELECT * FROM tidb_hot_regions_history WHERE is_learner in (0,1) -> request all
+	IsLearners []uint64
+	IsLeaders  []uint64
+
+	// HotRegionTypes represents all hot region types we should filter in PD to reduce network IO.
+	// e.g:
+	// 1. SELECT * FROM tidb_hot_regions_history WHERE type='read'
+	// 2. SELECT * FROM tidb_hot_regions_history WHERE type in ('read', 'write')
+	// 3. SELECT * FROM tidb_hot_regions_history WHERE type='read' and type='write' -> SkipRequest = true
+	HotRegionTypes set.StringSet
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *HotRegionsHistoryTableExtractor) Extract(
+	ctx sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	// Extract the `region_id/store_id/peer_id` columns.
+	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false)
+	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
+	remained, peerIDSkipRequest, peerIDs := e.extractCol(schema, names, remained, "peer_id", false)
+	e.RegionIDs, e.StoreIDs, e.PeerIDs = e.parseUint64(regionIDs), e.parseUint64(storeIDs), e.parseUint64(peerIDs)
+	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest || peerIDSkipRequest
+	if e.SkipRequest {
+		return nil
+	}
+
+	// Extract the is_learner/is_leader columns.
+	remained, isLearnerSkipRequest, isLearners := e.extractCol(schema, names, remained, "is_learner", false)
+	remained, isLeaderSkipRequest, isLeaders := e.extractCol(schema, names, remained, "is_leader", false)
+	e.IsLearners, e.IsLeaders = e.parseUint64(isLearners), e.parseUint64(isLeaders)
+	e.SkipRequest = isLearnerSkipRequest || isLeaderSkipRequest
+	if e.SkipRequest {
+		return nil
+	}
+
+	// Extract the `type` column.
+	remained, typeSkipRequest, types := e.extractCol(schema, names, remained, "type", false)
+	e.HotRegionTypes = types
+	e.SkipRequest = typeSkipRequest
+	if e.SkipRequest {
+		return nil
+	}
+
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time", ctx.GetSessionVars().StmtCtx.TimeZone)
+	// The time unit for search hot regions is millisecond.
+	startTime = startTime / int64(time.Millisecond)
+	endTime = endTime / int64(time.Millisecond)
+	e.StartTime = startTime
+	e.EndTime = endTime
+	if startTime != 0 && endTime != 0 {
+		e.SkipRequest = startTime > endTime
+	}
+	if e.SkipRequest {
+		return nil
+	}
+
+	return remained
+}
+
+func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	r := new(bytes.Buffer)
+	st, et := e.StartTime, e.EndTime
+	if st > 0 {
+		st := time.Unix(0, st*1e6)
+		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05")))
+	}
+	if et > 0 {
+		et := time.Unix(0, et*1e6)
+		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05")))
+	}
+	if len(e.RegionIDs) > 0 {
+		r.WriteString(fmt.Sprintf("region_ids:[%s], ", extractStringFromUint64Slice(e.RegionIDs)))
+	}
+	if len(e.StoreIDs) > 0 {
+		r.WriteString(fmt.Sprintf("store_ids:[%s], ", extractStringFromUint64Slice(e.StoreIDs)))
+	}
+	if len(e.PeerIDs) > 0 {
+		r.WriteString(fmt.Sprintf("peer_ids:[%s], ", extractStringFromUint64Slice(e.PeerIDs)))
+	}
+	if len(e.IsLearners) > 0 {
+		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromUint64Slice(e.IsLearners)))
+	}
+	if len(e.IsLeaders) > 0 {
+		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromUint64Slice(e.IsLeaders)))
+	}
+	if len(e.HotRegionTypes) > 0 {
+		r.WriteString(fmt.Sprintf("hot_region_types:[%s], ", extractStringFromStringSet(e.HotRegionTypes)))
+	}
 	// remove the last ", " in the message info
 	s := r.String()
 	if len(s) > 2 {
