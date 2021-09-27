@@ -380,6 +380,7 @@ func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop placement policy if exists p2")
 	tk.MustExec("drop placement policy if exists p3")
+	tk.MustExec("drop placement policy if exists p4")
 
 	// p1 is used by test.t11 and test2.t21
 	tk.MustExec("create placement policy p1 " +
@@ -401,7 +402,7 @@ func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 	tk.MustExec("create table test.t12 (id int) placement policy 'p2'")
 	defer tk.MustExec("drop table if exists test.t12")
 
-	// p1 is used by test2.t22
+	// p3 is used by test2.t22
 	tk.MustExec("create placement policy p3 " +
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
@@ -410,12 +411,21 @@ func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 	tk.MustExec("create table test.t21 (id int) placement policy 'p3'")
 	defer tk.MustExec("drop table if exists test.t21")
 
+	// p4 is used by test_p
+	tk.MustExec("create placement policy p4 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"SCHEDULE=\"EVEN\"")
+	defer tk.MustExec("drop placement policy if exists p4")
+	tk.MustExec("create database test_p placement policy 'p4'")
+	defer tk.MustExec("drop database if exists test_p")
+
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer func() {
 		c.Assert(txn.Rollback(), IsNil)
 	}()
-	for _, policyName := range []string{"p1", "p2", "p3"} {
+	for _, policyName := range []string{"p1", "p2", "p3", "p4"} {
 		err := tk.ExecToErr(fmt.Sprintf("drop placement policy %s", policyName))
 		c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:8241]Placement policy '%s' is still in use", policyName))
 
