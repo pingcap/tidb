@@ -1841,7 +1841,7 @@ func (s *testTableSuite) TestRegionLabel(c *C) {
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
 	tk.MustQuery(`select * from information_schema.region_label`).Check(testkit.Rows(
-		`schema/test/test_label key-range "merge_option=allow" 7480000000000000ff395f720000000000fa 7480000000000000ff3a5f720000000000fa`,
+		`schema/test/test_label key-range "merge_option=allow" [7480000000000000ff395f720000000000fa, 7480000000000000ff3a5f720000000000fa]`,
 	))
 }
 

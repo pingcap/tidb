@@ -49,7 +49,7 @@ require (
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20210806074406-317f69fb54b4
 	github.com/pingcap/log v0.0.0-20210906054005-afc726e70354
-	github.com/pingcap/parser v0.0.0-20210915160042-658edc1dba6a
+	github.com/pingcap/parser v0.0.0-20210917114242-ac711116bdff
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
 	github.com/pingcap/tipb v0.0.0-20210802080519-94b831c6db55
@@ -75,9 +75,9 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b
 	go.uber.org/atomic v1.9.0
 	go.uber.org/automaxprocs v1.4.0
-	go.uber.org/goleak v1.1.10
+	go.uber.org/goleak v1.1.11-0.20210813005559-691160354723
 	go.uber.org/multierr v1.7.0
-	go.uber.org/zap v1.19.0
+	go.uber.org/zap v1.19.1
 	golang.org/x/net v0.0.0-20210503060351-7fd8e65b6420
 	golang.org/x/oauth2 v0.0.0-20210805134026-6f1e6394065a
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
