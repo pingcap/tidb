@@ -743,7 +743,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, resp)
 	}
-	storeID := strconv.FormatUint(rpcCtx.Store.StoreID(), 10)
+	storeID := strconv.FormatUint(req.Context.GetPeer().StoreId, 10)
 	staleRead := strconv.FormatBool(req.StaleRead)
 	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, staleRead).Observe(costTime.Seconds())
 
