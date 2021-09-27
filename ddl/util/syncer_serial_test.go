@@ -34,18 +34,18 @@ import (
 	"go.etcd.io/etcd/etcdserver"
 	"go.etcd.io/etcd/integration"
 	"go.etcd.io/etcd/mvcc/mvccpb"
-	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
+const testLease = 5 * time.Millisecond
 
 func TestSyncerSimple(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	testLease := 5 * time.Millisecond
+
 	origin := CheckVersFirstWaitTime
 	CheckVersFirstWaitTime = 0
 	defer func() {
@@ -54,15 +54,13 @@ func TestSyncerSimple(t *testing.T) {
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
 
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer clus.Terminate(t)
-	cli := clus.RandClient()
-	ctx := goctx.Background()
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	cli := cluster.RandClient()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	ic := infoschema.NewCache(2)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d := NewDDL(
@@ -89,7 +87,8 @@ func TestSyncerSimple(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, InitialVersion, fmt.Sprintf("%d", globalVer))
 
-	childCtx, _ := goctx.WithTimeout(ctx, minInterval)
+	childCtx, cancel := context.WithTimeout(ctx, minInterval)
+	defer cancel()
 	_, err = d.SchemaSyncer().MustGetGlobalVersion(childCtx)
 	require.True(t, isTimeoutError(err))
 
@@ -104,7 +103,7 @@ func TestSyncerSimple(t *testing.T) {
 	)
 	require.NoError(t, d1.Start(nil))
 	defer func() {
-		require.NoError(t, d.Stop())
+		require.NoError(t, d1.Stop())
 	}()
 	require.NoError(t, d1.SchemaSyncer().Init(ctx))
 
@@ -136,7 +135,7 @@ func TestSyncerSimple(t *testing.T) {
 	require.Equal(t, "", checkErr)
 
 	// for CheckAllVersions
-	childCtx, cancel := goctx.WithTimeout(ctx, 200*time.Millisecond)
+	childCtx, cancel = context.WithTimeout(ctx, 200*time.Millisecond)
 	require.Error(t, d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer))
 	cancel()
 
@@ -144,7 +143,8 @@ func TestSyncerSimple(t *testing.T) {
 	require.NoError(t, d.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer))
 	require.NoError(t, d1.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer))
 
-	childCtx, _ = goctx.WithTimeout(ctx, minInterval)
+	childCtx, cancel = context.WithTimeout(ctx, minInterval)
+	defer cancel()
 	err = d1.SchemaSyncer().UpdateSelfVersion(childCtx, currentVer)
 	require.True(t, isTimeoutError(err))
 
@@ -152,7 +152,8 @@ func TestSyncerSimple(t *testing.T) {
 	require.NoError(t, d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer-1))
 	require.NoError(t, d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer))
 
-	childCtx, _ = goctx.WithTimeout(ctx, minInterval)
+	childCtx, cancel = context.WithTimeout(ctx, minInterval)
+	defer cancel()
 	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer)
 	require.True(t, isTimeoutError(err))
 
@@ -193,19 +194,19 @@ func TestSyncerSimple(t *testing.T) {
 	checkRespKV(t, 0, ttlKey, "", resp.Kvs...)
 
 	// for Close
-	resp, err = cli.Get(goctx.Background(), key)
+	resp, err = cli.Get(context.Background(), key)
 	require.NoError(t, err)
 
 	currVer := fmt.Sprintf("%v", currentVer)
 	checkRespKV(t, 1, key, currVer, resp.Kvs...)
 	d.SchemaSyncer().Close()
-	resp, err = cli.Get(goctx.Background(), key)
+	resp, err = cli.Get(context.Background(), key)
 	require.NoError(t, err)
 	require.Len(t, resp.Kvs, 0)
 }
 
 func isTimeoutError(err error) bool {
-	return terror.ErrorEqual(err, goctx.DeadlineExceeded) ||
+	return terror.ErrorEqual(err, context.DeadlineExceeded) ||
 		status.Code(errors.Cause(err)) == codes.DeadlineExceeded ||
 		terror.ErrorEqual(err, etcdserver.ErrTimeout)
 }

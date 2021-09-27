@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package label
+package util
 
 import (
 	"testing"
@@ -23,5 +23,8 @@ import (
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-	goleak.VerifyTestMain(m)
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+	}
+	goleak.VerifyTestMain(m, opts...)
 }
