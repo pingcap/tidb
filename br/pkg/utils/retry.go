@@ -7,7 +7,10 @@ import (
 	"strings"
 	"time"
 
+	serrors "github.com/pingcap/errors"
 	"go.uber.org/multierr"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var retryableServerError = []string{
@@ -47,6 +50,9 @@ func WithRetry(
 		err := retryableFunc()
 		if err != nil {
 			allErrors = multierr.Append(allErrors, err)
+			if status.Code(serrors.Cause(err)) == codes.Canceled { // current context cancelled, stop retry
+				return allErrors
+			}
 			select {
 			case <-ctx.Done():
 				return allErrors // nolint:wrapcheck
