@@ -14,9 +14,13 @@
 package kv
 
 import (
+	"context"
 	"encoding/binary"
+	"go.uber.org/zap"
 	"math"
 	"unsafe"
+
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 const (
@@ -41,6 +45,21 @@ func (addr memdbArenaAddr) isNull() bool {
 	return addr == nullAddr
 }
 
+func (addr *memdbArenaAddr) debugCheck() {
+	if !addr.isNull() {
+		if addr.off == math.MaxUint32 {
+			logutil.Logger(context.Background()).Error("addr.off is max uint32",
+				zap.Stack("stack"))
+			panic("addr.off is max uint32")
+		}
+		if addr.idx == math.MaxUint32 {
+			logutil.Logger(context.Background()).Error("addr.idx is max uint32",
+				zap.Stack("stack"))
+			panic("addr.idx is max uint32")
+		}
+	}
+}
+
 // store and load is used by vlog, due to pointer in vlog is not aligned.
 
 func (addr memdbArenaAddr) store(dst []byte) {
@@ -51,6 +70,7 @@ func (addr memdbArenaAddr) store(dst []byte) {
 func (addr *memdbArenaAddr) load(src []byte) {
 	addr.idx = endian.Uint32(src)
 	addr.off = endian.Uint32(src[4:])
+	addr.debugCheck()
 }
 
 type memdbArena struct {
@@ -197,6 +217,7 @@ func (a *nodeAllocator) allocNode(key Key) (memdbArenaAddr, *memdbNode) {
 	n.vptr = nullAddr
 	n.klen = uint16(len(key))
 	copy(n.getKey(), key)
+	addr.debugCheck()
 	return addr, n
 }
 
@@ -330,6 +351,7 @@ func (l *memdbVlog) inspectKVInLog(db *memdb, head, tail *memdbCheckpoint, f fun
 	cursor := *tail
 	for !head.isSamePosition(&cursor) {
 		cursorAddr := memdbArenaAddr{idx: uint32(cursor.blocks - 1), off: uint32(cursor.offsetInBlock)}
+		cursorAddr.debugCheck()
 		hdrOff := cursorAddr.off - memdbVlogHdrSize
 		block := l.blocks[cursorAddr.idx].buf
 		var hdr memdbVlogHdr
