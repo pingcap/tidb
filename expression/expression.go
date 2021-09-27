@@ -1166,7 +1166,8 @@ func init() {
 	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
 }
 
-func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
+//belongingAggFuncName is "" in default
+func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType, belongingAggFuncName string) bool {
 	pbCode := scalarFunc.Function.PbCode()
 
 	// Check whether this function can be pushed.
@@ -1188,7 +1189,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 
 	// Check whether all of its parameters can be pushed.
 	for _, arg := range scalarFunc.GetArgs() {
-		if !canExprPushDown(arg, pc, storeType) {
+		if !canExprPushDown(arg, pc, storeType, belongingAggFuncName) {
 			return false
 		}
 	}
@@ -1204,7 +1205,8 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 	return true
 }
 
-func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
+//belongingAggFuncName is "" in default
+func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, belongingAggFuncName string) bool {
 	if storeType == kv.TiFlash {
 		switch expr.GetType().Tp {
 		case mysql.TypeDuration:
@@ -1213,10 +1215,12 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bo
 			}
 			return false
 		case mysql.TypeEnum:
-			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Enum type"))
+			if belongingAggFuncName != ast.AggFuncSum {
+				if pc.sc.InExplainStmt {
+					pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Enum type"))
+				}
+				return false
 			}
-			return false
 		default:
 		}
 	}
@@ -1228,25 +1232,16 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bo
 	case *Column:
 		return pc.columnToPBExpr(x) != nil
 	case *ScalarFunction:
-		return canScalarFuncPushDown(x, pc, storeType)
+		return canScalarFuncPushDown(x, pc, storeType, belongingAggFuncName)
 	}
 	return false
 }
 
-func canAggArgExprPushDown(aggFuncName string, expr Expression, pc PbConverter, storeType kv.StoreType) bool {
-	if storeType == kv.TiFlash && aggFuncName == ast.AggFuncSum && expr.GetType().Tp == mysql.TypeEnum {
-		return true
-	} else {
-		return canExprPushDown(expr, pc, storeType)
-	}
-
-}
-
-// PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+// PushDownAggArgs split the input agg args into pushed and remained, pushed include all the exprs that can be pushed down
+func PushDownAggArgs(sc *stmtctx.StatementContext, aggFuncName string, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
 	pc := PbConverter{sc: sc, client: client}
 	for _, expr := range exprs {
-		if canExprPushDown(expr, pc, storeType) {
+		if canExprPushDown(expr, pc, storeType, aggFuncName) {
 			pushed = append(pushed, expr)
 		} else {
 			remained = append(remained, expr)
@@ -1255,16 +1250,9 @@ func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.C
 	return
 }
 
-// PushDownAggArgs split the input agg args into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownAggArgs(sc *stmtctx.StatementContext, aggFuncName string, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
-	pc := PbConverter{sc: sc, client: client}
-	for _, expr := range exprs {
-		if canAggArgExprPushDown(aggFuncName, expr, pc, storeType) {
-			pushed = append(pushed, expr)
-		} else {
-			remained = append(remained, expr)
-		}
-	}
+// PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
+func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+	pushed, remained = PushDownAggArgs(sc, "", exprs, client, storeType)
 	return
 }
 
