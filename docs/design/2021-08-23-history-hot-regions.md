@@ -29,7 +29,7 @@ Create a new table `TIDB_HOT_REGIONS_HISTORY` in the `INFORMATION_SCHEMAT` schem
 
 TiDB has a memory table `TIDB_HOT_REGIONS` that provides information about hotspot regions. But it only shows the current hotspot information. This leads to the fact that when DBAs want to query historical hotspot details, they have no way to find the corresponding hotspot information.
 
-According to the [documentation](https://docs.pingcap.com/tidb/stable/information-schema-tidb-hot-regions) for the current `TIDB_HOT_REGIONS` table,  it can only provides information about recent hotspot regions calculated by PD according to the heartbeat from tikv.  It is inconvenient to obtain hotspot regions of past time, and locate which store the region is. For ease of use, we can store extened hotspot region infomation in PD. The following list some common user cases:
+According to the [documentation](https://docs.pingcap.com/tidb/stable/information-schema-tidb-hot-regions) for the current `TIDB_HOT_REGIONS` table,  it can only provides information about recent hotspot regions calculated by PD according to the heartbeat from tikv.  It is inconvenient to obtain hotspot regions of past time, and locate which store the region is. For ease of use, we can store extended hotspot region information in PD. The following list some common use cases:
 
 ```SQL
 # Query hotspot regions within a specified period of time
