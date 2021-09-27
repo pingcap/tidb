@@ -131,7 +131,7 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
 2. Data size estimation 
 
     one record size: 1 * 4B(timestamp) + 1*1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64B(varchar(64)) = 333B
-    Below table show data size per day and per month in 5,10,15 minutes record interval respectively given the maximum number of hotspot regions  is 1000:
+    Below table show data size per day and per month in 5,10,15 minutes record interval respectively given the maximum number of hotspot regions is 1000:
 
     | Record Length (B) | Time Interval (Min) | Data Size Per Day (MB) | Data Size Per Month (MB) |
     | ----------------- | ------------------- | ---------------------- | ------------------------ |
