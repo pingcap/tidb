@@ -5079,7 +5079,7 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	result.Check(testkit.Rows(rs))
 
 	// https://github.com/pingcap/tidb/issues/27434.
-	hexKey = "7480000000000000375F69800000000000000103800000000001D4C1023B6458"
+	hexKey = "748000000000000FFF5F69800000000000000103800000000001D4C1023B6458"
 	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
 	tk.MustQuery(sql).Check(testkit.Rows(hexKey))
 }

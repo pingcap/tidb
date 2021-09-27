@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -106,6 +107,11 @@ type HistColl struct {
 	// The physical id is used when try to load column stats from storage.
 	HavePhysicalID bool
 	Pseudo         bool
+
+	// UniqueID2TblColID maps expression.Column.UniqueID to (TableID, ColumnID). It's used to track which statistics.Column
+	// is used(needed) when using UniqueID to look up HistColl.Columns. UniqueID2TblColID is nil if HistColl.Columns use
+	// expression.Column.ID as key.
+	UniqueID2TblColID map[int64]model.TableColumnID
 }
 
 // MemoryUsage returns the total memory usage of this Table.
@@ -128,13 +134,14 @@ func (t *Table) MemoryUsage() (sum int64) {
 // Copy copies the current table.
 func (t *Table) Copy() *Table {
 	newHistColl := HistColl{
-		PhysicalID:     t.PhysicalID,
-		HavePhysicalID: t.HavePhysicalID,
-		Count:          t.Count,
-		Columns:        make(map[int64]*Column, len(t.Columns)),
-		Indices:        make(map[int64]*Index, len(t.Indices)),
-		Pseudo:         t.Pseudo,
-		ModifyCount:    t.ModifyCount,
+		PhysicalID:        t.PhysicalID,
+		HavePhysicalID:    t.HavePhysicalID,
+		Count:             t.Count,
+		Columns:           make(map[int64]*Column, len(t.Columns)),
+		Indices:           make(map[int64]*Index, len(t.Indices)),
+		Pseudo:            t.Pseudo,
+		ModifyCount:       t.ModifyCount,
+		UniqueID2TblColID: t.UniqueID2TblColID,
 	}
 	for id, col := range t.Columns {
 		newHistColl.Columns[id] = col
@@ -277,8 +284,8 @@ func (t *Table) IsOutdated() bool {
 
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
 func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) float64 {
-	c, ok := t.Columns[colID]
-	if !ok || c.IsInvalid(sc, t.Pseudo) {
+	c := t.GetValidColumn(sc, colID, t.Pseudo)
+	if c == nil {
 		return float64(t.Count) / pseudoLessRate
 	}
 	return c.greaterRowCount(value) * c.GetIncreaseFactor(t.Count)
@@ -286,8 +293,8 @@ func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.
 
 // ColumnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
 func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) float64 {
-	c, ok := t.Columns[colID]
-	if !ok || c.IsInvalid(sc, t.Pseudo) {
+	c := t.GetValidColumn(sc, colID, t.Pseudo)
+	if c == nil {
 		return float64(t.Count) / pseudoLessRate
 	}
 	return c.lessRowCount(value) * c.GetIncreaseFactor(t.Count)
@@ -295,8 +302,8 @@ func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Dat
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
 func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) (float64, error) {
-	c, ok := t.Columns[colID]
-	if !ok || c.IsInvalid(sc, t.Pseudo) {
+	c := t.GetValidColumn(sc, colID, t.Pseudo)
+	if c == nil {
 		return float64(t.Count) / pseudoBetweenRate, nil
 	}
 	aEncoded, err := codec.EncodeKey(sc, nil, a)
@@ -316,8 +323,8 @@ func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.D
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
 func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) (float64, error) {
-	c, ok := t.Columns[colID]
-	if !ok || c.IsInvalid(sc, t.Pseudo) {
+	c := t.GetValidColumn(sc, colID, t.Pseudo)
+	if c == nil {
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
 	encodedVal, err := codec.EncodeKey(sc, nil, value)
@@ -331,8 +338,8 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
 func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []*ranger.Range) (float64, error) {
-	c, ok := coll.Columns[colID]
-	if !ok || c.IsInvalid(sc, coll.Pseudo) {
+	c := coll.GetValidColumn(sc, colID, coll.Pseudo)
+	if c == nil {
 		if len(intRanges) == 0 {
 			return 0, nil
 		}
@@ -347,8 +354,8 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID int64, colRanges []*ranger.Range) (float64, error) {
-	c, ok := coll.Columns[colID]
-	if !ok || c.IsInvalid(sc, coll.Pseudo) {
+	c := coll.GetValidColumn(sc, colID, coll.Pseudo)
+	if c == nil {
 		return GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 	}
 	result, err := c.GetColumnRowCount(sc, colRanges, coll.Count, false)
@@ -399,19 +406,22 @@ func GetOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.
 func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 	cols := make(map[int64]*Column)
+	uniqueID2TblColID := make(map[int64]model.TableColumnID, len(columns))
 	for _, col := range columns {
 		colHist, ok := coll.Columns[col.ID]
 		if ok {
 			cols[col.UniqueID] = colHist
 		}
+		uniqueID2TblColID[col.UniqueID] = model.TableColumnID{TableID: coll.PhysicalID, ColumnID: col.ID}
 	}
 	newColl := &HistColl{
-		PhysicalID:     coll.PhysicalID,
-		HavePhysicalID: coll.HavePhysicalID,
-		Pseudo:         coll.Pseudo,
-		Count:          coll.Count,
-		ModifyCount:    coll.ModifyCount,
-		Columns:        cols,
+		PhysicalID:        coll.PhysicalID,
+		HavePhysicalID:    coll.HavePhysicalID,
+		Pseudo:            coll.Pseudo,
+		Count:             coll.Count,
+		ModifyCount:       coll.ModifyCount,
+		Columns:           cols,
+		UniqueID2TblColID: uniqueID2TblColID,
 	}
 	return newColl
 }
@@ -420,9 +430,11 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
 	colInfoID2UniqueID := make(map[int64]int64, len(columns))
+	uniqueID2TblColID := make(map[int64]model.TableColumnID, len(columns))
 	colNames2UniqueID := make(map[string]int64)
 	for _, col := range columns {
 		colInfoID2UniqueID[col.ID] = col.UniqueID
+		uniqueID2TblColID[col.UniqueID] = model.TableColumnID{TableID: coll.PhysicalID, ColumnID: col.ID}
 	}
 	for _, colInfo := range infos {
 		uniqueID, ok := colInfoID2UniqueID[colInfo.ID]
@@ -458,15 +470,16 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 		idx2Columns[idxHist.ID] = ids
 	}
 	newColl := &HistColl{
-		PhysicalID:     coll.PhysicalID,
-		HavePhysicalID: coll.HavePhysicalID,
-		Pseudo:         coll.Pseudo,
-		Count:          coll.Count,
-		ModifyCount:    coll.ModifyCount,
-		Columns:        newColHistMap,
-		Indices:        newIdxHistMap,
-		ColID2IdxID:    colID2IdxID,
-		Idx2ColumnIDs:  idx2Columns,
+		PhysicalID:        coll.PhysicalID,
+		HavePhysicalID:    coll.HavePhysicalID,
+		Pseudo:            coll.Pseudo,
+		Count:             coll.Count,
+		ModifyCount:       coll.ModifyCount,
+		Columns:           newColHistMap,
+		Indices:           newIdxHistMap,
+		ColID2IdxID:       colID2IdxID,
+		Idx2ColumnIDs:     idx2Columns,
+		UniqueID2TblColID: uniqueID2TblColID,
 	}
 	return newColl
 }
@@ -512,10 +525,7 @@ func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, i
 		if i >= usedColsLen {
 			break
 		}
-		if col, ok := coll.Columns[colID]; ok {
-			if col.IsInvalid(sc, coll.Pseudo) {
-				continue
-			}
+		if col := coll.GetValidColumn(sc, colID, coll.Pseudo); col != nil {
 			lowExclude := idxPointRange.LowExclude
 			highExclude := idxPointRange.HighExclude
 			// Consider this case:
@@ -872,6 +882,8 @@ func (coll *HistColl) GetAvgRowSize(ctx sessionctx.Context, cols []*expression.C
 			// Normally this would not happen, it is for compatibility with old version stats which
 			// does not include TotColSize.
 			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
+				// TODO: Even if we don't have the column stats, we can make a finer estimation of the average column size depending on the column type.
+				// After we support analyze part of columns, we have more chances to enter here so we need a better estimation.
 				size += pseudoColSize
 				continue
 			}
@@ -941,6 +953,27 @@ func (coll *HistColl) GetIndexAvgRowSize(ctx sessionctx.Context, cols []*express
 		size++
 	}
 	return
+}
+
+// GetValidColumn returns the column stats if it exists and is valid. Otherwise it returns nil.
+// Also, it tracks the used(needed) column stats in sc.ColStatsUsage.
+func (coll *HistColl) GetValidColumn(sc *stmtctx.StatementContext, colID int64, collPseudo bool) *Column {
+	// track the column stats usage
+	if sc.ColStatsUsage != nil {
+		if coll.UniqueID2TblColID != nil {
+			if tblColID, ok := coll.UniqueID2TblColID[colID]; ok {
+				sc.ColStatsUsage[tblColID] = time.Now()
+			}
+		} else {
+			// TODO: check whether coll.PhysicalID is always valid
+			tblColID := model.TableColumnID{TableID: coll.PhysicalID, ColumnID: colID}
+			sc.ColStatsUsage[tblColID] = time.Now()
+		}
+	}
+	if c, ok := coll.Columns[colID]; ok && !c.IsInvalid(true, collPseudo) {
+		return c
+	}
+	return nil
 }
 
 // CheckAnalyzeVerOnTable checks whether the given version is the one from the tbl.

@@ -185,6 +185,8 @@ type StatementContext struct {
 	OptimInfo map[int]string
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
+	// ColStatsUsage maps (tableID, columnID) to the last time when the column stats are used(needed).
+	ColStatsUsage map[model.TableColumnID]time.Time
 }
 
 // StmtHints are SessionVars related sql hints.

@@ -198,12 +198,12 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			continue
 		}
 
-		if colHist := coll.Columns[c.UniqueID]; colHist == nil || colHist.IsInvalid(sc, coll.Pseudo) {
+		colHist := coll.GetValidColumn(sc, c.UniqueID, coll.Pseudo)
+		if colHist == nil {
 			ret *= 1.0 / pseudoEqualRate
 			continue
 		}
 
-		colHist := coll.Columns[c.UniqueID]
 		if colHist.Histogram.NDV > 0 {
 			ret *= 1 / float64(colHist.Histogram.NDV)
 		} else {

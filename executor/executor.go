@@ -1653,7 +1653,10 @@ func (e *UnionExec) Close() error {
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
+	// Before the reset, we update vars.StmtCtx.ColStatsUsage into ctx.
 	vars := ctx.GetSessionVars()
+	ctx.UpdateColStatsUsage(vars.StmtCtx.ColStatsUsage)
+
 	var sc *stmtctx.StatementContext
 	if vars.TxnCtx.CouldRetry {
 		// Must construct new statement context object, the retry history need context for every statement.
@@ -1666,6 +1669,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.TaskID = stmtctx.AllocateTaskID()
 	sc.CTEStorageMap = map[int]*CTEStorages{}
 	sc.IsStaleness = false
+	sc.ColStatsUsage = map[model.TableColumnID]time.Time{}
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)

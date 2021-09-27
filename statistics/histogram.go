@@ -1065,13 +1065,13 @@ func (c *Column) MemoryUsage() (sum int64) {
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
 
-// IsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
+// IsInvalid checks if this column is invalid. If needLoad is true and this column has histogram but not loaded yet, then we mark it
 // as need histogram.
-func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
+func (c *Column) IsInvalid(needLoad bool, collPseudo bool) bool {
 	if collPseudo && c.NotAccurate() {
 		return true
 	}
-	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sc != nil {
+	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && needLoad {
 		HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
 	}
 	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
@@ -1436,7 +1436,7 @@ func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistC
 		)
 		if anotherIdxID, ok := coll.ColID2IdxID[colID]; ok && anotherIdxID != idx.ID {
 			count, err = coll.GetRowCountByIndexRanges(sc, anotherIdxID, tmpRan)
-		} else if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sc, coll.Pseudo) {
+		} else if col := coll.GetValidColumn(sc, colID, coll.Pseudo); col != nil {
 			count, err = coll.GetRowCountByColumnRanges(sc, colID, tmpRan)
 		} else {
 			continue
@@ -1567,11 +1567,12 @@ func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode 
 // NewHistCollBySelectivity creates new HistColl by the given statsNodes.
 func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, statsNodes []*StatsNode) *HistColl {
 	newColl := &HistColl{
-		Columns:       make(map[int64]*Column),
-		Indices:       make(map[int64]*Index),
-		Idx2ColumnIDs: coll.Idx2ColumnIDs,
-		ColID2IdxID:   coll.ColID2IdxID,
-		Count:         coll.Count,
+		Columns:           make(map[int64]*Column),
+		Indices:           make(map[int64]*Index),
+		Idx2ColumnIDs:     coll.Idx2ColumnIDs,
+		ColID2IdxID:       coll.ColID2IdxID,
+		Count:             coll.Count,
+		UniqueID2TblColID: coll.UniqueID2TblColID,
 	}
 	for _, node := range statsNodes {
 		if node.Tp == IndexType {
