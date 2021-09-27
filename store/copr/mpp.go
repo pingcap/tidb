@@ -64,7 +64,7 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 		return c.selectAllTiFlashStore(), nil
 	}
 	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildBatchCopTasks(bo, c.store, ranges, kv.TiFlash, true)
+	tasks, err := buildBatchCopTasks(bo, c.store, ranges, kv.TiFlash, true, req.BalanceWithContinuity, req.BalanceContinuousRegionCount)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
