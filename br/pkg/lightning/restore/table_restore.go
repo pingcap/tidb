@@ -718,7 +718,7 @@ func (tr *TableRestore) postProcess(
 		hasDupe := false
 		if rc.cfg.TikvImporter.DuplicateDetection {
 			var err error
-			hasDupe, err = rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable)
+			hasDupe, err = rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
 			}
@@ -730,7 +730,7 @@ func (tr *TableRestore) postProcess(
 		}
 
 		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateDetection {
-			hasRemoteDupe, err := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable)
+			hasRemoteDupe, err := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName)
 			if err != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(err))
 				err = nil

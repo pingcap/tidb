@@ -2066,11 +2066,11 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	return nil
 }
 
-func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
+func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
 	if local.duplicateDB == nil {
 		return false, nil
 	}
-	log.L().Info("Begin collect duplicate local keys", zap.String("table", tbl.Meta().Name.String()))
+	log.L().Info("Begin collect duplicate local keys", zap.String("table", tableName))
 	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return false, err
@@ -2080,15 +2080,15 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 	if err != nil {
 		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
-	hasDupe, err := duplicateManager.CollectDuplicateRowsFromLocalIndex(ctx, tbl, local.duplicateDB)
+	hasDupe, err := duplicateManager.CollectDuplicateRowsFromLocalIndex(ctx, tbl, tableName, local.duplicateDB)
 	if err != nil {
 		return false, errors.Annotate(err, "collect local duplicate rows failed")
 	}
 	return hasDupe, nil
 }
 
-func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
-	log.L().Info("Begin collect remote duplicate keys", zap.String("table", tbl.Meta().Name.String()))
+func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
+	log.L().Info("Begin collect remote duplicate keys", zap.String("table", tableName))
 	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return false, err
@@ -2099,7 +2099,7 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 	if err != nil {
 		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
-	hasDupe, err := duplicateManager.CollectDuplicateRowsFromTiKV(ctx, tbl)
+	hasDupe, err := duplicateManager.CollectDuplicateRowsFromTiKV(ctx, tbl, tableName)
 	if err != nil {
 		return false, errors.Annotate(err, "collect remote duplicate rows failed")
 	}

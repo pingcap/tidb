@@ -203,8 +203,12 @@ func NewDuplicateManager(
 // CollectDuplicateRowsFromTiKV collects duplicated rows already imported into TiKV.
 //
 // Collection result are saved into the ErrorManager.
-func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, tbl table.Table) (hasDupe bool, err error) {
-	logTask := log.L().Begin(zapcore.InfoLevel, "collect duplicate data from remote TiKV")
+func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(
+	ctx context.Context,
+	tbl table.Table,
+	tableName string,
+) (hasDupe bool, err error) {
+	logTask := log.With(zap.String("table", tableName)).Begin(zapcore.InfoLevel, "collect duplicate data from remote TiKV")
 	defer func() {
 		logTask.End(zapcore.InfoLevel, err)
 	}()
@@ -215,7 +219,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Contex
 	}
 
 	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
-	decoder, err := kv.NewTableKVDecoder(tbl, &kv.SessionOptions{
+	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &kv.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	})
 	if err != nil {
@@ -423,10 +427,11 @@ func (manager *DuplicateManager) storeDuplicateData(
 func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 	ctx context.Context,
 	tbl table.Table,
+	tableName string,
 	db *pebble.DB,
 ) (bool, error) {
 	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
-	decoder, err := kv.NewTableKVDecoder(tbl, &kv.SessionOptions{
+	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &kv.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	})
 	if err != nil {

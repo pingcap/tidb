@@ -29,10 +29,12 @@ import (
 type TableKVDecoder struct {
 	tbl table.Table
 	se  *session
+	// tableName is the unique table name in the form "`db`.`tbl`".
+	tableName string
 }
 
 func (t *TableKVDecoder) Name() string {
-	return t.tbl.Meta().Name.O
+	return t.tableName
 }
 
 func (t *TableKVDecoder) DecodeHandleFromTable(key []byte) (kv.Handle, error) {
@@ -64,7 +66,7 @@ func (t *TableKVDecoder) DecodeRawRowDataAsStr(h kv.Handle, value []byte) (res s
 	return fmt.Sprintf("/* ERROR: %s */", err)
 }
 
-func NewTableKVDecoder(tbl table.Table, options *SessionOptions) (*TableKVDecoder, error) {
+func NewTableKVDecoder(tbl table.Table, tableName string, options *SessionOptions) (*TableKVDecoder, error) {
 	metric.KvEncoderCounter.WithLabelValues("open").Inc()
 	se := newSession(options)
 	cols := tbl.Cols()
@@ -73,7 +75,8 @@ func NewTableKVDecoder(tbl table.Table, options *SessionOptions) (*TableKVDecode
 	tables.SetAddRecordCtx(se, recordCtx)
 
 	return &TableKVDecoder{
-		tbl: tbl,
-		se:  se,
+		tbl:       tbl,
+		se:        se,
+		tableName: tableName,
 	}, nil
 }

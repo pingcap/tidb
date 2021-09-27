@@ -150,11 +150,12 @@ func (s *kvSuite) TestDecode(c *C) {
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
 	c.Assert(err, IsNil)
-	decoder, err := NewTableKVDecoder(tbl, &SessionOptions{
+	decoder, err := NewTableKVDecoder(tbl, "`test`.`c1`", &SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	})
 	c.Assert(decoder, NotNil)
+	c.Assert(decoder.Name(), Equals, "`test`.`c1`")
 	p := common.KvPair{
 		Key: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 		Val: []byte{0x8, 0x2, 0x8, 0x2},
@@ -211,7 +212,7 @@ func (s *kvSuite) TestDecodeIndex(c *C) {
 	data := pairs.(*KvPairs)
 	c.Assert(len(data.pairs), DeepEquals, 2)
 
-	decoder, err := NewTableKVDecoder(tbl, &SessionOptions{
+	decoder, err := NewTableKVDecoder(tbl, "`test`.``", &SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	})
