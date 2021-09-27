@@ -15,13 +15,14 @@
 package ddltest
 
 import (
+	"flag"
 	"os"
 	"testing"
-
-	"github.com/pingcap/tidb/util/testbridge"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	if flag.Lookup("check.f") == nil {
+		_ = flag.String("check.f", "", "WorkaroundGoCheckFlags: check.f")
+	}
 	os.Exit(m.Run())
 }
