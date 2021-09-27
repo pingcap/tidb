@@ -411,13 +411,6 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 	}
 }
 
-func (s *session) UpdateColStatsUsage(colStatsUsage map[model.TableColumnID]time.Time) {
-	if s.statsCollector == nil {
-		return
-	}
-	s.statsCollector.UpdateColStatsUsage(colStatsUsage)
-}
-
 // StoreIndexUsage stores index usage information in idxUsageCollector.
 func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) {
 	if s.idxUsageCollector == nil {
@@ -2182,11 +2175,6 @@ func (s *session) Close() {
 		}
 	}
 	if s.statsCollector != nil {
-		if vars := s.GetSessionVars(); vars != nil && vars.StmtCtx != nil {
-			// Since we merge StmtCtx.ColStatsUsage into s.statsCollector in ResetContextOfStmt, the column stats usage of
-			// the last sql has not been merged into s.statsCollector. So we call UpdateColStatsUsage here.
-			s.UpdateColStatsUsage(vars.StmtCtx.ColStatsUsage)
-		}
 		s.statsCollector.Delete()
 	}
 	if s.idxUsageCollector != nil {
