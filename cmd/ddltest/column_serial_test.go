@@ -198,13 +198,11 @@ func (s *ddlSuite) execColumnOperations(t *testing.T, workerNum, count int, rowI
 				key := int(atomic.AddInt64(rowID, 2))
 				s.execInsert(fmt.Sprintf("insert into test_column (c1, c2) values (%d, %d)",
 					key-1, key-1))
-				_, err := s.exec(fmt.Sprintf("insert into test_column values (%d, %d, %d)", key, key, key))
-				require.NoError(t, err)
+				_, _ = s.exec(fmt.Sprintf("insert into test_column values (%d, %d, %d)", key, key, key))
 				s.mustExec(fmt.Sprintf("update test_column set c2 = %d where c1 = %d",
 					updateDefault, randomNum(key)))
-				_, err = s.exec(fmt.Sprintf("update test_column set c2 = %d, c3 = %d where c1 = %d",
+				_, _ = s.exec(fmt.Sprintf("update test_column set c2 = %d, c3 = %d where c1 = %d",
 					updateDefault, updateDefault, randomNum(key)))
-				require.NoError(t, err)
 				s.mustExec(fmt.Sprintf("delete from test_column where c1 = %d", randomNum(key)))
 			}
 		}()
