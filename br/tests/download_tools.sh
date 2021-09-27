@@ -18,7 +18,7 @@
 
 set -eu
 
-BIN="$(dirname "$0")/../bin"
+BIN="$(dirname "$0")/../../bin"
 
 if [ "$(uname -s)" != Linux ]; then
     echo 'Can only automatically download binaries on Linux.'
