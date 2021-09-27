@@ -140,6 +140,35 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 	return ver, nil
 }
 
+func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var placementPolicyRef *model.PolicyRefInfo
+	if err := job.DecodeArgs(&placementPolicyRef); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if dbInfo.PlacementPolicyRef != nil && (dbInfo.PlacementPolicyRef.ID == placementPolicyRef.ID) {
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+		return ver, nil
+	}
+
+	dbInfo.PlacementPolicyRef = placementPolicyRef
+
+	if err = t.UpdateDatabase(dbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if ver, err = updateSchemaVersion(t, job); err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+	return ver, nil
+}
+
 func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {

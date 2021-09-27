@@ -378,7 +378,8 @@ func (s *testDBSuite6) TestAlterDBWithPlacementPolicy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create placement policy x PRIMARY_REGION=\"cn-east-1\";")
-	tk.MustExec("ALTER DATABASE test DEFAULT PLACEMENT POLICY=`x`;")
+	tk.MustExec("ALTER DATABASE test PLACEMENT POLICY=`x`;")
+//	tk.MustExec("ALTER DATABASE test default PLACEMENT POLICY=`x`;")
 	tk.MustExec("create table t(a int);")
 
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",

@@ -156,6 +156,8 @@ func (d *ddl) CreateSchemaWithInfo(
 func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var toCharset, toCollate string
+	var isAlterCharCol bool
+	var policyName model.CIStr
 	for _, val := range stmt.Options {
 		switch val.Tp {
 		case ast.DatabaseOptionCharset:
@@ -164,6 +166,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 			} else if toCharset != val.Value {
 				return ErrConflictingDeclarations.GenWithStackByArgs(toCharset, val.Value)
 			}
+			isAlterCharCol = true
 		case ast.DatabaseOptionCollate:
 			info, err := collate.GetCollationByName(val.Value)
 			if err != nil {
@@ -175,33 +178,65 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 				return ErrConflictingDeclarations.GenWithStackByArgs(toCharset, info.CharsetName)
 			}
 			toCollate = info.Name
-
+			isAlterCharCol = true
+		case ast.DatabaseOptionPlacementPrimaryRegion, ast.DatabaseOptionPlacementRegions, ast.DatabaseOptionPlacementFollowerCount, ast.DatabaseOptionPlacementVoterCount, ast.DatabaseOptionPlacementLearnerCount, ast.DatabaseOptionPlacementSchedule, ast.DatabaseOptionPlacementConstraints, ast.DatabaseOptionPlacementLeaderConstraints, ast.DatabaseOptionPlacementLearnerConstraints, ast.DatabaseOptionPlacementFollowerConstraints, ast.DatabaseOptionPlacementVoterConstraints:
+			//TODO: sylzd
+			fmt.Println(val)
+		case ast.DatabaseOptionPlacementPolicy:
+			policyName = model.NewCIStr(val.Value)
 		}
 	}
-	if toCollate == "" {
-		if toCollate, err = charset.GetDefaultCollation(toCharset); err != nil {
-			return errors.Trace(err)
-		}
-	}
 
-	// Check if need to change charset/collation.
+	// TODO sylzd: 这样有点丑，重新组织下char/colate/placement
+	if isAlterCharCol{
+		if toCollate == "" {
+			if toCollate, err = charset.GetDefaultCollation(toCharset); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		// Check if need to change charset/collation.
+		dbName := model.NewCIStr(stmt.Name)
+		is := d.GetInfoSchemaWithInterceptor(ctx)
+		dbInfo, ok := is.SchemaByName(dbName)
+		if !ok {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+		}
+		if dbInfo.Charset == toCharset && dbInfo.Collate == toCollate {
+			return nil
+		}
+		// Do the DDL job.
+		job := &model.Job{
+			SchemaID:   dbInfo.ID,
+			SchemaName: dbInfo.Name.L,
+			Type:       model.ActionModifySchemaCharsetAndCollate,
+			BinlogInfo: &model.HistoryInfo{},
+			Args:       []interface{}{toCharset, toCollate},
+		}
+		err = d.doDDLJob(ctx, job)
+		err = d.callHookOnChanged(err)
+		return errors.Trace(err)
+	}
+	// TODO: alter placement
+	// Do the DDL job.
 	dbName := model.NewCIStr(stmt.Name)
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
-	if dbInfo.Charset == toCharset && dbInfo.Collate == toCollate {
-		return nil
+	policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(policyName)
+	if !ok {
+		return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(policyName))
 	}
+	placementPolicyRef := &model.PolicyRefInfo{ID: policy.ID, Name: policyName}
 
-	// Do the DDL job.
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
-		Type:       model.ActionModifySchemaCharsetAndCollate,
+		Type:       model.ActionModifySchemaDefaultPlacement,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{toCharset, toCollate},
+		Args:       []interface{}{placementPolicyRef},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
