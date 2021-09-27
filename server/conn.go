@@ -1188,7 +1188,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
 	}
-	cc.textDumper = newTextDumper(ctx, vars)
+	chs, err := variable.GetSessionOrGlobalSystemVar(vars, variable.CharacterSetResults)
+	if err != nil {
+		logutil.Logger(ctx).Info("get character_set_results system variable failed", zap.Error(err))
+	}
+	cc.textDumper = newTextDumper(chs)
 	defer cc.textDumper.clean()
 
 	dataStr := string(hack.String(data))

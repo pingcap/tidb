@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"go.uber.org/zap"
@@ -54,6 +54,18 @@ func init() {
 	flag.UintVar(&statusPort, "status", 10080, "tidb server status port [default: 10080]")
 	flag.BoolVar(&record, "record", false, "record the test output in the result file")
 	flag.BoolVar(&create, "create", false, "create and import data into table, and save json file of stats")
+
+	c := &charset.Charset{
+		Name:             "gbk",
+		DefaultCollation: "gbk_bin",
+		Collations:       map[string]*charset.Collation{},
+	}
+	charset.AddCharset(c)
+	for _, coll := range charset.GetCollations() {
+		if strings.EqualFold(coll.CharsetName, c.Name) {
+			charset.AddCollation(coll)
+		}
+	}
 }
 
 var mdb *sql.DB
@@ -279,7 +291,6 @@ func (t *tester) execute(query query) error {
 		return nil
 	}
 
-	collate.EnableNewCharset()
 	list, err := session.Parse(t.ctx, query.Query)
 	if err != nil {
 		return t.parserErrorHandle(query, err)

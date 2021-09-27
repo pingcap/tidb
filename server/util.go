@@ -37,7 +37,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -49,7 +48,6 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
@@ -293,12 +291,8 @@ type textDumper struct {
 	isNull   bool
 }
 
-// newTextDumper reads the system variable @@character_set_results and creates the textDumper.
-func newTextDumper(ctx context.Context, sysVars *variable.SessionVars) *textDumper {
-	chs, err := variable.GetSessionOrGlobalSystemVar(sysVars, variable.CharacterSetResults)
-	if err != nil {
-		logutil.Logger(ctx).Info("get character_set_results system variable failed", zap.Error(err))
-	}
+// newTextDumper creates a new textDumper.
+func newTextDumper(chs string) *textDumper {
 	chsName := charset.Format(chs)
 	ret := &textDumper{}
 	ret.encoding.UpdateEncoding(chsName)
@@ -312,25 +306,8 @@ func (d *textDumper) clean() {
 	d.buffer = nil
 }
 
-func (d *textDumper) resetCharset() func() {
-	origin := d.encoding.Name()
-	return func() {
-		if d.isBinary || d.isNull {
-			d.encoding.UpdateEncoding(charset.Formatted(origin))
-		}
-	}
-}
-
-// updateCharset is used to set the encoding for each column.
-func (d *textDumper) updateCharset(chsID uint16) {
-	if d.isNull || d.isBinary {
-		// Only need to update when @@character_set_results = null | binary.
-		chs, _, err := charset.GetCharsetInfoByID(int(chsID))
-		if err != nil {
-			chs = ""
-		}
-		d.encoding.UpdateEncoding(charset.Formatted(chs))
-	}
+func (d *textDumper) charsetNeedDynUpdate() bool {
+	return d.isBinary || d.isNull
 }
 
 func (d *textDumper) encode(src []byte) []byte {
@@ -352,13 +329,24 @@ func (d *textDumper) encode(src []byte) []byte {
 
 func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *textDumper) ([]byte, error) {
 	tmp := make([]byte, 0, 20)
-	defer d.resetCharset()()
+	if d.charsetNeedDynUpdate() {
+		origin := d.encoding.Name()
+		defer func() {
+			d.encoding.UpdateEncoding(charset.Formatted(origin))
+		}()
+	}
 	for i, col := range columns {
 		if row.IsNull(i) {
 			buffer = append(buffer, 0xfb)
 			continue
 		}
-		d.updateCharset(col.Charset)
+		if d.charsetNeedDynUpdate() {
+			chs, _, err := charset.GetCharsetInfoByID(int(col.Charset))
+			if err != nil {
+				logutil.BgLogger().Info("unknown charset ID", zap.Error(err))
+			}
+			d.encoding.UpdateEncoding(charset.Formatted(chs))
+		}
 		switch col.Type {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
 			tmp = strconv.AppendInt(tmp[:0], row.GetInt64(i), 10)
