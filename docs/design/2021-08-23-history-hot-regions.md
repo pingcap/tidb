@@ -29,20 +29,26 @@ Create a new table `TIDB_HOT_REGIONS_HISTORY` in the `INFORMATION_SCHEMAT` schem
 
 TiDB has a memory table `TIDB_HOT_REGIONS` that provides information about hotspot regions. But it only shows the current hotspot information. This leads to the fact that when DBAs want to query historical hotspot details, they have no way to find the corresponding hotspot information.
 
-According to the [documentation](https://docs.pingcap.com/tidb/stable/information-schema-tidb-hot-regions) for the current `TIDB_HOT_REGIONS` table,  it can only provides information about recent hotspot regions calculated by PD according to the heartbeat from tikv.  It is inconvenient to obtain hotspot regions of past time, and locate which store the region is. For ease of use, we can store extened hotspot region infomation in PD. The DBA can query hotspot regions within a specified period by such statement in TiDB:
+According to the [documentation](https://docs.pingcap.com/tidb/stable/information-schema-tidb-hot-regions) for the current `TIDB_HOT_REGIONS` table,  it can only provides information about recent hotspot regions calculated by PD according to the heartbeat from tikv.  It is inconvenient to obtain hotspot regions of past time, and locate which store the region is. For ease of use, we can store extened hotspot region infomation in PD. The following list some common user cases:
 
 ```SQL
-SElECT * FROM information_schema.tidb_hot_regions_history WHERE update_time>='2019-04-01 00:00:00' and update_time<='2019-04-01 00:01:00';
-```
+# Query hotspot regions within a specified period of time
+SELECT * FROM INFORMATION_SCHEMA.TIDB_HOT_REGIONS_HISTORY WHERE update_time >'2021-08-18 21:40:00' and update_time <'2021-09-19 00:00:00';
 
-The result is shown below:
+# Query hotspot regions of a table within a specified period of time
+SELECT * FROM INFORMATION_SCHEMA.TIDB_HOT_REGIONS_HISTORY WHERE update_time >'2021-08-18 21:40:00' and update_time <'2021-09-19 00:00:00' and TABLE_NAME = 'table_name';
 
-```sql
-+---------------------+---------+------------+----------+------------+----------+-----------+----------+---------+-----------+-------+------------+------------+------------+------------+
-| UPDATE_TIME         | DB_NAME | TABLE_NAME | TABLE_ID | INDEX_NAME | INDEX_ID | REGION_ID | STORE_ID | PEER_ID | IS_LEADER | TYPE  | HOT_DEGREE | FLOW_BYTES | KEY_RATE   | QUERY_RATE |
-+---------------------+---------+------------+----------+------------+----------+-----------+----------+---------+-----------+-------+------------+------------+------------+------------+
-| 2019/04/01 00:00:00 | MYSQL   | USER       |        5 | PRIMARY    |        1 |         5 |        6 |      50 |        1  | READ  |         23 |  86.264363 |  70.001240 | 37.675487  |
-+---------------------+---------+------------+----------+------------+----------+-----------+----------+---------+-----------+-------+------------+------------+------------+------------+
+# Query the distribution of hotspot regions within a specified period of time
+SELECT count(region_id) cnt, store_id FROM INFORMATION_SCHEMA.TIDB_HOT_REGIONS_HISTORY WHERE update_time >'2021-08-18 21:40:00' and update_time <'2021-09-19 00:00:00'  and table_name = 'table_name' GROUP BY STORE_ID ORDER BY cnt DESC;
+
+# Query the distribution of hotspot leader regions within a specified period of time
+SELECT count(region_id) cnt, store_id FROM INFORMATION_SCHEMA.TIDB_HOT_REGIONS_HISTORY WHERE update_time >'2021-08-18 21:40:00' and update_time <'2021-09-19 00:00:00'  and table_name = 'table_name' and is_leader=1 GROUP BY STORE_ID ORDER BY cnt DESC;
+
+# Query the distribution of hotspot index regions within a specified period of time
+SELECT count(region_id) cnt, index_name, store_id FROM INFORMATION_SCHEMA.TIDB_HOT_REGIONS_HISTORY WHERE update_time >'2021-08-18 21:40:00' and update_time <'2021-09-19 00:00:00' and table_name = 'table_name' group by index_name, store_id order by index_name,cnt desc;
+
+# Query the distribution of hotspot index leader regions within a specified period of time
+SELECT count(region_id) cnt, index_name, store_id FROM INFORMATION_SCHEMA.TIDB_HOT_REGIONS_HISTORY WHERE update_time >'2021-08-18 21:40:00' and update_time <'2022-09-19 00:00:00' and table_name = 'TABLES_PRIV' and is_leader=1 group by index_name, store_id order by index_name,cnt desc;
 ```
 
 ## Detailed Design
@@ -128,17 +134,6 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
   * Add `KEY_RATE` and `QUERY_RATE` for future expansion in hotspot determination dimensions.
   * Remove `REGION_COUNT` for disuse and repeat with `STORE_ID`.
 
-2. Data size estimation 
-
-    one record size: 1 * 4B(timestamp) + 1*1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64B(varchar(64)) = 333B
-    Below table show data size per day and per month in 5,10,15 minutes record interval respectively given the maximum number of hotspot regions is 1000:
-
-    | Record Length (B) | Time Interval (Min) | Data Size Per Day (MB) | Data Size Per Month (MB) |
-    | ----------------- | ------------------- | ---------------------- | ------------------------ |
-    | 333               | 5                   | 91.46118164            | 2743.835449              |
-    | 333               | 10                  | 45.73059082            | 1371.917725              |
-    | 333               | 15                  | 30.48706055            | 914.6118164              |
-
 ### PD
 1. Timing write：
 
@@ -161,14 +156,32 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
    
 5. GC
 
-     The amount of data stored for one month is as follows.
+     * Data size estimation 
 
-     | Time Interval (Min) | Only Insert Data Size Per Month (MB) | Insert And Delete Data Size Per Month (MB) |
-     | ------------------- | ------------------------------------ | ------------------------------------------ |
-     | 10                  | 550                                  | 880                                        |
+         one record size:
 
-     If the data survival time exceeds the preservation time,it will be delete from LevelDB,every month we will compact the data that store in LevelDB to reduce space usage.This work takes 1.7s to complete.
-     
+         > M of [varchar(M)](https://docs.pingcap.com/tidb/stable/data-type-string#varchar-type) represents the maximum column length in characters (not bytes). The space occupied by a single character might differ for different character sets, form 1 to 4 bytes. 
+
+         minimum： 1 * 4B(timestamp) + 1*1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64 * 1B(varchar(64)) = 333B
+
+         maximum： 1 * 4B(timestamp) + 1*1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64 * 4B(varchar(64)) = 1101B
+
+         Below table show data size per day and per month in 5,10,15 minutes record interval respectively given the maximum number of hotspot regions is 1000:
+
+         | Record Length (B) | Time Interval (Min) | Data Size Per Day (MB) | Data Size Per Month (MB) |
+         | ----------------- | ------------------- | ---------------------- | ------------------------ |
+         | 333               | 5                   | 91.46118164            | 2743.835449              |
+         | 333               | 10                  | 45.73059082            | 1371.917725              |
+         | 333               | 15                  | 30.48706055            | 914.6118164              |
+
+     * The amount of data stored for one month is as follows.
+
+         | Time Interval (Min) | Only Insert Data Size Per Month (MB) | Insert And Delete Data Size Per Month (MB) |
+         | ------------------- | ------------------------------------ | ------------------------------------------ |
+         | 10                  | 550                                  | 880                                        |
+
+         If the data survival time exceeds the preservation time,it will be delete from LevelDB,every month we will compact the data that store in LevelDB to reduce space usage.This work takes 1.7s to complete.
+
 6. PD-CTL
    Support history hot regions in pd-ctl.
 
