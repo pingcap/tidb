@@ -81,7 +81,7 @@ There are two types of hotspot regions: `read` and `write`. The memory table ret
 1. PD returns the following fields：
 
     ```go
-      // HotPeerStatShow records the hot region statistics for output
+    // HotPeerStatShow records the hot region statistics for output
     type HotPeerStatShow struct {
       StoreID        uint64    `json:"store_id"`
       RegionID       uint64    `json:"region_id"`
