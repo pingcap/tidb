@@ -15,7 +15,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/errno"
+	serrors "github.com/pingcap/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -58,6 +58,9 @@ func WithRetry(
 		err := retryableFunc()
 		if err != nil {
 			allErrors = multierr.Append(allErrors, err)
+			if status.Code(serrors.Cause(err)) == codes.Canceled { // current context cancelled, stop retry
+				return allErrors
+			}
 			select {
 			case <-ctx.Done():
 				return allErrors // nolint:wrapcheck
