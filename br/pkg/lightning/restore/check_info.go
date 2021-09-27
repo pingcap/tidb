@@ -28,6 +28,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -39,10 +40,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/tikv/pd/server/api"
 	pdconfig "github.com/tikv/pd/server/config"
+
 	"go.uber.org/zap"
+	"modernc.org/mathutil"
 )
 
 const (
@@ -88,8 +92,8 @@ func (rc *Controller) getClusterAvail(ctx context.Context) (uint64, error) {
 	return clusterAvail, nil
 }
 
-// ClusterResource check cluster has enough resource to import data. this test can by skipped.
-func (rc *Controller) ClusterResource(ctx context.Context, localSource int64) error {
+// clusterResource check cluster has enough resource to import data. this test can by skipped.
+func (rc *Controller) clusterResource(ctx context.Context, localSource int64) error {
 	passed := true
 	message := "Cluster resources are rich for this import task"
 	defer func() {
@@ -163,11 +167,6 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
 	defer func() {
 		rc.checkTemplate.Collect(Critical, passed, message)
 	}()
-	// skip requirement check if explicitly turned off
-	if !rc.cfg.App.CheckRequirements {
-		message = "Cluster's available check is skipped by user requirement"
-		return nil
-	}
 	checkCtx := &backend.CheckCtx{
 		DBMetas: rc.dbMetas,
 	}
@@ -184,27 +183,56 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 	defer func() {
 		rc.checkTemplate.Collect(Critical, passed, message)
 	}()
+	storeInfo := &api.StoresInfo{}
+	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, storeInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(storeInfo.Stores) <= 1 {
+		return nil
+	}
 
 	var result api.RegionsInfo
 	if err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
 		return errors.Trace(err)
 	}
 	regions := make(map[uint64]int)
+	stores := make(map[uint64]*api.StoreInfo)
 	for _, region := range result.Regions {
 		for _, peer := range region.Peers {
 			regions[peer.StoreId]++
 		}
 	}
-
+	for _, store := range storeInfo.Stores {
+		stores[store.Store.Id] = store
+	}
+	tableCount := 0
+	for _, db := range rc.dbMetas {
+		info, ok := rc.dbInfos[db.Name]
+		if !ok {
+			continue
+		}
+		tableCount += len(info.Tables)
+	}
+	errorThrehold := mathutil.Max(errorEmptyRegionCntPerStore, tableCount*3)
+	warnThrehold := mathutil.Max(warnEmptyRegionCntPerStore, tableCount)
 	var (
 		errStores  []string
 		warnStores []string
 	)
 	for storeID, regionCnt := range regions {
-		if regionCnt > errorEmptyRegionCntPerStore {
-			errStores = append(errStores, strconv.Itoa(int(storeID)))
-		} else if regionCnt > warnEmptyRegionCntPerStore {
-			warnStores = append(warnStores, strconv.Itoa(int(storeID)))
+		if store, ok := stores[storeID]; ok {
+			if store.Store.State != metapb.StoreState_Up {
+				continue
+			}
+			if version.IsTiFlash(store.Store.Store) {
+				continue
+			}
+			if regionCnt > errorThrehold {
+				errStores = append(errStores, strconv.Itoa(int(storeID)))
+			} else if regionCnt > warnThrehold {
+				warnStores = append(warnStores, strconv.Itoa(int(storeID)))
+			}
 		}
 	}
 
@@ -237,15 +265,34 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(result.Stores) <= 1 {
+	stores := make([]*api.StoreInfo, 0, len(result.Stores))
+	for _, store := range result.Stores {
+		if store.Store.State != metapb.StoreState_Up {
+			continue
+		}
+		if version.IsTiFlash(store.Store.Store) {
+			continue
+		}
+		stores = append(stores, store)
+	}
+	if len(stores) <= 1 {
 		return nil
 	}
-	sort.Slice(result.Stores, func(i, j int) bool {
-		return result.Stores[i].Status.RegionCount < result.Stores[j].Status.RegionCount
+	sort.Slice(stores, func(i, j int) bool {
+		return stores[i].Status.RegionCount < stores[j].Status.RegionCount
 	})
-	minStore := result.Stores[0]
-	maxStore := result.Stores[len(result.Stores)-1]
-	if maxStore.Status.RegionCount <= checkRegionCntRatioThreshold {
+	minStore := stores[0]
+	maxStore := stores[len(stores)-1]
+	tableCount := 0
+	for _, db := range rc.dbMetas {
+		info, ok := rc.dbInfos[db.Name]
+		if !ok {
+			continue
+		}
+		tableCount += len(info.Tables)
+	}
+	threhold := mathutil.Max(checkRegionCntRatioThreshold, tableCount)
+	if maxStore.Status.RegionCount <= threhold {
 		return nil
 	}
 	ratio := float64(minStore.Status.RegionCount) / float64(maxStore.Status.RegionCount)
@@ -262,8 +309,8 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 	return nil
 }
 
-// CheckClusterRegion checks cluster if there are too many empty regions or region distribution is unbalanced.
-func (rc *Controller) CheckClusterRegion(ctx context.Context) error {
+// checkClusterRegion checks cluster if there are too many empty regions or region distribution is unbalanced.
+func (rc *Controller) checkClusterRegion(ctx context.Context) error {
 	err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 		restoreStarted := false
 		for _, task := range tasks {
@@ -338,7 +385,7 @@ func (rc *Controller) HasLargeCSV(dbMetas []*mydump.MDDatabaseMeta) error {
 	return nil
 }
 
-func (rc *Controller) EstimateSourceData(ctx context.Context) (int64, error) {
+func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 	sourceSize := int64(0)
 	originSource := int64(0)
 	bigTableCount := 0
@@ -350,17 +397,25 @@ func (rc *Controller) EstimateSourceData(ctx context.Context) (int64, error) {
 			continue
 		}
 		for _, tbl := range db.Tables {
+			originSource += tbl.TotalSize
 			tableInfo, ok := info.Tables[tbl.Name]
 			if ok {
-				if err := rc.SampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core); err != nil {
-					return sourceSize, errors.Trace(err)
-				}
-				sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
-				originSource += tbl.TotalSize
-				if tbl.TotalSize > int64(config.DefaultBatchSize)*2 {
-					bigTableCount += 1
-					if !tbl.IsRowOrdered {
-						unSortedTableCount += 1
+				// Do not sample small table because there may a large number of small table and it will take a long
+				// time to sample data for all of them.
+				if rc.cfg.TikvImporter.Backend == config.BackendTiDB || tbl.TotalSize < int64(config.SplitRegionSize) {
+					sourceSize += tbl.TotalSize
+					tbl.IndexRatio = 1.0
+					tbl.IsRowOrdered = false
+				} else {
+					if err := rc.sampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core); err != nil {
+						return sourceSize, errors.Trace(err)
+					}
+					sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
+					if tbl.TotalSize > int64(config.DefaultBatchSize)*2 {
+						bigTableCount += 1
+						if !tbl.IsRowOrdered {
+							unSortedTableCount += 1
+						}
 					}
 				}
 				tableCount += 1
@@ -368,6 +423,9 @@ func (rc *Controller) EstimateSourceData(ctx context.Context) (int64, error) {
 		}
 	}
 
+	if rc.status != nil {
+		rc.status.TotalFileSize.Store(originSource)
+	}
 	// Do not import with too large concurrency because these data may be all unsorted.
 	if bigTableCount > 0 && unSortedTableCount > 0 {
 		if rc.cfg.App.TableConcurrency > rc.cfg.App.IndexConcurrency {
@@ -377,8 +435,8 @@ func (rc *Controller) EstimateSourceData(ctx context.Context) (int64, error) {
 	return sourceSize, nil
 }
 
-// LocalResource checks the local node has enough resources for this import when local backend enabled;
-func (rc *Controller) LocalResource(ctx context.Context, sourceSize int64) error {
+// localResource checks the local node has enough resources for this import when local backend enabled;
+func (rc *Controller) localResource(sourceSize int64) error {
 	if rc.isSourceInLocal() {
 		sourceDir := strings.TrimPrefix(rc.cfg.Mydumper.SourceDir, storage.LocalURIPrefix)
 		same, err := common.SameDisk(sourceDir, rc.cfg.TikvImporter.SortedKVDir)
@@ -397,9 +455,6 @@ func (rc *Controller) LocalResource(ctx context.Context, sourceSize int64) error
 		return errors.Trace(err)
 	}
 	localAvailable := storageSize.Available
-	if err = rc.taskMgr.InitTask(ctx, sourceSize); err != nil {
-		return errors.Trace(err)
-	}
 
 	var message string
 	var passed bool
@@ -538,7 +593,10 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 	switch dataFileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
-		parser = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader)
+		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, nil)
+		if err != nil {
+			return nil, 0, errors.Trace(err)
+		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
 	case mydump.SourceTypeParquet:
@@ -677,7 +735,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	return msgs, nil
 }
 
-func (rc *Controller) SampleDataFromTable(ctx context.Context, dbName string, tableMeta *mydump.MDTableMeta, tableInfo *model.TableInfo) error {
+func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, tableMeta *mydump.MDTableMeta, tableInfo *model.TableInfo) error {
 	if len(tableMeta.DataFiles) == 0 {
 		return nil
 	}
@@ -707,7 +765,10 @@ func (rc *Controller) SampleDataFromTable(ctx context.Context, dbName string, ta
 	switch tableMeta.DataFiles[0].FileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
-		parser = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader)
+		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
 	case mydump.SourceTypeParquet:
@@ -764,7 +825,7 @@ outloop:
 		rowCount += 1
 
 		var dataChecksum, indexChecksum verification.KVChecksum
-		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, offset)
+		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
 		parser.RecycleRow(lastRow)
 		if encodeErr != nil {
 			err = errors.Annotatef(encodeErr, "in file at offset %d", offset)

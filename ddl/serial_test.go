@@ -648,7 +648,6 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	defer tk.MustExec("drop table if exists tb7, tb8")
 
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	// Test from->normal, to->local temporary
 	tk.MustExec("drop table if exists tb11, tb12")
 	tk.MustExec("create table tb11 (i int primary key, j int)")
@@ -658,7 +657,7 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("create temporary table if not exists tb12 like tb11;")
 	c.Assert(tk.Se.(sessionctx.Context).GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals,
-		infoschema.ErrTableExists.GenWithStackByArgs("tb12").Error())
+		infoschema.ErrTableExists.GenWithStackByArgs("test.tb12").Error())
 	defer tk.MustExec("drop table if exists tb11, tb12")
 	// Test from->local temporary, to->local temporary
 	tk.MustExec("drop table if exists tb13, tb14")
@@ -1066,7 +1065,11 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 		once.Do(func() {
 			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
-				return t.DropTableOrView(job.SchemaID, job.TableID, true)
+				err := t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del()
+				if err != nil {
+					return err
+				}
+				return t.DropTableOrView(job.SchemaID, job.TableID)
 			})
 			c.Assert(err, IsNil)
 		})
@@ -1108,7 +1111,6 @@ func (s *testSerialDBSuite) TestAutoRandomOnTemporaryTable(c *C) {
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	_, err := tk.Exec("create global temporary table auto_random_temporary (a bigint primary key auto_random(3), b varchar(255)) on commit delete rows;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error())
-	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 	_, err = tk.Exec("create temporary table t(a bigint key auto_random);")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error())
 }
@@ -1710,9 +1712,9 @@ func (s *testSerialDBSuite) TestCreateTableNoBlock(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime"), IsNil)
 	}()
 	save := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(1)
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1")
 	defer func() {
-		variable.SetDDLErrorCountLimit(save)
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", save))
 	}()
 
 	tk.MustExec("drop table if exists t")
@@ -1805,7 +1807,6 @@ func (s *testSerialSuite) TestGetReverseKey(c *C) {
 
 func (s *testSerialDBSuite) TestLocalTemporaryTableBlockedDDL(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int)")
 	tk.MustExec("create temporary table tmp1 (id int primary key, a int unique, b int)")

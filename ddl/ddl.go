@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
@@ -92,7 +93,7 @@ var (
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
-	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
+	CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, directPlacementOpts *model.PlacementSettings, placementPolicyRef *model.PolicyRefInfo) error
 	AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
@@ -117,6 +118,7 @@ type DDL interface {
 	AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error
 	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
 	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
+	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
 	//
@@ -410,6 +412,8 @@ func (d *ddl) close() {
 		d.sessPool.close()
 	}
 
+	variable.UnregisterStatistics(d)
+
 	logutil.BgLogger().Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -491,7 +495,7 @@ func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) 
 
 func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
@@ -508,7 +512,7 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 
 	var worker *worker
 	jobTp := job.Type
-	if jobTp == model.ActionAddIndex || jobTp == model.ActionAddPrimaryKey {
+	if admin.MayNeedBackfill(jobTp) {
 		worker = d.workers[addIdxWorker]
 	} else {
 		worker = d.workers[generalWorker]
@@ -696,8 +700,9 @@ type RecoverInfo struct {
 	TableInfo     *model.TableInfo
 	DropJobID     int64
 	SnapshotTS    uint64
-	CurAutoIncID  int64
-	CurAutoRandID int64
+	AutoIDs       meta.AutoIDGroup
+	OldSchemaName string
+	OldTableName  string
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.

@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/types"
@@ -175,4 +176,33 @@ func newSession(t *testing.T, store kv.Storage) session.Session {
 	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())
 	return se
+}
+
+// MustGetErrCode executes a sql statement and assert it's error code.
+func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
+	_, err := tk.Exec(sql)
+	tk.require.Error(err)
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	tk.require.Truef(ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
+	sqlErr := terror.ToSQLError(tErr)
+	tk.require.Equalf(errCode, int(sqlErr.Code), "Assertion failed, origin err:\n  %v", sqlErr)
+}
+
+// MustGetErrMsg executes a sql statement and assert it's error message.
+func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
+	err := tk.ExecToErr(sql)
+	tk.require.Error(err)
+	tk.require.Equal(errStr, err.Error())
+}
+
+// MustUseIndex checks if the result execution plan contains specific index(es).
+func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][3], "index:"+index) {
+			return true
+		}
+	}
+	return false
 }

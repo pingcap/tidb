@@ -513,12 +513,29 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 			}
 		}
 	}
+
+	// This excludes ciphers listed in tls.InsecureCipherSuites() and can be used to filter out more
+	var cipherSuites []uint16
+	var cipherNames []string
+	for _, sc := range tls.CipherSuites() {
+		switch sc.ID {
+		case tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:
+			logutil.BgLogger().Info("Disabling weak cipherSuite", zap.String("cipherSuite", sc.Name))
+		default:
+			cipherNames = append(cipherNames, sc.Name)
+			cipherSuites = append(cipherSuites, sc.ID)
+		}
+
+	}
+	logutil.BgLogger().Info("Enabled ciphersuites", zap.Strings("cipherNames", cipherNames))
+
 	/* #nosec G402 */
 	tlsConfig = &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 		ClientCAs:    certPool,
 		ClientAuth:   clientAuthPolicy,
 		MinVersion:   minTLSVersion,
+		CipherSuites: cipherSuites,
 	}
 	return
 }
@@ -565,6 +582,14 @@ func initInternalClient() {
 	internalHTTPClient = &http.Client{
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
+}
+
+// ComposeURL adds HTTP schema if missing and concats address with path
+func ComposeURL(address, path string) string {
+	if strings.HasPrefix(address, "http://") || strings.HasPrefix(address, "https://") {
+		return fmt.Sprintf("%s%s", address, path)
+	}
+	return fmt.Sprintf("%s://%s%s", InternalHTTPSchema(), address, path)
 }
 
 // GetLocalIP will return a local IP(non-loopback, non 0.0.0.0), if there is one

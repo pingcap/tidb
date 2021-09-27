@@ -43,13 +43,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
@@ -62,13 +61,12 @@ import (
 	split "github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -103,9 +101,8 @@ const (
 	// the lower threshold of max open files for pebble db.
 	openFilesLowerThreshold = 128
 
-	duplicateDBName       = "duplicates"
-	remoteDuplicateDBName = "remote_duplicates"
-	scanRegionLimit       = 128
+	duplicateDBName = "duplicates"
+	scanRegionLimit = 128
 )
 
 var (
@@ -206,6 +203,7 @@ type File struct {
 	keyAdapter         KeyAdapter
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
+	errorMgr           *errormanager.ErrorManager
 }
 
 func (e *File) setError(err error) {
@@ -823,6 +821,7 @@ type local struct {
 
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
+	errorMgr           *errormanager.ErrorManager
 }
 
 // connPool is a lazy pool of gRPC channels.
@@ -901,6 +900,7 @@ func NewLocalBackend(
 	enableCheckpoint bool,
 	g glue.Glue,
 	maxOpenFiles int,
+	errorMgr *errormanager.ErrorManager,
 ) (backend.Backend, error) {
 	localFile := cfg.SortedKVDir
 	rangeConcurrency := cfg.RangeConcurrency
@@ -957,6 +957,7 @@ func NewLocalBackend(
 		localWriterMemCacheSize: int64(cfg.LocalWriterMemCacheSize),
 		duplicateDetection:      cfg.DuplicateDetection,
 		duplicateDB:             duplicateDB,
+		errorMgr:                errorMgr,
 	}
 	local.conns = common.NewGRPCConns()
 	if err = local.checkMultiIngestSupport(ctx, pdCtl); err != nil {
@@ -967,17 +968,43 @@ func NewLocalBackend(
 }
 
 func (local *local) checkMultiIngestSupport(ctx context.Context, pdCtl *pdutil.PdController) error {
-	stores, err := conn.GetAllTiKVStores(ctx, pdCtl.GetPDClient(), conn.SkipTiFlash)
+	stores, err := pdCtl.GetPDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	hasTiFlash := false
 	for _, s := range stores {
-		client, err := local.getImportClient(ctx, s.Id)
-		if err != nil {
-			return errors.Trace(err)
+		if version.IsTiFlash(s) {
+			hasTiFlash = true
+			break
 		}
-		_, err = client.MultiIngest(ctx, &sst.MultiIngestRequest{})
-		if err != nil {
+	}
+
+	for _, s := range stores {
+		// skip stores that are not online
+		if s.State != metapb.StoreState_Up || version.IsTiFlash(s) {
+			continue
+		}
+		var err error
+		for i := 0; i < maxRetryTimes; i++ {
+			if i > 0 {
+				select {
+				case <-time.After(100 * time.Millisecond):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			client, err1 := local.getImportClient(ctx, s.Id)
+			if err1 != nil {
+				err = err1
+				log.L().Warn("get import client failed", zap.Error(err), zap.String("store", s.Address))
+				continue
+			}
+			_, err = client.MultiIngest(ctx, &sst.MultiIngestRequest{})
+			if err == nil {
+				break
+			}
 			if st, ok := status.FromError(err); ok {
 				if st.Code() == codes.Unimplemented {
 					log.L().Info("multi ingest not support", zap.Any("unsupported store", s))
@@ -985,7 +1012,18 @@ func (local *local) checkMultiIngestSupport(ctx context.Context, pdCtl *pdutil.P
 					return nil
 				}
 			}
-			return errors.Trace(err)
+			log.L().Warn("check multi ingest support failed", zap.Error(err), zap.String("store", s.Address),
+				zap.Int("retry", i))
+		}
+		if err != nil {
+			// if the cluster contains no TiFlash store, we don't need the multi-ingest feature,
+			// so in this condition, downgrade the logic instead of return an error.
+			if hasTiFlash {
+				return errors.Trace(err)
+			}
+			log.L().Warn("check multi failed all retry, fallback to false", log.ShortError(err))
+			local.supportMultiIngest = false
+			return nil
 		}
 	}
 
@@ -1243,6 +1281,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		tableInfo:          cfg.TableInfo,
 		duplicateDetection: local.duplicateDetection,
 		duplicateDB:        local.duplicateDB,
+		errorMgr:           local.errorMgr,
 		keyAdapter:         keyAdapter,
 	})
 	engine := e.(*File)
@@ -1289,7 +1328,7 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			sstMetasChan:       make(chan metaOrFlush),
 			tableInfo:          cfg.TableInfo,
 			duplicateDetection: local.duplicateDetection,
-			duplicateDB:        local.duplicateDB,
+			errorMgr:           local.errorMgr,
 		}
 		engineFile.sstIngester = dbSSTIngester{e: engineFile}
 		if err = engineFile.loadEngineMeta(); err != nil {
@@ -2027,109 +2066,44 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	return nil
 }
 
-func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
 	if local.duplicateDB == nil {
-		return nil
+		return false, nil
 	}
 	log.L().Info("Begin collect duplicate local keys", zap.String("table", tbl.Meta().Name.String()))
 	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
-	// TODO: Here we use this db to store the duplicate rows. We shall remove this parameter and store the result in
-	//  a TiDB table.
-	duplicateManager, err := NewDuplicateManager(local.duplicateDB, local.splitCli, ts, local.tls, local.tcpConcurrency)
+	duplicateManager, err := NewDuplicateManager(local.errorMgr, local.splitCli, ts, local.tls, local.tcpConcurrency)
 	if err != nil {
-		return errors.Annotate(err, "open duplicatemanager failed")
+		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
-	if err := duplicateManager.CollectDuplicateRowsFromLocalIndex(ctx, tbl, local.duplicateDB); err != nil {
-		return errors.Annotate(err, "collect local duplicate rows failed")
+	hasDupe, err := duplicateManager.CollectDuplicateRowsFromLocalIndex(ctx, tbl, local.duplicateDB)
+	if err != nil {
+		return false, errors.Annotate(err, "collect local duplicate rows failed")
 	}
-	return local.reportDuplicateRows(tbl, local.duplicateDB)
+	return hasDupe, nil
 }
 
-func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
 	log.L().Info("Begin collect remote duplicate keys", zap.String("table", tbl.Meta().Name.String()))
 	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
-	dbPath := filepath.Join(local.localStoreDir, remoteDuplicateDBName)
-	// TODO: Optimize the opts for better write.
-	opts := &pebble.Options{}
-	duplicateDB, err := pebble.Open(dbPath, opts)
+
+	duplicateManager, err := NewDuplicateManager(local.errorMgr, local.splitCli, ts, local.tls, local.tcpConcurrency)
 	if err != nil {
-		return errors.Annotate(err, "open duplicate db failed")
+		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
-
-	// TODO: Here we use the temp created db to store the duplicate rows. We shall remove this parameter and store the
-	//  result in a TiDB table.
-	duplicateManager, err := NewDuplicateManager(duplicateDB, local.splitCli, ts, local.tls, local.tcpConcurrency)
+	hasDupe, err := duplicateManager.CollectDuplicateRowsFromTiKV(ctx, tbl)
 	if err != nil {
-		return errors.Annotate(err, "open duplicatemanager failed")
+		return false, errors.Annotate(err, "collect remote duplicate rows failed")
 	}
-	if err = duplicateManager.CollectDuplicateRowsFromTiKV(ctx, tbl); err != nil {
-		return errors.Annotate(err, "collect remote duplicate rows failed")
-	}
-	err = local.reportDuplicateRows(tbl, duplicateDB)
-	duplicateDB.Close()
-	return err
-}
-
-func (local *local) reportDuplicateRows(tbl table.Table, db *pebble.DB) error {
-	log.L().Info("Begin report duplicate rows", zap.String("table", tbl.Meta().Name.String()))
-	decoder, err := kv.NewTableKVDecoder(tbl, &kv.SessionOptions{
-		SQLMode: mysql.ModeStrictAllTables,
-	})
-	if err != nil {
-		return errors.Annotate(err, "create decoder failed")
-	}
-
-	ranges := ranger.FullIntRange(false)
-	keysRanges := distsql.TableRangesToKVRanges(tbl.Meta().ID, ranges, nil)
-	keyAdapter := duplicateKeyAdapter{}
-	var nextUserKey []byte = nil
-	for _, r := range keysRanges {
-		startKey := codec.EncodeBytes([]byte{}, r.StartKey)
-		endKey := codec.EncodeBytes([]byte{}, r.EndKey)
-		opts := &pebble.IterOptions{
-			LowerBound: startKey,
-			UpperBound: endKey,
-		}
-		iter := db.NewIter(opts)
-		for iter.SeekGE(startKey); iter.Valid(); iter.Next() {
-			nextUserKey, _, _, err = keyAdapter.Decode(nextUserKey[:0], iter.Key())
-			if err != nil {
-				log.L().Error("decode key error from index for duplicatedb",
-					zap.Error(err), logutil.Key("key", iter.Key()))
-				continue
-			}
-
-			h, err := decoder.DecodeHandleFromTable(nextUserKey)
-			if err != nil {
-				log.L().Error("decode handle error from index for duplicatedb",
-					zap.Error(err), logutil.Key("key", iter.Key()))
-				continue
-			}
-			rows, _, err := decoder.DecodeRawRowData(h, iter.Value())
-			if err != nil {
-				log.L().Error("decode row error from index for duplicatedb",
-					zap.Error(err), logutil.Key("key", iter.Key()))
-				continue
-			}
-			// TODO: We need to output the duplicate rows into files or database.
-			//  Here I just output them for debug.
-			r := "row "
-			for _, row := range rows {
-				r += "," + row.String()
-			}
-			log.L().Info(r)
-		}
-		iter.Close()
-	}
-	return nil
+	return hasDupe, nil
 }
 
 func (e *File) unfinishedRanges(ranges []Range) []Range {
@@ -2374,10 +2348,10 @@ func (local *local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterCon
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engineFile := e.(*File)
-	return openLocalWriter(ctx, cfg, engineFile, local.localWriterMemCacheSize)
+	return openLocalWriter(cfg, engineFile, local.localWriterMemCacheSize)
 }
 
-func openLocalWriter(ctx context.Context, cfg *backend.LocalWriterConfig, f *File, cacheSize int64) (*Writer, error) {
+func openLocalWriter(cfg *backend.LocalWriterConfig, f *File, cacheSize int64) (*Writer, error) {
 	w := &Writer{
 		local:              f,
 		memtableSizeLimit:  cacheSize,
