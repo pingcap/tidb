@@ -2376,6 +2376,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{`create database t voter_constraints="ww";`, true, "CREATE DATABASE `t` VOTER_CONSTRAINTS = 'ww'"},
 		{`create database t learner_constraints="ww";`, true, "CREATE DATABASE `t` LEARNER_CONSTRAINTS = 'ww'"},
 		{`create database t placement policy="ww";`, true, "CREATE DATABASE `t` PLACEMENT POLICY = `ww`"},
+		{`create database t default placement policy="ww";`, true, "CREATE DATABASE `t` PLACEMENT POLICY = `ww`"},
 		{`create database t /*T![placement] primary_region="us" */;`, true, "CREATE DATABASE `t` PRIMARY_REGION = 'us'"},
 		// 4. alter db
 		{`alter database t primary_region="us";`, true, "ALTER DATABASE `t` PRIMARY_REGION = 'us'"},
@@ -2390,6 +2391,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{`alter database t voter_constraints="ww";`, true, "ALTER DATABASE `t` VOTER_CONSTRAINTS = 'ww'"},
 		{`alter database t learner_constraints="ww";`, true, "ALTER DATABASE `t` LEARNER_CONSTRAINTS = 'ww'"},
 		{`alter database t placement policy="ww";`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `ww`"},
+		{`alter database t default placement policy="ww";`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `ww`"},
 		{`alter database t /*T![placement] primary_region="us" */;`, true, "ALTER DATABASE `t` PRIMARY_REGION = 'us'"},
 		// 5. create partition
 		{`create table m (c int) partition by range (c) (partition p1 values less than (200) primary_region="us");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) PRIMARY_REGION = 'us')"},
