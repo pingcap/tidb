@@ -162,17 +162,16 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
 
          > M of [varchar(M)](https://docs.pingcap.com/tidb/stable/data-type-string#varchar-type) represents the maximum column length in characters (not bytes). The space occupied by a single character might differ for different character sets, form 1 to 4 bytes. 
 
-         minimum： 1 * 4B(timestamp) + 1*1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64 * 1B(varchar(64)) = 333B
+         minimum： 1 * 4B(timestamp) + 1 * 1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64 * 1B(varchar(64)) = 333B
 
-         maximum： 1 * 4B(timestamp) + 1*1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64 * 4B(varchar(64)) = 1101B
+         maximum： 1 * 4B(timestamp) + 1 * 1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64 * 4B(varchar(64)) = 1101B
 
-         Below table show data size per day and per month in 5,10,15 minutes record interval respectively given the maximum number of hotspot regions is 1000:
+         Below table show data size per day and per month with 10 minutes interval, given the maximum number of hotspot regions is 1000, Note that varchar is used to store the name of table index, and its true size is generally smaller than the minimum case:
 
          | Record Length (B) | Time Interval (Min) | Data Size Per Day (MB) | Data Size Per Month (MB) |
          | ----------------- | ------------------- | ---------------------- | ------------------------ |
-         | 333               | 5                   | 91.46118164            | 2743.835449              |
          | 333               | 10                  | 45.73059082            | 1371.917725              |
-         | 333               | 15                  | 30.48706055            | 914.6118164              |
+         | 1101              | 10                  | 151.1993408            | 4535.980225              |
 
      * The amount of data stored for one month is as follows.
 
