@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,6 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
@@ -26,75 +26,62 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
+// This test checks the resolve lock functionality. When a txn meets the lock of a large transaction,
+// it should not block by the lock.
+func TestResolvedLargeTxnLocks(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(&testExecutorSuite{})
+	rpcClient, cluster, pdClient, err := testutils.NewMockTiKV("", mockcopr.NewCoprRPCHandler())
+	require.NoError(t, err)
 
-type testExecutorSuite struct {
-	cluster   *mocktikv.Cluster
-	store     kv.Storage
-	mvccStore mocktikv.MVCCStore
-	dom       *domain.Domain
-}
+	testutils.BootstrapWithSingleStore(cluster)
+	mvccStore := rpcClient.MvccStore
+	tikvStore, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
+	require.NoError(t, err)
 
-func (s *testExecutorSuite) SetUpSuite(c *C) {
-	rpcClient, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("", mockcopr.NewCoprRPCHandler())
-	c.Assert(err, IsNil)
-	mocktikv.BootstrapWithSingleStore(cluster)
-	s.cluster = cluster
-	s.mvccStore = rpcClient.MvccStore
-	store, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
-	c.Assert(err, IsNil)
-	s.store, err = mockstorage.NewMockStorage(store)
-	c.Assert(err, IsNil)
+	store, err := mockstorage.NewMockStorage(tikvStore)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
 
-func (s *testExecutorSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-}
-
-func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
-	// This test checks the resolve lock functionality.
-	// When a txn meets the lock of a large transaction, it should not block by the
-	// lock.
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, val int)")
-	dom := domain.GetDomain(tk.Se)
+	dom = domain.GetDomain(tk.Session())
 	schema := dom.InfoSchema()
 	tbl, err := schema.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	tk.MustExec("insert into t values (1, 1)")
 
-	o := s.store.GetOracle()
+	o := store.GetOracle()
 	tso, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: kv.GlobalTxnScope})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
-	pairs := s.mvccStore.Scan(key, nil, 1, tso, kvrpcpb.IsolationLevel_SI, nil)
-	c.Assert(pairs, HasLen, 1)
-	c.Assert(pairs[0].Err, IsNil)
+	pairs := mvccStore.Scan(key, nil, 1, tso, kvrpcpb.IsolationLevel_SI, nil)
+	require.Len(t, pairs, 1)
+	require.Nil(t, pairs[0].Err)
 
 	// Simulate a large txn (holding a pk lock with large TTL).
 	// Secondary lock 200ms, primary lock 100s
-	c.Assert(mocktikv.MustPrewrite(s.mvccStore, mocktikv.PutMutations("primary", "value"), "primary", tso, 100000), IsTrue)
-	c.Assert(mocktikv.MustPrewrite(s.mvccStore, mocktikv.PutMutations(string(key), "value"), "primary", tso, 200), IsTrue)
+	require.True(t, prewriteMVCCStore(mvccStore, putMutations("primary", "value"), "primary", tso, 100000))
+	require.True(t, prewriteMVCCStore(mvccStore, putMutations(string(key), "value"), "primary", tso, 200))
 
 	// Simulate the action of reading meet the lock of a large txn.
 	// The lock of the large transaction should not block read.
@@ -111,14 +98,18 @@ func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
 	tk.MustExec("rollback")
 
 	// And check the large txn is still alive.
-	pairs = s.mvccStore.Scan([]byte("primary"), nil, 1, tso, kvrpcpb.IsolationLevel_SI, nil)
-	c.Assert(pairs, HasLen, 1)
-	_, ok := errors.Cause(pairs[0].Err).(*mocktikv.ErrLocked)
-	c.Assert(ok, IsTrue)
+	pairs = mvccStore.Scan([]byte("primary"), nil, 1, tso, kvrpcpb.IsolationLevel_SI, nil)
+	require.Len(t, pairs, 1)
+	_, ok := errors.Cause(pairs[0].Err).(*testutils.ErrLocked)
+	require.True(t, ok)
 }
 
-func (s *testExecutorSuite) TestIssue15662(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue15662(t *testing.T) {
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 
@@ -130,4 +121,33 @@ func (s *testExecutorSuite) TestIssue15662(c *C) {
 
 	tk.MustQuery("select table1.`col_int` as field1, table1.`col_int` as field2 from V as table1 left join F as table2 on table1.`col_int` = table2.`col_int` order by field1, field2 desc limit 2").
 		Check(testkit.Rows("8 8"))
+}
+
+func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
+	var mutations []*kvrpcpb.Mutation
+	for i := 0; i < len(kvpairs); i += 2 {
+		mutations = append(mutations, &kvrpcpb.Mutation{
+			Op:    kvrpcpb.Op_Put,
+			Key:   []byte(kvpairs[i]),
+			Value: []byte(kvpairs[i+1]),
+		})
+	}
+	return mutations
+}
+
+func prewriteMVCCStore(store testutils.MVCCStore, mutations []*kvrpcpb.Mutation, primary string, startTS uint64, ttl uint64) bool {
+	req := &kvrpcpb.PrewriteRequest{
+		Mutations:    mutations,
+		PrimaryLock:  []byte(primary),
+		StartVersion: startTS,
+		LockTtl:      ttl,
+		MinCommitTs:  startTS + 1,
+	}
+	errs := store.Prewrite(req)
+	for _, err := range errs {
+		if err != nil {
+			return false
+		}
+	}
+	return true
 }

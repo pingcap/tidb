@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -243,9 +243,11 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetDesc(e.descs[workID]).
 					SetKeepOrder(false).
 					SetStreaming(e.partialStreamings[workID]).
+					SetReadReplicaScope(e.readReplicaScope).
+					SetIsStaleness(e.isStaleness).
 					SetFromSessionVars(e.ctx.GetSessionVars()).
 					SetMemTracker(e.memTracker).
-					SetFromInfoSchema(e.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema))
+					SetFromInfoSchema(e.ctx.GetInfoSchema())
 
 				worker := &partialIndexWorker{
 					stats:        e.stats,
@@ -324,13 +326,15 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		util.WithRecovery(
 			func() {
 				partialTableReader := &TableReaderExecutor{
-					baseExecutor: newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
-					dagPB:        e.dagPBs[workID],
-					startTS:      e.startTS,
-					streaming:    e.partialStreamings[workID],
-					feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
-					plans:        e.partialPlans[workID],
-					ranges:       e.ranges[workID],
+					baseExecutor:     newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
+					dagPB:            e.dagPBs[workID],
+					startTS:          e.startTS,
+					readReplicaScope: e.readReplicaScope,
+					isStaleness:      e.isStaleness,
+					streaming:        e.partialStreamings[workID],
+					feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
+					plans:            e.partialPlans[workID],
+					ranges:           e.ranges[workID],
 				}
 				worker := &partialTableWorker{
 					stats:        e.stats,
@@ -534,14 +538,16 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 
 func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tbl table.Table, handles []kv.Handle) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.getTablePlanRootID()),
-		table:        tbl,
-		dagPB:        e.tableRequest,
-		startTS:      e.startTS,
-		streaming:    e.tableStreaming,
-		columns:      e.columns,
-		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
-		plans:        e.tblPlans,
+		baseExecutor:     newBaseExecutor(e.ctx, e.schema, e.getTablePlanRootID()),
+		table:            tbl,
+		dagPB:            e.tableRequest,
+		startTS:          e.startTS,
+		readReplicaScope: e.readReplicaScope,
+		isStaleness:      e.isStaleness,
+		streaming:        e.tableStreaming,
+		columns:          e.columns,
+		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
+		plans:            e.tblPlans,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, false)

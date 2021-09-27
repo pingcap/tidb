@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,8 +23,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 type coprRPCHandler struct {
@@ -32,7 +33,7 @@ type coprRPCHandler struct {
 }
 
 // NewCoprRPCHandler creates a handler to process coprocessor requests.
-func NewCoprRPCHandler() mocktikv.CoprRPCHandler {
+func NewCoprRPCHandler() testutils.CoprRPCHandler {
 	ch := make(chan *tikvrpc.Lease, 1024)
 	done := make(chan struct{})
 	go tikvrpc.CheckStreamTimeoutLoop(ch, done)
@@ -42,7 +43,7 @@ func NewCoprRPCHandler() mocktikv.CoprRPCHandler {
 	}
 }
 
-func (mc *coprRPCHandler) HandleCmdCop(reqCtx *kvrpcpb.Context, session *mocktikv.Session, r *coprocessor.Request) *coprocessor.Response {
+func (mc *coprRPCHandler) HandleCmdCop(reqCtx *kvrpcpb.Context, session *testutils.RPCSession, r *coprocessor.Request) *coprocessor.Response {
 	if err := session.CheckRequestContext(reqCtx); err != nil {
 		return &coprocessor.Response{RegionError: err}
 	}
@@ -60,7 +61,7 @@ func (mc *coprRPCHandler) HandleCmdCop(reqCtx *kvrpcpb.Context, session *mocktik
 	return res
 }
 
-func (mc *coprRPCHandler) HandleBatchCop(ctx context.Context, reqCtx *kvrpcpb.Context, session *mocktikv.Session, r *coprocessor.BatchRequest, timeout time.Duration) (*tikvrpc.BatchCopStreamResponse, error) {
+func (mc *coprRPCHandler) HandleBatchCop(ctx context.Context, reqCtx *kvrpcpb.Context, session *testutils.RPCSession, r *coprocessor.BatchRequest, timeout time.Duration) (*tikvrpc.BatchCopStreamResponse, error) {
 	if err := session.CheckRequestContext(reqCtx); err != nil {
 		return &tikvrpc.BatchCopStreamResponse{
 			Tikv_BatchCoprocessorClient: &mockBathCopErrClient{Error: err},
@@ -88,7 +89,7 @@ func (mc *coprRPCHandler) HandleBatchCop(ctx context.Context, reqCtx *kvrpcpb.Co
 	return batchResp, nil
 }
 
-func (mc *coprRPCHandler) HandleCopStream(ctx context.Context, reqCtx *kvrpcpb.Context, session *mocktikv.Session, r *coprocessor.Request, timeout time.Duration) (*tikvrpc.CopStreamResponse, error) {
+func (mc *coprRPCHandler) HandleCopStream(ctx context.Context, reqCtx *kvrpcpb.Context, session *testutils.RPCSession, r *coprocessor.Request, timeout time.Duration) (*tikvrpc.CopStreamResponse, error) {
 	if err := session.CheckRequestContext(reqCtx); err != nil {
 		return &tikvrpc.CopStreamResponse{
 			Tikv_CoprocessorStreamClient: &mockCopStreamErrClient{Error: err},

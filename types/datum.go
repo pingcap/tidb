@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -958,8 +959,21 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		s = d.GetMysqlEnum().String()
 	case KindMysqlSet:
 		s = d.GetMysqlSet().String()
-	case KindBinaryLiteral, KindMysqlBit:
+	case KindBinaryLiteral:
 		s = d.GetBinaryLiteral().ToString()
+	case KindMysqlBit:
+		// issue #25037
+		// bit to binary/varbinary. should consider transferring to uint first.
+		if target.Tp == mysql.TypeString || (target.Tp == mysql.TypeVarchar && target.Collate == charset.CollationBin) {
+			val, err := d.GetBinaryLiteral().ToInt(sc)
+			if err != nil {
+				s = d.GetBinaryLiteral().ToString()
+			} else {
+				s = strconv.FormatUint(val, 10)
+			}
+		} else {
+			s = d.GetBinaryLiteral().ToString()
+		}
 	case KindMysqlJSON:
 		s = d.GetMysqlJSON().String()
 	default:
@@ -1115,7 +1129,11 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	}
 	switch d.k {
 	case KindMysqlTime:
-		t = d.GetMysqlTime()
+		t, err = d.GetMysqlTime().Convert(sc, target.Tp)
+		if err != nil {
+			ret.SetMysqlTime(ZeroTimestamp)
+			return ret, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimestampStr, t.String()))
+		}
 		t, err = t.RoundFrac(sc, fsp)
 	case KindMysqlDuration:
 		t, err = d.GetMysqlDuration().ConvertToTime(sc, mysql.TypeTimestamp)
@@ -1182,6 +1200,14 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 		t, err = ParseTime(sc, d.GetString(), tp, fsp)
 	case KindInt64:
 		t, err = ParseTimeFromNum(sc, d.GetInt64(), tp, fsp)
+	case KindUint64:
+		intOverflow64 := d.GetInt64() < 0
+		if intOverflow64 {
+			uNum := strconv.FormatUint(d.GetUint64(), 10)
+			t, err = ZeroDate, ErrWrongValue.GenWithStackByArgs(TimeStr, uNum)
+		} else {
+			t, err = ParseTimeFromNum(sc, d.GetInt64(), tp, fsp)
+		}
 	case KindMysqlJSON:
 		j := d.GetMysqlJSON()
 		var s string
@@ -1219,18 +1245,18 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 			ret.SetMysqlDuration(dur)
 			return ret, errors.Trace(err)
 		}
-		dur, err = dur.RoundFrac(fsp)
+		dur, err = dur.RoundFrac(fsp, sc.TimeZone)
 		ret.SetMysqlDuration(dur)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
 	case KindMysqlDuration:
-		dur, err := d.GetMysqlDuration().RoundFrac(fsp)
+		dur, err := d.GetMysqlDuration().RoundFrac(fsp, sc.TimeZone)
 		ret.SetMysqlDuration(dur)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-	case KindInt64, KindFloat32, KindFloat64, KindMysqlDecimal:
+	case KindInt64, KindUint64, KindFloat32, KindFloat64, KindMysqlDecimal:
 		// TODO: We need a ParseDurationFromNum to avoid the cost of converting a num to string.
 		timeStr, err := d.ToString()
 		if err != nil {
@@ -1390,8 +1416,6 @@ func (d *Datum) ConvertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		}
 	case KindMysqlTime:
 		y = int64(d.GetMysqlTime().Year())
-	case KindMysqlDuration:
-		y = int64(time.Now().Year())
 	case KindMysqlJSON:
 		y, err = ConvertJSONToInt64(sc, d.GetMysqlJSON(), false)
 		if err != nil {
@@ -1457,7 +1481,7 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 		return Datum{}, errors.Trace(ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen))
 	}
 	if target.Flen < 64 && uintValue >= 1<<(uint64(target.Flen)) {
-		uintValue &= (1 << (uint64(target.Flen))) - 1
+		uintValue = (1 << (uint64(target.Flen))) - 1
 		err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen)
 	}
 	byteSize := (target.Flen + 7) >> 3
@@ -1697,7 +1721,7 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 	case KindMysqlDuration:
 		// 11:11:11.999999 -> 111112
 		// 11:59:59.999999 -> 120000
-		dur, err := d.GetMysqlDuration().RoundFrac(DefaultFsp)
+		dur, err := d.GetMysqlDuration().RoundFrac(DefaultFsp, sc.TimeZone)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -74,7 +75,7 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	// We need to merge the partition-level stats to global-stats when we drop table partition in dynamic mode.
 	tableID := tblInfo.ID
-	is := h.mu.ctx.GetSessionVars().GetInfoSchema().(infoschema.InfoSchema)
+	is := h.mu.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	globalStats, err := h.TableStatsFromStorage(tblInfo, tableID, true, 0)
 	if err != nil {
 		return err

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -84,7 +85,7 @@ func (s *testSuite1) TestRevokeTableScope(c *C) {
 
 	// Make sure all the table privs for new user is Y.
 	res := tk.MustQuery(`SELECT Table_priv FROM mysql.tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`)
-	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Index,Alter,Create View,Show View"))
+	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Index,Alter,Create View,Show View,References"))
 
 	// Revoke each priv from the user.
 	for _, v := range mysql.AllTablePrivs {
@@ -94,15 +95,16 @@ func (s *testSuite1) TestRevokeTableScope(c *C) {
 		c.Assert(rows, HasLen, 1)
 		row := rows[0]
 		c.Assert(row, HasLen, 1)
-		op := mysql.Priv2SetStr[v]
+
+		op := v.SetString()
 		found := false
-		for _, v := range strings.Split(fmt.Sprintf("%v", row[0]), ",") {
-			if v == op {
+		for _, p := range executor.SetFromString(fmt.Sprintf("%s", row[0])) {
+			if op == p {
 				found = true
 				break
 			}
 		}
-		c.Assert(found, IsFalse)
+		c.Assert(found, IsFalse, Commentf("%s", mysql.Priv2SetStr[v]))
 	}
 
 	// Revoke all table scope privs.
@@ -159,17 +161,11 @@ func (s *testSuite1) TestRevokeDynamicPrivs(c *C) {
 	tk.MustExec("DROP USER if exists dyn")
 	tk.MustExec("create user dyn")
 
-	tk.MustExec("SET tidb_enable_dynamic_privileges=0")
-	_, err := tk.Exec("GRANT BACKUP_ADMIN ON *.* TO dyn")
-	c.Assert(err.Error(), Equals, "dynamic privileges is an experimental feature. Run 'SET tidb_enable_dynamic_privileges=1'")
-
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
-
 	tk.MustExec("GRANT BACKUP_Admin ON *.* TO dyn") // grant one priv
 	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % BACKUP_ADMIN N"))
 
 	// try revoking only on test.* - should fail:
-	_, err = tk.Exec("REVOKE BACKUP_Admin,system_variables_admin ON test.* FROM dyn")
+	_, err := tk.Exec("REVOKE BACKUP_Admin,system_variables_admin ON test.* FROM dyn")
 	c.Assert(terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel), IsTrue)
 
 	// privs should still be intact:

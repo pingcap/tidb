@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,13 +19,17 @@ import (
 	"crypto/tls"
 	"time"
 
+	"github.com/pingcap/errors"
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/trxevents"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -43,9 +48,6 @@ var (
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
 	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
-
-// FlagsOp  describes KeyFlags modify operation. TODO:remove it when br is ready
-type FlagsOp = tikvstore.FlagsOp
 
 // Getter is the interface for the Get method.
 type Getter interface {
@@ -68,6 +70,40 @@ type Retriever interface {
 	// If k is nil, the returned iterator will be positioned at the last key.
 	// TODO: Add lower bound limit
 	IterReverse(k Key) (Iterator, error)
+}
+
+// EmptyIterator is an iterator without any entry
+type EmptyIterator struct{}
+
+// Valid returns true if the current iterator is valid.
+func (i *EmptyIterator) Valid() bool { return false }
+
+// Key returns the current key. Always return nil for this iterator
+func (i *EmptyIterator) Key() Key { return nil }
+
+// Value returns the current value. Always return nil for this iterator
+func (i *EmptyIterator) Value() []byte { return nil }
+
+// Next goes the next position. Always return error for this iterator
+func (i *EmptyIterator) Next() error { return errors.New("iterator is invalid") }
+
+// Close closes the iterator.
+func (i *EmptyIterator) Close() {}
+
+// EmptyRetriever is a retriever without any entry
+type EmptyRetriever struct{}
+
+// Get gets the value for key k from kv store. Always return nil for this retriever
+func (r *EmptyRetriever) Get(_ context.Context, _ Key) ([]byte, error) {
+	return nil, ErrNotExist
+}
+
+// Iter creates an Iterator. Always return EmptyIterator for this retriever
+func (r *EmptyRetriever) Iter(_ Key, _ Key) (Iterator, error) { return &EmptyIterator{}, nil }
+
+// IterReverse creates a reversed Iterator. Always return EmptyIterator for this retriever
+func (r *EmptyRetriever) IterReverse(_ Key) (Iterator, error) {
+	return &EmptyIterator{}, nil
 }
 
 // Mutator is the interface wraps the basic Set and Delete methods.
@@ -108,11 +144,11 @@ type MemBuffer interface {
 	RUnlock()
 
 	// GetFlags returns the latest flags associated with key.
-	GetFlags(Key) (tikvstore.KeyFlags, error)
+	GetFlags(Key) (KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
-	SetWithFlags(Key, []byte, ...tikvstore.FlagsOp) error
+	SetWithFlags(Key, []byte, ...FlagsOp) error
 	// DeleteWithFlags delete key with the given KeyFlags
-	DeleteWithFlags(Key, ...tikvstore.FlagsOp) error
+	DeleteWithFlags(Key, ...FlagsOp) error
 
 	// Staging create a new staging buffer inside the MemBuffer.
 	// Subsequent writes will be temporarily stored in this new staging buffer.
@@ -124,7 +160,7 @@ type MemBuffer interface {
 	// If the changes are not published by `Release`, they will be discarded.
 	Cleanup(StagingHandle)
 	// InspectStage used to inspect the value updates in the given stage.
-	InspectStage(StagingHandle, func(Key, tikvstore.KeyFlags, []byte))
+	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
 
 	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 	SnapshotGetter() Getter
@@ -133,6 +169,9 @@ type MemBuffer interface {
 
 	// Len returns the number of entries in the DB.
 	Len() int
+
+	// Size returns sum of keys and values length.
+	Size() int
 }
 
 // LockCtx contains information for LockKeys method.
@@ -162,8 +201,6 @@ type Transaction interface {
 	SetOption(opt int, val interface{})
 	// GetOption returns the option
 	GetOption(opt int) interface{}
-	// DelOption deletes an option.
-	DelOption(opt int)
 	// IsReadOnly checks if the transaction has only performed read operations.
 	IsReadOnly() bool
 	// StartTS returns the transaction start timestamp.
@@ -190,12 +227,17 @@ type Transaction interface {
 	// GetIndexName returns the cached index name.
 	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
 	GetTableInfo(id int64) *model.TableInfo
+
+	// set allowed options of current operation in each TiKV disk usage level.
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	// clear allowed flag
+	ClearDiskFullOpt()
 }
 
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
+	Send(ctx context.Context, req *Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
@@ -287,11 +329,20 @@ type Request struct {
 	TaskID uint64
 	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
 	TiDBServerID uint64
+	// ReadReplicaScope is the scope of the read replica.
+	ReadReplicaScope string
 	// IsStaleness indicates whether the request read staleness data
 	IsStaleness bool
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
+	// ResourceGroupTag indicates the kv request task group.
+	ResourceGroupTag []byte
 }
+
+const (
+	// GlobalReplicaScope indicates the default replica scope for tidb to request
+	GlobalReplicaScope = oracle.GlobalTxnScope
+)
 
 // ResultSubset represents a result subset from a single storage unit.
 // TODO: Find a better interface for ResultSubset that can reuse bytes.
@@ -323,8 +374,18 @@ type Snapshot interface {
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option. Only ReplicaRead is supported for snapshot
 	SetOption(opt int, val interface{})
-	// DelOption deletes an option.
-	DelOption(opt int)
+}
+
+// SnapshotInterceptor is used to intercept snapshot's read operation
+type SnapshotInterceptor interface {
+	// OnGet intercepts Get operation for Snapshot
+	OnGet(ctx context.Context, snap Snapshot, k Key) ([]byte, error)
+	// OnBatchGet intercepts BatchGet operation for Snapshot
+	OnBatchGet(ctx context.Context, snap Snapshot, keys []Key) (map[string][]byte, error)
+	// OnIter intercepts Iter operation for Snapshot
+	OnIter(snap Snapshot, k Key, upperBound Key) (Iterator, error)
+	// OnIterReverse intercepts IterReverse operation for Snapshot
+	OnIterReverse(snap Snapshot, k Key) (Iterator, error)
 }
 
 // BatchGetter is the interface for BatchGet.
@@ -345,7 +406,7 @@ type Driver interface {
 type Storage interface {
 	// Begin a global transaction
 	Begin() (Transaction, error)
-	// Begin a transaction with given option
+	// BeginWithOption begins a transaction with given option
 	BeginWithOption(option tikv.StartTSOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
@@ -374,6 +435,8 @@ type Storage interface {
 	GetMemCache() MemManager
 	// GetMinSafeTS return the minimal SafeTS of the storage with given txnScope.
 	GetMinSafeTS(txnScope string) uint64
+	// GetLockWaits return all lock wait information
+	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.

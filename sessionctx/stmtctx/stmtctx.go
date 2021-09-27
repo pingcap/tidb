@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,10 +25,11 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -62,29 +64,30 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue           bool
-	InInsertStmt              bool
-	InUpdateStmt              bool
-	InDeleteStmt              bool
-	InSelectStmt              bool
-	InLoadDataStmt            bool
-	InExplainStmt             bool
-	InCreateOrAlterStmt       bool
-	IgnoreTruncate            bool
-	IgnoreZeroInDate          bool
-	DupKeyAsWarning           bool
-	BadNullAsWarning          bool
-	DividedByZeroAsWarning    bool
-	TruncateAsWarning         bool
-	OverflowAsWarning         bool
-	InShowWarning             bool
-	UseCache                  bool
-	BatchCheck                bool
-	InNullRejectCheck         bool
-	AllowInvalidDate          bool
-	IgnoreNoPartition         bool
-	OptimDependOnMutableConst bool
-	IgnoreExplainIDSuffix     bool
+	IsDDLJobInQueue              bool
+	InInsertStmt                 bool
+	InUpdateStmt                 bool
+	InDeleteStmt                 bool
+	InSelectStmt                 bool
+	InLoadDataStmt               bool
+	InExplainStmt                bool
+	InCreateOrAlterStmt          bool
+	IgnoreTruncate               bool
+	IgnoreZeroInDate             bool
+	DupKeyAsWarning              bool
+	BadNullAsWarning             bool
+	DividedByZeroAsWarning       bool
+	TruncateAsWarning            bool
+	OverflowAsWarning            bool
+	InShowWarning                bool
+	UseCache                     bool
+	BatchCheck                   bool
+	InNullRejectCheck            bool
+	AllowInvalidDate             bool
+	IgnoreNoPartition            bool
+	MaybeOverOptimized4PlanCache bool
+	IgnoreExplainIDSuffix        bool
+	IsStaleness                  bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -111,12 +114,11 @@ type StatementContext struct {
 		copied  uint64
 		touched uint64
 
-		message           string
-		warnings          []SQLWarn
-		errorCount        uint16
-		histogramsNotLoad bool
-		execDetails       execdetails.ExecDetails
-		allExecDetails    []*execdetails.ExecDetails
+		message        string
+		warnings       []SQLWarn
+		errorCount     uint16
+		execDetails    execdetails.ExecDetails
+		allExecDetails []*execdetails.ExecDetails
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
@@ -145,11 +147,11 @@ type StatementContext struct {
 	digestMemo       struct {
 		sync.Once
 		normalized string
-		digest     string
+		digest     *parser.Digest
 	}
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
-	planDigest            string
+	planDigest            *parser.Digest
 	encodedPlan           string
 	planHint              string
 	planHintSet           bool
@@ -165,6 +167,24 @@ type StatementContext struct {
 
 	// stmtCache is used to store some statement-related values.
 	stmtCache map[StmtCacheKey]interface{}
+	// resourceGroupTag cache for the current statement resource group tag.
+	resourceGroupTag atomic.Value
+	// Map to store all CTE storages of current SQL.
+	// Will clean up at the end of the execution.
+	CTEStorageMap interface{}
+
+	// cache is used to reduce object allocation.
+	cache struct {
+		execdetails.RuntimeStatsColl
+		MemTracker  memory.Tracker
+		DiskTracker disk.Tracker
+		LogOnExceed [2]memory.LogOnExceed
+	}
+
+	// OptimInfo maps Plan.ID() to optimization information when generating Plan.
+	OptimInfo map[int]string
+	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
+	InVerboseExplain bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -229,7 +249,7 @@ func (sc *StatementContext) ResetStmtCache() {
 
 // SQLDigest gets normalized and digest for provided sql.
 // it will cache result after first calling.
-func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
+func (sc *StatementContext) SQLDigest() (normalized string, sqlDigest *parser.Digest) {
 	sc.digestMemo.Do(func() {
 		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.OriginalSQL)
 	})
@@ -237,20 +257,37 @@ func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
 }
 
 // InitSQLDigest sets the normalized and digest for sql.
-func (sc *StatementContext) InitSQLDigest(normalized, digest string) {
+func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Digest) {
 	sc.digestMemo.Do(func() {
 		sc.digestMemo.normalized, sc.digestMemo.digest = normalized, digest
 	})
 }
 
 // GetPlanDigest gets the normalized plan and plan digest.
-func (sc *StatementContext) GetPlanDigest() (normalized, planDigest string) {
+func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *parser.Digest) {
 	return sc.planNormalized, sc.planDigest
 }
 
+// GetResourceGroupTag gets the resource group of the statement.
+func (sc *StatementContext) GetResourceGroupTag() []byte {
+	tag, _ := sc.resourceGroupTag.Load().([]byte)
+	if len(tag) > 0 {
+		return tag
+	}
+	normalized, sqlDigest := sc.SQLDigest()
+	if len(normalized) == 0 {
+		return nil
+	}
+	tag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest)
+	sc.resourceGroupTag.Store(tag)
+	return tag
+}
+
 // SetPlanDigest sets the normalized plan and plan digest.
-func (sc *StatementContext) SetPlanDigest(normalized, planDigest string) {
-	sc.planNormalized, sc.planDigest = normalized, planDigest
+func (sc *StatementContext) SetPlanDigest(normalized string, planDigest *parser.Digest) {
+	if planDigest != nil {
+		sc.planNormalized, sc.planDigest = normalized, planDigest
+	}
 }
 
 // GetEncodedPlan gets the encoded plan, it is used to avoid repeated encode.
@@ -266,6 +303,18 @@ func (sc *StatementContext) SetEncodedPlan(encodedPlan string) {
 // GetPlanHint gets the hint string generated from the plan.
 func (sc *StatementContext) GetPlanHint() (string, bool) {
 	return sc.planHint, sc.planHintSet
+}
+
+// InitDiskTracker initializes the sc.DiskTracker, use cache to avoid allocation.
+func (sc *StatementContext) InitDiskTracker(label int, bytesLimit int64) {
+	memory.InitTracker(&sc.cache.DiskTracker, label, bytesLimit, &sc.cache.LogOnExceed[0])
+	sc.DiskTracker = &sc.cache.DiskTracker
+}
+
+// InitMemTracker initializes the sc.MemTracker, use cache to avoid allocation.
+func (sc *StatementContext) InitMemTracker(label int, bytesLimit int64) {
+	memory.InitTracker(&sc.cache.MemTracker, label, bytesLimit, &sc.cache.LogOnExceed[1])
+	sc.MemTracker = &sc.cache.MemTracker
 }
 
 // SetPlanHint sets the hint for the plan.
@@ -474,13 +523,6 @@ func (sc *StatementContext) AppendError(warn error) {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelError, warn})
 		sc.mu.errorCount++
 	}
-	sc.mu.Unlock()
-}
-
-// SetHistogramsNotLoad sets histogramsNotLoad.
-func (sc *StatementContext) SetHistogramsNotLoad() {
-	sc.mu.Lock()
-	sc.mu.histogramsNotLoad = true
 	sc.mu.Unlock()
 }
 

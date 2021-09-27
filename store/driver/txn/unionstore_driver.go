@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,28 +19,32 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/unionstore"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
-// memBuffer wraps unionstore.MemDB as kv.MemBuffer.
+// memBuffer wraps tikv.MemDB as kv.MemBuffer.
 type memBuffer struct {
-	*unionstore.MemDB
+	*tikv.MemDB
 }
 
-func newMemBuffer(m *unionstore.MemDB) kv.MemBuffer {
+func newMemBuffer(m *tikv.MemDB) kv.MemBuffer {
 	if m == nil {
 		return nil
 	}
 	return &memBuffer{MemDB: m}
 }
 
+func (m *memBuffer) Size() int {
+	return m.MemDB.Size()
+}
+
 func (m *memBuffer) Delete(k kv.Key) error {
 	return m.MemDB.Delete(k)
 }
 
-func (m *memBuffer) DeleteWithFlags(k kv.Key, ops ...tikvstore.FlagsOp) error {
-	err := m.MemDB.DeleteWithFlags(k, ops...)
+func (m *memBuffer) DeleteWithFlags(k kv.Key, ops ...kv.FlagsOp) error {
+	err := m.MemDB.DeleteWithFlags(k, getTiKVFlagsOps(ops)...)
 	return derr.ToTiDBErr(err)
 }
 
@@ -48,9 +53,9 @@ func (m *memBuffer) Get(_ context.Context, key kv.Key) ([]byte, error) {
 	return data, derr.ToTiDBErr(err)
 }
 
-func (m *memBuffer) GetFlags(key kv.Key) (tikvstore.KeyFlags, error) {
+func (m *memBuffer) GetFlags(key kv.Key) (kv.KeyFlags, error) {
 	data, err := m.MemDB.GetFlags(key)
-	return data, derr.ToTiDBErr(err)
+	return getTiDBKeyFlags(data), derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) Staging() kv.StagingHandle {
@@ -65,9 +70,9 @@ func (m *memBuffer) Release(h kv.StagingHandle) {
 	m.MemDB.Release(int(h))
 }
 
-func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, tikvstore.KeyFlags, []byte)) {
+func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, kv.KeyFlags, []byte)) {
 	tf := func(key []byte, flag tikvstore.KeyFlags, value []byte) {
-		f(kv.Key(key), flag, value)
+		f(kv.Key(key), getTiDBKeyFlags(flag), value)
 	}
 	m.MemDB.InspectStage(int(handle), tf)
 }
@@ -78,7 +83,7 @@ func (m *memBuffer) Set(key kv.Key, value []byte) error {
 }
 
 func (m *memBuffer) SetWithFlags(key kv.Key, value []byte, ops ...kv.FlagsOp) error {
-	err := m.MemDB.SetWithFlags(key, value, ops...)
+	err := m.MemDB.SetWithFlags(key, value, getTiKVFlagsOps(ops)...)
 	return derr.ToTiDBErr(err)
 }
 
@@ -112,10 +117,10 @@ func (m *memBuffer) SnapshotGetter() kv.Getter {
 }
 
 type tikvGetter struct {
-	unionstore.Getter
+	tikv.Getter
 }
 
-func newKVGetter(getter unionstore.Getter) kv.Getter {
+func newKVGetter(getter tikv.Getter) kv.Getter {
 	return &tikvGetter{Getter: getter}
 }
 
@@ -124,18 +129,40 @@ func (g *tikvGetter) Get(_ context.Context, k kv.Key) ([]byte, error) {
 	return data, derr.ToTiDBErr(err)
 }
 
-// tikvIterator wraps unionstore.Iterator as kv.Iterator
+// tikvIterator wraps tikv.Iterator as kv.Iterator
 type tikvIterator struct {
-	unionstore.Iterator
-}
-
-func newKVIterator(it unionstore.Iterator) kv.Iterator {
-	if it == nil {
-		return nil
-	}
-	return &tikvIterator{Iterator: it}
+	tikv.Iterator
 }
 
 func (it *tikvIterator) Key() kv.Key {
 	return kv.Key(it.Iterator.Key())
+}
+
+func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {
+	var v kv.KeyFlags
+	if flag.HasPresumeKeyNotExists() {
+		v = kv.ApplyFlagsOps(v, kv.SetPresumeKeyNotExists)
+	}
+	if flag.HasNeedLocked() {
+		v = kv.ApplyFlagsOps(v, kv.SetNeedLocked)
+	}
+	return v
+}
+
+func getTiKVFlagsOp(op kv.FlagsOp) tikvstore.FlagsOp {
+	switch op {
+	case kv.SetPresumeKeyNotExists:
+		return tikvstore.SetPresumeKeyNotExists
+	case kv.SetNeedLocked:
+		return tikvstore.SetNeedLocked
+	}
+	return 0
+}
+
+func getTiKVFlagsOps(ops []kv.FlagsOp) []tikvstore.FlagsOp {
+	v := make([]tikvstore.FlagsOp, len(ops))
+	for i := range ops {
+		v[i] = getTiKVFlagsOp(ops[i])
+	}
+	return v
 }

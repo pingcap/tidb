@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -200,7 +200,10 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 
 	var value []byte
-	if sctx.GetSessionVars().LazyCheckKeyNotExists() {
+	if c.tblInfo.TempTableType != model.TempTableNone {
+		// Always check key for temporary table because it does not write to TiKV
+		value, err = txn.Get(ctx, key)
+	} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
 		value, err = txn.GetMemBuffer().Get(ctx, key)
 	} else {
 		value, err = txn.Get(ctx, key)
@@ -210,7 +213,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
-			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, tikvstore.SetPresumeKeyNotExists)
+			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
 		} else {
 			err = txn.GetMemBuffer().Set(key, idxVal)
 		}
@@ -231,7 +234,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 		return err
 	}
 	if distinct {
-		err = txn.GetMemBuffer().DeleteWithFlags(key, tikvstore.SetNeedLocked)
+		err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 	} else {
 		err = txn.GetMemBuffer().Delete(key)
 	}

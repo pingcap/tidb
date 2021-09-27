@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,8 +19,8 @@ package main
 import (
 	"bytes"
 	"go/format"
-	"io/ioutil"
 	"log"
+	"os"
 	"path/filepath"
 	"text/template"
 
@@ -36,6 +37,7 @@ const header = `// Copyright 2019 PingCAP, Inc.
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -57,7 +59,7 @@ const builtinOtherImports = `import (
 
 var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 {{ define "BufAllocator" }}
-	buf0, err := b.bufAllocator.get(types.ET{{ .Input.ETName }}, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -65,7 +67,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	if err := b.args[0].VecEval{{ .Input.TypeName }}(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ET{{ .Input.ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -201,7 +203,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 				{{- end }}
 			{{- end }}
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}
@@ -265,6 +267,7 @@ var testFile = template.Must(template.New("").Parse(`// Copyright 2019 PingCAP, 
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -459,7 +462,7 @@ func generateDotGo(fileName string) error {
 		log.Println("[Warn]", fileName+": gofmt failed", err)
 		data = w.Bytes() // write original data for debugging
 	}
-	return ioutil.WriteFile(fileName, data, 0644)
+	return os.WriteFile(fileName, data, 0644)
 }
 
 func generateTestDotGo(fileName string) error {
@@ -473,7 +476,7 @@ func generateTestDotGo(fileName string) error {
 		log.Println("[Warn]", fileName+": gofmt failed", err)
 		data = w.Bytes() // write original data for debugging
 	}
-	return ioutil.WriteFile(fileName, data, 0644)
+	return os.WriteFile(fileName, data, 0644)
 }
 
 // generateOneFile generate one xxx.go file and the associated xxx_test.go file.

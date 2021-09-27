@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,7 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/klauspost/cpuid"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -41,20 +42,18 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 // PreparedStmtCount is exported for test.
@@ -176,9 +175,9 @@ type TransactionContext struct {
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
 
-	// GlobalTemporaryTables is used to store transaction-specific information for global temporary tables.
+	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
-	GlobalTemporaryTables map[int64]tableutil.TempTable
+	TemporaryTables map[int64]tableutil.TempTable
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -187,7 +186,7 @@ func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uin
 		return 0
 	}
 	if tc.shardRand == nil {
-		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS)))
+		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
 	}
 	if tc.shardRemain <= 0 {
 		tc.updateShard()
@@ -357,6 +356,69 @@ func (r *RewritePhaseInfo) Reset() {
 	r.PreprocessSubQueries = 0
 }
 
+// TemporaryTableData is a interface to maintain temporary data in session
+type TemporaryTableData interface {
+	kv.Retriever
+	// Staging create a new staging buffer inside the MemBuffer.
+	// Subsequent writes will be temporarily stored in this new staging buffer.
+	// When you think all modifications looks good, you can call `Release` to public all of them to the upper level buffer.
+	Staging() kv.StagingHandle
+	// Release publish all modifications in the latest staging buffer to upper level.
+	Release(kv.StagingHandle)
+	// Cleanup cleanups the resources referenced by the StagingHandle.
+	// If the changes are not published by `Release`, they will be discarded.
+	Cleanup(kv.StagingHandle)
+	// GetTableSize get the size of a table
+	GetTableSize(tblID int64) int64
+	// DeleteTableKey removes the entry for key k from table
+	DeleteTableKey(tblID int64, k kv.Key) error
+	// SetTableKey sets the entry for k from table
+	SetTableKey(tblID int64, k kv.Key, val []byte) error
+}
+
+// temporaryTableData is used for store temporary table data in session
+type temporaryTableData struct {
+	kv.MemBuffer
+	tblSize map[int64]int64
+}
+
+// NewTemporaryTableData creates a new TemporaryTableData
+func NewTemporaryTableData(memBuffer kv.MemBuffer) TemporaryTableData {
+	return &temporaryTableData{
+		MemBuffer: memBuffer,
+		tblSize:   make(map[int64]int64),
+	}
+}
+
+// GetTableSize get the size of a table
+func (d *temporaryTableData) GetTableSize(tblID int64) int64 {
+	if tblSize, ok := d.tblSize[tblID]; ok {
+		return tblSize
+	}
+	return 0
+}
+
+// DeleteTableKey removes the entry for key k from table
+func (d *temporaryTableData) DeleteTableKey(tblID int64, k kv.Key) error {
+	bufferSize := d.MemBuffer.Size()
+	defer d.updateTblSize(tblID, bufferSize)
+
+	return d.MemBuffer.Delete(k)
+}
+
+// SetTableKey sets the entry for k from table
+func (d *temporaryTableData) SetTableKey(tblID int64, k kv.Key, val []byte) error {
+	bufferSize := d.MemBuffer.Size()
+	defer d.updateTblSize(tblID, bufferSize)
+
+	return d.MemBuffer.Set(k, val)
+}
+
+func (d *temporaryTableData) updateTblSize(tblID int64, beforeSize int) {
+	delta := int64(d.MemBuffer.Size() - beforeSize)
+	d.tblSize[tblID] = d.GetTableSize(tblID) + delta
+}
+
 const (
 	// oneShotDef means default, that is tx_isolation_one_shot not set.
 	oneShotDef txnIsolationLevelOneShotState = iota
@@ -418,6 +480,7 @@ type SessionVars struct {
 
 	// mppTaskIDAllocator is used to allocate mpp task id for a session.
 	mppTaskIDAllocator struct {
+		mu     sync.Mutex
 		lastTS uint64
 		taskID int64
 	}
@@ -465,6 +528,9 @@ type SessionVars struct {
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
 
+	// TxnReadTS is used for staleness transaction, it provides next staleness transaction startTS.
+	TxnReadTS *TxnReadTS
+
 	// SnapshotInfoschema is used with SnapshotTS, when the schema version at snapshotTS less than current schema
 	// version, we load an old version schema for query.
 	SnapshotInfoschema interface{}
@@ -486,6 +552,15 @@ type SessionVars struct {
 
 	// AllowBCJ means allow broadcast join.
 	AllowBCJ bool
+
+	// AllowCartesianBCJ means allow broadcast CARTESIAN join, 0 means not allow, 1 means allow broadcast CARTESIAN join
+	// but the table size should under the broadcast threshold, 2 means allow broadcast CARTESIAN join even if the table
+	// size exceeds the broadcast threshold
+	AllowCartesianBCJ int
+
+	// MPPOuterJoinFixedBuildSide means in MPP plan, always use right(left) table as build side for left(right) out join
+	MPPOuterJoinFixedBuildSide bool
+
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -499,9 +574,21 @@ type SessionVars struct {
 	// Value set to 2 means to force to send batch cop for any query. Value set to 0 means never use batch cop.
 	AllowBatchCop int
 
-	// AllowMPPExecution means if we should use mpp way to execute query. Default value is "ON", means to be determined by the optimizer.
-	// Value set to "ENFORCE" means to use mpp whenever possible. Value set to means never use mpp.
-	allowMPPExecution string
+	// allowMPPExecution means if we should use mpp way to execute query.
+	// Default value is `true`, means to be determined by the optimizer.
+	// Value set to `false` means never use mpp.
+	allowMPPExecution bool
+
+	// HashExchangeWithNewCollation means if we support hash exchange when new collation is enabled.
+	// Default value is `true`, means support hash exchange when new collation is enabled.
+	// Value set to `false` means not use hash exchange when new collation is enabled.
+	HashExchangeWithNewCollation bool
+
+	// enforceMPPExecution means if we should enforce mpp way to execute query.
+	// Default value is `false`, means to be determined by variable `allowMPPExecution`.
+	// Value set to `true` means enforce use mpp.
+	// Note if you want to set `enforceMPPExecution` to `true`, you must set `allowMPPExecution` to `true` first.
+	enforceMPPExecution bool
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
@@ -514,8 +601,14 @@ type SessionVars struct {
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	BroadcastJoinThresholdCount int64
 
+	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
+	LimitPushDownThreshold int64
+
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
+
+	// EnableCorrelationAdjustment is used to indicate if correlation adjustment is enabled.
+	EnableCorrelationAdjustment bool
 
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
@@ -526,14 +619,14 @@ type SessionVars struct {
 	CopCPUFactor float64
 	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
 	CopTiFlashConcurrencyFactor float64
-	// NetworkFactor is the network cost of transferring 1 byte data.
-	NetworkFactor float64
+	// networkFactor is the network cost of transferring 1 byte data.
+	networkFactor float64
 	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
-	ScanFactor float64
-	// DescScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
-	DescScanFactor float64
-	// SeekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
-	SeekFactor float64
+	scanFactor float64
+	// descScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash in desc order.
+	descScanFactor float64
+	// seekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
+	seekFactor float64
 	// MemoryFactor is the memory cost of storing one tuple.
 	MemoryFactor float64
 	// DiskFactor is the IO cost of reading/writing one byte to temporary disk.
@@ -596,6 +689,9 @@ type SessionVars struct {
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
+	// EnablePipelinedWindowExec enables executing window functions in a pipelined manner.
+	EnablePipelinedWindowExec bool
+
 	// EnableStrictDoubleTypeCheck enables table field double type check.
 	EnableStrictDoubleTypeCheck bool
 
@@ -605,11 +701,11 @@ type SessionVars struct {
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
-	// EnableChangeColumnType is used to control whether to enable the change column type.
-	EnableChangeColumnType bool
-
 	// EnableChangeMultiSchema is used to control whether to enable the multi schema change.
 	EnableChangeMultiSchema bool
+
+	// EnableAutoIncrementInGenerated is used to control whether to allow auto incremented columns in generated columns.
+	EnableAutoIncrementInGenerated bool
 
 	// EnablePointGetCache is used to cache value for point get for read only scenario.
 	EnablePointGetCache bool
@@ -631,13 +727,6 @@ type SessionVars struct {
 	EnableChunkRPC bool
 
 	writeStmtBufs WriteStmtBufs
-
-	// L2CacheSize indicates the size of CPU L2 cache, using byte as unit.
-	L2CacheSize int
-
-	// EnableRadixJoin indicates whether to use radix hash join to execute
-	// HashJoin.
-	EnableRadixJoin bool
 
 	// ConstraintCheckInPlace indicates whether to check the constraint when the SQL executing.
 	ConstraintCheckInPlace bool
@@ -731,7 +820,6 @@ type SessionVars struct {
 	PlannerSelectBlockAsName []ast.HintTable
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
-	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
 
 	// MetricSchemaStep indicates the step when query metric schema.
@@ -799,7 +887,7 @@ type SessionVars struct {
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
 
-	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
+	// TxnScope indicates the scope of the transactions. It should be `global` or equal to the value of key `zone` in config.Labels.
 	TxnScope kv.TxnScopeVar
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
@@ -830,17 +918,57 @@ type SessionVars struct {
 	// Now we only support TiFlash.
 	AllowFallbackToTiKV map[kv.StoreType]struct{}
 
-	// EnableDynamicPrivileges indicates whether to permit experimental support for MySQL 8.0 compatible dynamic privileges.
-	EnableDynamicPrivileges bool
-
 	// CTEMaxRecursionDepth indicates The common table expression (CTE) maximum recursion depth.
 	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
 	CTEMaxRecursionDepth int
+
+	// The temporary table size threshold
+	// In MySQL, when a temporary table exceed this size, it spills to disk.
+	// In TiDB, as we do not support spill to disk for now, an error is reported.
+	// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_tmp_table_size
+	TMPTableSize int64
+
+	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
+	EnableGlobalTemporaryTable bool
+
+	// EnableStableResultMode if stabilize query results.
+	EnableStableResultMode bool
+
+	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
+	// It's nil if there is no local temporary table.
+	LocalTemporaryTables interface{}
+
+	// TemporaryTableData stores committed kv values for temporary table for current session.
+	TemporaryTableData TemporaryTableData
+
+	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed.
+	MPPStoreLastFailTime map[string]time.Time
+
+	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
+	MPPStoreFailTTL string
+
+	// ReadStaleness indicates the staleness duration for the following query
+	ReadStaleness time.Duration
+
+	// cached is used to optimze the object allocation.
+	cached struct {
+		curr int8
+		data [2]stmtctx.StatementContext
+	}
+}
+
+// InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
+func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
+	s.cached.curr = (s.cached.curr + 1) % 2
+	s.cached.data[s.cached.curr] = stmtctx.StatementContext{}
+	return &s.cached.data[s.cached.curr]
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
 // startTs is different.
 func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
+	s.mppTaskIDAllocator.mu.Lock()
+	defer s.mppTaskIDAllocator.mu.Unlock()
 	if s.mppTaskIDAllocator.lastTS == startTS {
 		s.mppTaskIDAllocator.taskID++
 		return s.mppTaskIDAllocator.taskID
@@ -852,17 +980,26 @@ func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
 
 // IsMPPAllowed returns whether mpp execution is allowed.
 func (s *SessionVars) IsMPPAllowed() bool {
-	return s.allowMPPExecution != "OFF"
+	return s.allowMPPExecution
 }
 
 // IsMPPEnforced returns whether mpp execution is enforced.
 func (s *SessionVars) IsMPPEnforced() bool {
-	return s.allowMPPExecution == "ENFORCE"
+	return s.allowMPPExecution && s.enforceMPPExecution
+}
+
+// RaiseWarningWhenMPPEnforced will raise a warning when mpp mode is enforced and executing explain statement.
+// TODO: Confirm whether this function will be inlined and
+// omit the overhead of string construction when calling with false condition.
+func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
+	if s.IsMPPEnforced() && s.StmtCtx.InExplainStmt {
+		s.StmtCtx.AppendWarning(errors.New(warning))
+	}
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
 func (s *SessionVars) CheckAndGetTxnScope() string {
-	if s.InRestrictedSQL {
+	if s.InRestrictedSQL || !EnableLocalTxn.Load() {
 		return kv.GlobalTxnScope
 	}
 	if s.TxnScope.GetVarValue() == kv.LocalTxnScope {
@@ -873,6 +1010,11 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
+	if s.InTxn() {
+		// UnionScan cannot get partition table IDs in dynamic-mode, this is a quick-fix for issues/26719,
+		// please see it for more details.
+		return false
+	}
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
@@ -881,31 +1023,8 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	return parser.ParserConfig{
 		EnableWindowFunction:        s.EnableWindowFunction,
 		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
+		SkipPositionRecording:       true,
 	}
-}
-
-// FIXME: remove this interface
-// infoschemaMetaVersion is a workaround. Due to circular dependency,
-// can not return the complete interface. But SchemaMetaVersion is widely used for logging.
-// So we give a convenience for that
-type infoschemaMetaVersion interface {
-	SchemaMetaVersion() int64
-}
-
-// GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
-// Otherwise, transaction infoschema is returned.
-// Nil if there is no available infoschema.
-func (s *SessionVars) GetInfoSchema() infoschemaMetaVersion {
-	if snap, ok := s.SnapshotInfoschema.(infoschemaMetaVersion); ok {
-		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", s.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
-		return snap
-	}
-	if s.TxnCtx != nil {
-		if is, ok := s.TxnCtx.InfoSchema.(infoschemaMetaVersion); ok {
-			return is
-		}
-	}
-	return nil
 }
 
 // PartitionPruneMode presents the prune mode used.
@@ -999,6 +1118,8 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
 		AllowBCJ:                    false,
+		AllowCartesianBCJ:           DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:  DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
@@ -1007,21 +1128,21 @@ func NewSessionVars() *SessionVars {
 		DDLReorgPriority:            kv.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		preferRangeScan:             DefOptPreferRangeScan,
+		EnableCorrelationAdjustment: DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:      DefOptLimitPushDownThreshold,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		CPUFactor:                   DefOptCPUFactor,
 		CopCPUFactor:                DefOptCopCPUFactor,
 		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
-		NetworkFactor:               DefOptNetworkFactor,
-		ScanFactor:                  DefOptScanFactor,
-		DescScanFactor:              DefOptDescScanFactor,
-		SeekFactor:                  DefOptSeekFactor,
+		networkFactor:               DefOptNetworkFactor,
+		scanFactor:                  DefOptScanFactor,
+		descScanFactor:              DefOptDescScanFactor,
+		seekFactor:                  DefOptSeekFactor,
 		MemoryFactor:                DefOptMemoryFactor,
 		DiskFactor:                  DefOptDiskFactor,
 		ConcurrencyFactor:           DefOptConcurrencyFactor,
-		EnableRadixJoin:             false,
 		EnableVectorizedExpression:  DefEnableVectorizedExpression,
-		L2CacheSize:                 cpuid.CPU.Cache.L2,
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
@@ -1049,13 +1170,12 @@ func NewSessionVars() *SessionVars {
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableParallelApply:         DefTiDBEnableParallelApply,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
-		EnableChangeColumnType:      DefTiDBChangeColumnType,
 		EnableChangeMultiSchema:     DefTiDBChangeMultiSchema,
 		EnablePointGetCache:         DefTiDBPointGetCache,
 		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    kv.GetTxnScopeVar(),
+		TxnScope:                    kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
 		Enable1PC:                   DefTiDBEnable1PC,
@@ -1064,6 +1184,10 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
+		TMPTableSize:                DefTMPTableSize,
+		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
+		MPPStoreLastFailTime:        make(map[string]time.Time),
+		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1111,6 +1235,9 @@ func NewSessionVars() *SessionVars {
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
+	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
+	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
+	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -1128,6 +1255,9 @@ func NewSessionVars() *SessionVars {
 		case kv.TiDB.Name():
 			vars.IsolationReadEngines[kv.TiDB] = struct{}{}
 		}
+	}
+	if !EnableLocalTxn.Load() {
+		vars.TxnScope = kv.NewGlobalTxnScopeVar()
 	}
 	return vars
 }
@@ -1269,7 +1399,7 @@ func (s *SessionVars) GetStatusFlag(flag uint16) bool {
 func (s *SessionVars) SetInTxn(val bool) {
 	s.SetStatusFlag(mysql.ServerStatusInTrans, val)
 	if val {
-		s.TxnCtx.IsExplicit = true
+		s.TxnCtx.IsExplicit = val
 	}
 }
 
@@ -1426,6 +1556,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 // Errors are not expected to be returned because this could cause upgrade issues.
 func (s *SessionVars) SetSystemVarWithRelaxedValidation(name string, val string) error {
 	sv := GetSysVar(name)
+	if sv == nil {
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
 	val = sv.ValidateWithRelaxedValidation(s, val, ScopeSession)
 	return sv.SetSessionFromHook(s, val)
 }
@@ -1472,34 +1605,21 @@ func (s *SessionVars) LazyCheckKeyNotExists() bool {
 
 // GetTemporaryTable returns a TempTable by tableInfo.
 func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
-	if tblInfo.TempTableType == model.TempTableGlobal {
-		if s.TxnCtx.GlobalTemporaryTables == nil {
-			s.TxnCtx.GlobalTemporaryTables = make(map[int64]tableutil.TempTable)
+	if tblInfo.TempTableType != model.TempTableNone {
+		if s.TxnCtx.TemporaryTables == nil {
+			s.TxnCtx.TemporaryTables = make(map[int64]tableutil.TempTable)
 		}
-		globalTempTables := s.TxnCtx.GlobalTemporaryTables
-		globalTempTable, ok := globalTempTables[tblInfo.ID]
+		tempTables := s.TxnCtx.TemporaryTables
+		tempTable, ok := tempTables[tblInfo.ID]
 		if !ok {
-			globalTempTable = tableutil.TempTableFromMeta(tblInfo)
-			globalTempTables[tblInfo.ID] = globalTempTable
+			tempTable = tableutil.TempTableFromMeta(tblInfo)
+			tempTables[tblInfo.ID] = tempTable
 		}
-		return globalTempTable
+		return tempTable
 	}
-	// TODO: check local temporary tables
+
 	return nil
 }
-
-// special session variables.
-const (
-	SQLModeVar           = "sql_mode"
-	CharacterSetResults  = "character_set_results"
-	MaxAllowedPacket     = "max_allowed_packet"
-	TimeZone             = "time_zone"
-	TxnIsolation         = "tx_isolation"
-	TransactionIsolation = "transaction_isolation"
-	TxnIsolationOneShot  = "tx_isolation_one_shot"
-	MaxExecutionTime     = "max_execution_time"
-	ReadOnly             = "read_only"
-)
 
 // TableDelta stands for the changed count for one table or partition.
 type TableDelta struct {
@@ -2087,4 +2207,99 @@ type QueryInfo struct {
 	StartTS     uint64 `json:"start_ts"`
 	ForUpdateTS uint64 `json:"for_update_ts"`
 	ErrMsg      string `json:"error,omitempty"`
+}
+
+// TxnReadTS indicates the value and used situation for tx_read_ts
+type TxnReadTS struct {
+	readTS uint64
+	used   bool
+}
+
+// NewTxnReadTS creates TxnReadTS
+func NewTxnReadTS(ts uint64) *TxnReadTS {
+	return &TxnReadTS{
+		readTS: ts,
+		used:   false,
+	}
+}
+
+// UseTxnReadTS returns readTS, and mark used as true
+func (t *TxnReadTS) UseTxnReadTS() uint64 {
+	if t == nil {
+		return 0
+	}
+	t.used = true
+	return t.readTS
+}
+
+// SetTxnReadTS update readTS, and refresh used
+func (t *TxnReadTS) SetTxnReadTS(ts uint64) {
+	if t == nil {
+		return
+	}
+	t.used = false
+	t.readTS = ts
+}
+
+// PeakTxnReadTS returns readTS
+func (t *TxnReadTS) PeakTxnReadTS() uint64 {
+	if t == nil {
+		return 0
+	}
+	return t.readTS
+}
+
+// CleanupTxnReadTSIfUsed cleans txnReadTS if used
+func (s *SessionVars) CleanupTxnReadTSIfUsed() {
+	if s.TxnReadTS == nil {
+		return
+	}
+	if s.TxnReadTS.used && s.TxnReadTS.readTS > 0 {
+		s.TxnReadTS = NewTxnReadTS(0)
+		s.SnapshotInfoschema = nil
+	}
+}
+
+// GetNetworkFactor returns the session variable networkFactor
+// returns 0 when tbl is a temporary table.
+func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
+	if tbl != nil {
+		if tbl.TempTableType != model.TempTableNone {
+			return 0
+		}
+	}
+	return s.networkFactor
+}
+
+// GetScanFactor returns the session variable scanFactor
+// returns 0 when tbl is a temporary table.
+func (s *SessionVars) GetScanFactor(tbl *model.TableInfo) float64 {
+	if tbl != nil {
+		if tbl.TempTableType != model.TempTableNone {
+			return 0
+		}
+	}
+	return s.scanFactor
+}
+
+// GetDescScanFactor returns the session variable descScanFactor
+// returns 0 when tbl is a temporary table.
+func (s *SessionVars) GetDescScanFactor(tbl *model.TableInfo) float64 {
+	if tbl != nil {
+		if tbl.TempTableType != model.TempTableNone {
+			return 0
+		}
+	}
+	return s.descScanFactor
+}
+
+// GetSeekFactor returns the session variable seekFactor
+// returns 0 when tbl is a temporary table.
+func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
+	if tbl != nil {
+		if tbl.TempTableType != model.TempTableNone {
+			return 0
+		}
+	}
+	return s.seekFactor
 }

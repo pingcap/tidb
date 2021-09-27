@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -193,6 +194,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
 	case types.ETDecimal:
 		sig = &builtinCastDecimalAsRealSig{bf}
+		PropagateType(types.ETReal, sig.getArgs()...)
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsReal)
 	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsRealSig{bf}
@@ -1011,6 +1013,20 @@ type builtinCastDecimalAsRealSig struct {
 	baseBuiltinCastFunc
 }
 
+func setDataTypeDouble(srcDecimal int) (flen, decimal int) {
+	decimal = mysql.NotFixedDec
+	flen = floatLength(srcDecimal, decimal)
+	return
+}
+
+func floatLength(srcDecimal int, decimalPar int) int {
+	const dblDIG = 15
+	if srcDecimal != mysql.NotFixedDec {
+		return dblDIG + 2 + decimalPar
+	}
+	return dblDIG + 8
+}
+
 func (b *builtinCastDecimalAsRealSig) Clone() builtinFunc {
 	newSig := &builtinCastDecimalAsRealSig{}
 	newSig.cloneFrom(&b.baseBuiltinCastFunc)
@@ -1438,7 +1454,7 @@ func (b *builtinCastTimeAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		return res, false, err
 	}
-	res, err = res.RoundFrac(int8(b.tp.Decimal))
+	res, err = res.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
 	return res, false, err
 }
 
@@ -1457,7 +1473,7 @@ func (b *builtinCastDurationAsDurationSig) evalDuration(row chunk.Row) (res type
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = res.RoundFrac(int8(b.tp.Decimal))
+	res, err = res.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
 	return res, false, err
 }
 
@@ -1476,7 +1492,7 @@ func (b *builtinCastDurationAsIntSig) evalInt(row chunk.Row) (res int64, isNull 
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	dur, err := val.RoundFrac(types.DefaultFsp)
+	dur, err := val.RoundFrac(types.DefaultFsp, b.ctx.GetSessionVars().Location())
 	if err != nil {
 		return res, false, err
 	}
@@ -1883,6 +1899,9 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETInt {
 		tp.Flen = mysql.MaxIntWidth
 	}
+	if tp.Flen == types.UnspecifiedLength {
+		tp.Flen = mysql.MaxDecimalWidth
+	}
 	types.SetBinChsClnFlag(tp)
 	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
 	return BuildCastFunction(ctx, expr, tp)
@@ -1929,11 +1948,19 @@ func WrapWithCastAsTime(ctx sessionctx.Context, expr Expression, tp *types.Field
 	} else if (exprTp == mysql.TypeDate || exprTp == mysql.TypeTimestamp) && tp.Tp == mysql.TypeDatetime {
 		return expr
 	}
-	switch x := expr.GetType(); x.Tp {
-	case mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDuration:
-		tp.Decimal = x.Decimal
-	default:
+	switch x := expr.GetType().EvalType(); x {
+	case types.ETInt:
+		tp.Decimal = int(types.MinFsp)
+	case types.ETString, types.ETReal, types.ETJson:
 		tp.Decimal = int(types.MaxFsp)
+	case types.ETDatetime, types.ETTimestamp, types.ETDuration:
+		tp.Decimal = expr.GetType().Decimal
+	case types.ETDecimal:
+		tp.Decimal = expr.GetType().Decimal
+		if tp.Decimal > int(types.MaxFsp) {
+			tp.Decimal = int(types.MaxFsp)
+		}
+	default:
 	}
 	switch tp.Tp {
 	case mysql.TypeDate:

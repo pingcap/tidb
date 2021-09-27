@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -319,4 +321,43 @@ func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
 	for err := range errCh {
 		c.Assert(err, IsNil)
 	}
+}
+
+func (s *testBatchPointGetSuite) TestPointGetForTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("create global temporary table t1 (id int primary key, val int) on commit delete rows")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (1,1)")
+	tk.MustQuery("explain format = 'brief' select * from t1 where id in (1, 2, 3)").
+		Check(testkit.Rows("Batch_Point_Get 3.00 root table:t1 handle:[1 2 3], keep order:false, desc:false"))
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"), IsNil)
+	}()
+
+	// Batch point get.
+	tk.MustQuery("select * from t1 where id in (1, 2, 3)").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 where id in (2, 3)").Check(testkit.Rows())
+
+	// Point get.
+	tk.MustQuery("select * from t1 where id = 1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 where id = 2").Check(testkit.Rows())
+}
+
+func (s *testBatchPointGetSuite) TestBatchPointGetIssue25167(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	defer func() {
+		tk.MustExec("drop table if exists t")
+	}()
+	time.Sleep(50 * time.Millisecond)
+	tk.MustExec("set @a=(select current_timestamp(3))")
+	tk.MustExec("insert into t values (1)")
+	tk.MustQuery("select * from t as of timestamp @a where a in (1,2,3)").Check(testkit.Rows())
 }

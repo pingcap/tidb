@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -49,6 +49,7 @@ var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 const (
 	flagGcSubstitute uint64 = 1 << iota
 	flagPrunColumns
+	flagStabilizeResults
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagEliminateAgg
@@ -66,6 +67,7 @@ const (
 var optRuleList = []logicalOptRule{
 	&gcSubstituter{},
 	&columnPruner{},
+	&resultReorder{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&aggregationEliminator{},
@@ -86,11 +88,11 @@ type logicalOptRule interface {
 	name() string
 }
 
-// BuildLogicalPlan used to build logical plan from ast.Node.
-func BuildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, types.NameSlice, error) {
+// BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
+func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, types.NameSlice, error) {
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
-	builder, _ := NewPlanBuilder(sctx, is, &utilhint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, &utilhint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, nil, err
@@ -133,11 +135,20 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 	return nil
 }
 
+func checkStableResultMode(sctx sessionctx.Context) bool {
+	s := sctx.GetSessionVars()
+	st := s.StmtCtx
+	return s.EnableStableResultMode && (!st.InInsertStmt && !st.InUpdateStmt && !st.InDeleteStmt && !st.InLoadDataStmt)
+}
+
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
 		flag |= flagPrunColumnsAgain
+	}
+	if checkStableResultMode(sctx) {
+		flag |= flagStabilizeResults
 	}
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
@@ -187,7 +198,6 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
-	plan = eliminateLockForTemporaryTable(plan)
 	plan = enableParallelApply(sctx, plan)
 	return plan
 }
@@ -322,29 +332,6 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 		}
 		return p
 	})
-}
-
-// eliminateLockForTemporaryTable eliminates lock for the temporary table.
-func eliminateLockForTemporaryTable(p PhysicalPlan) PhysicalPlan {
-	iteratePhysicalPlan(p, func(p PhysicalPlan) bool {
-		if len(p.Children()) > 1 {
-			return false
-		}
-		switch x := p.(type) {
-		case *PointGetPlan:
-			if x.TblInfo.TempTableType != model.TempTableNone {
-				x.Lock = false
-				x.LockWaitTime = 0
-			}
-		case *BatchPointGetPlan:
-			if x.TblInfo.TempTableType != model.TempTableNone {
-				x.Lock = false
-				x.LockWaitTime = 0
-			}
-		}
-		return true
-	})
-	return p
 }
 
 func iteratePhysicalPlan(p PhysicalPlan, f func(p PhysicalPlan) bool) {

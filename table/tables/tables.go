@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package tables
 
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -286,6 +286,11 @@ func (t *TableCommon) WritableCols() []*table.Column {
 	return writableColumns
 }
 
+// DeletableCols implements table DeletableCols interface.
+func (t *TableCommon) DeletableCols() []*table.Column {
+	return t.Columns
+}
+
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
 	if len(t.FullHiddenColsAndVisibleColumns) > 0 {
@@ -324,8 +329,13 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
-		addTemporaryTable(sctx, m)
+	if m := t.Meta(); m.TempTableType != model.TempTableNone {
+		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
+			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
+				return err
+			}
+			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+		}
 	}
 
 	var colIDs, binlogColIDs []int64
@@ -348,6 +358,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 				if err != nil {
 					logutil.BgLogger().Info("update record cast value failed", zap.Any("col", col), zap.Uint64("txnStartTS", txn.StartTS()),
 						zap.String("handle", h.String()), zap.Any("val", oldData[col.DependencyColumnOffset]), zap.Error(err))
+					return err
 				}
 				oldData = append(oldData, value)
 				touched = append(touched, touched[col.DependencyColumnOffset])
@@ -590,9 +601,33 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 	return pkCols
 }
 
-func addTemporaryTable(sctx sessionctx.Context, tblInfo *model.TableInfo) {
+func addTemporaryTable(sctx sessionctx.Context, tblInfo *model.TableInfo) tableutil.TempTable {
 	tempTable := sctx.GetSessionVars().GetTemporaryTable(tblInfo)
 	tempTable.SetModified(true)
+	return tempTable
+}
+
+// The size of a temporary table is calculated by accumulating the transaction size delta.
+func handleTempTableSize(t tableutil.TempTable, txnSizeBefore int, txn kv.Transaction) {
+	txnSizeNow := txn.Size()
+	delta := txnSizeNow - txnSizeBefore
+
+	oldSize := t.GetSize()
+	newSize := oldSize + int64(delta)
+	t.SetSize(newSize)
+}
+
+func checkTempTableSize(ctx sessionctx.Context, tmpTable tableutil.TempTable, tblInfo *model.TableInfo) error {
+	tmpTableSize := tmpTable.GetSize()
+	if tempTableData := ctx.GetSessionVars().TemporaryTableData; tempTableData != nil {
+		tmpTableSize += tempTableData.GetTableSize(tblInfo.ID)
+	}
+
+	if tmpTableSize > ctx.GetSessionVars().TMPTableSize {
+		return table.ErrTempTableFull.GenWithStackByArgs(tblInfo.Name.O)
+	}
+
+	return nil
 }
 
 // AddRecord implements table.Table AddRecord interface.
@@ -607,8 +642,13 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		fn.ApplyOn(&opt)
 	}
 
-	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
-		addTemporaryTable(sctx, m)
+	if m := t.Meta(); m.TempTableType != model.TempTableNone {
+		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
+			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
+				return nil, err
+			}
+			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+		}
 	}
 
 	var ctx context.Context
@@ -747,9 +787,11 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	value := writeBufs.RowValBuf
 
 	var setPresume bool
-	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
-	if (t.meta.IsCommonHandle || t.meta.PKIsHandle) && !skipCheck && !opt.SkipHandleCheck {
-		if sctx.GetSessionVars().LazyCheckKeyNotExists() {
+	if !sctx.GetSessionVars().StmtCtx.BatchCheck {
+		if t.meta.TempTableType != model.TempTableNone {
+			// Always check key for temporary table because it does not write to TiKV
+			_, err = txn.Get(ctx, key)
+		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
 			var v []byte
 			v, err = txn.GetMemBuffer().Get(ctx, key)
 			if err != nil {
@@ -770,7 +812,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 
 	if setPresume {
-		err = memBuffer.SetWithFlags(key, value, tikvstore.SetPresumeKeyNotExists)
+		err = memBuffer.SetWithFlags(key, value, kv.SetPresumeKeyNotExists)
 	} else {
 		err = memBuffer.Set(key, value)
 	}
@@ -1009,13 +1051,31 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 
-	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
-		addTemporaryTable(ctx, m)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	if m := t.Meta(); m.TempTableType != model.TempTableNone {
+		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
+			if err := checkTempTableSize(ctx, tmpTable, m); err != nil {
+				return err
+			}
+			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+		}
 	}
 
 	// The table has non-public column and this column is doing the operation of "modify/change column".
 	if len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
-		r = append(r, r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset])
+		// The changing column datum derived from related column should be casted here.
+		// Otherwise, the existed changing indexes will not be deleted.
+		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
+		value, err := table.CastValue(ctx, relatedColDatum, t.Columns[len(r)].ColumnInfo, false, false)
+		if err != nil {
+			logutil.BgLogger().Info("remove record cast value failed", zap.Any("col", t.Columns[len(r)]),
+				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
+			return err
+		}
+		r = append(r, value)
 	}
 	err = t.removeRowIndices(ctx, h, r)
 	if err != nil {
@@ -1147,6 +1207,9 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 		return err
 	}
 	for _, v := range t.deletableIndices() {
+		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
+			continue
+		}
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
@@ -1333,7 +1396,7 @@ func AllocHandle(ctx context.Context, sctx sessionctx.Context, t table.Table) (k
 
 func allocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table, n uint64) (int64, int64, error) {
 	meta := t.Meta()
-	base, maxID, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, meta.ID, n, 1, 1)
+	base, maxID, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1374,8 +1437,11 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	} else if ctx.GetSessionVars().IDAllocator == nil {
 		// Use an independent allocator for global temporary tables.
 		if t.meta.TempTableType == model.TempTableGlobal {
-			alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator()
-			return autoid.Allocators{alloc}
+			if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
+				return autoid.Allocators{alloc}
+			}
+			// If the session is not in a txn, for example, in "show create table", use the original allocator.
+			// Otherwise the would be a nil pointer dereference.
 		}
 		return t.allocs
 	}
@@ -1397,12 +1463,6 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 		retAllocs = append(retAllocs, sessAlloc)
 	}
 	return retAllocs
-}
-
-// RebaseAutoID implements table.Table RebaseAutoID interface.
-// Both auto-increment and auto-random can use this function to do rebase on explicit newBase value (without shadow bits).
-func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
-	return t.Allocators(ctx).Get(tp).Rebase(t.tableID, newBase, isSetStep)
 }
 
 // Type implements table.Table Type interface.
@@ -1576,7 +1636,7 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 			return err1
 		}
 		var base, end, round int64
-		base, end, round, err1 = sequenceAlloc.AllocSeqCache(t.tableID)
+		base, end, round, err1 = sequenceAlloc.AllocSeqCache()
 		if err1 != nil {
 			return err1
 		}
@@ -1652,7 +1712,7 @@ func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqN
 	if err != nil {
 		return 0, false, err
 	}
-	res, alreadySatisfied, err := sequenceAlloc.RebaseSeq(t.tableID, newVal)
+	res, alreadySatisfied, err := sequenceAlloc.RebaseSeq(newVal)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1783,6 +1843,10 @@ type TemporaryTable struct {
 	stats *statistics.Table
 	// The autoID allocator of this table.
 	autoIDAllocator autoid.Allocator
+	// Table size.
+	size int64
+
+	meta *model.TableInfo
 }
 
 // TempTableFromMeta builds a TempTable from model.TableInfo.
@@ -1791,6 +1855,7 @@ func TempTableFromMeta(tblInfo *model.TableInfo) tableutil.TempTable {
 		modified:        false,
 		stats:           statistics.PseudoTable(tblInfo),
 		autoIDAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
+		meta:            tblInfo,
 	}
 }
 
@@ -1812,4 +1877,19 @@ func (t *TemporaryTable) GetModified() bool {
 // GetStats is implemented from TempTable.GetStats.
 func (t *TemporaryTable) GetStats() interface{} {
 	return t.stats
+}
+
+// GetSize gets the table size.
+func (t *TemporaryTable) GetSize() int64 {
+	return t.size
+}
+
+// SetSize sets the table size.
+func (t *TemporaryTable) SetSize(v int64) {
+	t.size = v
+}
+
+// GetMeta gets the table meta.
+func (t *TemporaryTable) GetMeta() *model.TableInfo {
+	return t.meta
 }

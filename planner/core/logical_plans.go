@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -172,6 +173,18 @@ func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, i
 	return
 }
 
+// GetPotentialPartitionKeys return potential partition keys for join, the potential partition keys are
+// the join keys of EqualConditions
+func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*property.MPPPartitionColumn) {
+	for _, expr := range p.EqualConditions {
+		_, coll := expr.CharsetAndCollation(p.ctx)
+		collateID := property.GetCollateIDByNameForPartition(coll)
+		leftKeys = append(leftKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[0].(*expression.Column), CollateID: collateID})
+		rightKeys = append(rightKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[1].(*expression.Column), CollateID: collateID})
+	}
+	return
+}
+
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
 	for i, cond := range p.LeftConditions {
 		p.LeftConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
@@ -326,6 +339,16 @@ func (la *LogicalAggregation) HasDistinct() bool {
 	return false
 }
 
+// HasOrderBy shows whether LogicalAggregation has functions with order-by items.
+func (la *LogicalAggregation) HasOrderBy() bool {
+	for _, aggFunc := range la.AggFuncs {
+		if len(aggFunc.OrderByItems) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // CopyAggHints copies the aggHints from another LogicalAggregation.
 func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
 	// TODO: Copy the hint may make the un-applicable hint throw the
@@ -360,6 +383,20 @@ func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
 	return groupByCols
 }
 
+// GetPotentialPartitionKeys return potential partition keys for aggregation, the potential partition keys are the group by keys
+func (la *LogicalAggregation) GetPotentialPartitionKeys() []*property.MPPPartitionColumn {
+	groupByCols := make([]*property.MPPPartitionColumn, 0, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols = append(groupByCols, &property.MPPPartitionColumn{
+				Col:       col,
+				CollateID: property.GetCollateIDByNameForPartition(col.GetType().Collate),
+			})
+		}
+	}
+	return groupByCols
+}
+
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (la *LogicalAggregation) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(la.GroupByItems)+len(la.AggFuncs))
@@ -369,6 +406,9 @@ func (la *LogicalAggregation) ExtractCorrelatedCols() []*expression.CorrelatedCo
 	for _, fun := range la.AggFuncs {
 		for _, arg := range fun.Args {
 			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
+		}
+		for _, arg := range fun.OrderByItems {
+			corCols = append(corCols, expression.ExtractCorColumns(arg.Expr)...)
 		}
 	}
 	return corCols
@@ -383,6 +423,9 @@ func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
 		for _, expr := range aggDesc.Args {
 			usedCols = append(usedCols, expression.ExtractColumns(expr)...)
 		}
+		for _, expr := range aggDesc.OrderByItems {
+			usedCols = append(usedCols, expression.ExtractColumns(expr.Expr)...)
+		}
 	}
 	return usedCols
 }
@@ -395,6 +438,9 @@ type LogicalSelection struct {
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
+
+	// having selection can't be pushed down, because it must above the aggregation.
+	buildByHaving bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -451,6 +497,7 @@ type LogicalMemTable struct {
 	Extractor MemTablePredicateExtractor
 	DBName    model.CIStr
 	TableInfo *model.TableInfo
+	Columns   []*model.ColumnInfo
 	// QueryTimeRange is used to specify the time range for metrics summary tables and inspection tables
 	// e.g: select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary;
 	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary_by_label;
@@ -459,7 +506,7 @@ type LogicalMemTable struct {
 	QueryTimeRange QueryTimeRange
 }
 
-// LogicalUnionScan is only used in non read-only txn.
+// LogicalUnionScan is used in non read-only txn or for scanning a local temporary table whose snapshot data is located in memory.
 type LogicalUnionScan struct {
 	baseLogicalPlan
 
@@ -654,19 +701,19 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	return gathers
 }
 
-func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) (bool, error) {
+func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) error {
 	path.CountAfterAccess = float64(ds.statisticTable.Count)
 	path.Ranges = ranger.FullNotNullRange()
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 	if len(conds) == 0 {
-		return false, nil
+		return nil
 	}
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	if len(path.IdxCols) != 0 {
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
 		if err != nil {
-			return false, err
+			return err
 		}
 		path.Ranges = res.Ranges
 		path.AccessConds = res.AccessConds
@@ -674,9 +721,15 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 		path.EqCondCount = res.EqCondCount
 		path.EqOrInCondCount = res.EqOrInCount
 		path.IsDNFCond = res.IsDNFCond
+		path.ConstCols = make([]bool, len(path.IdxCols))
+		if res.ColumnValues != nil {
+			for i := range path.ConstCols {
+				path.ConstCols[i] = res.ColumnValues[i] != nil
+			}
+		}
 		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
 		if err != nil {
-			return false, err
+			return err
 		}
 	} else {
 		path.TableFilters = conds
@@ -705,33 +758,12 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
 		path.CountAfterAccess = math.Min(ds.stats.RowCount/SelectionFactor, float64(ds.statisticTable.Count))
 	}
-	// Check whether there's only point query.
-	noIntervalRanges := true
-	haveNullVal := false
-	for _, ran := range path.Ranges {
-		// Not point or the not full matched.
-		if !ran.IsPoint(sc) || len(ran.HighVal) != len(path.Index.Columns) {
-			noIntervalRanges = false
-			break
-		}
-		// Check whether there's null value.
-		for i := 0; i < len(path.Index.Columns); i++ {
-			if ran.HighVal[i].IsNull() {
-				haveNullVal = true
-				break
-			}
-		}
-		if haveNullVal {
-			break
-		}
-	}
-	return noIntervalRanges && !haveNullVal, nil
+	return nil
 }
 
 // deriveTablePathStats will fulfill the information that the AccessPath need.
-// And it will check whether the primary key is covered only by point query.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
-func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) (bool, error) {
+func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) error {
 	if path.IsCommonHandlePath {
 		return ds.deriveCommonHandleTablePathStats(path, conds, isIm)
 	}
@@ -752,12 +784,12 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	}
 	if pkCol == nil {
 		path.Ranges = ranger.FullIntRange(isUnsigned)
-		return false, nil
+		return nil
 	}
 
 	path.Ranges = ranger.FullIntRange(isUnsigned)
 	if len(conds) == 0 {
-		return false, nil
+		return nil
 	}
 	path.AccessConds, path.TableFilters = ranger.DetachCondsForColumn(ds.ctx, conds, pkCol)
 	// If there's no access cond, we try to find that whether there's expression containing correlated column that
@@ -793,11 +825,11 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	}
 	if corColInAccessConds {
 		path.CountAfterAccess = 1
-		return true, nil
+		return nil
 	}
 	path.Ranges, err = ranger.BuildTableRange(path.AccessConds, sc, pkCol.RetType)
 	if err != nil {
-		return false, err
+		return err
 	}
 	path.CountAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.Ranges)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
@@ -805,15 +837,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
 		path.CountAfterAccess = math.Min(ds.stats.RowCount/SelectionFactor, float64(ds.statisticTable.Count))
 	}
-	// Check whether the primary key is covered by point query.
-	noIntervalRange := true
-	for _, ran := range path.Ranges {
-		if !ran.IsPoint(sc) {
-			noIntervalRange = false
-			break
-		}
-	}
-	return noIntervalRange, err
+	return err
 }
 
 func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Expression) error {
@@ -835,6 +859,10 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 			if !alreadyHandle {
 				path.IdxCols = append(path.IdxCols, handleCol)
 				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+				// Also updates the map that maps the index id to its prefix column ids.
+				if len(ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID]) == len(path.Index.Columns) {
+					ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID] = append(ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID], handleCol.UniqueID)
+				}
 			}
 		}
 	}
@@ -849,6 +877,12 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 		path.EqCondCount = res.EqCondCount
 		path.EqOrInCondCount = res.EqOrInCount
 		path.IsDNFCond = res.IsDNFCond
+		path.ConstCols = make([]bool, len(path.IdxCols))
+		if res.ColumnValues != nil {
+			for i := range path.ConstCols {
+				path.ConstCols[i] = res.ColumnValues[i] != nil
+			}
+		}
 		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
 		if err != nil {
 			return err
@@ -860,12 +894,9 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 }
 
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
-// And it will check whether this index is full matched by point query. We will use this check to
-// determine whether we remove other paths or not.
 // conds is the conditions used to generate the DetachRangeResult for path.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
-func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) bool {
-	sc := ds.ctx.GetSessionVars().StmtCtx
+func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) {
 	if path.EqOrInCondCount == len(path.AccessConds) {
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.ctx, path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
@@ -905,27 +936,6 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expres
 			path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, ds.stats.RowCount)
 		}
 	}
-	// Check whether there's only point query.
-	noIntervalRanges := true
-	haveNullVal := false
-	for _, ran := range path.Ranges {
-		// Not point or the not full matched.
-		if !ran.IsPoint(sc) || len(ran.HighVal) != len(path.Index.Columns) {
-			noIntervalRanges = false
-			break
-		}
-		// Check whether there's null value.
-		for i := 0; i < len(path.Index.Columns); i++ {
-			if ran.HighVal[i].IsNull() {
-				haveNullVal = true
-				break
-			}
-		}
-		if haveNullVal {
-			break
-		}
-	}
-	return noIntervalRanges && !haveNullVal
 }
 
 func getPKIsHandleColFromSchema(cols []*model.ColumnInfo, schema *expression.Schema, pkIsHandle bool) *expression.Column {
@@ -1021,6 +1031,16 @@ type LogicalLimit struct {
 	limitHints limitHintInfo
 }
 
+// extraPIDInfo is used by SelectLock on partitioned table, the TableReader need
+// to return the partition id column.
+// Because SelectLock has to used that partition id to encode the lock key.
+// the child of SelectLock may be Join, so that table can be multiple extra PID columns.
+// fields are for each of the table, and TblIDs are the corresponding table IDs.
+type extraPIDInfo struct {
+	Columns []*expression.Column
+	TblIDs  []int64
+}
+
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	baseLogicalPlan
@@ -1028,6 +1048,9 @@ type LogicalLock struct {
 	Lock             *ast.SelectLockInfo
 	tblID2Handle     map[int64][]HandleCols
 	partitionedTable []table.PartitionedTable
+	// extraPIDInfo is used when it works on partition table, the child executor
+	// need to return an extra partition ID column in the chunk row.
+	extraPIDInfo
 }
 
 // WindowFrame represents a window function frame.
@@ -1168,4 +1191,51 @@ type LogicalShowDDLJobs struct {
 	logicalSchemaProducer
 
 	JobNumber int64
+}
+
+// CTEClass holds the information and plan for a CTE. Most of the fields in this struct are the same as cteInfo.
+// But the cteInfo is used when building the plan, and CTEClass is used also for building the executor.
+type CTEClass struct {
+	// The union between seed part and recursive part is DISTINCT or DISTINCT ALL.
+	IsDistinct bool
+	// seedPartLogicalPlan and recursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
+	seedPartLogicalPlan      LogicalPlan
+	recursivePartLogicalPlan LogicalPlan
+	// seedPartPhysicalPlan and recursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
+	seedPartPhysicalPlan      PhysicalPlan
+	recursivePartPhysicalPlan PhysicalPlan
+	// storageID for this CTE.
+	IDForStorage int
+	// optFlag is the optFlag for the whole CTE.
+	optFlag  uint64
+	HasLimit bool
+	LimitBeg uint64
+	LimitEnd uint64
+}
+
+// LogicalCTE is for CTE.
+type LogicalCTE struct {
+	logicalSchemaProducer
+
+	cte       *CTEClass
+	cteAsName model.CIStr
+	seedStat  *property.StatsInfo
+}
+
+// LogicalCTETable is for CTE table
+type LogicalCTETable struct {
+	logicalSchemaProducer
+
+	seedStat     *property.StatsInfo
+	name         string
+	idForStorage int
+}
+
+// ExtractCorrelatedCols implements LogicalPlan interface.
+func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4LogicalPlan(p.cte.seedPartLogicalPlan)
+	if p.cte.recursivePartLogicalPlan != nil {
+		corCols = append(corCols, ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
+	}
+	return corCols
 }

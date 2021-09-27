@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package table
 
@@ -30,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
-// Type , the type of table, store data in different ways.
+// Type is used to distinguish between different tables that store data in different ways.
 type Type int16
 
 const (
@@ -97,6 +98,8 @@ var (
 	ErrSequenceHasRunOut = dbterror.ClassTable.NewStd(mysql.ErrSequenceRunOut)
 	// ErrRowDoesNotMatchGivenPartitionSet returns when the destination partition conflict with the partition selection.
 	ErrRowDoesNotMatchGivenPartitionSet = dbterror.ClassTable.NewStd(mysql.ErrRowDoesNotMatchGivenPartitionSet)
+	// ErrTempTableFull returns a table is full error, it's used by temporary table now.
+	ErrTempTableFull = dbterror.ClassTable.NewStd(mysql.ErrRecordFileFull)
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -151,6 +154,10 @@ type columnAPI interface {
 	// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
 	WritableCols() []*Column
 
+	// DeletableCols returns columns of the table in deletable states.
+	// Deletable states includes Public, WriteOnly, WriteOnlyReorganization, DeleteOnly, DeleteReorganization.
+	DeletableCols() []*Column
+
 	// FullHiddenColsAndVisibleCols returns hidden columns in all states and unhidden columns in public states.
 	FullHiddenColsAndVisibleCols() []*Column
 }
@@ -178,11 +185,6 @@ type Table interface {
 	// Allocators returns all allocators.
 	Allocators(ctx sessionctx.Context) autoid.Allocators
 
-	// RebaseAutoID rebases the auto_increment ID base.
-	// If allocIDs is true, it will allocate some IDs and save to the cache.
-	// If allocIDs is false, it will not allocate IDs.
-	RebaseAutoID(ctx sessionctx.Context, newBase int64, allocIDs bool, tp autoid.AllocatorType) error
-
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
 
@@ -198,7 +200,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 	}
 	increment := sctx.GetSessionVars().AutoIncrementIncrement
 	offset := sctx.GetSessionVars().AutoIncrementOffset
-	_, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, t.Meta().ID, uint64(1), int64(increment), int64(offset))
+	_, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
@@ -210,7 +212,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	min, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, t.Meta().ID, uint64(N), increment, offset)
+	min, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, uint64(N), increment, offset)
 	if err != nil {
 		return min, max, err
 	}

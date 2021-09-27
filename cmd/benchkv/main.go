@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	_ "net/http/pprof"
 	"sync"
@@ -129,7 +130,7 @@ func main() {
 	terror.MustNil(err)
 
 	defer terror.Call(resp.Body.Close)
-	text, err1 := ioutil.ReadAll(resp.Body)
+	text, err1 := io.ReadAll(resp.Body)
 	terror.Log(errors.Trace(err1))
 
 	fmt.Println(string(text))

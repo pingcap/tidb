@@ -13,6 +13,8 @@ set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain format = 'brief' select group_concat(a) from t group by id;
 explain format = 'brief' select group_concat(a, b) from t group by id;
+explain format = TRADITIONAL select group_concat(a, b) from t group by id;
+explain format = 'row' select group_concat(a, b) from t group by id;
 drop table t;
 
 drop view if exists v;

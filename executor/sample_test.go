@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -26,14 +27,14 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 var _ = SerialSuites(&testTableSampleSuite{})
 
 type testTableSampleSuite struct {
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
 }
@@ -43,7 +44,7 @@ func (s *testTableSampleSuite) SetUpSuite(c *C) {
 	useMockTikv := *mockTikv
 	if useMockTikv {
 		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.WithClusterInspector(func(c testutils.Cluster) {
 				mockstore.BootstrapWithSingleStore(c)
 				s.cluster = c
 			}),
@@ -57,6 +58,11 @@ func (s *testTableSampleSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
 	s.domain = d
+}
+
+func (s *testTableSampleSuite) TearDownSuite(c *C) {
+	s.domain.Close()
+	c.Assert(s.store.Close(), IsNil)
 }
 
 func (s *testTableSampleSuite) initSampleTest(c *C) *testkit.TestKit {
@@ -118,6 +124,20 @@ func (s *testTableSampleSuite) TestTableSampleMultiRegions(c *C) {
 	c.Assert(len(rows), Equals, 16)
 	tk.MustQuery("select count(*) from t tablesample regions();").Check(testkit.Rows("4"))
 	tk.MustExec("drop table t2;")
+}
+
+func (s *testTableSampleSuite) TestTableSampleNoSplitTable(c *C) {
+	tk := s.initSampleTest(c)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1 (id int primary key);")
+	tk.MustExec("create table t2 (id int primary key);")
+	tk.MustExec("insert into t2 values(1);")
+	rows := tk.MustQuery("select * from t1 tablesample regions();").Rows()
+	rows2 := tk.MustQuery("select * from t2 tablesample regions();").Rows()
+	c.Assert(len(rows), Equals, 0)
+	c.Assert(len(rows2), Equals, 1)
 }
 
 func (s *testTableSampleSuite) TestTableSamplePlan(c *C) {
@@ -199,6 +219,17 @@ func (s *testTableSampleSuite) TestTableSampleWithPartition(c *C) {
 	c.Assert(len(rows), Equals, 0)
 	rows = tk.MustQuery("select * from t partition (p1) tablesample regions();").Rows()
 	c.Assert(len(rows), Equals, 1)
+
+	// Test https://github.com/pingcap/tidb/issues/27349.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (a int, b int, unique key idx(a)) partition by range (a) (
+        partition p0 values less than (0),
+        partition p1 values less than (10),
+        partition p2 values less than (30),
+        partition p3 values less than (maxvalue));`)
+	tk.MustExec("insert into t values (2, 2), (31, 31), (12, 12);")
+	tk.MustQuery("select _tidb_rowid from t tablesample regions() order by _tidb_rowid;").
+		Check(testkit.Rows("1", "2", "3")) // The order of _tidb_rowid should be correct.
 }
 
 func (s *testTableSampleSuite) TestTableSampleGeneratedColumns(c *C) {

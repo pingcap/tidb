@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,7 +20,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -163,7 +163,7 @@ LOOP:
 }
 
 func (t *tester) loadQueries() ([]query, error) {
-	data, err := ioutil.ReadFile(t.testFileName())
+	data, err := os.ReadFile(t.testFileName())
 	if err != nil {
 		return nil, err
 	}
@@ -427,12 +427,12 @@ func (t *tester) create(tableName string, qText string) error {
 		return err
 	}
 
-	js, err := ioutil.ReadAll(resp.Body)
+	js, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
 
-	return ioutil.WriteFile(t.statsFileName(tableName), js, 0644)
+	return os.WriteFile(t.statsFileName(tableName), js, 0644)
 }
 
 func (t *tester) commit() error {
@@ -531,7 +531,7 @@ func (t *tester) flushResult() error {
 	if !record {
 		return nil
 	}
-	return ioutil.WriteFile(t.resultFileName(), t.buf.Bytes(), 0644)
+	return os.WriteFile(t.resultFileName(), t.buf.Bytes(), 0644)
 }
 
 func (t *tester) statsFileName(tableName string) string {
@@ -550,7 +550,7 @@ func (t *tester) resultFileName() string {
 
 func loadAllTests() ([]string, error) {
 	// tests must be in t folder
-	files, err := ioutil.ReadDir("./t")
+	files, err := os.ReadDir("./t")
 	if err != nil {
 		return nil, err
 	}
@@ -612,7 +612,7 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 func main() {
 	flag.Parse()
 
-	err := logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	if err != nil {
 		panic("init logger fail, " + err.Error())
 	}
@@ -698,7 +698,7 @@ func main() {
 	log.Info("Explain test passed")
 }
 
-var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}
+var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin", "with"}
 
 func trimSQL(sql string) string {
 	// Trim space.

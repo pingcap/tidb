@@ -8,19 +8,18 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package statistics
 
 import (
-	"bytes"
 	"container/heap"
 	"context"
 	"math/rand"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -31,7 +30,15 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// RowSampleCollector collects the samples from the source and organize the samples by row.
+type baseCollector struct {
+	Samples    WeightedRowSampleHeap
+	NullCount  []int64
+	FMSketches []*FMSketch
+	TotalSizes []int64
+	Count      int64
+}
+
+// ReservoirRowSampleCollector collects the samples from the source and organize the samples by row.
 // It will maintain the following things:
 //   Row samples.
 //   FM sketches(To calculate the NDV).
@@ -39,23 +46,20 @@ import (
 //   The data sizes.
 //   The number of rows.
 // It uses weighted reservoir sampling(A-Res) to do the sampling.
-type RowSampleCollector struct {
-	Samples       WeightedRowSampleHeap
-	NullCount     []int64
-	FMSketches    []*FMSketch
-	TotalSizes    []int64
-	Count         int64
+type ReservoirRowSampleCollector struct {
+	*baseCollector
 	MaxSampleSize int
 }
 
-// RowSampleItem is the item for the RowSampleCollector. The weight is needed for the sampling algorithm.
-type RowSampleItem struct {
+// ReservoirRowSampleItem is the item for the ReservoirRowSampleCollector. The weight is needed for the sampling algorithm.
+type ReservoirRowSampleItem struct {
 	Columns []types.Datum
 	Weight  int64
+	Handle  kv.Handle
 }
 
 // WeightedRowSampleHeap implements the Heap interface.
-type WeightedRowSampleHeap []*RowSampleItem
+type WeightedRowSampleHeap []*ReservoirRowSampleItem
 
 // Len implements the Heap interface.
 func (h WeightedRowSampleHeap) Len() int {
@@ -74,7 +78,7 @@ func (h WeightedRowSampleHeap) Less(i, j int) bool {
 
 // Push implements the Heap interface.
 func (h *WeightedRowSampleHeap) Push(i interface{}) {
-	*h = append(*h, i.(*RowSampleItem))
+	*h = append(*h, i.(*ReservoirRowSampleItem))
 }
 
 // Pop implements the Heap interface.
@@ -86,8 +90,8 @@ func (h *WeightedRowSampleHeap) Pop() interface{} {
 	return item
 }
 
-// RowSampleBuilder is used to construct the RowSampleCollector to get the samples.
-type RowSampleBuilder struct {
+// ReservoirRowSampleBuilder is used to construct the ReservoirRowSampleCollector to get the samples.
+type ReservoirRowSampleBuilder struct {
 	Sc              *stmtctx.StatementContext
 	RecordSet       sqlexec.RecordSet
 	ColsFieldType   []*types.FieldType
@@ -98,15 +102,32 @@ type RowSampleBuilder struct {
 	Rng             *rand.Rand
 }
 
+// NewReservoirRowSampleCollector creates the new collector by the given inputs.
+func NewReservoirRowSampleCollector(maxSampleSize int, totalLen int) *ReservoirRowSampleCollector {
+	base := &baseCollector{
+		Samples:    make(WeightedRowSampleHeap, 0, maxSampleSize),
+		NullCount:  make([]int64, totalLen),
+		FMSketches: make([]*FMSketch, 0, totalLen),
+		TotalSizes: make([]int64, totalLen),
+	}
+	return &ReservoirRowSampleCollector{
+		baseCollector: base,
+		MaxSampleSize: maxSampleSize,
+	}
+}
+
 // Collect first builds the collector. Then maintain the null count, FM sketch and the data size for each column and
 // column group.
 // Then use the weighted reservoir sampling to collect the samples.
-func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
-	collector := &RowSampleCollector{
-		Samples:       make(WeightedRowSampleHeap, 0, s.MaxSampleSize),
-		NullCount:     make([]int64, len(s.ColsFieldType)+len(s.ColGroups)),
-		FMSketches:    make([]*FMSketch, 0, len(s.ColsFieldType)+len(s.ColGroups)),
-		TotalSizes:    make([]int64, len(s.ColsFieldType)+len(s.ColGroups)),
+func (s *ReservoirRowSampleBuilder) Collect() (*ReservoirRowSampleCollector, error) {
+	base := &baseCollector{
+		Samples:    make(WeightedRowSampleHeap, 0, s.MaxSampleSize),
+		NullCount:  make([]int64, len(s.ColsFieldType)+len(s.ColGroups)),
+		FMSketches: make([]*FMSketch, 0, len(s.ColsFieldType)+len(s.ColGroups)),
+		TotalSizes: make([]int64, len(s.ColsFieldType)+len(s.ColGroups)),
+	}
+	collector := &ReservoirRowSampleCollector{
+		baseCollector: base,
 		MaxSampleSize: s.MaxSampleSize,
 	}
 	for i := 0; i < len(s.ColsFieldType)+len(s.ColGroups); i++ {
@@ -126,6 +147,15 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 		collector.Count += int64(chk.NumRows())
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			datums := RowToDatums(row, s.RecordSet.Fields())
+			newCols := make([]types.Datum, len(datums))
+			// sizes are used to calculate the total size information. We calculate the sizes here because we need the
+			// length of the original bytes instead of the collate key when it's a new collation string.
+			sizes := make([]int64, 0, len(datums))
+			for i := range datums {
+				datums[i].Copy(&newCols[i])
+				sizes = append(sizes, int64(len(datums[i].GetBytes())))
+			}
+
 			for i, val := range datums {
 				// For string values, we use the collation key instead of the original value.
 				if s.Collators[i] != nil && !val.IsNull() {
@@ -138,23 +168,19 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 					if err != nil {
 						return nil, err
 					}
-					val.SetBytes(encodedKey)
+					datums[i].SetBytes(encodedKey)
 				}
 			}
-			err := collector.collectColumns(s.Sc, datums)
+			err := collector.collectColumns(s.Sc, datums, sizes)
 			if err != nil {
 				return nil, err
 			}
-			err = collector.collectColumnGroups(s.Sc, datums, s.ColGroups)
+			err = collector.collectColumnGroups(s.Sc, datums, s.ColGroups, sizes)
 			if err != nil {
 				return nil, err
 			}
 			weight := s.Rng.Int63()
-			newCols := make([]types.Datum, len(datums))
-			for i := range datums {
-				datums[i].Copy(&newCols[i])
-			}
-			item := &RowSampleItem{
+			item := &ReservoirRowSampleItem{
 				Columns: newCols,
 				Weight:  weight,
 			}
@@ -163,14 +189,14 @@ func (s *RowSampleBuilder) Collect() (*RowSampleCollector, error) {
 	}
 }
 
-func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum) error {
+func (s *ReservoirRowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64) error {
 	for i, col := range cols {
 		if col.IsNull() {
 			s.NullCount[i]++
 			continue
 		}
-		s.TotalSizes[i] += int64(len(col.GetBytes())) - 1
 		// Minus one is to remove the flag byte.
+		s.TotalSizes[i] += sizes[i] - 1
 		err := s.FMSketches[i].InsertValue(sc, col)
 		if err != nil {
 			return err
@@ -179,7 +205,7 @@ func (s *RowSampleCollector) collectColumns(sc *stmtctx.StatementContext, cols [
 	return nil
 }
 
-func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64) error {
+func (s *ReservoirRowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64, sizes []int64) error {
 	colLen := len(cols)
 	datumBuffer := make([]types.Datum, 0, len(cols))
 	for i, group := range colGroups {
@@ -188,7 +214,7 @@ func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, c
 		for _, c := range group {
 			datumBuffer = append(datumBuffer, cols[c])
 			hasNull = hasNull && cols[c].IsNull()
-			s.TotalSizes[colLen+i] += int64(len(cols[c].GetBytes())) - 1
+			s.TotalSizes[colLen+i] += sizes[c] - 1
 		}
 		// We don't maintain the null counts information for the multi-column group
 		if hasNull && len(group) == 1 {
@@ -203,7 +229,7 @@ func (s *RowSampleCollector) collectColumnGroups(sc *stmtctx.StatementContext, c
 	return nil
 }
 
-func (s *RowSampleCollector) sampleZippedRow(sample *RowSampleItem) {
+func (s *ReservoirRowSampleCollector) sampleZippedRow(sample *ReservoirRowSampleItem) {
 	if len(s.Samples) < s.MaxSampleSize {
 		s.Samples = append(s.Samples, sample)
 		if len(s.Samples) == s.MaxSampleSize {
@@ -218,7 +244,7 @@ func (s *RowSampleCollector) sampleZippedRow(sample *RowSampleItem) {
 }
 
 // ToProto converts the collector to proto struct.
-func (s *RowSampleCollector) ToProto() *tipb.RowSampleCollector {
+func (s *ReservoirRowSampleCollector) ToProto() *tipb.RowSampleCollector {
 	pbFMSketches := make([]*tipb.FMSketch, 0, len(s.FMSketches))
 	for _, sketch := range s.FMSketches {
 		pbFMSketches = append(pbFMSketches, FMSketchToProto(sketch))
@@ -234,7 +260,8 @@ func (s *RowSampleCollector) ToProto() *tipb.RowSampleCollector {
 }
 
 // FromProto constructs the collector from the proto struct.
-func (s *RowSampleCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
+func (s *ReservoirRowSampleCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
+	s.baseCollector = &baseCollector{}
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
@@ -252,7 +279,7 @@ func (s *RowSampleCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
 		}
 		// The samples collected from regions are also organized by binary heap. So we can just copy the slice.
 		// No need to maintain the heap again.
-		s.Samples = append(s.Samples, &RowSampleItem{
+		s.Samples = append(s.Samples, &ReservoirRowSampleItem{
 			Columns: data,
 			Weight:  pbSample.Weight,
 		})
@@ -260,7 +287,7 @@ func (s *RowSampleCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
 }
 
 // MergeCollector merges the collectors to a final one.
-func (s *RowSampleCollector) MergeCollector(subCollector *RowSampleCollector) {
+func (s *ReservoirRowSampleCollector) MergeCollector(subCollector *ReservoirRowSampleCollector) {
 	s.Count += subCollector.Count
 	for i := range subCollector.FMSketches {
 		s.FMSketches[i].MergeFMSketch(subCollector.FMSketches[i])
@@ -298,152 +325,4 @@ func RowSamplesToProto(samples WeightedRowSampleHeap) []*tipb.RowSample {
 		rows = append(rows, pbRow)
 	}
 	return rows
-}
-
-// BuildHistAndTopNOnRowSample build a histogram and TopN for a column from samples.
-func BuildHistAndTopNOnRowSample(
-	ctx sessionctx.Context,
-	numBuckets, numTopN int,
-	id int64,
-	collector *SampleCollector,
-	tp *types.FieldType,
-	isColumn bool,
-) (*Histogram, *TopN, error) {
-	var getComparedBytes func(datum types.Datum) ([]byte, error)
-	if isColumn {
-		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			return codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datum)
-		}
-	} else {
-		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			return datum.GetBytes(), nil
-		}
-	}
-	count := collector.Count
-	ndv := collector.FMSketch.NDV()
-	nullCount := collector.NullCount
-	if ndv > count {
-		ndv = count
-	}
-	if count == 0 || len(collector.Samples) == 0 {
-		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil, nil
-	}
-	sc := ctx.GetSessionVars().StmtCtx
-	samples := collector.Samples
-	samples, err := SortSampleItems(sc, samples)
-	if err != nil {
-		return nil, nil, err
-	}
-	hg := NewHistogram(id, ndv, nullCount, 0, tp, numBuckets, collector.TotalSize)
-
-	sampleNum := int64(len(samples))
-	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
-	sampleFactor := float64(count) / float64(len(samples))
-
-	// Step1: collect topn from samples
-
-	// the topNList is always sorted by count from more to less
-	topNList := make([]TopNMeta, 0, numTopN)
-	cur, err := getComparedBytes(samples[0].Value)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	curCnt := float64(0)
-
-	// Iterate through the samples
-	for i := int64(0); i < sampleNum; i++ {
-
-		sampleBytes, err := getComparedBytes(samples[i].Value)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		// case 1, this value is equal to the last one: current count++
-		if bytes.Equal(cur, sampleBytes) {
-			curCnt += 1
-			continue
-		}
-		// case 2, meet a different value: counting for the "current" is complete
-		// case 2-1, now topn is empty: append the "current" count directly
-		if len(topNList) == 0 {
-			topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
-			cur, curCnt = sampleBytes, 1
-			continue
-		}
-		// case 2-2, now topn is full, and the "current" count is less than the least count in the topn: no need to insert the "current"
-		if len(topNList) >= numTopN && uint64(curCnt) <= topNList[len(topNList)-1].Count {
-			cur, curCnt = sampleBytes, 1
-			continue
-		}
-		// case 2-3, now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
-		j := len(topNList)
-		for ; j > 0; j-- {
-			if uint64(curCnt) < topNList[j-1].Count {
-				break
-			}
-		}
-		topNList = append(topNList, TopNMeta{})
-		copy(topNList[j+1:], topNList[j:])
-		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
-		if len(topNList) > numTopN {
-			topNList = topNList[:numTopN]
-		}
-		cur, curCnt = sampleBytes, 1
-	}
-
-	// Handle the counting for the last value. Basically equal to the case 2 above.
-	// now topn is empty: append the "current" count directly
-	if len(topNList) == 0 {
-		topNList = append(topNList, TopNMeta{Encoded: cur, Count: uint64(curCnt)})
-	} else if len(topNList) < numTopN || uint64(curCnt) > topNList[len(topNList)-1].Count {
-		// now topn is not full, or the "current" count is larger than the least count in the topn: need to find a slot to insert the "current"
-		j := len(topNList)
-		for ; j > 0; j-- {
-			if uint64(curCnt) < topNList[j-1].Count {
-				break
-			}
-		}
-		topNList = append(topNList, TopNMeta{})
-		copy(topNList[j+1:], topNList[j:])
-		topNList[j] = TopNMeta{Encoded: cur, Count: uint64(curCnt)}
-		if len(topNList) > numTopN {
-			topNList = topNList[:numTopN]
-		}
-	}
-
-	// Step2: exclude topn from samples
-	for i := int64(0); i < int64(len(samples)); i++ {
-		sampleBytes, err := getComparedBytes(samples[i].Value)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		for j := 0; j < len(topNList); j++ {
-			if bytes.Equal(sampleBytes, topNList[j].Encoded) {
-				// find the same value in topn: need to skip over this value in samples
-				copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
-				samples = samples[:uint64(len(samples))-topNList[j].Count]
-				i--
-				continue
-			}
-		}
-	}
-
-	for i := 0; i < len(topNList); i++ {
-		topNList[i].Count *= uint64(sampleFactor)
-	}
-	topn := &TopN{TopN: topNList}
-
-	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
-		// TopN includes all sample data
-		return hg, topn, nil
-	}
-
-	// Step3: build histogram with the rest samples
-	if len(samples) > 0 {
-		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets))
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	return hg, topn, nil
 }

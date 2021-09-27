@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,15 +20,15 @@ import (
 	"bytes"
 	"flag"
 	"go/format"
-	"io/ioutil"
 	"log"
+	"os"
 	"path/filepath"
 	"text/template"
 
 	. "github.com/pingcap/tidb/expression/generator/helper"
 )
 
-const header = `// Copyright 2019 PingCAP, Inc.
+const header = `// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -37,6 +38,7 @@ const header = `// Copyright 2019 PingCAP, Inc.
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -48,7 +50,6 @@ package expression
 const newLine = "\n"
 
 const builtinStringImports = `import (
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 `
@@ -58,7 +59,7 @@ var builtinStringVecTpl = template.Must(template.New("").Parse(`
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
 func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -66,7 +67,7 @@ func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *
 	if err := b.args[0].VecEval{{ .TypeName }}(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -168,7 +169,7 @@ func generateDotGo(fileName string, types []TypeContext) (err error) {
 		log.Println("[Warn]", fileName+": gofmt failed", err)
 		data = w.Bytes() // write original data for debugging
 	}
-	return ioutil.WriteFile(fileName, data, 0644)
+	return os.WriteFile(fileName, data, 0644)
 }
 
 func generateTestDotGo(fileName string, types []TypeContext) error {
@@ -186,7 +187,7 @@ func generateTestDotGo(fileName string, types []TypeContext) error {
 		log.Println("[Warn]", fileName+": gofmt failed", err)
 		data = w.Bytes() // write original data for debugging
 	}
-	return ioutil.WriteFile(fileName, data, 0644)
+	return os.WriteFile(fileName, data, 0644)
 }
 
 // generateOneFile generate one xxx.go file and the associated xxx_test.go file.

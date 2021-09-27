@@ -8,104 +8,102 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package resourcegrouptag
 
 import (
+	"crypto/sha256"
 	"math/rand"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tipb/go-tipb"
+	"github.com/stretchr/testify/require"
 )
 
-type testUtilsSuite struct{}
+func TestResourceGroupTagEncoding(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(&testUtilsSuite{})
+	sqlDigest := parser.NewDigest(nil)
+	tag := EncodeResourceGroupTag(sqlDigest, nil)
+	require.Len(t, tag, 0)
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-func (s *testUtilsSuite) TestResourceGroupTagEncoding(c *C) {
-	sqlDigest := ""
-	tag := EncodeResourceGroupTag(sqlDigest)
-	c.Assert(len(tag), Equals, 0)
 	decodedSQLDigest, err := DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(len(decodedSQLDigest), Equals, 0)
+	require.NoError(t, err)
+	require.Len(t, decodedSQLDigest, 0)
 
-	sqlDigest = "aa"
-	tag = EncodeResourceGroupTag(sqlDigest)
+	sqlDigest = parser.NewDigest([]byte{'a', 'a'})
+	tag = EncodeResourceGroupTag(sqlDigest, nil)
 	// version(1) + prefix(1) + length(1) + content(2hex -> 1byte)
-	c.Assert(len(tag), Equals, 4)
+	require.Len(t, tag, 4)
+
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, Equals, sqlDigest)
+	require.NoError(t, err)
+	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
 
-	sqlDigest = genRandHex(64)
-	tag = EncodeResourceGroupTag(sqlDigest)
+	sqlDigest = parser.NewDigest(genRandHex(64))
+	tag = EncodeResourceGroupTag(sqlDigest, nil)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, Equals, sqlDigest)
+	require.NoError(t, err)
+	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
 
-	sqlDigest = genRandHex(510)
-	tag = EncodeResourceGroupTag(sqlDigest)
+	sqlDigest = parser.NewDigest(genRandHex(510))
+	tag = EncodeResourceGroupTag(sqlDigest, nil)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, Equals, sqlDigest)
-
-	// The max supported length is 255 bytes (510 hex digits).
-	sqlDigest = genRandHex(512)
-	tag = EncodeResourceGroupTag(sqlDigest)
-	c.Assert(len(tag), Equals, 0)
-
-	// A hex string can't have odd length.
-	sqlDigest = genRandHex(15)
-	tag = EncodeResourceGroupTag(sqlDigest)
-	c.Assert(len(tag), Equals, 0)
-
-	// Non-hexadecimal character is invalid
-	sqlDigest = "aabbccddgg"
-	tag = EncodeResourceGroupTag(sqlDigest)
-	c.Assert(len(tag), Equals, 0)
-
-	// A tag should start with a supported version
-	tag = []byte("\x00")
-	_, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, NotNil)
-
-	// The fields should have format like `[prefix, length, content...]`, otherwise decoding it should returns error.
-	tag = []byte("\x01\x01")
-	_, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, NotNil)
-
-	tag = []byte("\x01\x01\x02")
-	_, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, NotNil)
-
-	tag = []byte("\x01\x01\x02AB")
-	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, Equals, "4142")
-
-	tag = []byte("\x01\x01\x00")
-	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(len(decodedSQLDigest), Equals, 0)
-
-	// Unsupported field
-	tag = []byte("\x01\x99")
-	_, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, NotNil)
+	require.NoError(t, err)
+	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
 }
 
-func genRandHex(length int) string {
+func TestResourceGroupTagEncodingPB(t *testing.T) {
+	t.Parallel()
+
+	digest1 := genDigest("abc")
+	digest2 := genDigest("abcdefg")
+	// Test for protobuf
+	resourceTag := &tipb.ResourceGroupTag{
+		SqlDigest:  digest1,
+		PlanDigest: digest2,
+	}
+	buf, err := resourceTag.Marshal()
+	require.NoError(t, err)
+	require.Len(t, buf, 68)
+
+	tag := &tipb.ResourceGroupTag{}
+	err = tag.Unmarshal(buf)
+	require.NoError(t, err)
+	require.Equal(t, digest1, tag.SqlDigest)
+	require.Equal(t, digest2, tag.PlanDigest)
+
+	// Test for protobuf sql_digest only
+	resourceTag = &tipb.ResourceGroupTag{
+		SqlDigest: digest1,
+	}
+	buf, err = resourceTag.Marshal()
+	require.NoError(t, err)
+	require.Len(t, buf, 34)
+
+	tag = &tipb.ResourceGroupTag{}
+	err = tag.Unmarshal(buf)
+	require.NoError(t, err)
+	require.Equal(t, digest1, tag.SqlDigest)
+	require.Nil(t, tag.PlanDigest)
+}
+
+func genRandHex(length int) []byte {
 	const chars = "0123456789abcdef"
 	res := make([]byte, length)
 	for i := 0; i < length; i++ {
 		res[i] = chars[rand.Intn(len(chars))]
 	}
-	return string(res)
+	return res
+}
+
+func genDigest(str string) []byte {
+	hasher := sha256.New()
+	hasher.Write(hack.Slice(str))
+	return hasher.Sum(nil)
 }

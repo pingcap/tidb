@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,10 +24,30 @@ import (
 func (s *testSuite7) TestWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_window_concurrency = 1")
+	tk.MustExec("set @@tidb_enable_pipelined_window_function = 0")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_pipelined_window_function=1;")
+	}()
 	doTestWindowFunctions(tk)
 }
 
 func (s *testSuite7) TestWindowParallelFunctions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_window_concurrency = 4")
+	tk.MustExec("set @@tidb_enable_pipelined_window_function = 0")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_pipelined_window_function=1;")
+	}()
+	doTestWindowFunctions(tk)
+}
+
+func (s *testSuite7) TestPipelinedWindowFunctions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_window_concurrency = 1")
+	doTestWindowFunctions(tk)
+}
+
+func (s *testSuite7) TestPipelinedWindowParallelFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_window_concurrency = 4")
 	doTestWindowFunctions(tk)
@@ -224,6 +245,25 @@ func (s *testSuite7) TestWindowFunctionsDataReference(c *C) {
 func (s *testSuite7) TestSlidingWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
+	tk.MustExec("set @@tidb_enable_pipelined_window_function=0;")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_pipelined_window_function=1;")
+	}()
+	idTypes := []string{"FLOAT", "DOUBLE"}
+	useHighPrecisions := []string{"ON", "OFF"}
+	for _, idType := range idTypes {
+		for _, useHighPrecision := range useHighPrecisions {
+			tk.MustExec("drop table if exists t;")
+			tk.MustExec(fmt.Sprintf("CREATE TABLE t (id %s, sex CHAR(1));", idType))
+			tk.MustExec(fmt.Sprintf("SET SESSION windowing_use_high_precision = %s;", useHighPrecision))
+			baseTestSlidingWindowFunctions(tk)
+		}
+	}
+}
+
+func (s *testSuite7) TestPipelinedSlidingWindowFunctions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
 	idTypes := []string{"FLOAT", "DOUBLE"}
 	useHighPrecisions := []string{"ON", "OFF"}
 	for _, idType := range idTypes {
@@ -245,6 +285,7 @@ func baseTestSlidingWindowFunctions(tk *testkit.TestKit) {
 	tk.MustExec("insert into t values (5,'M')")
 	tk.MustExec("insert into t values (10,null)")
 	tk.MustExec("insert into t values (11,null)")
+
 	tk.MustExec("PREPARE p FROM 'SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN ? PRECEDING and ? PRECEDING) FROM t';")
 	tk.MustExec("SET @p1= 1;")
 	tk.MustExec("SET @p2= 2;")

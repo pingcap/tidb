@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -133,7 +134,7 @@ func (s *testSerialSuite) TestPrepareStmtAfterIsolationReadChange(c *C) {
 
 type mockSessionManager2 struct {
 	se     session.Session
-	killed bool
+	killed int32
 }
 
 func (sm *mockSessionManager2) ShowTxnList() []*txninfo.TxnInfo {
@@ -156,7 +157,7 @@ func (sm *mockSessionManager2) GetProcessInfo(id uint64) (pi *util.ProcessInfo, 
 	return
 }
 func (sm *mockSessionManager2) Kill(connectionID uint64, query bool) {
-	sm.killed = true
+	atomic.StoreInt32(&sm.killed, 1)
 	atomic.StoreUint32(&sm.se.GetSessionVars().Killed, 1)
 }
 func (sm *mockSessionManager2) KillAllConnections()             {}
@@ -192,7 +193,7 @@ func (s *testSuite12) TestPreparedStmtWithHint(c *C) {
 	go dom.ExpensiveQueryHandle().SetSessionManager(sm).Run()
 	tk.MustExec("prepare stmt from \"select /*+ max_execution_time(100) */ sleep(10)\"")
 	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
-	c.Check(sm.killed, Equals, true)
+	c.Check(atomic.LoadInt32(&sm.killed), Equals, int32(1))
 }
 
 func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
@@ -403,4 +404,48 @@ func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
 			res.Check(testkit.Rows(output[i].Executes[j].Result...))
 		}
 	}
+}
+
+func (s *testSerialSuite) TestIssue28064(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t28064")
+	tk.MustExec("CREATE TABLE `t28064` (" +
+		"`a` decimal(10,0) DEFAULT NULL," +
+		"`b` decimal(10,0) DEFAULT NULL," +
+		"`c` decimal(10,0) DEFAULT NULL," +
+		"`d` decimal(10,0) DEFAULT NULL," +
+		"KEY `iabc` (`a`,`b`,`c`));")
+	tk.MustExec("set @a='123', @b='234', @c='345';")
+	tk.MustExec("prepare stmt1 from 'select * from t28064 use index (iabc) where a = ? and b = ? and c = ?';")
+
+	tk.MustExec("execute stmt1 using @a, @b, @c;")
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	rows.Check(testkit.Rows("IndexLookUp_7 0.00 root  ",
+		"├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+
+	tk.MustExec("execute stmt1 using @a, @b, @c;")
+	rows = tk.MustQuery("select @@last_plan_from_cache")
+	rows.Check(testkit.Rows("1"))
+
+	tk.MustExec("execute stmt1 using @a, @b, @c;")
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	rows.Check(testkit.Rows("IndexLookUp_7 0.00 root  ",
+		"├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
 }

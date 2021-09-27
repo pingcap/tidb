@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -33,63 +34,78 @@ func (s *testInfoCacheSuite) TestInsert(c *C) {
 	c.Assert(ic, NotNil)
 
 	is2 := infoschema.MockInfoSchemaWithSchemaVer(nil, 2)
-	ic.Insert(is2)
-	c.Assert(ic.GetByVersion(2), NotNil)
+	ic.Insert(is2, 2)
+	c.Assert(ic.GetByVersion(2), DeepEquals, is2)
+	c.Assert(ic.GetBySnapshotTS(2), DeepEquals, is2)
+	c.Assert(ic.GetBySnapshotTS(10), DeepEquals, is2)
+	c.Assert(ic.GetBySnapshotTS(0), IsNil)
 
 	// newer
 	is5 := infoschema.MockInfoSchemaWithSchemaVer(nil, 5)
-	ic.Insert(is5)
-	c.Assert(ic.GetByVersion(5), NotNil)
-	c.Assert(ic.GetByVersion(2), NotNil)
+	ic.Insert(is5, 5)
+	c.Assert(ic.GetByVersion(5), DeepEquals, is5)
+	c.Assert(ic.GetByVersion(2), DeepEquals, is2)
+	c.Assert(ic.GetBySnapshotTS(2), IsNil)
+	c.Assert(ic.GetBySnapshotTS(10), DeepEquals, is5)
 
 	// older
 	is0 := infoschema.MockInfoSchemaWithSchemaVer(nil, 0)
-	ic.Insert(is0)
-	c.Assert(ic.GetByVersion(5), NotNil)
-	c.Assert(ic.GetByVersion(2), NotNil)
-	c.Assert(ic.GetByVersion(0), NotNil)
+	ic.Insert(is0, 0)
+	c.Assert(ic.GetByVersion(5), DeepEquals, is5)
+	c.Assert(ic.GetByVersion(2), DeepEquals, is2)
+	c.Assert(ic.GetByVersion(0), DeepEquals, is0)
 
 	// replace 5, drop 0
 	is6 := infoschema.MockInfoSchemaWithSchemaVer(nil, 6)
-	ic.Insert(is6)
-	c.Assert(ic.GetByVersion(6), NotNil)
-	c.Assert(ic.GetByVersion(5), NotNil)
-	c.Assert(ic.GetByVersion(2), NotNil)
+	ic.Insert(is6, 6)
+	c.Assert(ic.GetByVersion(6), DeepEquals, is6)
+	c.Assert(ic.GetByVersion(5), DeepEquals, is5)
+	c.Assert(ic.GetByVersion(2), DeepEquals, is2)
 	c.Assert(ic.GetByVersion(0), IsNil)
+	c.Assert(ic.GetBySnapshotTS(2), IsNil)
+	c.Assert(ic.GetBySnapshotTS(10), DeepEquals, is6)
 
 	// replace 2, drop 2
 	is3 := infoschema.MockInfoSchemaWithSchemaVer(nil, 3)
-	ic.Insert(is3)
-	c.Assert(ic.GetByVersion(6), NotNil)
-	c.Assert(ic.GetByVersion(5), NotNil)
-	c.Assert(ic.GetByVersion(3), NotNil)
+	ic.Insert(is3, 3)
+	c.Assert(ic.GetByVersion(6), DeepEquals, is6)
+	c.Assert(ic.GetByVersion(5), DeepEquals, is5)
+	c.Assert(ic.GetByVersion(3), DeepEquals, is3)
 	c.Assert(ic.GetByVersion(2), IsNil)
 	c.Assert(ic.GetByVersion(0), IsNil)
+	c.Assert(ic.GetBySnapshotTS(2), IsNil)
+	c.Assert(ic.GetBySnapshotTS(10), DeepEquals, is6)
 
 	// insert 2, but failed silently
-	ic.Insert(is2)
-	c.Assert(ic.GetByVersion(6), NotNil)
-	c.Assert(ic.GetByVersion(5), NotNil)
-	c.Assert(ic.GetByVersion(3), NotNil)
+	ic.Insert(is2, 2)
+	c.Assert(ic.GetByVersion(6), DeepEquals, is6)
+	c.Assert(ic.GetByVersion(5), DeepEquals, is5)
+	c.Assert(ic.GetByVersion(3), DeepEquals, is3)
 	c.Assert(ic.GetByVersion(2), IsNil)
 	c.Assert(ic.GetByVersion(0), IsNil)
+	c.Assert(ic.GetBySnapshotTS(2), IsNil)
+	c.Assert(ic.GetBySnapshotTS(10), DeepEquals, is6)
 
 	// insert 5, but it is already in
-	ic.Insert(is5)
-	c.Assert(ic.GetByVersion(6), NotNil)
-	c.Assert(ic.GetByVersion(5), NotNil)
-	c.Assert(ic.GetByVersion(3), NotNil)
+	ic.Insert(is5, 5)
+	c.Assert(ic.GetByVersion(6), DeepEquals, is6)
+	c.Assert(ic.GetByVersion(5), DeepEquals, is5)
+	c.Assert(ic.GetByVersion(3), DeepEquals, is3)
 	c.Assert(ic.GetByVersion(2), IsNil)
 	c.Assert(ic.GetByVersion(0), IsNil)
+	c.Assert(ic.GetBySnapshotTS(2), IsNil)
+	c.Assert(ic.GetBySnapshotTS(5), IsNil)
+	c.Assert(ic.GetBySnapshotTS(10), DeepEquals, is6)
+
 }
 
 func (s *testInfoCacheSuite) TestGetByVersion(c *C) {
 	ic := infoschema.NewCache(2)
 	c.Assert(ic, NotNil)
 	is1 := infoschema.MockInfoSchemaWithSchemaVer(nil, 1)
-	ic.Insert(is1)
+	ic.Insert(is1, 1)
 	is3 := infoschema.MockInfoSchemaWithSchemaVer(nil, 3)
-	ic.Insert(is3)
+	ic.Insert(is3, 3)
 
 	c.Assert(ic.GetByVersion(1), Equals, is1)
 	c.Assert(ic.GetByVersion(3), Equals, is3)
@@ -104,16 +120,16 @@ func (s *testInfoCacheSuite) TestGetLatest(c *C) {
 	c.Assert(ic.GetLatest(), IsNil)
 
 	is1 := infoschema.MockInfoSchemaWithSchemaVer(nil, 1)
-	ic.Insert(is1)
+	ic.Insert(is1, 1)
 	c.Assert(ic.GetLatest(), Equals, is1)
 
 	// newer change the newest
 	is2 := infoschema.MockInfoSchemaWithSchemaVer(nil, 2)
-	ic.Insert(is2)
+	ic.Insert(is2, 2)
 	c.Assert(ic.GetLatest(), Equals, is2)
 
 	// older schema doesn't change the newest
 	is0 := infoschema.MockInfoSchemaWithSchemaVer(nil, 0)
-	ic.Insert(is0)
+	ic.Insert(is0, 0)
 	c.Assert(ic.GetLatest(), Equals, is2)
 }

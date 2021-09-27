@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -237,51 +238,60 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	statsTbl := s.prepareSelectivity(testKit, c)
-	is := s.do.InfoSchema()
 
 	longExpr := "0 < a and a = 1 "
 	for i := 1; i < 64; i++ {
 		longExpr += fmt.Sprintf(" and a > %d ", i)
 	}
 	tests := []struct {
-		exprs       string
-		selectivity float64
+		exprs                    string
+		selectivity              float64
+		selectivityAfterIncrease float64
 	}{
 		{
-			exprs:       "a > 0 and a < 2",
-			selectivity: 0.01851851851,
+			exprs:                    "a > 0 and a < 2",
+			selectivity:              0.01851851851,
+			selectivityAfterIncrease: 0.01851851851,
 		},
 		{
-			exprs:       "a >= 1 and a < 2",
-			selectivity: 0.01851851851,
+			exprs:                    "a >= 1 and a < 2",
+			selectivity:              0.01851851851,
+			selectivityAfterIncrease: 0.01851851851,
 		},
 		{
-			exprs:       "a >= 1 and b > 1 and a < 2",
-			selectivity: 0.01783264746,
+			exprs:                    "a >= 1 and b > 1 and a < 2",
+			selectivity:              0.01783264746,
+			selectivityAfterIncrease: 0.01851851852,
 		},
 		{
-			exprs:       "a >= 1 and c > 1 and a < 2",
-			selectivity: 0.00617283950,
+			exprs:                    "a >= 1 and c > 1 and a < 2",
+			selectivity:              0.00617283950,
+			selectivityAfterIncrease: 0.00617283950,
 		},
 		{
-			exprs:       "a >= 1 and c >= 1 and a < 2",
-			selectivity: 0.01234567901,
+			exprs:                    "a >= 1 and c >= 1 and a < 2",
+			selectivity:              0.01234567901,
+			selectivityAfterIncrease: 0.01234567901,
 		},
 		{
-			exprs:       "d = 0 and e = 1",
-			selectivity: 0.11111111111,
+			exprs:                    "d = 0 and e = 1",
+			selectivity:              0.11111111111,
+			selectivityAfterIncrease: 0.11111111111,
 		},
 		{
-			exprs:       "b > 1",
-			selectivity: 0.96296296296,
+			exprs:                    "b > 1",
+			selectivity:              0.96296296296,
+			selectivityAfterIncrease: 1,
 		},
 		{
-			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-			selectivity: 0,
+			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
+			selectivity:              0,
+			selectivityAfterIncrease: 0,
 		},
 		{
-			exprs:       longExpr,
-			selectivity: 0.001,
+			exprs:                    longExpr,
+			selectivity:              0.001,
+			selectivityAfterIncrease: 0.001,
 		},
 	}
 
@@ -294,9 +304,10 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
 
-		err = plannercore.Preprocess(sctx, stmts[0], is)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, comment)
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
 
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
@@ -311,7 +322,7 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		histColl.Count *= 10
 		ratio, _, err = histColl.Selectivity(sctx, sel.Conditions, nil)
 		c.Assert(err, IsNil, comment)
-		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
+		c.Assert(math.Abs(ratio-tt.selectivityAfterIncrease) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio))
 	}
 }
 
@@ -372,16 +383,16 @@ func getRange(start, end int64) []*ranger.Range {
 	return []*ranger.Range{ran}
 }
 
-func (s *testStatsSuite) TestOutOfRangeEQEstimation(c *C) {
+func (s *testStatsSuite) TestOutOfRangeEstimation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int)")
-	for i := 0; i < 1000; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/4)) // 0 ~ 249
+	testKit.MustExec("create table t(a int unsigned)")
+	for i := 0; i < 3000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
 	}
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 2000 samples")
 
 	h := s.do.StatsHandle()
 	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -389,14 +400,34 @@ func (s *testStatsSuite) TestOutOfRangeEQEstimation(c *C) {
 	statsTbl := h.GetTableStats(table.Meta())
 	sc := &stmtctx.StatementContext{}
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
-	count, err := col.GetColumnRowCount(sc, getRange(250, 250), 0, false)
+	count, err := col.GetColumnRowCount(sc, getRange(900, 900), statsTbl.Count, false)
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, float64(0))
+	// Because the ANALYZE collect data by random sampling, so the result is not an accurate value.
+	// so we use a range here.
+	c.Assert(count < 5.5, IsTrue, Commentf("expected: around 5.0, got: %v", count))
+	c.Assert(count > 4.5, IsTrue, Commentf("expected: around 5.0, got: %v", count))
 
-	for i := 0; i < 8; i++ {
-		count, err := col.GetColumnRowCount(sc, getRange(250, 250), int64(i+1), false)
+	var input []struct {
+		Start int64
+		End   int64
+	}
+	var output []struct {
+		Start int64
+		End   int64
+		Count float64
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	increasedTblRowCount := int64(float64(statsTbl.Count) * 1.5)
+	for i, ran := range input {
+		count, err = col.GetColumnRowCount(sc, getRange(ran.Start, ran.End), increasedTblRowCount, false)
 		c.Assert(err, IsNil)
-		c.Assert(count, Equals, math.Min(float64(i+1), 4)) // estRows must be less than modifyCnt
+		s.testData.OnRecord(func() {
+			output[i].Start = ran.Start
+			output[i].End = ran.End
+			output[i].Count = count
+		})
+		c.Assert(count < output[i].Count*1.2, IsTrue, Commentf("for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count))
+		c.Assert(count > output[i].Count*0.8, IsTrue, Commentf("for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count))
 	}
 }
 
@@ -406,6 +437,7 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
+	testKit.MustExec("set @@tidb_analyze_version=1")
 	testKit.MustExec("analyze table t")
 	for i := 0; i < 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
@@ -430,20 +462,20 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.4000000000000004)
+	c.Assert(count, Equals, 7.2)
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, math.MaxInt64))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.4000000000000004)
+	c.Assert(count, Equals, 7.2)
 
 	idxID := table.Meta().Indices[0].ID
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(30, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 0.2)
+	c.Assert(count, Equals, 0.1)
 
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(9, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.2)
+	c.Assert(count, Equals, 7.0)
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (null, null)")
@@ -542,7 +574,6 @@ func BenchmarkSelectivity(b *testing.B) {
 
 	testKit := testkit.NewTestKit(c, s.store)
 	statsTbl := s.prepareSelectivity(testKit, c)
-	is := s.do.InfoSchema()
 	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
 	sql := "select * from t where " + exprs
 	comment := Commentf("for %s", exprs)
@@ -550,9 +581,10 @@ func BenchmarkSelectivity(b *testing.B) {
 	stmts, err := session.Parse(sctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)
-	err = plannercore.Preprocess(sctx, stmts[0], is)
+	ret := &plannercore.PreprocessorReturn{}
+	err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 	c.Assert(err, IsNil, comment)
-	p, _, err := plannercore.BuildLogicalPlan(context.Background(), sctx, stmts[0], is)
+	p, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, stmts[0], ret.InfoSchema)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
 
 	file, err := os.Create("cpu.profile")
@@ -627,6 +659,42 @@ func (s *testStatsSuite) TestStatsVer2(c *C) {
 		// ensure statsVer = 2
 		c.Assert(fmt.Sprintf("%v", r[0]), Equals, "2")
 	}
+
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i := range input {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
+}
+
+func (s *testStatsSuite) TestTopNOutOfHist(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_analyze_version=2")
+
+	testKit.MustExec("drop table if exists topn_before_hist")
+	testKit.MustExec("create table topn_before_hist(a int, index idx(a))")
+	testKit.MustExec("insert into topn_before_hist values(1), (1), (1), (1), (3), (3), (4), (5), (6)")
+	testKit.MustExec("analyze table topn_before_hist with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_after_hist(a int, index idx(a))")
+	testKit.MustExec("insert into topn_after_hist values(2), (2), (3), (4), (5), (7), (7), (7), (7)")
+	testKit.MustExec("analyze table topn_after_hist with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_before_hist_no_index(a int)")
+	testKit.MustExec("insert into topn_before_hist_no_index values(1), (1), (1), (1), (3), (3), (4), (5), (6)")
+	testKit.MustExec("analyze table topn_before_hist_no_index with 2 topn, 3 buckets")
+
+	testKit.MustExec("create table topn_after_hist_no_index(a int)")
+	testKit.MustExec("insert into topn_after_hist_no_index values(2), (2), (3), (4), (5), (7), (7), (7), (7)")
+	testKit.MustExec("analyze table topn_after_hist_no_index with 2 topn, 3 buckets")
 
 	var (
 		input  []string
@@ -724,6 +792,7 @@ func (s *testStatsSuite) TestCollationColumnEstimate(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(20) collate utf8mb4_general_ci)")
 	tk.MustExec("insert into t values('aaa'), ('bbb'), ('AAA'), ('BBB')")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
 	h := s.do.StatsHandle()
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	tk.MustExec("analyze table t")
@@ -756,9 +825,8 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 	testKit.MustExec(`analyze table t`)
 
 	ctx := context.Background()
-	is := s.do.InfoSchema()
 	h := s.do.StatsHandle()
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tblInfo := tb.Meta()
 	statsTbl := h.GetTableStats(tblInfo)
@@ -777,9 +845,10 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for sql %s", err, tt))
 		c.Assert(stmts, HasLen, 1)
 
-		err = plannercore.Preprocess(sctx, stmts[0], is)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, Commentf("error %v, for sql %s", err, tt))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, sql %s", err, tt))
 
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
@@ -805,6 +874,10 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 	// If we don't have a check against this, DNF condition could lead to infinite recursion in Selectivity().
 	testKit.MustExec("alter table t add column n timestamp;")
 	testKit.MustExec("select * from t where n = '2000-01-01' or n = '2000-01-02';")
+
+	// Test issue 27294
+	testKit.MustExec("create table tt (COL1 blob DEFAULT NULL,COL2 decimal(37,4) DEFAULT NULL,COL3 timestamp NULL DEFAULT NULL,COL4 int(11) DEFAULT NULL,UNIQUE KEY U_M_COL4(COL1(10),COL2), UNIQUE KEY U_M_COL5(COL3,COL2));")
+	testKit.MustExec("explain select * from tt where col1 is not null or col2 not between 454623814170074.2771 and -975540642273402.9269 and col3 not between '2039-1-19 10:14:57' and '2002-3-27 14:40:23';")
 }
 
 func (s *testStatsSuite) TestIndexEstimationCrossValidate(c *C) {
@@ -850,4 +923,44 @@ func (s *testStatsSuite) TestRangeStepOverflow(c *C) {
 	c.Assert(h.LoadNeededHistograms(), IsNil)
 	// Must execute successfully after loading the column stats.
 	tk.MustQuery("select * from t where col between '8499-1-23 2:14:38' and '9961-7-23 18:35:26'").Check(testkit.Rows())
+}
+
+func (s *testStatsSuite) TestSmallRangeEstimation(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int)")
+	for i := 0; i < 400; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v), (%v), (%v)", i, i, i)) // [0, 400)
+	}
+	testKit.MustExec("analyze table t with 0 topn")
+
+	h := s.do.StatsHandle()
+	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl := h.GetTableStats(table.Meta())
+	sc := &stmtctx.StatementContext{}
+	col := statsTbl.Columns[table.Meta().Columns[0].ID]
+
+	var input []struct {
+		Start int64
+		End   int64
+	}
+	var output []struct {
+		Start int64
+		End   int64
+		Count float64
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ran := range input {
+		count, err := col.GetColumnRowCount(sc, getRange(ran.Start, ran.End), statsTbl.Count, false)
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
+			output[i].Start = ran.Start
+			output[i].End = ran.End
+			output[i].Count = count
+		})
+		c.Assert(math.Abs(count-output[i].Count) < eps, IsTrue, Commentf("for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count))
+	}
 }

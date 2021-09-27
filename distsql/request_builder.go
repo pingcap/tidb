@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,6 +20,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -39,14 +41,31 @@ import (
 // It is called before we issue a kv request by "Select".
 type RequestBuilder struct {
 	kv.Request
-	// txnScope indicates the value of txn_scope
-	txnScope string
-	is       infoschema.InfoSchema
-	err      error
+	is  infoschema.InfoSchema
+	err error
 }
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
+	if builder.ReadReplicaScope == "" {
+		builder.ReadReplicaScope = kv.GlobalReplicaScope
+	}
+	if builder.ReplicaRead.IsClosestRead() && builder.ReadReplicaScope != kv.GlobalReplicaScope {
+		builder.MatchStoreLabels = []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: builder.ReadReplicaScope,
+			},
+		}
+	}
+	failpoint.Inject("assertRequestBuilderStalenessOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if len(assertScope) > 0 {
+			if builder.IsStaleness && assertScope != builder.ReadReplicaScope {
+				panic("request builder get staleness option fail")
+			}
+		}
+	})
 	err := builder.verifyTxnScope()
 	if err != nil {
 		builder.err = err
@@ -229,20 +248,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	// in tests, it may be null
-	if is, ok := sv.GetInfoSchema().(infoschema.InfoSchema); ok {
-		builder.Request.SchemaVar = is.SchemaMetaVersion()
-	}
-	builder.txnScope = sv.TxnCtx.TxnScope
-	builder.IsStaleness = sv.TxnCtx.IsStaleness
-	if builder.IsStaleness && builder.txnScope != kv.GlobalTxnScope {
-		builder.MatchStoreLabels = []*metapb.StoreLabel{
-			{
-				Key:   placement.DCLabelKey,
-				Value: builder.txnScope,
-			},
-		}
-	}
+	builder.SetResourceGroupTag(sv.StmtCtx)
 	return builder
 }
 
@@ -268,19 +274,29 @@ func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder 
 
 // SetFromInfoSchema sets the following fields from infoSchema:
 // "bundles"
-func (builder *RequestBuilder) SetFromInfoSchema(is infoschema.InfoSchema) *RequestBuilder {
-	if is == nil {
+func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilder {
+	is, ok := pis.(infoschema.InfoSchema)
+	if !ok {
 		return builder
 	}
 	builder.is = is
+	builder.Request.SchemaVar = is.SchemaMetaVersion()
+	return builder
+}
+
+// SetResourceGroupTag sets the request resource group tag.
+func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext) *RequestBuilder {
+	if variable.TopSQLEnabled() {
+		builder.Request.ResourceGroupTag = sc.GetResourceGroupTag()
+	}
 	return builder
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
-	if builder.txnScope == "" {
-		builder.txnScope = kv.GlobalTxnScope
+	if builder.ReadReplicaScope == "" {
+		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}
-	if builder.txnScope == kv.GlobalTxnScope || builder.is == nil {
+	if builder.ReadReplicaScope == kv.GlobalReplicaScope || builder.is == nil {
 		return nil
 	}
 	visitPhysicalTableID := make(map[int64]struct{})
@@ -294,7 +310,7 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	}
 
 	for phyTableID := range visitPhysicalTableID {
-		valid := VerifyTxnScope(builder.txnScope, phyTableID, builder.is)
+		valid := VerifyTxnScope(builder.ReadReplicaScope, phyTableID, builder.is)
 		if !valid {
 			var tblName string
 			var partName string
@@ -306,15 +322,27 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 				tblInfo, _ = builder.is.TableByID(phyTableID)
 				tblName = tblInfo.Meta().Name.String()
 			}
-			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.txnScope)
+			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.ReadReplicaScope)
 			if len(partName) > 0 {
 				err = fmt.Errorf("table %v's partition %v can not be read by %v txn_scope",
-					tblName, partName, builder.txnScope)
+					tblName, partName, builder.ReadReplicaScope)
 			}
 			return err
 		}
 	}
 	return nil
+}
+
+// SetReadReplicaScope sets request readReplicaScope
+func (builder *RequestBuilder) SetReadReplicaScope(scope string) *RequestBuilder {
+	builder.ReadReplicaScope = scope
+	return builder
+}
+
+// SetIsStaleness sets request IsStaleness
+func (builder *RequestBuilder) SetIsStaleness(is bool) *RequestBuilder {
+	builder.IsStaleness = is
+	return builder
 }
 
 // TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
@@ -606,7 +634,7 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSc
 	if !ok {
 		return true
 	}
-	leaderDC, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+	leaderDC, ok := bundle.GetLeaderDC(placement.DCLabelKey)
 	if !ok {
 		return true
 	}

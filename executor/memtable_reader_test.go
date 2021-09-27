@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +17,6 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http/httptest"
@@ -431,7 +431,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 }
 
 func (s *testClusterTableBase) writeTmpFile(c *C, dir, filename string, lines []string) {
-	err := ioutil.WriteFile(filepath.Join(dir, filename), []byte(strings.Join(lines, "\n")), os.ModePerm)
+	err := os.WriteFile(filepath.Join(dir, filename), []byte(strings.Join(lines, "\n")), os.ModePerm)
 	c.Assert(err, IsNil, Commentf("write tmp file %s failed", filename))
 }
 
@@ -449,7 +449,7 @@ func (s *testClusterTableBase) setupClusterGRPCServer(c *C) map[string]*testServ
 
 	// create gRPC servers
 	for _, typ := range []string{"tidb", "tikv", "pd"} {
-		tmpDir, err := ioutil.TempDir("", typ)
+		tmpDir, err := os.MkdirTemp("", typ)
 		c.Assert(err, IsNil)
 
 		server := grpc.NewServer()
