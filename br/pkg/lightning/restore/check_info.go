@@ -397,12 +397,12 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 			continue
 		}
 		for _, tbl := range db.Tables {
+			originSource += tbl.TotalSize
 			tableInfo, ok := info.Tables[tbl.Name]
 			if ok {
-				originSource += tbl.TotalSize
 				// Do not sample small table because there may a large number of small table and it will take a long
 				// time to sample data for all of them.
-				if tbl.TotalSize < int64(config.SplitRegionSize) {
+				if rc.cfg.TikvImporter.Backend == config.BackendTiDB || tbl.TotalSize < int64(config.SplitRegionSize) {
 					sourceSize += tbl.TotalSize
 					tbl.IndexRatio = 1.0
 					tbl.IsRowOrdered = false
@@ -422,10 +422,10 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 			}
 		}
 	}
+
 	if rc.status != nil {
 		rc.status.TotalFileSize.Store(originSource)
 	}
-
 	// Do not import with too large concurrency because these data may be all unsorted.
 	if bigTableCount > 0 && unSortedTableCount > 0 {
 		if rc.cfg.App.TableConcurrency > rc.cfg.App.IndexConcurrency {
@@ -825,7 +825,7 @@ outloop:
 		rowCount += 1
 
 		var dataChecksum, indexChecksum verification.KVChecksum
-		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, offset)
+		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
 		parser.RecycleRow(lastRow)
 		if encodeErr != nil {
 			err = errors.Annotatef(encodeErr, "in file at offset %d", offset)

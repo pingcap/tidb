@@ -1949,7 +1949,7 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 			return
 		}
 
-		patch := label.NewRulePatch(nil, ruleIDs)
+		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	}
 	return
