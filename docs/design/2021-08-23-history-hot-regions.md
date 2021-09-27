@@ -166,7 +166,7 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
 
          maximum： 1 * 4B(timestamp) + 1 * 1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64 * 4B(varchar(64)) = 1102B
 
-         Below table show data size per day and per month with 10 minutes interval, given the maximum number of hotspot regions is 1000, Note that varchar is used to store the name of table index, and its true size is generally smaller than the minimum case:
+         Below table show data size per day and per month with 10 minutes interval, given the maximum number of hotspot regions is 1000, Note that varchar is used to store the name of table index.the really data size is much smaller than the calculated value because of datat compaction and so on
 
          | Record Length (B) | Time Interval (Min) | Data Size Per Day (MB) | Data Size Per Week (MB) | Data Size Per Month (MB) |
          | ----------------- | ------------------- | ---------------------- | ----------------------- | ------------------------ |
@@ -179,7 +179,7 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
          | ------------------- | ------------------------------------ | ------------------------------------------ |
          | 10                  | 550                                  | 880                                        |
 
-         If the data survival time exceeds the preservation time,it will be delete from LevelDB,every month we will compact the data that store in LevelDB to reduce space usage.This work takes 1.7s to complete.
+         If the data survival time exceeds the preservation time,it will be delete from LevelDB,but really delete happend in every month data compaction. This work takes 1.7s to complete.
 
 6. PD-CTL
    Support history hot regions in pd-ctl.
