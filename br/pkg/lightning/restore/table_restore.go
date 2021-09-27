@@ -712,44 +712,55 @@ func (tr *TableRestore) postProcess(
 				localChecksum.Add(&chunk.Checksum)
 			}
 		}
+		tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+
+		// 4.5. do duplicate detection.
+		hasDupe := false
+		if rc.cfg.TikvImporter.DuplicateDetection {
+			var err error
+			hasDupe, err = rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable)
+			if err != nil {
+				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
+			}
+		}
+
+		needChecksum, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
+		if err != nil {
+			return false, err
+		}
+
+		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateDetection {
+			hasRemoteDupe, err := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable)
+			if err != nil {
+				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(err))
+				err = nil
+			}
+			hasDupe = hasDupe || hasRemoteDupe
+		}
 
 		if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 			tr.logger.Info("skip checksum")
 			if err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusChecksumSkipped); err != nil {
 				return false, errors.Trace(err)
 			}
-		} else {
-			if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
-				tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
-				if rc.cfg.TikvImporter.DuplicateDetection {
-					if err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable); err != nil {
-						tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
-					}
-				}
-				needChecksum, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum)
-				if err != nil {
-					return false, err
-				}
-				if !needChecksum {
-					return false, nil
-				}
-				if rc.cfg.TikvImporter.DuplicateDetection {
-					if err := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable); err != nil {
-						tr.logger.Error("collect remote duplicate keys failed", log.ShortError(err))
-						err = nil
-					}
-				}
-				if cp.Checksum.SumKVS() > 0 || baseTotalChecksum.SumKVS() > 0 {
-					localChecksum.Add(&cp.Checksum)
-					localChecksum.Add(baseTotalChecksum)
-					tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
-				}
+		} else if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
+			if !needChecksum {
+				return false, nil
+			}
+			if cp.Checksum.SumKVS() > 0 || baseTotalChecksum.SumKVS() > 0 {
+				localChecksum.Add(&cp.Checksum)
+				localChecksum.Add(baseTotalChecksum)
+				tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
+			}
 
+			if hasDupe {
+				// If there are duplicate keys, do not set the `ChecksumMismatch` error
+				tr.logger.Warn("checksum not performed due to duplicated records")
+			} else {
 				remoteChecksum, err := DoChecksum(ctx, tr.tableInfo)
 				if err != nil {
 					return false, err
 				}
-				// TODO: If there are duplicate keys, do not set the `ChecksumMismatch` error
 				err = tr.compareChecksum(remoteChecksum, localChecksum)
 				// with post restore level 'optional', we will skip checksum error
 				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
@@ -758,19 +769,19 @@ func (tr *TableRestore) postProcess(
 						err = nil
 					}
 				}
-				if err == nil {
-					err = metaMgr.FinishTable(ctx)
-				}
-
-				saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusChecksummed)
-				if err = firstErr(err, saveCpErr); err != nil {
-					return false, errors.Trace(err)
-				}
-
-				cp.Status = checkpoints.CheckpointStatusChecksummed
-			} else {
-				finished = false
 			}
+			if err == nil {
+				err = metaMgr.FinishTable(ctx)
+			}
+
+			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusChecksummed)
+			if err = firstErr(err, saveCpErr); err != nil {
+				return false, errors.Trace(err)
+			}
+
+			cp.Status = checkpoints.CheckpointStatusChecksummed
+		} else {
+			finished = false
 		}
 	}
 	if !finished {

@@ -6250,7 +6250,8 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 		}
 		return ErrInvalidAttributesSpec.GenWithStackByArgs(err)
 	}
-	rule.Reset(meta.ID, schema.Name.L, meta.Name.L)
+	ids := getIDs([]*model.TableInfo{meta})
+	rule.Reset(schema.Name.L, meta.Name.L, "", ids...)
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -6297,7 +6298,7 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 		}
 		return ErrInvalidAttributesSpec.GenWithStackByArgs(sb.String(), err)
 	}
-	rule.Reset(partitionID, schema.Name.L, meta.Name.L, spec.PartitionNames[0].L)
+	rule.Reset(schema.Name.L, meta.Name.L, spec.PartitionNames[0].L, partitionID)
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
