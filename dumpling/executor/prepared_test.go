@@ -405,3 +405,47 @@ func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
 		}
 	}
 }
+
+func (s *testSerialSuite) TestIssue28064(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t28064")
+	tk.MustExec("CREATE TABLE `t28064` (" +
+		"`a` decimal(10,0) DEFAULT NULL," +
+		"`b` decimal(10,0) DEFAULT NULL," +
+		"`c` decimal(10,0) DEFAULT NULL," +
+		"`d` decimal(10,0) DEFAULT NULL," +
+		"KEY `iabc` (`a`,`b`,`c`));")
+	tk.MustExec("set @a='123', @b='234', @c='345';")
+	tk.MustExec("prepare stmt1 from 'select * from t28064 use index (iabc) where a = ? and b = ? and c = ?';")
+
+	tk.MustExec("execute stmt1 using @a, @b, @c;")
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	rows.Check(testkit.Rows("IndexLookUp_7 0.00 root  ",
+		"├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+
+	tk.MustExec("execute stmt1 using @a, @b, @c;")
+	rows = tk.MustQuery("select @@last_plan_from_cache")
+	rows.Check(testkit.Rows("1"))
+
+	tk.MustExec("execute stmt1 using @a, @b, @c;")
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	rows.Check(testkit.Rows("IndexLookUp_7 0.00 root  ",
+		"├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+}
