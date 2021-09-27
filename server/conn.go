@@ -694,7 +694,6 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 
 func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeResponse41) error {
 	if resp.Capability&mysql.ClientPluginAuth > 0 {
-
 		newAuth, err := cc.checkAuthPlugin(ctx, &resp.AuthPlugin)
 		if err != nil {
 			logutil.Logger(ctx).Warn("failed to check the user authplugin", zap.Error(err))
