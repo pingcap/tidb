@@ -193,6 +193,9 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowStatsHealthy:
 		e.fetchShowStatsHealthy()
 		return nil
+	case ast.ShowColumnStatsUsage:
+		// TODO: since we fetch column stats usage by loading from disk rather than cache, we can push down filters to make it efficient.
+		return e.fetchShowColumnStatsUsage()
 	case ast.ShowPlugins:
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:

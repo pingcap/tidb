@@ -335,3 +335,24 @@ func (s *testShowStatsSuite) TestShowStatsExtended(c *C) {
 	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
 	c.Assert(len(result.Rows()), Equals, 0)
 }
+
+func (s *testShowStatsSuite) TestShowColumnStatsUsage(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	h := s.domain.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("insert into t values (1,2,3), (4,5,6), (7,8,9)")
+	tk.MustExec("select * from t where a = 3")
+	// Here we execute `select 1` so that ResetContextOfStmt is called and StatementContext.ColStatsUsage is merged to session.statsCollector.
+	tk.MustExec("select 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	result := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't'").Sort()
+	c.Assert(len(result.Rows()), Equals, 1)
+	c.Assert(len(result.Rows()[0]), Equals, 6)
+	c.Assert(result.Rows()[0][0], Equals, "test")
+	c.Assert(result.Rows()[0][1], Equals, "t")
+	c.Assert(result.Rows()[0][2], Equals, "")
+	c.Assert(result.Rows()[0][3], Equals, "a")
+	c.Assert(result.Rows()[0][5], Equals, "0000-00-00 00:00:00")
+}
