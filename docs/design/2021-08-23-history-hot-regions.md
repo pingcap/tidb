@@ -162,16 +162,16 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
 
          > M of [varchar(M)](https://docs.pingcap.com/tidb/stable/data-type-string#varchar-type) represents the maximum column length in characters (not bytes). The space occupied by a single character might differ for different character sets, form 1 to 4 bytes. 
 
-         minimum： 1 * 4B(timestamp) + 1 * 1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64 * 1B(varchar(64)) = 333B
+         minimum： 1 * 4B(timestamp) + 2 * 1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64 * 1B(varchar(64)) = 334B
 
-         maximum： 1 * 4B(timestamp) + 1 * 1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64 * 4B(varchar(64)) = 1101B
+         maximum： 1 * 4B(timestamp) + 1 * 1B(tinyint) + 6 * 8B(bitint) + 3 * 8B(double)  + 4 * 64 * 4B(varchar(64)) = 1102B
 
          Below table show data size per day and per month with 10 minutes interval, given the maximum number of hotspot regions is 1000, Note that varchar is used to store the name of table index, and its true size is generally smaller than the minimum case:
 
-         | Record Length (B) | Time Interval (Min) | Data Size Per Day (MB) | Data Size Per Month (MB) |
-         | ----------------- | ------------------- | ---------------------- | ------------------------ |
-         | 333               | 10                  | 45.73059082            | 1371.917725              |
-         | 1101              | 10                  | 151.1993408            | 4535.980225              |
+         | Record Length (B) | Time Interval (Min) | Data Size Per Day (MB) | Data Size Per Week (MB) | Data Size Per Month (MB) |
+         | ----------------- | ------------------- | ---------------------- | ----------------------- | ------------------------ |
+         | 334               | 10                  | 45.86791992            | 321.0754395             | 1376.037598              |
+         | 1102              | 10                  | 151.3366699            | 1059.356689             | 4540.100098              |
 
      * The amount of data stored for one month is as follows.
 
