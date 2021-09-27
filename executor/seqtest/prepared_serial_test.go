@@ -885,11 +885,6 @@ func TestPreparedIssue17419(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	tk1.SetSession(se)
-	tk1.RefreshConnectionID()
-
 	query := "select * from test.t"
 	stmtID, _, _, err := tk1.Session().PrepareStmt(query)
 	require.NoError(t, err)

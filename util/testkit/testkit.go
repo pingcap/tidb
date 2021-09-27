@@ -168,7 +168,6 @@ func MockGC(tk *TestKit) (string, string, string, func()) {
 var connectionID uint64
 
 // GetConnectionID get the connection ID for tk.Se
-// NOTE: Use RefreshConnectionID when migrate to pingcap/tidb/testkit
 func (tk *TestKit) GetConnectionID() {
 	if tk.Se != nil {
 		id := atomic.AddUint64(&connectionID, 1)
