@@ -64,7 +64,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210918071319-6ca8098ae0fe
+	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210926100628-3cc2459779ca
 	github.com/tikv/pd v1.1.0-beta.0.20210818082359-acba1da0018d
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -75,9 +75,9 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b
 	go.uber.org/atomic v1.9.0
 	go.uber.org/automaxprocs v1.4.0
-	go.uber.org/goleak v1.1.10
+	go.uber.org/goleak v1.1.11-0.20210813005559-691160354723
 	go.uber.org/multierr v1.7.0
-	go.uber.org/zap v1.19.0
+	go.uber.org/zap v1.19.1
 	golang.org/x/net v0.0.0-20210503060351-7fd8e65b6420
 	golang.org/x/oauth2 v0.0.0-20210805134026-6f1e6394065a
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c

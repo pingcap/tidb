@@ -302,13 +302,15 @@ func checkPlacementPolicyNotInUse(d *ddlCtx, t *meta.Meta, policy *model.PolicyI
 
 func checkPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy *model.PolicyInfo) error {
 	for _, dbInfo := range is.AllSchemas() {
-		// TODO: check policy is not in use for databases
+		if ref := dbInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
+			return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+		}
+
 		for _, tbl := range is.SchemaTables(dbInfo.Name) {
 			tblInfo := tbl.Meta()
-			if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
-				return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+			if err := checkPlacementPolicyNotUsedByTable(tblInfo, policy); err != nil {
+				return err
 			}
-			// TODO: check policy is not in use for partitions
 		}
 	}
 	return nil
@@ -354,18 +356,36 @@ func checkPlacementPolicyNotInUseFromMeta(t *meta.Meta, policy *model.PolicyInfo
 	}
 
 	for _, dbInfo := range schemas {
-		// TODO: check policy is not in use for databases
+		if ref := dbInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
+			return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+		}
+
 		tables, err := t.ListTables(dbInfo.ID)
 		if err != nil {
 			return err
 		}
 
 		for _, tblInfo := range tables {
-			if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
-				return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+			if err := checkPlacementPolicyNotUsedByTable(tblInfo, policy); err != nil {
+				return err
 			}
-			// TODO: check policy is not in use for partitions
 		}
 	}
+	return nil
+}
+
+func checkPlacementPolicyNotUsedByTable(tblInfo *model.TableInfo, policy *model.PolicyInfo) error {
+	if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
+		return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+	}
+
+	if tblInfo.Partition != nil {
+		for _, partition := range tblInfo.Partition.Definitions {
+			if ref := partition.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
+				return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+			}
+		}
+	}
+
 	return nil
 }
