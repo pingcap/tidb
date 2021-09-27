@@ -1952,7 +1952,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 		column.DefaultValue = []byte{}
 
 		data = data[0:4]
-		data = column.Dump(data, cc.getTextDumper().encode)
+		data = column.Dump(data, cc.textDumper)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
@@ -2000,13 +2000,6 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	return false, cc.flush(ctx)
 }
 
-func (cc *clientConn) getTextDumper() *textDumper {
-	if cc.textDumper == nil {
-		return &textDumper{}
-	}
-	return cc.textDumper
-}
-
 func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
@@ -2015,7 +2008,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 	}
 	for _, v := range columns {
 		data = data[0:4]
-		data = v.Dump(data, cc.getTextDumper().encode)
+		data = v.Dump(data, cc.textDumper)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
@@ -2075,7 +2068,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			if binary {
 				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i))
 			} else {
-				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i), cc.getTextDumper())
+				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i), cc.textDumper)
 			}
 			if err != nil {
 				reg.End()

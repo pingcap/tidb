@@ -38,7 +38,6 @@ package server
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -285,6 +284,7 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 }
 
 type textDumper struct {
+	chsName  string
 	encoding charset.Encoding
 	buffer   []byte
 	isBinary bool
@@ -293,12 +293,13 @@ type textDumper struct {
 
 // newTextDumper creates a new textDumper.
 func newTextDumper(chs string) *textDumper {
-	chsName := charset.Format(chs)
-	ret := &textDumper{}
-	ret.encoding.UpdateEncoding(chsName)
-	ret.isBinary = chsName == charset.CharsetBinary
-	ret.isNull = len(chsName) == 0
-	return ret
+	return &textDumper{
+		chsName:  chs,
+		encoding: *charset.NewEncoding(chs),
+		buffer:   nil,
+		isBinary: chs == charset.CharsetBinary,
+		isNull:   len(chs) == 0,
+	}
 }
 
 // clean prevent the textDumper from holding too much memory.
@@ -312,22 +313,19 @@ func (d *textDumper) charsetNeedDynUpdate() bool {
 
 func (d *textDumper) encode(src []byte) []byte {
 	if !d.encoding.Enabled() {
-		if d.isBinary {
-			return []byte(fmt.Sprintf("0x%X", src))
-		}
 		return src
 	}
 	result, err := d.encoding.Encode(d.buffer, src)
 	if err != nil {
 		logutil.BgLogger().Debug("encode error", zap.Error(err))
 	}
-	if d.isBinary {
-		return []byte(fmt.Sprintf("0x%X", result))
-	}
 	return result
 }
 
 func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *textDumper) ([]byte, error) {
+	if d == nil {
+		d = &textDumper{}
+	}
 	tmp := make([]byte, 0, 20)
 	if d.charsetNeedDynUpdate() {
 		origin := d.encoding.Name()

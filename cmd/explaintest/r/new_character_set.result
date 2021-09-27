@@ -29,12 +29,12 @@ a	b
 һ	一
 set @@character_set_results = BINARY;
 select * from t;
-0x61	0x62
-0xD2BB	0xE4B880
+a	b
+һ	一
 set @@character_set_results = "BINARY";
 select * from t;
-0x61	0x62
-0xD2BB	0xE4B880
+a	b
+һ	一
 set names utf8mb4;
 select * from t;
 a	b

@@ -37,7 +37,10 @@ type ColumnInfo struct {
 }
 
 // Dump dumps ColumnInfo to bytes.
-func (column *ColumnInfo) Dump(buffer []byte, encoder func([]byte) []byte) []byte {
+func (column *ColumnInfo) Dump(buffer []byte, d *textDumper) []byte {
+	if d == nil {
+		d = &textDumper{}
+	}
 	nameDump, orgnameDump := []byte(column.Name), []byte(column.OrgName)
 	if len(nameDump) > maxColumnNameSize {
 		nameDump = nameDump[0:maxColumnNameSize]
@@ -46,15 +49,19 @@ func (column *ColumnInfo) Dump(buffer []byte, encoder func([]byte) []byte) []byt
 		orgnameDump = orgnameDump[0:maxColumnNameSize]
 	}
 	buffer = dumpLengthEncodedString(buffer, []byte("def"))
-	buffer = dumpLengthEncodedString(buffer, encoder([]byte(column.Schema)))
-	buffer = dumpLengthEncodedString(buffer, encoder([]byte(column.Table)))
-	buffer = dumpLengthEncodedString(buffer, encoder([]byte(column.OrgTable)))
-	buffer = dumpLengthEncodedString(buffer, encoder(nameDump))
-	buffer = dumpLengthEncodedString(buffer, encoder(orgnameDump))
+	buffer = dumpLengthEncodedString(buffer, d.encode([]byte(column.Schema)))
+	buffer = dumpLengthEncodedString(buffer, d.encode([]byte(column.Table)))
+	buffer = dumpLengthEncodedString(buffer, d.encode([]byte(column.OrgTable)))
+	buffer = dumpLengthEncodedString(buffer, d.encode(nameDump))
+	buffer = dumpLengthEncodedString(buffer, d.encode(orgnameDump))
 
 	buffer = append(buffer, 0x0c)
 
-	buffer = dumpUint16(buffer, column.Charset)
+	if !d.isNull && len(d.chsName) > 0 {
+		buffer = dumpUint16(buffer, uint16(mysql.CharsetNameToID(d.chsName)))
+	} else {
+		buffer = dumpUint16(buffer, column.Charset)
+	}
 	buffer = dumpUint32(buffer, column.ColumnLength)
 	buffer = append(buffer, dumpType(column.Type))
 	buffer = dumpUint16(buffer, dumpFlag(column.Type, column.Flag))

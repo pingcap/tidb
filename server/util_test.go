@@ -102,7 +102,7 @@ func TestTextDumper(t *testing.T) {
 	// Encode bytes to binary.
 	d = newTextDumper("binary")
 	result = d.encode([]byte("一"))
-	require.Equal(t, "0xE4B880", string(result))
+	require.Equal(t, "一", string(result))
 
 	d = newTextDumper("")
 	require.True(t, d.charsetNeedDynUpdate())
