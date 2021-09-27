@@ -539,7 +539,7 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 				}
 				return errors.Trace(err)
 			}
-			// No error, contine the next stmtTask.
+			// No error, continue the next stmtTask.
 			break
 		}
 	}
