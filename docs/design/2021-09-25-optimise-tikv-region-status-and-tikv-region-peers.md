@@ -67,7 +67,7 @@ TiDB
 
 PD 
 
-1. add http interface `ScanRegionsInKeys` to scan regions in a given key range. 
+1. add http interface `ScanRegionsByKeys` to scan regions in a given key range. 
 2. Add support of this api in pd-ctl tool.
 
 ### TIKV_REGION_PEERS
@@ -154,8 +154,8 @@ The alteration steps are as follows：
 
 - /tidb/TikvRegionStatusExtractor & TikvRegionPeersExtractor
 - /tidb/tikvRegionStatusRetriever & tikvRegionPeersRetriever
-- /pd/ScanRegionsInKeys
-- /pd/pd-ctl/ScanRegionsInKeys
+- /pd/ScanRegionsByKeys
+- /pd/pd-ctl/ScanRegionsByKeys
 
 ### **Scenario Tests**
 
