@@ -1047,3 +1047,290 @@ func (s *extractorSuite) TestInspectionRuleTableExtractor(c *C) {
 		c.Assert(clusterConfigExtractor.SkipRequest, Equals, ca.skip, Commentf("SQL: %v", ca.sql))
 	}
 }
+
+func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	se.GetSessionVars().StmtCtx.TimeZone = time.Local
+
+	var cases = []struct {
+		sql                          string
+		skipRequest                  bool
+		startTime, endTime           int64
+		regionIDs, storeIDs, peerIDs []uint64
+		isLearners, isLeaders        []uint64
+		hotRegionTypes               set.StringSet
+	}{
+		// Test full data, it will not call Extract() and executor(retriver) will panic and remind user to add conditions to save network IO.
+		{
+			sql: "select * from information_schema.tidb_hot_regions_history",
+		},
+		// Test startTime and endTime.
+		{
+			// Test for invalid update_time.
+			sql: "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10::10'",
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10:10:10'",
+			startTime: timestamp(c, "2019-10-10 10:10:10"),
+			endTime:   timestamp(c, "2019-10-10 10:10:10"),
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and update_time<='2019-10-11 10:10:10'",
+			startTime: timestamp(c, "2019-10-10 10:10:10"),
+			endTime:   timestamp(c, "2019-10-11 10:10:10"),
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where update_time>'2019-10-10 10:10:10' and update_time<'2019-10-11 10:10:10'",
+			startTime: timestamp(c, "2019-10-10 10:10:10") + 1,
+			endTime:   timestamp(c, "2019-10-11 10:10:10") - 1,
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and update_time<'2019-10-11 10:10:10'",
+			startTime: timestamp(c, "2019-10-10 10:10:10"),
+			endTime:   timestamp(c, "2019-10-11 10:10:10") - 1,
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-12 10:10:10' and update_time<'2019-10-11 10:10:10'",
+			startTime:   timestamp(c, "2019-10-12 10:10:10"),
+			endTime:     timestamp(c, "2019-10-11 10:10:10") - 1,
+			skipRequest: true,
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10'",
+			startTime: timestamp(c, "2019-10-10 10:10:10"),
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and  update_time>='2019-10-11 10:10:10' and  update_time>='2019-10-12 10:10:10'",
+			startTime: timestamp(c, "2019-10-12 10:10:10"),
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and  update_time>='2019-10-11 10:10:10' and  update_time>='2019-10-12 10:10:10' and update_time='2019-10-13 10:10:10'",
+			startTime: timestamp(c, "2019-10-13 10:10:10"),
+			endTime:   timestamp(c, "2019-10-13 10:10:10"),
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where update_time<='2019-10-10 10:10:10' and update_time='2019-10-13 10:10:10'",
+			startTime:   timestamp(c, "2019-10-13 10:10:10"),
+			endTime:     timestamp(c, "2019-10-10 10:10:10"),
+			skipRequest: true,
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10:10:10' and update_time<='2019-10-13 10:10:10'",
+			startTime: timestamp(c, "2019-10-10 10:10:10"),
+			endTime:   timestamp(c, "2019-10-10 10:10:10"),
+		},
+
+		// Test `region_id`, `store_id`, `peer_id` columns.
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where region_id=100",
+			regionIDs: []uint64{100},
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where 100=region_id",
+			regionIDs: []uint64{100},
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where 100=region_id or region_id=101",
+			regionIDs: []uint64{100, 101},
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where 100=region_id or region_id=101 or region_id=102 or 103 = region_id",
+			regionIDs: []uint64{100, 101, 102, 103},
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where (region_id=100 or region_id=101) and (store_id=200 or store_id=201)",
+			regionIDs: []uint64{100, 101},
+			storeIDs:  []uint64{200, 201},
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where region_id in (100, 101)",
+			regionIDs: []uint64{100, 101},
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where region_id in (100, 101) and store_id=200",
+			regionIDs: []uint64{100, 101},
+			storeIDs:  []uint64{200},
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where region_id in (100, 101) and store_id in (200, 201)",
+			regionIDs: []uint64{100, 101},
+			storeIDs:  []uint64{200, 201},
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where region_id=100 and store_id in (200, 201)",
+			regionIDs: []uint64{100},
+			storeIDs:  []uint64{200, 201},
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where region_id=100 and store_id=200",
+			regionIDs: []uint64{100},
+			storeIDs:  []uint64{200},
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id=101",
+			skipRequest: true,
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (100,101)",
+			regionIDs: []uint64{100},
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (100,101) and store_id=200 and store_id in (200,201)",
+			regionIDs: []uint64{100},
+			storeIDs:  []uint64{200},
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (101,102)",
+			skipRequest: true,
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (101,102) and store_id=200 and store_id in (200,201)",
+			skipRequest: true,
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (100,101) and store_id=200 and store_id in (201,202)",
+			skipRequest: true,
+		},
+		{
+			sql: `select * from information_schema.tidb_hot_regions_history 
+								where region_id=100 and region_id in (100,101) 
+								and store_id=200 and store_id in (201,202)`,
+			skipRequest: true,
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where region_id in (100,101) and region_id in (101,102)",
+			regionIDs: []uint64{101},
+		},
+		{
+			sql: `select * from information_schema.tidb_hot_regions_history 
+							where region_id in (100,101) 
+							and region_id in (101,102) 
+							and store_id in (200,201) 
+							and store_id in (201,202)`,
+			regionIDs: []uint64{101},
+			storeIDs:  []uint64{201},
+		},
+		{
+			sql: `select * from information_schema.tidb_hot_regions_history 
+							where region_id in (100,101) 
+							and region_id in (101,102) 
+							and store_id in (200,201) 
+							and store_id in (201,202)
+							and peer_id in (3000,3001)
+							and peer_id in (3001,3002)`,
+			regionIDs: []uint64{101},
+			storeIDs:  []uint64{201},
+			peerIDs:   []uint64{3001},
+		},
+		{
+			sql: `select * from information_schema.tidb_hot_regions_history 
+							where region_id in (100,101) 
+							and region_id in (100,102) 
+							and region_id in (102,103) 
+							and region_id in (103,104)`,
+			skipRequest: true,
+		},
+		// Test `type` column.
+		{
+			sql:            "select * from information_schema.tidb_hot_regions_history where type='read'",
+			hotRegionTypes: set.NewStringSet("read"),
+		},
+		{
+			sql:            "select * from information_schema.tidb_hot_regions_history where type in('read')",
+			hotRegionTypes: set.NewStringSet("read"),
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where type='read' and type='write'",
+			skipRequest: true,
+		},
+		{
+			sql:            "select * from information_schema.tidb_hot_regions_history where type in ('read', 'write')",
+			hotRegionTypes: set.NewStringSet("read", "write"),
+		},
+		{
+			sql:            "select * from information_schema.tidb_hot_regions_history where type='read' and type in ('read', 'write')",
+			hotRegionTypes: set.NewStringSet("read"),
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where type in ('read') and type in ('write')",
+			skipRequest: true,
+		},
+		// Test `is_learner`, `is_leaeder` columns.
+		{
+			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner=1",
+			isLearners: []uint64{1},
+		},
+		{
+			sql:       "select * from information_schema.tidb_hot_regions_history where is_leader=0",
+			isLeaders: []uint64{0},
+		},
+		{
+			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner=true",
+			isLearners: []uint64{1},
+		},
+		{
+			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner in(0,1)",
+			isLearners: []uint64{0, 1},
+		},
+		{
+			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner in(true,false)",
+			isLearners: []uint64{0, 1},
+		},
+		{
+			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner in(3,4)",
+			isLearners: []uint64{3, 4},
+		},
+		{
+			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner in(3,4) and is_leader in(0,1,true,false,3,4)",
+			isLearners: []uint64{3, 4},
+			isLeaders:  []uint64{0, 1, 3, 4},
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where is_learner=1 and is_learner=0",
+			skipRequest: true,
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where is_learner=3 and is_learner=false",
+			skipRequest: true,
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where is_learner=3 and is_learner=4",
+			skipRequest: true,
+		},
+	}
+
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
+		c.Assert(logicalMemTable.Extractor, NotNil, Commentf("SQL: %v", ca.sql))
+
+		hotRegionsHistoryExtractor := logicalMemTable.Extractor.(*plannercore.HotRegionsHistoryTableExtractor)
+		if ca.startTime > 0 {
+			c.Assert(hotRegionsHistoryExtractor.StartTime, Equals, ca.startTime, Commentf("SQL: %v", ca.sql))
+		}
+		if ca.endTime > 0 {
+			c.Assert(hotRegionsHistoryExtractor.EndTime, Equals, ca.endTime, Commentf("SQL: %v", ca.sql))
+		}
+		c.Assert(hotRegionsHistoryExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
+		if len(ca.isLearners) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.IsLearners, DeepEquals, ca.isLearners, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.isLeaders) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.IsLeaders, DeepEquals, ca.isLeaders, Commentf("SQL: %v", ca.sql))
+		}
+		if ca.hotRegionTypes.Count() > 0 {
+			c.Assert(hotRegionsHistoryExtractor.HotRegionTypes, DeepEquals, ca.hotRegionTypes, Commentf("SQL: %v", ca.sql))
+		}
+		// ues length to avoid case uint64{} != uint64(nil)
+		if len(ca.regionIDs) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.RegionIDs, DeepEquals, ca.regionIDs, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.storeIDs) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.StoreIDs, DeepEquals, ca.storeIDs, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.peerIDs) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.PeerIDs, DeepEquals, ca.peerIDs, Commentf("SQL: %v", ca.sql))
+		}
+	}
+}
