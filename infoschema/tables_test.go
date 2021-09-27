@@ -1952,7 +1952,4 @@ func (s *testClusterTableSuite) TestIssue26379(c *C) {
 	tk.MustQuery("select count(*) from information_schema.statements_summary where digest is null").Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from information_schema.cluster_statements_summary where digest=''").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from information_schema.cluster_statements_summary where digest is null").Check(testkit.Rows("1"))
-
-	// Test explain
-	tk.MustQuery("explain select digest from information_schema.statements_summary where digest is null").Check(testkit.Rows(`Selection_5 8000.00 root  isnull(Column#5)`, `└─MemTableScan_6 10000.00 root table:STATEMENTS_SUMMARY `))
 }
