@@ -320,6 +320,8 @@ type Log struct {
 	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
 	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+	AuditLogFile        string `toml:"audit-log-file" json:"audit-log-file"`
+	AuditLogMaxSize     int    `toml:"audit-log-max-size" json:"audit-log-max-size"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -608,6 +610,8 @@ var defaultConf = Config{
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 		EnableSlowLog:       logutil.DefaultTiDBEnableSlowLog,
+		AuditLogFile:        "tidb-audit.log",
+		AuditLogMaxSize:     logutil.DefaultAuditLogMaxSize,
 	},
 	Status: Status{
 		ReportStatus:    true,

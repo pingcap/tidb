@@ -164,6 +164,12 @@ expensive-threshold = 10000
 # Maximum query length recorded in log.
 query-log-max-len = 4096
 
+# Stores audit log into separated files.
+audit-log-file = "tidb-audit.log"
+
+# Max audit log file size im MB (upper limit to 4096MB).
+audit-log-max-size = 10
+
 # File logging.
 [log.file]
 # Log file name.

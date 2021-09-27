@@ -236,6 +236,9 @@ deadlock-history-capacity = 123
 deadlock-history-collect-retryable = true
 [top-sql]
 receiver-address = "127.0.0.1:10100"
+[log]
+audit-log-file = "audit.log"
+audit-log-max-size = 5
 `)
 
 	require.NoError(t, err)
@@ -292,6 +295,8 @@ receiver-address = "127.0.0.1:10100"
 	require.True(t, conf.PessimisticTxn.DeadlockHistoryCollectRetryable)
 	require.False(t, conf.Experimental.EnableNewCharset)
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
+	require.Equal(t, "audit.log", conf.Log.AuditLogFile)
+	require.Equal(t, 5, conf.Log.AuditLogMaxSize)
 
 	_, err = f.WriteString(`
 [log.file]
