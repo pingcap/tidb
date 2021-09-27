@@ -412,7 +412,6 @@ func TestLocalTemporaryTable(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1;")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tmp2")
 	tk.MustExec("create temporary table tmp2 (a int, b int, key(a), key(b));")

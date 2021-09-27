@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
@@ -1360,7 +1361,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 
 	ctx := context.Background()
 	cfg := config.NewConfig()
-	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
+	errorMgr := errormanager.New(nil, cfg)
+	rc := &Controller{pauser: DeliverPauser, cfg: cfg, errorMgr: errorMgr}
 
 	reader, err := store.Open(ctx, fileName)
 	c.Assert(err, IsNil)
@@ -1374,7 +1376,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup).NewEncoder(
+	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup, errorMgr).NewEncoder(
 		s.tr.encTable,
 		&kv.SessionOptions{
 			SQLMode:   s.cfg.TiDB.SQLMode,

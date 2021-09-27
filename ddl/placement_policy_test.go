@@ -219,7 +219,7 @@ func (s *testDBSuite6) TestConstraintCompatibility(c *C) {
 			err := tk.ExecToErr(sql)
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Equals, ca.errmsg)
-			tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x REGIONS=\"cn-east1,cn-east\" SCHEDULED"))
+			tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x REGIONS=\"cn-east1,cn-east\""))
 		}
 	}
 	tk.MustExec("drop placement policy x")
@@ -234,20 +234,20 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 
 	// test for normal cases
 	tk.MustExec("alter placement policy x REGIONS=\"bj,sh\"")
-	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x REGIONS=\"bj,sh\" SCHEDULED"))
+	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x REGIONS=\"bj,sh\""))
 
 	tk.MustExec("alter placement policy x " +
 		"PRIMARY_REGION=\"bj\" " +
 		"REGIONS=\"sh\" " +
 		"SCHEDULE=\"EVEN\"")
-	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"sh\" SCHEDULE=\"EVEN\" SCHEDULED"))
+	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"sh\" SCHEDULE=\"EVEN\""))
 
 	tk.MustExec("alter placement policy x " +
 		"LEADER_CONSTRAINTS=\"[+region=us-east-1]\" " +
 		"FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" " +
 		"FOLLOWERS=3")
 	tk.MustQuery("show placement where target='POLICY x'").Check(
-		testkit.Rows("POLICY x LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" SCHEDULED"),
+		testkit.Rows("POLICY x LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\""),
 	)
 
 	tk.MustExec("alter placement policy x " +
@@ -257,7 +257,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 		"VOTERS=5 " +
 		"LEARNERS=3")
 	tk.MustQuery("show placement where target='POLICY x'").Check(
-		testkit.Rows("POLICY x CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" SCHEDULED"),
+		testkit.Rows("POLICY x CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\""),
 	)
 
 	// test alter not exist policies
@@ -380,6 +380,7 @@ func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 	tk.MustExec("drop placement policy if exists p1")
 	tk.MustExec("drop placement policy if exists p2")
 	tk.MustExec("drop placement policy if exists p3")
+	tk.MustExec("drop placement policy if exists p4")
 
 	// p1 is used by test.t11 and test2.t21
 	tk.MustExec("create placement policy p1 " +
@@ -401,7 +402,7 @@ func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 	tk.MustExec("create table test.t12 (id int) placement policy 'p2'")
 	defer tk.MustExec("drop table if exists test.t12")
 
-	// p1 is used by test2.t22
+	// p3 is used by test2.t22
 	tk.MustExec("create placement policy p3 " +
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
@@ -410,12 +411,21 @@ func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 	tk.MustExec("create table test.t21 (id int) placement policy 'p3'")
 	defer tk.MustExec("drop table if exists test.t21")
 
+	// p4 is used by test_p
+	tk.MustExec("create placement policy p4 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"SCHEDULE=\"EVEN\"")
+	defer tk.MustExec("drop placement policy if exists p4")
+	tk.MustExec("create database test_p placement policy 'p4'")
+	defer tk.MustExec("drop database if exists test_p")
+
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer func() {
 		c.Assert(txn.Rollback(), IsNil)
 	}()
-	for _, policyName := range []string{"p1", "p2", "p3"} {
+	for _, policyName := range []string{"p1", "p2", "p3", "p4"} {
 		err := tk.ExecToErr(fmt.Sprintf("drop placement policy %s", policyName))
 		c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:8241]Placement policy '%s' is still in use", policyName))
 
@@ -472,7 +482,7 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
 	tk.MustExec("create placement policy x primary_region=\"r1\" regions=\"r1,r2\" schedule=\"EVEN\";")
 	po := testGetPolicyByName(c, tk.Se, "x", true)
 	c.Assert(po, NotNil)
-	tk.MustQuery("show placement").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" SCHEDULED"))
+	tk.MustQuery("show placement").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\""))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int) placement policy \"x\"")
