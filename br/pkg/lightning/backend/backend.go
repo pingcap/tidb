@@ -359,12 +359,13 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 	}, nil
 }
 
-func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
-	return be.abstract.CollectLocalDuplicateRows(ctx, tbl)
+func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
+	return be.abstract.CollectLocalDuplicateRows(ctx, tbl, tableName)
 }
 
-func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
-	return be.abstract.CollectRemoteDuplicateRows(ctx, tbl)
+func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
+	return be.abstract.CollectRemoteDuplicateRows(ctx, tbl, tableName)
+}
 }
 
 // Close the opened engine to prepare it for importing.

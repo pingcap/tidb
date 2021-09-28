@@ -41,8 +41,9 @@ func (t *TableKVDecoder) DecodeHandleFromTable(key []byte) (kv.Handle, error) {
 	return tablecodec.DecodeRowKey(key)
 }
 
-func (t *TableKVDecoder) EncodeHandleKey(h kv.Handle) kv.Key {
-	return tablecodec.EncodeRowKeyWithHandle(t.tbl.Meta().ID, h)
+func (t *TableKVDecoder) EncodeHandleKey(tableID int64, h kv.Handle) kv.Key {
+	// do not ever ever use tbl.Meta().ID, we need to deal with partitioned tables!
+	return tablecodec.EncodeRowKeyWithHandle(tableID, h)
 }
 
 func (t *TableKVDecoder) DecodeHandleFromIndex(indexInfo *model.IndexInfo, key []byte, value []byte) (kv.Handle, error) {

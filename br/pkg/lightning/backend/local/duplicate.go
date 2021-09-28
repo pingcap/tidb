@@ -405,7 +405,7 @@ func (manager *DuplicateManager) storeDuplicateData(
 			indexHandles.append(
 				conflictInfo,
 				req.indexInfo.Name.O,
-				h, decoder.EncodeHandleKey(h))
+				h, decoder.EncodeHandleKey(req.tableID, h))
 		} else {
 			conflictInfo.Row = decoder.DecodeRawRowDataAsStr(h, kv.Value)
 			dataConflictInfos = append(dataConflictInfos, conflictInfo)
@@ -516,6 +516,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 		}
 		allRanges = append(allRanges, keysRanges...)
 		for _, r := range keysRanges {
+			tableID := tablecodec.DecodeTableID(r.StartKey)
 			startKey := codec.EncodeBytes([]byte{}, r.StartKey)
 			endKey := codec.EncodeBytes([]byte{}, r.EndKey)
 			opts := &pebble.IterOptions{
@@ -557,7 +558,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 						},
 						indexInfo.Name.O,
 						h,
-						decoder.EncodeHandleKey(h))
+						decoder.EncodeHandleKey(tableID, h))
 					if handles.Len() > maxGetRequestKeyCount {
 						handles = manager.getValues(ctx, decoder, handles)
 					}
