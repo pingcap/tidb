@@ -5828,8 +5828,6 @@ func (c *makeTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	switch tp {
 	case types.ETString:
 		decimal = 6
-	case types.ETInt:
-		decimal = 0
 	default:
 		decimal = args[2].GetType().Decimal
 	}
