@@ -61,6 +61,7 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 	}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
 	require.Error(t, err)
 	require.Equal(t, codes.Canceled, status.Code(errors.Cause(err)))
@@ -96,10 +97,8 @@ func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
 			},
 		},
 	}
-
-=======
-	kvStores, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
-	require.Len(t, kvStores, 0)
+	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
+	require.Error(t, err)
 	require.Equal(t, codes.Canceled, status.Code(errors.Cause(err)))
 }
 
@@ -140,12 +139,17 @@ func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
 	}
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
 	require.Error(t, err)
 =======
 	kvStores, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
 	require.Len(t, kvStores, 0)
 >>>>>>> fix issue 27015
+=======
+	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
+	require.Error(t, err)
+>>>>>>> fix comments - add general function isRetryableError
 	require.Equal(t, codes.Unknown, status.Code(errors.Cause(err)))
 }
 func TestCheckStoresAlive(t *testing.T) {

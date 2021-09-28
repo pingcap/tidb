@@ -4,18 +4,14 @@ package utils
 
 import (
 	"context"
-	"database/sql"
-	stderrors "errors"
 	"io"
 	"net"
-	"reflect"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	serrors "github.com/pingcap/errors"
+	terror "github.com/pingcap/tidb/errno"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -58,9 +54,11 @@ func WithRetry(
 		err := retryableFunc()
 		if err != nil {
 			allErrors = multierr.Append(allErrors, err)
-			if status.Code(serrors.Cause(err)) == codes.Canceled { // current context cancelled, stop retry
+			retry := isRetryableError(err)
+			if !retry { // exited retry
 				return allErrors
 			}
+
 			select {
 			case <-ctx.Done():
 				return allErrors // nolint:wrapcheck
@@ -85,19 +83,12 @@ func MessageIsRetryableStorageError(msg string) bool {
 	return false
 }
 
-// sqlmock uses fmt.Errorf to produce expectation failures, which will cause
-// unnecessary retry if not specially handled >:(
-var stdFatalErrorsRegexp = regexp.MustCompile(
-	`^call to (?s:.*) was not expected|arguments do not match:|could not match actual sql|mock non-retryable error`,
-)
-var stdErrorType = reflect.TypeOf(stderrors.New(""))
-
 // IsRetryableError returns whether the error is transient (e.g. network
 // connection dropped) or irrecoverable (e.g. user pressing Ctrl+C). This
 // function returns `false` (irrecoverable) if `err == nil`.
 //
 // If the error is a multierr, returns true only if all suberrors are retryable.
-func IsRetryableError(err error) bool {
+func isRetryableError(err error) bool {
 	for _, singleError := range errors.Errors(err) {
 		if !isSingleRetryableError(singleError) {
 			return false
@@ -110,7 +101,7 @@ func isSingleRetryableError(err error) bool {
 	err = errors.Cause(err)
 
 	switch err {
-	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
+	case nil, context.Canceled, context.DeadlineExceeded, io.EOF:
 		return false
 	}
 
@@ -120,7 +111,7 @@ func isSingleRetryableError(err error) bool {
 	case *mysql.MySQLError:
 		switch nerr.Number {
 		// ErrLockDeadlock can retry to commit while meet deadlock
-		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrWriteConflictInTiDB, tmysql.ErrPDServerTimeout, tmysql.ErrTiKVServerTimeout, tmysql.ErrTiKVServerBusy, tmysql.ErrResolveLockTimeout, tmysql.ErrRegionUnavailable:
+		case terror.ErrUnknown, terror.ErrLockDeadlock, terror.ErrWriteConflictInTiDB, terror.ErrPDServerTimeout, terror.ErrTiKVServerTimeout, terror.ErrTiKVServerBusy, terror.ErrResolveLockTimeout, terror.ErrRegionUnavailable:
 			return true
 		default:
 			return false
@@ -130,9 +121,6 @@ func isSingleRetryableError(err error) bool {
 		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
 			return true
 		case codes.Unknown:
-			if reflect.TypeOf(err) == stdErrorType {
-				return !stdFatalErrorsRegexp.MatchString(err.Error())
-			}
 			return true
 		default:
 			return false
