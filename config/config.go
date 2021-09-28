@@ -871,6 +871,9 @@ func (c *Config) Valid() error {
 	if c.Log.File.MaxSize > MaxLogFileSize {
 		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.File.MaxSize, MaxLogFileSize)
 	}
+	if c.Log.AuditLogMaxSize > MaxLogFileSize {
+		return fmt.Errorf("invalid max log file size=%v which is larger than max=%v", c.Log.AuditLogMaxSize, MaxLogFileSize)
+	}
 	c.OOMAction = strings.ToLower(c.OOMAction)
 	if c.OOMAction != OOMActionLog && c.OOMAction != OOMActionCancel {
 		return fmt.Errorf("unsupported OOMAction %v, TiDB only supports [%v, %v]", c.OOMAction, OOMActionLog, OOMActionCancel)
