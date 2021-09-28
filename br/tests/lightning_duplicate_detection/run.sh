@@ -16,7 +16,7 @@
 
 set -eux
 
-check_cluster_version 4 0 0 'local backend' || exit 0
+check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
 LOG_FILE1="$TEST_DIR/lightning-duplicate-detection1.log"
 LOG_FILE2="$TEST_DIR/lightning-duplicate-detection2.log"
