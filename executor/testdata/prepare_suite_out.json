@@ -214,6 +214,852 @@
             "Result": null
           }
         ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select cast(? as decimal)\"",
+        "Executes": [
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"123456789.0123456789012345678901234567890123456789\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(len:78)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "0",
+            "Result": [
+              "123456789"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"1234567.1234567\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(1234567.1234567, decimal(10,0) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "1234567"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"0.99999\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(0.99999, decimal(10,0) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "1"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"99999.0\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(99999.0, decimal(10,0) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "99999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-123456789.0123456789012345678901234567890123456789\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decima(len:79)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-123456789"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-1234567.1234567\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-1234567.1234567, decimal(10,0) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-1234567"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-0.99999\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-0.99999, decimal(10,0) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-1"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-99999.0\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-99999.0, decimal(10,0) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-99999"
+            ]
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select cast(? as decimal(10,0))\"",
+        "Executes": [
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"123456789.0123456789012345678901234567890123456789\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(len:78)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "0",
+            "Result": [
+              "123456789"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"1234567.1234567\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(1234567.1234567, decimal(10,0) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "1234567"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"0.99999\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(0.99999, decimal(10,0) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "1"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"99999.0\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(99999.0, decimal(10,0) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "99999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-123456789.0123456789012345678901234567890123456789\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decima(len:79)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-123456789"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-1234567.1234567\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-1234567.1234567, decimal(10,0) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-1234567"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-0.99999\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-0.99999, decimal(10,0) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-1"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-99999.0\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-99999.0, decimal(10,0) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-99999"
+            ]
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select cast(? as decimal(5,4))\"",
+        "Executes": [
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"123456789.0123456789012345678901234567890123456789\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(len:77)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "0",
+            "Result": [
+              "9.9999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"1234567.1234567\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(1234567.1234567, decimal(5,4) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "9.9999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"0.99999\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(0.99999, decimal(5,4) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "1.0000"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"99999.0\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(99999.0, decimal(5,4) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "9.9999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-123456789.0123456789012345678901234567890123456789\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decima(len:78)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-9.9999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-1234567.1234567\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-1234567.1234567, decimal(5,4) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-9.9999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-0.99999\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-0.99999, decimal(5,4) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-1.0000"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-99999.0\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-99999.0, decimal(5,4) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-9.9999"
+            ]
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select cast(? as decimal(64, 30))\"",
+        "Executes": [
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"123456789.0123456789012345678901234567890123456789\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(len:79)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "0",
+            "Result": [
+              "123456789.012345678901234567890123456789"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"1234567.1234567\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(1234567.1234567, decimal(64,30) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "1234567.123456700000000000000000000000"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"0.99999\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(0.99999, decimal(64,30) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "0.999990000000000000000000000000"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"99999.0\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(99999.0, decimal(64,30) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "99999.000000000000000000000000000000"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-123456789.0123456789012345678901234567890123456789\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decima(len:80)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-123456789.012345678901234567890123456789"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-1234567.1234567\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-1234567.1234567, decimal(64,30) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-1234567.123456700000000000000000000000"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-0.99999\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-0.99999, decimal(64,30) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-0.999990000000000000000000000000"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-99999.0\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-99999.0, decimal(64,30) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-99999.000000000000000000000000000000"
+            ]
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select cast(? as decimal(15,5))\"",
+        "Executes": [
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"123456789.0123456789012345678901234567890123456789\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(len:78)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "0",
+            "Result": [
+              "123456789.01235"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"1234567.1234567\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(1234567.1234567, decimal(15,5) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "1234567.12346"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"0.99999\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(0.99999, decimal(15,5) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "0.99999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"99999.0\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(99999.0, decimal(15,5) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "99999.00000"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-123456789.0123456789012345678901234567890123456789\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decima(len:79)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-123456789.01235"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-1234567.1234567\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-1234567.1234567, decimal(15,5) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-1234567.12346"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-0.99999\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-0.99999, decimal(15,5) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-0.99999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-99999.0\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-99999.0, decimal(15,5) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-99999.00000"
+            ]
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select cast(? as decimal(5,5))\"",
+        "Executes": [
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"123456789.0123456789012345678901234567890123456789\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(len:77)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "0",
+            "Result": [
+              "0.99999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"1234567.1234567\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(1234567.1234567, decimal(5,5) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "0.99999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"0.99999\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(0.99999, decimal(5,5) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "0.99999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"99999.0\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(99999.0, decimal(5,5) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "0.99999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-123456789.0123456789012345678901234567890123456789\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decima(len:78)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-0.99999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-1234567.1234567\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-1234567.1234567, decimal(5,5) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-0.99999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-0.99999\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-0.99999, decimal(5,5) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-0.99999"
+            ]
+          },
+          {
+            "SQL": "execute stmt using @v1",
+            "Vars": [
+              {
+                "Name": "v1",
+                "Value": "\"-99999.0\""
+              }
+            ],
+            "Plan": [
+              "Projection_3 1.00 root  cast(-99999.0, decimal(5,5) BINARY)->Column#1",
+              "└─TableDual_4 1.00 root  rows:1"
+            ],
+            "LastPlanUseCache": "1",
+            "Result": [
+              "-0.99999"
+            ]
+          }
+        ]
       }
     ]
   }

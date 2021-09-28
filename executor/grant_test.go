@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
@@ -413,6 +414,51 @@ func (s *testSuite3) TestIssue22721(c *C) {
 	tk.MustExec("GRANT USAGE ON sync_ci_data.* TO 'sync_ci_data'@'%';")
 	tk.MustExec("GRANT USAGE ON test.* TO 'sync_ci_data'@'%';")
 	tk.MustExec("GRANT USAGE ON test.xx TO 'sync_ci_data'@'%';")
+}
+
+func (s *testSuite3) TestPerformanceSchemaPrivGrant(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create user issue27867;")
+	defer func() {
+		tk.MustExec("drop user issue27867;")
+	}()
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	err := tk.ExecToErr("grant all on performance_schema.* to issue27867;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
+	// Check case insensitivity
+	err = tk.ExecToErr("grant all on PERFormanCE_scHemA.* to issue27867;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'root'@'%' to database 'PERFormanCE_scHemA'")
+	// Check other database privileges
+	tk.MustExec("grant select on performance_schema.* to issue27867;")
+	tk.MustExec("grant insert on performance_schema.* to issue27867;")
+	tk.MustExec("grant update on performance_schema.* to issue27867;")
+	tk.MustExec("grant delete on performance_schema.* to issue27867;")
+	tk.MustExec("grant drop on performance_schema.* to issue27867;")
+	tk.MustExec("grant lock tables on performance_schema.* to issue27867;")
+	err = tk.ExecToErr("grant create on performance_schema.* to issue27867;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
+	err = tk.ExecToErr("grant references on performance_schema.* to issue27867;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
+	err = tk.ExecToErr("grant alter on PERFormAnCE_scHemA.* to issue27867;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'root'@'%' to database 'PERFormAnCE_scHemA'")
+	err = tk.ExecToErr("grant execute on performance_schema.* to issue27867;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
+	err = tk.ExecToErr("grant index on PERFormanCE_scHemA.* to issue27867;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'root'@'%' to database 'PERFormanCE_scHemA'")
+	err = tk.ExecToErr("grant create view on performance_schema.* to issue27867;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
+	err = tk.ExecToErr("grant show view on performance_schema.* to issue27867;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
 }
 
 func (s *testSuite3) TestGrantDynamicPrivs(c *C) {

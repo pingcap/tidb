@@ -71,18 +71,51 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
 		return ver, errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
 	}
+	var bundle *placement.Bundle
 	if tbInfo.DirectPlacementOpts != nil {
 		// check the direct placement option compatibility.
 		if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
 			return ver, errors.Trace(err)
 		}
+		// build bundle from direct placement options.
+		bundle, err = placement.NewBundleFromOptions(tbInfo.DirectPlacementOpts)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 	if tbInfo.PlacementPolicyRef != nil {
 		// placement policy reference will override the direct placement options.
-		_, err = checkPlacementPolicyExistAndCancelNonExistJob(t, job, tbInfo.PlacementPolicyRef.ID)
+		po, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, tbInfo.PlacementPolicyRef.ID)
 		if err != nil {
 			return ver, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
 		}
+		// build bundle from placement policy.
+		bundle, err = placement.NewBundleFromOptions(po.PlacementSettings)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+	if bundle == nil {
+		// get the default bundle from DB or PD.
+		bundle = infoschema.GetBundle(d.infoCache.GetLatest(), []int64{schemaID})
+	}
+	// Do the http request only when the rules is existed.
+	syncPlacementRules := func() error {
+		if bundle.Rules == nil {
+			return nil
+		}
+		err = bundle.Tidy()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// todo: partitions should use the default table level placement rules or it's specified one.
+		bundle.Reset(tbInfo.ID)
+		err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+		return nil
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -105,6 +138,10 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 				failpoint.Return(ver, errors.New("mock create table error"))
 			}
 		})
+		// Send the placement bundle to PD.
+		if err = syncPlacementRules(); err != nil {
+			return ver, errors.Trace(err)
+		}
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -168,7 +205,11 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
 		if oldTbInfoID > 0 && orReplace {
-			err = t.DropTableOrView(schemaID, oldTbInfoID, true)
+			err = t.DropTableOrView(schemaID, oldTbInfoID)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			err = t.GetAutoIDAccessors(schemaID, oldTbInfoID).Del()
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -186,10 +227,16 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	}
 }
 
-func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	var physicalTableIDs = []int64{tblInfo.ID}
+	if tblInfo.Partition != nil {
+		for _, p := range tblInfo.Partition.Definitions {
+			physicalTableIDs = append(physicalTableIDs, p.ID)
+		}
 	}
 
 	originalState := job.SchemaState
@@ -215,19 +262,30 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		oldIDs := getPartitionIDs(tblInfo)
 		ruleIDs := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
 		job.CtxVars = []interface{}{oldIDs}
+
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		if tblInfo.IsSequence() {
-			if err = t.DropSequence(job.SchemaID, job.TableID, true); err != nil {
+			if err = t.DropSequence(job.SchemaID, job.TableID); err != nil {
 				break
 			}
 		} else {
-			if err = t.DropTableOrView(job.SchemaID, job.TableID, true); err != nil {
+			if err = t.DropTableOrView(job.SchemaID, job.TableID); err != nil {
+				break
+			}
+			if err = t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
 				break
 			}
 		}
+		// Clean the placement bundle to PD.
+		err = dropRuleBundles(d, physicalTableIDs)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
@@ -499,7 +557,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
 	}
 
-	err = t.DropTableOrView(schemaID, tblInfo.ID, true)
+	err = t.DropTableOrView(schemaID, tblInfo.ID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	err = t.GetAutoIDAccessors(schemaID, tblInfo.ID).Del()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -555,7 +618,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return 0, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 
-	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, nil, newTableID)
+	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, []string{}, newTableID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to update the label rule to PD")
@@ -791,27 +854,7 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID
 		return ver, tblInfo, errors.Trace(err)
 	}
 
-	var autoTableID int64
-	var autoRandID int64
-	shouldDelAutoID := false
-	if newSchemaID != oldSchemaID {
-		shouldDelAutoID = true
-		autoTableID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, tblInfo, errors.Trace(err)
-		}
-		autoRandID, err = t.GetAutoRandomID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, tblInfo, errors.Trace(err)
-		}
-		// It's compatible with old version.
-		// TODO: Remove it.
-		tblInfo.OldSchemaID = 0
-	}
-
-	err = t.DropTableOrView(oldSchemaID, tblInfo.ID, shouldDelAutoID)
+	err = t.DropTableOrView(oldSchemaID, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, tblInfo, errors.Trace(err)
@@ -839,18 +882,17 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID
 		job.State = model.JobStateCancelled
 		return ver, tblInfo, errors.Trace(err)
 	}
-	// Update the table's auto-increment ID.
+
 	if newSchemaID != oldSchemaID {
-		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, autoTableID)
+		oldDBID := tblInfo.GetDBID(oldSchemaID)
+		err := meta.BackupAndRestoreAutoIDs(t, oldDBID, tblInfo.ID, newSchemaID, tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, tblInfo, errors.Trace(err)
 		}
-		_, err = t.GenAutoRandomID(newSchemaID, tblInfo.ID, autoRandID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, tblInfo, errors.Trace(err)
-		}
+		// It's compatible with old version.
+		// TODO: Remove it.
+		tblInfo.OldSchemaID = 0
 	}
 
 	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)
@@ -1194,7 +1236,7 @@ func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error)
 	}
 
 	if len(rule.Labels) == 0 {
-		patch := label.NewRulePatch(nil, []string{rule.ID})
+		patch := label.NewRulePatch([]*label.Rule{}, []string{rule.ID})
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	} else {
 		err = infosync.PutLabelRule(context.TODO(), rule)
@@ -1232,7 +1274,7 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 	}
 
 	if len(rule.Labels) == 0 {
-		patch := label.NewRulePatch(nil, []string{rule.ID})
+		patch := label.NewRulePatch([]*label.Rule{}, []string{rule.ID})
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	} else {
 		err = infosync.PutLabelRule(context.TODO(), rule)
@@ -1266,18 +1308,27 @@ func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName stri
 }
 
 func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[string]*label.Rule, tableRuleID string, partRuleIDs, oldRuleIDs []string, tID int64) error {
-	var newRules []*label.Rule
-	if r, ok := oldRules[tableRuleID]; ok {
-		newRules = append(newRules, r.Clone().Reset(tID, job.SchemaName, tblInfo.Name.L))
+	if oldRules == nil {
+		return nil
 	}
-
+	var newRules []*label.Rule
 	if tblInfo.GetPartitionInfo() != nil {
 		for idx, def := range tblInfo.GetPartitionInfo().Definitions {
 			if r, ok := oldRules[partRuleIDs[idx]]; ok {
-				newRules = append(newRules, r.Clone().Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
+				newRules = append(newRules, r.Clone().Reset(job.SchemaName, tblInfo.Name.L, def.Name.L, def.ID))
 			}
 		}
 	}
+	ids := []int64{tID}
+	if r, ok := oldRules[tableRuleID]; ok {
+		if tblInfo.GetPartitionInfo() != nil {
+			for _, def := range tblInfo.GetPartitionInfo().Definitions {
+				ids = append(ids, def.ID)
+			}
+		}
+		newRules = append(newRules, r.Clone().Reset(job.SchemaName, tblInfo.Name.L, "", ids...))
+	}
+
 	patch := label.NewRulePatch(newRules, oldRuleIDs)
 	return infosync.UpdateLabelRules(context.TODO(), patch)
 }

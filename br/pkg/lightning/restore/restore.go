@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
@@ -94,6 +95,7 @@ const (
 		total_bytes 		BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
 		checksum 			BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
 		status 				VARCHAR(32) NOT NULL,
+		has_duplicates		BOOL NOT NULL DEFAULT 0,
 		PRIMARY KEY (table_id, task_id)
 	);`
 	// CreateTaskMetaTable stores the pre-lightning metadata used by TiDB Lightning
@@ -252,27 +254,36 @@ type Controller struct {
 	closedEngineLimit *worker.Pool
 	store             storage.ExternalStorage
 	metaMgrBuilder    metaMgrBuilder
+	errorMgr          *errormanager.ErrorManager
 	taskMgr           taskMetaMgr
 
 	diskQuotaLock  *diskQuotaLock
 	diskQuotaState atomic.Int32
 	compactState   atomic.Int32
+	status         *LightningStatus
+}
+
+type LightningStatus struct {
+	FinishedFileSize atomic.Int64
+	TotalFileSize    atomic.Int64
 }
 
 func NewRestoreController(
 	ctx context.Context,
 	dbMetas []*mydump.MDDatabaseMeta,
 	cfg *config.Config,
+	status *LightningStatus,
 	s storage.ExternalStorage,
 	g glue.Glue,
 ) (*Controller, error) {
-	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, s, DeliverPauser, g)
+	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, status, s, DeliverPauser, g)
 }
 
 func NewRestoreControllerWithPauser(
 	ctx context.Context,
 	dbMetas []*mydump.MDDatabaseMeta,
 	cfg *config.Config,
+	status *LightningStatus,
 	s storage.ExternalStorage,
 	pauser *common.Pauser,
 	g glue.Glue,
@@ -299,6 +310,16 @@ func NewRestoreControllerWithPauser(
 		cfg.TaskID = taskCp.TaskID
 	}
 
+	// TODO: support Lightning via SQL
+	db, err := g.GetDB()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	errorMgr := errormanager.New(db, cfg)
+	if err := errorMgr.Init(ctx); err != nil {
+		return nil, errors.Annotate(err, "failed to init error manager")
+	}
+
 	var backend backend.Backend
 	switch cfg.TikvImporter.Backend {
 	case config.BackendImporter:
@@ -312,7 +333,7 @@ func NewRestoreControllerWithPauser(
 		if err != nil {
 			return nil, errors.Annotate(err, "open tidb backend failed")
 		}
-		backend = tidb.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate)
+		backend = tidb.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate, errorMgr)
 	case config.BackendLocal:
 		var rLimit local.Rlim_t
 		rLimit, err = local.GetSystemRLimit()
@@ -326,7 +347,7 @@ func NewRestoreControllerWithPauser(
 		}
 
 		backend, err = local.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, &cfg.TikvImporter,
-			cfg.Checkpoint.Enable, g, maxOpenFiles)
+			cfg.Checkpoint.Enable, g, maxOpenFiles, errorMgr)
 		if err != nil {
 			return nil, errors.Annotate(err, "build local backend failed")
 		}
@@ -341,11 +362,6 @@ func NewRestoreControllerWithPauser(
 	var metaBuilder metaMgrBuilder
 	switch cfg.TikvImporter.Backend {
 	case config.BackendLocal, config.BackendImporter:
-		// TODO: support Lightning via SQL
-		db, err := g.GetDB()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		metaBuilder = &dbMetaMgrBuilder{
 			db:           db,
 			taskID:       cfg.TaskID,
@@ -378,7 +394,9 @@ func NewRestoreControllerWithPauser(
 
 		store:          s,
 		metaMgrBuilder: metaBuilder,
+		errorMgr:       errorMgr,
 		diskQuotaLock:  newDiskQuotaLock(),
+		status:         status,
 		taskMgr:        nil,
 	}
 
@@ -1716,18 +1734,27 @@ func (rc *Controller) isLocalBackend() bool {
 // 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
-	if err := rc.ClusterIsAvailable(ctx); err != nil {
-		return errors.Trace(err)
+	if rc.cfg.App.CheckRequirements {
+		if err := rc.ClusterIsAvailable(ctx); err != nil {
+			return errors.Trace(err)
+		}
+
+		if err := rc.StoragePermission(ctx); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
-	if err := rc.StoragePermission(ctx); err != nil {
-		return errors.Trace(err)
-	}
 	if err := rc.metaMgrBuilder.Init(ctx); err != nil {
 		return err
 	}
 	taskExist := false
 
+	// We still need to sample source data even if this task has existed, because we need to judge whether the
+	// source is in order as row key to decide how to sort local data.
+	source, err := rc.estimateSourceData(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if rc.isLocalBackend() {
 		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
@@ -1742,29 +1769,28 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 		if !taskExist {
-			source, err := rc.EstimateSourceData(ctx)
-			if err != nil {
+			if err = rc.taskMgr.InitTask(ctx, source); err != nil {
 				return errors.Trace(err)
 			}
-			err = rc.LocalResource(ctx, source)
-			if err != nil {
-				rc.taskMgr.CleanupTask(ctx)
-				return errors.Trace(err)
-			}
-			if err := rc.ClusterResource(ctx, source); err != nil {
-				rc.taskMgr.CleanupTask(ctx)
-				return errors.Trace(err)
-			}
-			if err := rc.CheckClusterRegion(ctx); err != nil {
-				return errors.Trace(err)
+			if rc.cfg.App.CheckRequirements {
+				err = rc.localResource(source)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if err := rc.clusterResource(ctx, source); err != nil {
+					rc.taskMgr.CleanupTask(ctx)
+					return errors.Trace(err)
+				}
+				if err := rc.checkClusterRegion(ctx); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 	}
-	if rc.tidbGlue.OwnsSQLExecutor() {
-		// print check info at any time.
+
+	if rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements {
 		fmt.Print(rc.checkTemplate.Output())
-		if rc.cfg.App.CheckRequirements && !rc.checkTemplate.Success() {
-			// if check requirements is true, return error.
+		if !rc.checkTemplate.Success() {
 			if !taskExist && rc.taskMgr != nil {
 				rc.taskMgr.CleanupTask(ctx)
 			}
@@ -2218,13 +2244,26 @@ func (cr *chunkRestore) encodeLoop(
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
 			// sql -> kv
-			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
+			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
 			encodeDur += time.Since(encodeDurStart)
-			cr.parser.RecycleRow(lastRow)
+
+			hasIgnoredEncodeErr := false
 			if encodeErr != nil {
+				rowText := tidb.EncodeRowForRecord(t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row)
+				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
 				err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
+				hasIgnoredEncodeErr = true
+			}
+			cr.parser.RecycleRow(lastRow)
+			curOffset = newOffset
+
+			if err != nil {
 				return
 			}
+			if hasIgnoredEncodeErr {
+				continue
+			}
+
 			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset, rowID: rowID})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
@@ -2237,7 +2276,6 @@ func (cr *chunkRestore) encodeLoop(
 				canDeliver = true
 				kvSize = 0
 			}
-			curOffset = newOffset
 		}
 		encodeTotalDur += encodeDur
 		metric.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
