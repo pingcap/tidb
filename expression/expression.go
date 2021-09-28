@@ -1047,15 +1047,17 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return true
 		}
 	case ast.Cast:
+		sourceType := function.GetArgs()[0].GetType()
+		retType := function.RetType
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_CastDecimalAsInt /*, tipb.ScalarFuncSig_CastDurationAsInt*/, tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastRealAsInt,
 			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastStringAsInt /*, tipb.ScalarFuncSig_CastJsonAsInt*/ :
-			// TiFlash cast only support cast to Int64
-			return function.RetType.Tp == mysql.TypeLonglong
+			// TiFlash cast only support cast to Int64 or the source type is the same as the target type
+			return (sourceType.Tp == retType.Tp && mysql.HasUnsignedFlag(sourceType.Flag) == mysql.HasUnsignedFlag(retType.Flag)) || retType.Tp == mysql.TypeLonglong
 		case /*tipb.ScalarFuncSig_CastDecimalAsReal, tipb.ScalarFuncSig_CastDurationAsReal,*/ tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastRealAsReal,
 			/*tipb.ScalarFuncSig_CastTimeAsReal,*/ tipb.ScalarFuncSig_CastStringAsReal /*, tipb.ScalarFuncSig_CastJsonAsReal*/ :
-			// TiFlash cast only support cast to Float64
-			return function.RetType.Tp == mysql.TypeDouble
+			// TiFlash cast only support cast to Float64 or the source type is the same as the target type
+			return sourceType.Tp == retType.Tp || retType.Tp == mysql.TypeDouble
 		case tipb.ScalarFuncSig_CastDecimalAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal*/, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal,
 			tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
 			return isValidTiFlashDecimalType(function.RetType)

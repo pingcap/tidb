@@ -609,6 +609,8 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	datetimeColumn := dg.genColumn(mysql.TypeDatetime, 6)
 	binaryStringColumn := dg.genColumn(mysql.TypeString, 7)
 	binaryStringColumn.RetType.Collate = charset.CollationBin
+	int32Column := dg.genColumn(mysql.TypeLong, 8)
+	float32Column := dg.genColumn(mysql.TypeFloat, 9)
 
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	c.Assert(err, IsNil)
@@ -964,6 +966,16 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_StrToDateDatetime)
 	exprs = append(exprs, function)
 
+	// cast Int32 to Int32
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLong), int32Column)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast float32 to float32
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeFloat), float32Column)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
 	c.Assert(canPush, Equals, true)
 
@@ -1000,6 +1012,13 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 
 	// Cast to invalid Decimal Type: not supported
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast Int32 to UInt32
+	unsignedInt32Type := types.NewFieldType(mysql.TypeLong)
+	unsignedInt32Type.Flag = mysql.UnsignedFlag
+	function, err = NewFunction(mock.NewContext(), ast.Cast, unsignedInt32Type, int32Column)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
