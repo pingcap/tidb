@@ -227,26 +227,12 @@ func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 		// Reset bundle for tables.
 		for _, id := range tblIDs {
 			cp := bundle.Clone()
-			bundles = append(bundles, cp.Reset(id))
-			if len(bundle.Rules) == 0 {
-				bundle.Index = 0
-				bundle.Override = false
-			} else {
-				bundle.Index = placement.RuleIndexTable
-				bundle.Override = true
-			}
+			bundles = append(bundles, cp.Reset(placement.RuleIndexTable, []int64{id}))
 		}
 		// Reset bundle for partitions.
 		for _, id := range partIDs {
 			cp := bundle.Clone()
-			bundles = append(bundles, cp.Reset(id))
-			if len(bundle.Rules) == 0 {
-				bundle.Index = 0
-				bundle.Override = false
-			} else {
-				bundle.Index = placement.RuleIndexPartition
-				bundle.Override = true
-			}
+			bundles = append(bundles, cp.Reset(placement.RuleIndexPartition, []int64{id}))
 		}
 		err = infosync.PutRuleBundles(context.TODO(), bundles)
 		if err != nil {

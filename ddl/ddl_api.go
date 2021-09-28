@@ -6212,15 +6212,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bundle.Reset(partitionID)
-
-	if len(bundle.Rules) == 0 {
-		bundle.Index = 0
-		bundle.Override = false
-	} else {
-		bundle.Index = placement.RuleIndexPartition
-		bundle.Override = true
-	}
+	bundle.Reset(placement.RuleIndexPartition, []int64{partitionID})
 
 	job := &model.Job{
 		SchemaID:   schema.ID,

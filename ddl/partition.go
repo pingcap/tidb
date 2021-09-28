@@ -1124,7 +1124,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(oldID))
 		if ok && !oldBundle.IsEmpty() {
 			bundles = append(bundles, placement.NewBundle(oldID))
-			bundles = append(bundles, oldBundle.Clone().Reset(newPartitions[i].ID))
+			bundles = append(bundles, oldBundle.Clone().Reset(placement.RuleIndexPartition, []int64{newPartitions[i].ID}))
 		}
 	}
 
@@ -1331,14 +1331,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	ntBundle, ntOK := d.infoCache.GetLatest().BundleByName(placement.GroupID(nt.ID))
 	ntOK = ntOK && !ntBundle.IsEmpty()
 	if ptOK && ntOK {
-		bundles = append(bundles, ptBundle.Clone().Reset(nt.ID))
-		bundles = append(bundles, ntBundle.Clone().Reset(partDef.ID))
+		bundles = append(bundles, ptBundle.Clone().Reset(placement.RuleIndexPartition, []int64{nt.ID}))
+		bundles = append(bundles, ntBundle.Clone().Reset(placement.RuleIndexPartition, []int64{partDef.ID}))
 	} else if ptOK {
 		bundles = append(bundles, placement.NewBundle(partDef.ID))
-		bundles = append(bundles, ptBundle.Clone().Reset(nt.ID))
+		bundles = append(bundles, ptBundle.Clone().Reset(placement.RuleIndexPartition, []int64{nt.ID}))
 	} else if ntOK {
 		bundles = append(bundles, placement.NewBundle(nt.ID))
-		bundles = append(bundles, ntBundle.Clone().Reset(partDef.ID))
+		bundles = append(bundles, ntBundle.Clone().Reset(placement.RuleIndexPartition, []int64{partDef.ID}))
 	}
 	err = infosync.PutRuleBundles(context.TODO(), bundles)
 	if err != nil {

@@ -326,16 +326,41 @@ func (b *Bundle) Tidy() error {
 }
 
 // Reset resets the bundle ID and keyrange of all rules.
-func (b *Bundle) Reset(newID int64) *Bundle {
-	b.ID = GroupID(newID)
-	// Involve all the table level objects.
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
-	for _, rule := range b.Rules {
-		rule.GroupID = b.ID
-		rule.StartKeyHex = startKey
-		rule.EndKeyHex = endKey
+func (b *Bundle) Reset(ruleIndex int, newIDs []int64) *Bundle {
+	// eliminate the redundant rules.
+	type key struct {
+		start string
+		end   string
 	}
+	rulesMap := make(map[key][]*Rule, len(b.Rules))
+	for _, rule := range b.Rules {
+		if rules, ok := rulesMap[key{start: rule.StartKeyHex, end: rule.EndKeyHex}]; ok {
+			rules = append(rules, rule)
+			rulesMap[key{start: rule.StartKeyHex, end: rule.EndKeyHex}] = rules
+		} else {
+			rulesMap[key{start: rule.StartKeyHex, end: rule.EndKeyHex}] = []*Rule{rule}
+		}
+	}
+	basicRules := rulesMap[key{start: b.Rules[0].StartKeyHex, end: b.Rules[0].EndKeyHex}]
+
+	// extend and reset basic rules for all new ids, the first id should be the group id.
+	b.ID = GroupID(newIDs[0])
+	b.Index = ruleIndex
+	b.Override = true
+	newRules := make([]*Rule, 0, len(basicRules)*len(newIDs))
+	for _, newID := range newIDs {
+		// Involve all the table level objects.
+		startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
+		endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
+		for _, rule := range basicRules {
+			clone := rule.Clone()
+			clone.GroupID = b.ID
+			clone.StartKeyHex = startKey
+			clone.EndKeyHex = endKey
+			newRules = append(newRules, clone)
+		}
+	}
+	b.Rules = newRules
 	return b
 }
 

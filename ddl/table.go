@@ -90,20 +90,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	bundles = append(bundles, tableBundle)
 	bundles = append(bundles, partitionBundles...)
 
-	// Do the http request only when the rules is existed.
-	syncPlacementRules := func() error {
-		// bundles being 0 means there is no specified or inherited placement rules.
-		if len(bundles) == 0 {
-			return nil
-		}
-		err = infosync.PutRuleBundles(context.TODO(), bundles)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
-		return nil
-	}
-
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -125,8 +111,10 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 			}
 		})
 		// Send the placement bundle to PD.
-		if err = syncPlacementRules(); err != nil {
-			return ver, errors.Trace(err)
+		err = infosync.PutRuleBundles(context.TODO(), bundles)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
 		// Finish this job.
@@ -139,10 +127,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 }
 
 func inheritPlacementRuleFromDB(tbInfo *model.TableInfo, dbInfo *model.DBInfo) error {
-	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
-	if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
-		return ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name)
-	}
 	if tbInfo.DirectPlacementOpts == nil && tbInfo.PlacementPolicyRef == nil {
 		if dbInfo.DirectPlacementOpts != nil {
 			clone := *dbInfo.DirectPlacementOpts
@@ -153,25 +137,19 @@ func inheritPlacementRuleFromDB(tbInfo *model.TableInfo, dbInfo *model.DBInfo) e
 			tbInfo.PlacementPolicyRef = &clone
 		}
 	}
+	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
+	if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
+		return ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name)
+	}
 	return nil
 }
 
 func getBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) (*placement.Bundle, error) {
-	tableBundleWrapper := func(bundle *placement.Bundle) *placement.Bundle {
-		bundle.Index = placement.RuleIndexTable
-		bundle.Override = true
-		return bundle
-	}
 	var (
 		bundle *placement.Bundle
 		err    error
 	)
 	if tbInfo.DirectPlacementOpts != nil {
-		// check the direct placement option compatibility.
-		if err = checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
-			job.State = model.JobStateCancelled
-			return nil, errors.Trace(err)
-		}
 		// build bundle from direct placement options.
 		bundle, err = placement.NewBundleFromOptions(tbInfo.DirectPlacementOpts)
 		if err != nil {
@@ -200,25 +178,18 @@ func getBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	bundle.Reset(tbInfo.ID)
-
+	ids := []int64{tbInfo.ID}
 	// build the default partition rules in the table-level bundle.
 	if tbInfo.Partition != nil {
-		ids := make([]int64, 0, len(tbInfo.Partition.Definitions))
 		for _, pDef := range tbInfo.Partition.Definitions {
 			ids = append(ids, pDef.ID)
 		}
-		bundle.Append(ids)
 	}
-	return tableBundleWrapper(bundle), nil
+	bundle.Reset(placement.RuleIndexTable, ids)
+	return bundle, nil
 }
 
 func getBundleFromPartitionDef(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) ([]*placement.Bundle, error) {
-	partitionBundleWrapper := func(bundle *placement.Bundle) *placement.Bundle {
-		bundle.Index = placement.RuleIndexPartition
-		bundle.Override = true
-		return bundle
-	}
 	if tbInfo.Partition == nil {
 		return nil, nil
 	}
@@ -226,11 +197,6 @@ func getBundleFromPartitionDef(t *meta.Meta, job *model.Job, tbInfo *model.Table
 	// If the partition has the placement rules on their own, build the partition-level bundles additionally.
 	for _, def := range tbInfo.Partition.Definitions {
 		if def.DirectPlacementOpts != nil {
-			// check the direct placement option compatibility.
-			if err := checkPolicyValidation(def.DirectPlacementOpts); err != nil {
-				job.State = model.JobStateCancelled
-				return nil, errors.Trace(err)
-			}
 			// build bundle from direct placement options.
 			bundle, err := placement.NewBundleFromOptions(def.DirectPlacementOpts)
 			if err != nil {
@@ -241,8 +207,8 @@ func getBundleFromPartitionDef(t *meta.Meta, job *model.Job, tbInfo *model.Table
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			bundle.Reset(tbInfo.ID)
-			bundles = append(bundles, partitionBundleWrapper(bundle))
+			bundle.Reset(placement.RuleIndexPartition, []int64{def.ID})
+			bundles = append(bundles, bundle)
 			continue
 		}
 		if def.PlacementPolicyRef != nil {
@@ -262,8 +228,8 @@ func getBundleFromPartitionDef(t *meta.Meta, job *model.Job, tbInfo *model.Table
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			bundle.Reset(tbInfo.ID)
-			bundles = append(bundles, partitionBundleWrapper(bundle))
+			bundle.Reset(placement.RuleIndexPartition, []int64{def.ID})
+			bundles = append(bundles, bundle)
 			continue
 		}
 	}
@@ -706,7 +672,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 	bundles := make([]*placement.Bundle, 0, len(oldPartitionIDs)+1)
 	if oldBundle, ok := is.BundleByName(placement.GroupID(tableID)); ok {
-		bundles = append(bundles, oldBundle.Clone().Reset(newTableID))
+		bundles = append(bundles, oldBundle.Clone().Reset(placement.RuleIndexTable, []int64{newTableID}))
 	}
 
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
@@ -718,7 +684,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 			if oldBundle, ok := is.BundleByName(placement.GroupID(oldPartitionIDs[i])); ok && !oldBundle.IsEmpty() {
 				oldIDs = append(oldIDs, oldPartitionIDs[i])
 				newIDs = append(newIDs, newID)
-				bundles = append(bundles, oldBundle.Clone().Reset(newID))
+				bundles = append(bundles, oldBundle.Clone().Reset(placement.RuleIndexPartition, []int64{newID}))
 			}
 		}
 		job.CtxVars = []interface{}{oldIDs, newIDs}
