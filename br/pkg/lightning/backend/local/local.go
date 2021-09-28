@@ -2076,7 +2076,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 		return false, err
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
-	duplicateManager, err := NewDuplicateManager(local.errorMgr, local.splitCli, ts, local.tls, local.tcpConcurrency)
+	duplicateManager, err := NewDuplicateManager(local, ts)
 	if err != nil {
 		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
@@ -2095,7 +2095,7 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
 
-	duplicateManager, err := NewDuplicateManager(local.errorMgr, local.splitCli, ts, local.tls, local.tcpConcurrency)
+	duplicateManager, err := NewDuplicateManager(local, ts)
 	if err != nil {
 		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}

@@ -181,22 +181,17 @@ func physicalTableIDs(tableInfo *model.TableInfo) []int64 {
 //
 // This object provides methods to collect and decode duplicated KV pairs into row data. The results
 // are stored into the errorMgr.
-func NewDuplicateManager(
-	errorMgr *errormanager.ErrorManager,
-	splitCli restore.SplitClient,
-	ts uint64,
-	tls *common.TLS,
-	regionConcurrency int) (*DuplicateManager, error) {
+func NewDuplicateManager(local *local, ts uint64) (*DuplicateManager, error) {
 	return &DuplicateManager{
-		errorMgr:          errorMgr,
-		tls:               tls,
-		regionConcurrency: regionConcurrency,
-		splitCli:          splitCli,
+		errorMgr:          local.errorMgr,
+		tls:               local.tls,
+		regionConcurrency: local.tcpConcurrency,
+		splitCli:          local.splitCli,
 		keyAdapter:        duplicateKeyAdapter{},
 		ts:                ts,
 		connPool:          common.NewGRPCConns(),
 		// TODO: not sure what is the correct concurrency value.
-		remoteWorkerPool: utils.NewWorkerPool(uint(regionConcurrency), "duplicates"),
+		remoteWorkerPool: utils.NewWorkerPool(uint(local.tcpConcurrency), "duplicates"),
 	}, nil
 }
 
