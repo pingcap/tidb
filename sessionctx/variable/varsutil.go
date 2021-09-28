@@ -303,12 +303,12 @@ const (
 // It is used for MultiStmtMode and NoopFunctionsMode
 func TiDBOptOnOffWarn(opt string) int {
 	switch opt {
-	case Off:
-		return OffInt
+	case Warn:
+		return WarnInt
 	case On:
 		return OnInt
 	}
-	return WarnInt
+	return OffInt
 }
 
 // ClusteredIndexDefMode controls the default clustered property for primary key.
