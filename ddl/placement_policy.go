@@ -208,11 +208,11 @@ func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 
-	dbIDs, tblIDs, partIDs, err := getPlacementPolicyDependedObjectsIDs(t, oldPolicy)
+	dbIDs, partIDs, tblInfos, err := getPlacementPolicyDependedObjectsIDs(t, oldPolicy)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if len(dbIDs)+len(tblIDs)+len(partIDs) != 0 {
+	if len(dbIDs)+len(tblInfos)+len(partIDs) != 0 {
 		// build bundle from new placement policy.
 		bundle, err := placement.NewBundleFromOptions(newPolicyInfo.PlacementSettings)
 		if err != nil {
@@ -223,11 +223,17 @@ func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 			return ver, errors.Trace(err)
 		}
 		// Do the http request only when the rules is existed.
-		bundles := make([]*placement.Bundle, 0, len(tblIDs)+len(partIDs))
-		// Reset bundle for tables.
-		for _, id := range tblIDs {
+		bundles := make([]*placement.Bundle, 0, len(tblInfos)+len(partIDs))
+		// Reset bundle for tables (including the default rule for partition).
+		for _, tbl := range tblInfos {
 			cp := bundle.Clone()
-			bundles = append(bundles, cp.Reset(placement.RuleIndexTable, []int64{id}))
+			ids := []int64{tbl.ID}
+			if tbl.Partition != nil {
+				for _, pDef := range tbl.Partition.Definitions {
+					ids = append(ids, pDef.ID)
+				}
+			}
+			bundles = append(bundles, cp.Reset(placement.RuleIndexTable, ids))
 		}
 		// Reset bundle for partitions.
 		for _, id := range partIDs {
@@ -280,15 +286,15 @@ func checkPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy
 	return nil
 }
 
-func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo) (dbIDs, tblIDs, partIDs []int64, err error) {
+func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo) (dbIDs, partIDs []int64, tblInfos []*model.TableInfo, err error) {
 	schemas, err := t.ListDatabases()
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	// DB ids don't have to set the bundle themselves, but to check the dependency.
 	dbIDs = make([]int64, 0, len(schemas))
-	tblIDs = make([]int64, 0, len(schemas))
 	partIDs = make([]int64, 0, len(schemas))
+	tblInfos = make([]*model.TableInfo, 0, len(schemas))
 	for _, dbInfo := range schemas {
 		if dbInfo.PlacementPolicyRef != nil && dbInfo.PlacementPolicyRef.ID == policy.ID {
 			dbIDs = append(dbIDs, dbInfo.ID)
@@ -299,7 +305,7 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo
 		}
 		for _, tblInfo := range tables {
 			if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
-				tblIDs = append(tblIDs, tblInfo.ID)
+				tblInfos = append(tblInfos, tblInfo)
 			}
 			if tblInfo.Partition != nil {
 				for _, part := range tblInfo.Partition.Definitions {
@@ -310,7 +316,7 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo
 			}
 		}
 	}
-	return dbIDs, tblIDs, partIDs, nil
+	return dbIDs, partIDs, tblInfos, nil
 }
 
 func checkPlacementPolicyNotInUseFromMeta(t *meta.Meta, policy *model.PolicyInfo) error {
