@@ -131,7 +131,7 @@ func testGetPolicyByNameFromIS(c *C, ctx sessionctx.Context, policy string) *mod
 	return po
 }
 
-func (s *testDBSuite6) TestConstraintCompatibility(c *C) {
+func (s *testDBSuite6) TestPlacementValidation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
