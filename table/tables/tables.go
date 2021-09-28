@@ -1208,7 +1208,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 		return err
 	}
 	for _, v := range t.deletableIndices() {
-		if v.Meta().Primary && t.Meta().IsCommonHandle {
+		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
 			continue
 		}
 		vals, err := v.FetchValues(rec, nil)
