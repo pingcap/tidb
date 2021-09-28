@@ -36,6 +36,11 @@ type mutation struct {
 	value []byte
 }
 
+type richIndexMutation struct {
+	mutation
+	indexID int64
+}
+
 type columnMaps struct {
 	ColumnIDToInfo       map[int64]*model.ColumnInfo
 	ColumnIDToFieldType  map[int64]*types.FieldType
@@ -47,20 +52,14 @@ type columnMaps struct {
 // Namely, assume the database is consistent before, applying the mutations shouldn't break the consistency.
 // It aims at reducing bugs that will corrupt data, and preventing mistakes from spreading if possible.
 //
+// 3 conditions are checked:
+// (1) row.value is consistent with input data
+// (2) the handle is consistent in row and index insertions
+// (3) the keys of the indices are consistent with the values of rows
+//
 // The check doesn't work and just returns nil when:
 // (1) the table is partitioned
 // (2) new collation is enabled and restored data is needed
-//
-// How it works:
-//
-// Assume the set of row values changes from V1 to V2, we check
-// (1) V2 - V1 = {added indices}
-// (2) V1 - V2 = {deleted indices}
-//
-// To check (1), we need
-// (a) {added indices} is a subset of {needed indices} => each index mutation is consistent with the input/row key/value
-// (b) {needed indices} is a subset of {added indices}. The check process would be exactly the same with how we generate
-// 		the mutations, thus ignored.
 func CheckIndexConsistency(
 	txn kv.Transaction, sessVars *variable.SessionVars, t *TableCommon,
 	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle,
@@ -86,33 +85,104 @@ func CheckIndexConsistency(
 			return errors.Trace(err)
 		}
 	}
+
+	richIndexMutations, err := buildRichIndexMutations(indexMutations)
+	if err != nil {
+		return err
+	}
+
+	if rowInsertion.key != nil {
+		if err = checkHandleConsistency(rowInsertion, richIndexMutations, columnMaps.IndexIDToInfo); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	if err := checkIndexKeys(
-		sessVars, t, rowToInsert, rowToRemove, indexMutations, columnMaps.IndexIDToInfo, columnMaps.IndexIDToRowColInfos,
+		sessVars, t, rowToInsert, rowToRemove, richIndexMutations, columnMaps.IndexIDToInfo, columnMaps.IndexIDToRowColInfos,
 	); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-// checkIndexKeys checks whether the decoded data from keys of index mutations are consistent with the expected ones.
-func checkIndexKeys(
-	sessVars *variable.SessionVars, t *TableCommon, rowToInsert, rowToRemove []types.Datum,
-	indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo,
-	indexIDToRowColInfos map[int64][]rowcodec.ColInfo,
-) error {
-
-	var indexData []types.Datum
+// buildRichIndexMutations attaches some reusable info to index mutations
+func buildRichIndexMutations(indexMutations []mutation) ([]richIndexMutation, error) {
+	richIndexMutations := make([]richIndexMutation, 0, len(indexMutations))
 	for _, m := range indexMutations {
 		_, indexID, _, err := tablecodec.DecodeIndexKey(m.key)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
+		}
+		richIndexMutations = append(richIndexMutations, richIndexMutation{m, indexID})
+	}
+	return richIndexMutations, nil
+}
+
+// checkHandleConsistency checks whether the handles, with regard to a single-row change,
+// in row insertions and index insertions are consistent.
+// A PUT_index implies a PUT_row with the same handle.
+// Deletions are not checked since the values of deletions are unknown
+func checkHandleConsistency(rowInsertion mutation, indexMutations []richIndexMutation, indexIDToInfo map[int64]*model.IndexInfo) error {
+	var insertionHandle kv.Handle
+	var err error
+
+	if rowInsertion.key == nil {
+		return nil
+	}
+	insertionHandle, err = tablecodec.DecodeRowKey(rowInsertion.key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var indexHandle kv.Handle
+	for _, m := range indexMutations {
+		if len(m.value) == 0 {
+			continue
 		}
 
-		indexInfo, ok := indexIDToInfo[indexID]
+		indexInfo, ok := indexIDToInfo[m.indexID]
 		if !ok {
 			return errors.New("index not found")
 		}
-		rowColInfos, ok := indexIDToRowColInfos[indexID]
+
+		indexHandle, err = tablecodec.DecodeIndexHandle(m.key, m.value, len(indexInfo.Columns))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if indexHandle.Compare(insertionHandle) != 0 {
+			return errors.Errorf("inconsistent handles in row and index insertions. index handle = %v, "+
+				"row handle = %v, index = %+v, row = %+v",
+				indexHandle, insertionHandle, m, rowInsertion)
+		}
+	}
+
+	return err
+}
+
+// checkIndexKeys checks whether the decoded data from keys of index mutations are consistent with the expected ones.
+//
+// How it works:
+//
+// Assume the set of row values changes from V1 to V2, we check
+// (1) V2 - V1 = {added indices}
+// (2) V1 - V2 = {deleted indices}
+//
+// To check (1), we need
+// (a) {added indices} is a subset of {needed indices} => each index mutation is consistent with the input/row key/value
+// (b) {needed indices} is a subset of {added indices}. The check process would be exactly the same with how we generate
+// 		the mutations, thus ignored.
+func checkIndexKeys(
+	sessVars *variable.SessionVars, t *TableCommon, rowToInsert, rowToRemove []types.Datum,
+	indexMutations []richIndexMutation, indexIDToInfo map[int64]*model.IndexInfo,
+	indexIDToRowColInfos map[int64][]rowcodec.ColInfo,
+) error {
+	var indexData []types.Datum
+	for _, m := range indexMutations {
+		indexInfo, ok := indexIDToInfo[m.indexID]
+		if !ok {
+			return errors.New("index not found")
+		}
+		rowColInfos, ok := indexIDToRowColInfos[m.indexID]
 		if !ok {
 			return errors.New("index not found")
 		}
