@@ -409,42 +409,30 @@ func reconstructAllocators(s kv.Storage, dbID int64, oldTbl table.Table, newTbl 
 	as := oldTbl.Allocators(nil)
 	switch tp {
 	case model.ActionRebaseRowID:
-		as = as.Remove(autoid.RowIDAllocType)
 		rowID := autoid.NewAllocator(s, dbID, newTbl.ID, false, autoid.RowIDAllocType)
-		as = append(as, rowID)
-		return as
+		return as.Remove(autoid.RowIDAllocType).Add(rowID)
 	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
 		unsigned := newTbl.IsAutoIncColUnsigned()
 		if model.AutoIncrementIDIsSeparated(newTbl.Version) {
-			as = as.Remove(autoid.AutoIncrementType)
 			incID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.AutoIncrementType)
-			as = append(as, incID)
-			return as
+			return as.Remove(autoid.AutoIncrementType).Add(incID)
 		}
-		as = as.Remove(autoid.RowIDAllocType).Remove(autoid.AutoIncrementType)
 		rowID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.RowIDAllocType)
-		as = append(as, rowID)
-		return as
+		return as.Remove(autoid.RowIDAllocType).Remove(autoid.AutoIncrementType).Add(rowID)
 	case model.ActionRebaseAutoRandomBase:
 		unsigned := newTbl.IsAutoRandomBitColUnsigned()
-		as = as.Remove(autoid.AutoRandomType)
 		randID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.AutoRandomType)
-		as = append(as, randID)
-		return as
+		return as.Remove(autoid.AutoRandomType).Add(randID)
 	case model.ActionModifyColumn:
 		// Change column attribute from auto_increment to auto_random.
 		if !oldTbl.Meta().ContainsAutoRandomBits() && newTbl.ContainsAutoRandomBits() {
 			unsigned := newTbl.IsAutoRandomBitColUnsigned()
 			if model.AutoIncrementIDIsSeparated(newTbl.Version) {
-				as = as.Remove(autoid.AutoIncrementType)
 				randID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.AutoRandomType)
-				as = append(as, randID)
-				return as
+				return as.Remove(autoid.AutoIncrementType).Add(randID)
 			}
-			as = as.Remove(autoid.RowIDAllocType).Remove(autoid.AutoIncrementType)
 			randID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.AutoRandomType)
-			as = append(as, randID)
-			return as
+			return as.Remove(autoid.RowIDAllocType).Remove(autoid.AutoIncrementType).Add(randID)
 		}
 	}
 	return as

@@ -111,7 +111,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				if err != nil {
 					return false, err
 				}
-				if err = t.Allocators(sctx).GetAutoIncrement(t.Meta().Version).Rebase(recordID, true); err != nil {
+				if err = t.Allocators(sctx).Get(autoid.AutoIncrementType).Rebase(recordID, true); err != nil {
 					return false, err
 				}
 			}

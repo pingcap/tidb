@@ -30,9 +30,9 @@ type panickingAllocator struct {
 }
 
 // NewPanickingAllocator creates a PanickingAllocator shared by all allocation types.
-func NewPanickingAllocators(base int64) autoid.Allocators {
+func NewPanickingAllocators(base int64, tblVer uint16) autoid.Allocators {
 	sharedBase := &base
-	return autoid.NewAllocators(
+	return autoid.NewAllocators(tblVer,
 		&panickingAllocator{base: sharedBase, ty: autoid.RowIDAllocType},
 		&panickingAllocator{base: sharedBase, ty: autoid.AutoIncrementType},
 		&panickingAllocator{base: sharedBase, ty: autoid.AutoRandomType},

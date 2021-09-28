@@ -1930,7 +1930,7 @@ func (s *tableRestoreSuite) TestEstimate(c *C) {
 	controller := gomock.NewController(c)
 	defer controller.Finish()
 	mockBackend := mock.NewMockBackend(controller)
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(0, s.tableInfo.Core.Version)
 	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
 
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()

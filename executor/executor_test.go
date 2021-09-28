@@ -3840,7 +3840,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	tbInfo := tbl.Meta()
 
 	alloc := autoid.NewAllocator(s.store, dbInfo.ID, tbInfo.ID, false, autoid.RowIDAllocType)
-	tb, err := tables.TableFromMeta(autoid.NewAllocators(alloc), tbInfo)
+	tb, err := tables.TableFromMeta(autoid.NewAllocators(tbInfo.Version, alloc), tbInfo)
 	c.Assert(err, IsNil)
 
 	_, err = se.Execute(context.Background(), "admin check index t c")

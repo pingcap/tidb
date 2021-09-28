@@ -711,8 +711,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		}
 		// Use the value if it's not null and not 0.
 		if recordID != 0 {
-			ver := e.Table.Meta().Version
-			err = e.Table.Allocators(e.ctx).GetAutoIncrement(ver).Rebase(recordID, true)
+			err = e.Table.Allocators(e.ctx).Get(autoid.AutoIncrementType).Rebase(recordID, true)
 			if err != nil {
 				return nil, err
 			}
@@ -802,8 +801,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		ver := e.Table.Meta().Version
-		err = e.Table.Allocators(e.ctx).GetAutoIncrement(ver).Rebase(recordID, true)
+		err = e.Table.Allocators(e.ctx).Get(autoid.AutoIncrementType).Rebase(recordID, true)
 		if err != nil {
 			return types.Datum{}, err
 		}

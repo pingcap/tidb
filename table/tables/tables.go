@@ -83,7 +83,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	}
 
 	var t TableCommon
-	initTableCommon(&t, tblInfo, tblInfo.ID, columns, nil)
+	initTableCommon(&t, tblInfo, tblInfo.ID, columns, autoid.Allocators{})
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t); err != nil {
 			return nil
@@ -1438,7 +1438,7 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 		// Use an independent allocator for global temporary tables.
 		if t.meta.TempTableType == model.TempTableGlobal {
 			if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
-				return autoid.Allocators{alloc}
+				return autoid.NewAllocators(t.meta.Version, alloc)
 			}
 			// If the session is not in a txn, for example, in "show create table", use the original allocator.
 			// Otherwise the would be a nil pointer dereference.
@@ -1448,8 +1448,8 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 
 	// Replace the row id allocator with the one in session variables.
 	sessAlloc := ctx.GetSessionVars().IDAllocator
-	retAllocs := make([]autoid.Allocator, 0, len(t.allocs))
-	copy(retAllocs, t.allocs)
+	retAllocs := make([]autoid.Allocator, 0, len(t.allocs.Items))
+	copy(retAllocs, t.allocs.Items)
 
 	overwritten := false
 	for i, a := range retAllocs {
@@ -1462,7 +1462,7 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	if !overwritten {
 		retAllocs = append(retAllocs, sessAlloc)
 	}
-	return retAllocs
+	return autoid.NewAllocators(t.meta.Version, retAllocs...)
 }
 
 // Type implements table.Table Type interface.
@@ -1631,12 +1631,11 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 			return nil
 		}
 		// Update batch alloc from kv storage.
-		sequenceAlloc, err1 := getSequenceAllocator(t.allocs)
-		if err1 != nil {
-			return err1
-		}
-		var base, end, round int64
-		base, end, round, err1 = sequenceAlloc.AllocSeqCache()
+		var (
+			base, end, round int64
+			err1             error
+		)
+		base, end, round, err1 = t.allocs.Get(autoid.SequenceType).AllocSeqCache()
 		if err1 != nil {
 			return err1
 		}
@@ -1708,11 +1707,7 @@ func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqN
 	t.sequence.base = t.sequence.end
 
 	// Rebase from kv storage.
-	sequenceAlloc, err := getSequenceAllocator(t.allocs)
-	if err != nil {
-		return 0, false, err
-	}
-	res, alreadySatisfied, err := sequenceAlloc.RebaseSeq(newVal)
+	res, alreadySatisfied, err := t.allocs.Get(autoid.SequenceType).RebaseSeq(newVal)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1808,16 +1803,6 @@ func maxIndexLen(idxA, idxB *model.IndexColumn) *model.IndexColumn {
 		return idxA
 	}
 	return idxB
-}
-
-func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {
-	for _, alloc := range allocs {
-		if alloc.GetType() == autoid.SequenceType {
-			return alloc, nil
-		}
-	}
-	// TODO: refine the error.
-	return nil, errors.New("sequence allocator is nil")
 }
 
 // BuildTableScanFromInfos build tipb.TableScan with *model.TableInfo and *model.ColumnInfo.

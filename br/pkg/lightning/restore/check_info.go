@@ -750,7 +750,7 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 	if err != nil {
 		return errors.Trace(err)
 	}
-	idAlloc := kv.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(0, tableInfo.Version)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo)
 
 	kvEncoder, err := rc.backend.NewEncoder(tbl, &kv.SessionOptions{

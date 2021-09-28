@@ -63,7 +63,7 @@ func NewTableRestore(
 	cp *checkpoints.TableCheckpoint,
 	ignoreColumns []string,
 ) (*TableRestore, error) {
-	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
+	idAlloc := kv.NewPanickingAllocators(cp.AllocBase, tableInfo.Core.Version)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)

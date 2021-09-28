@@ -344,20 +344,20 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	tblMeta := tbl.Meta()
 
 	allocators := tbl.Allocators(e.ctx)
-	for _, alloc := range allocators {
+	for _, alloc := range allocators.Items {
 		nextGlobalID, err := alloc.NextGlobalAutoID()
 		if err != nil {
 			return err
 		}
-
 		var colName, idType string
 		switch alloc.GetType() {
-		case autoid.RowIDAllocType, autoid.AutoIncrementType:
+		case autoid.RowIDAllocType:
+			idType = "_TIDB_ROW_ID"
+			colName = model.ExtraHandleName.O
+		case autoid.AutoIncrementType:
 			idType = "AUTO_INCREMENT"
 			if col := tblMeta.GetAutoIncrementColInfo(); col != nil {
 				colName = col.Name.O
-			} else {
-				colName = model.ExtraHandleName.O
 			}
 		case autoid.AutoRandomType:
 			idType = "AUTO_RANDOM"

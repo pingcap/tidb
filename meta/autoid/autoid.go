@@ -152,16 +152,25 @@ type Allocator interface {
 }
 
 // Allocators represents a set of `Allocator`s.
-type Allocators []Allocator
+type Allocators struct {
+	Items        []Allocator
+	TableVersion uint16
+}
 
 // NewAllocators packs multiple `Allocator`s into Allocators.
-func NewAllocators(allocators ...Allocator) Allocators {
-	return allocators
+func NewAllocators(tableVersion uint16, allocators ...Allocator) Allocators {
+	return Allocators{
+		Items:        allocators,
+		TableVersion: tableVersion,
+	}
 }
 
 // Get returns the Allocator according to the AllocatorType.
 func (all Allocators) Get(allocType AllocatorType) Allocator {
-	for _, a := range all {
+	if allocType == AutoIncrementType && !model.AutoIncrementIDIsSeparated(all.TableVersion) {
+		allocType = RowIDAllocType
+	}
+	for _, a := range all.Items {
 		if a.GetType() == allocType {
 			return a
 		}
@@ -169,17 +178,9 @@ func (all Allocators) Get(allocType AllocatorType) Allocator {
 	return nil
 }
 
-// GetAutoIncrement gets the auto_increment ID allocator.
-func (all Allocators) GetAutoIncrement(tableVersion uint16) Allocator {
-	if model.AutoIncrementIDIsSeparated(tableVersion) {
-		return all.Get(AutoIncrementType)
-	}
-	return all.Get(RowIDAllocType)
-}
-
 // Remove remove all the allocators that match tp.
 func (all Allocators) Remove(tp AllocatorType) Allocators {
-	total := all
+	total := all.Items
 	cur := 0
 	for cur < len(total) {
 		last := len(total) - 1
@@ -190,7 +191,13 @@ func (all Allocators) Remove(tp AllocatorType) Allocators {
 			cur++
 		}
 	}
-	return total
+	all.Items = total
+	return all
+}
+
+func (all Allocators) Add(a Allocator) Allocators {
+	all.Items = append(all.Items, a)
+	return all
 }
 
 type allocator struct {
@@ -498,15 +505,14 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
 func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) Allocators {
 	dbID := tblInfo.GetDBID(schemaID)
-	var allocs []Allocator
 	if tblInfo.IsSequence() {
-		allocs = append(allocs, NewSequenceAllocator(store, dbID, tblInfo.ID, tblInfo.Sequence))
-		return allocs
+		return NewAllocators(tblInfo.Version, NewSequenceAllocator(store, dbID, tblInfo.ID, tblInfo.Sequence))
 	}
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
 	separated := model.AutoIncrementIDIsSeparated(tblInfo.Version)
+	var allocs []Allocator
 	if hasRowID || (hasAutoIncID && !separated) {
 		alloc := NewAllocator(store, dbID, tblInfo.ID, false, RowIDAllocType, idCacheOpt)
 		allocs = append(allocs, alloc)
@@ -519,7 +525,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt)
 		allocs = append(allocs, alloc)
 	}
-	return NewAllocators(allocs...)
+	return NewAllocators(tblInfo.Version, allocs...)
 }
 
 // Alloc implements autoid.Allocator Alloc interface.
