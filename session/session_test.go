@@ -5723,13 +5723,14 @@ func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
 	runtime.ReadMemStats(&memStat)
 	oldHeapInUse := memStat.HeapInuse
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
 		initAndCloseTiDB()
 	}
 
 	runtime.GC()
 	runtime.ReadMemStats(&memStat)
-	c.Assert(memStat.HeapInuse-oldHeapInUse, Less, uint64(150*units.MiB))
+	// before the fix, initAndCloseTiDB for 20 times will cost 900 MB memory, so we test for a quite loose upper bound.
+	c.Assert(memStat.HeapInuse-oldHeapInUse, Less, uint64(300*units.MiB))
 }
 
 func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
