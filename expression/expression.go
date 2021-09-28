@@ -1091,7 +1091,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.Upper, ast.Ucase:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_UpperUTF8:
+		case tipb.ScalarFuncSig_UpperUTF8, tipb.ScalarFuncSig_Upper:
 			return true
 		}
 
