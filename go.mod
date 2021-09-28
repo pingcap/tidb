@@ -97,4 +97,4 @@ require (
 // we need keep the replacement until go.etcd.io supports the higher version of grpc.
 replace google.golang.org/grpc => google.golang.org/grpc v1.29.1
 
-replace github.com/tikv/client-go/v2 => github.com/cfzjywxk/client-go/v2 v2.0.0-20210928092132-214e55b9d7ef
+replace github.com/tikv/client-go/v2 => github.com/cfzjywxk/client-go/v2 v2.0.0-20210928113310-a12287f7a5d3

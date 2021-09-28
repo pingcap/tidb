@@ -115,6 +115,8 @@ github.com/cfzjywxk/client-go/v2 v2.0.0-20210927081851-048a85ec4920 h1:YpBdmbA8P
 github.com/cfzjywxk/client-go/v2 v2.0.0-20210927081851-048a85ec4920/go.mod h1:00plYwQsQ5kBUmafHO+JkjznGgFaBokMZl82TZIbsQk=
 github.com/cfzjywxk/client-go/v2 v2.0.0-20210928092132-214e55b9d7ef h1:4MLynBVWaUJS/9vVlQ3JvmUDw23wEX2VuXomPcml4JE=
 github.com/cfzjywxk/client-go/v2 v2.0.0-20210928092132-214e55b9d7ef/go.mod h1:00plYwQsQ5kBUmafHO+JkjznGgFaBokMZl82TZIbsQk=
+github.com/cfzjywxk/client-go/v2 v2.0.0-20210928113310-a12287f7a5d3 h1:S6KRns4Ztg1Th7KK1+Zrz21PAd+AcvaBZCS/BJDDJYw=
+github.com/cfzjywxk/client-go/v2 v2.0.0-20210928113310-a12287f7a5d3/go.mod h1:00plYwQsQ5kBUmafHO+JkjznGgFaBokMZl82TZIbsQk=
 github.com/cheggaaa/pb/v3 v3.0.8 h1:bC8oemdChbke2FHIIGy9mn4DPJ2caZYQnfbRqwmdCoA=
 github.com/cheggaaa/pb/v3 v3.0.8/go.mod h1:UICbiLec/XO6Hw6k+BHEtHeQFzzBH4i2/qk/ow1EJTA=
 github.com/cheynewallace/tabby v1.1.1 h1:JvUR8waht4Y0S3JF17G6Vhyt+FRhnqVCkk8l4YrOU54=
