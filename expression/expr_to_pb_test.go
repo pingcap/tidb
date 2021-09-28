@@ -656,28 +656,31 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	validDecimalType := types.NewFieldType(mysql.TypeNewDecimal)
+	validDecimalType.Flen = 20
+	validDecimalType.Decimal = 2
 	// CastIntAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), intColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, intColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastRealAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), realColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, realColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastDecimalAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, decimalColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastStringAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), stringColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, stringColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastTimeAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), datetimeColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, datetimeColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
@@ -982,6 +985,21 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 
 	// ExtractDatetimeFromString: can not be pushed
 	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Cast to Int32: not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLong), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Cast to Float: not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeFloat), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Cast to invalid Decimal Type: not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), intColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 

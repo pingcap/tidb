@@ -1004,6 +1004,13 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 	return false
 }
 
+func isValidTiFlashDecimalType(tp *types.FieldType) bool {
+	if tp.Tp != mysql.TypeNewDecimal {
+		return false
+	}
+	return tp.Flen > 0 && tp.Flen <= 65 && tp.Decimal >= 0 && tp.Decimal <= 30 && tp.Flen >= tp.Decimal
+}
+
 func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	switch function.FuncName.L {
 	case ast.Floor, ast.Ceil, ast.Ceiling:
@@ -1041,15 +1048,30 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.Cast:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastIntAsTime:
+		case tipb.ScalarFuncSig_CastDecimalAsInt /*, tipb.ScalarFuncSig_CastDurationAsInt*/, tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastRealAsInt,
+			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastStringAsInt /*, tipb.ScalarFuncSig_CastJsonAsInt*/ :
+			// TiFlash cast only support cast to Int64
+			return function.RetType.Tp == mysql.TypeLonglong
+		case /*tipb.ScalarFuncSig_CastDecimalAsReal, tipb.ScalarFuncSig_CastDurationAsReal,*/ tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastRealAsReal,
+			/*tipb.ScalarFuncSig_CastTimeAsReal,*/ tipb.ScalarFuncSig_CastStringAsReal /*, tipb.ScalarFuncSig_CastJsonAsReal*/ :
+			// TiFlash cast only support cast to Float64
+			return function.RetType.Tp == mysql.TypeDouble
+		case tipb.ScalarFuncSig_CastDecimalAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal*/, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal,
+			tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
+			return isValidTiFlashDecimalType(function.RetType)
+		case tipb.ScalarFuncSig_CastDecimalAsString /*, tipb.ScalarFuncSig_CastDurationAsString*/, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastRealAsString,
+			tipb.ScalarFuncSig_CastTimeAsString, tipb.ScalarFuncSig_CastStringAsString /*, tipb.ScalarFuncSig_CastJsonAsString*/ :
+			return true
+		case tipb.ScalarFuncSig_CastDecimalAsTime /*, tipb.ScalarFuncSig_CastDurationAsTime*/, tipb.ScalarFuncSig_CastIntAsTime, tipb.ScalarFuncSig_CastRealAsTime,
+			tipb.ScalarFuncSig_CastTimeAsTime, tipb.ScalarFuncSig_CastStringAsTime /*, tipb.ScalarFuncSig_CastJsonAsTime*/ :
 			// ban the function of casting year type as time type pushing down to tiflash because of https://github.com/pingcap/tidb/issues/26215
 			return function.GetArgs()[0].GetType().Tp != mysql.TypeYear
-		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString,
-			tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastRealAsTime,
-			tipb.ScalarFuncSig_CastStringAsInt, tipb.ScalarFuncSig_CastStringAsReal, tipb.ScalarFuncSig_CastStringAsDecimal, tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastStringAsTime,
-			tipb.ScalarFuncSig_CastDecimalAsInt /*, tipb.ScalarFuncSig_CastDecimalAsReal*/, tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastDecimalAsTime,
-			tipb.ScalarFuncSig_CastTimeAsInt /*, tipb.ScalarFuncSig_CastTimeAsReal*/, tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime, tipb.ScalarFuncSig_CastTimeAsString:
-			return true
+			/*case tipb.ScalarFuncSig_CastDecimalAsDuration, tipb.ScalarFuncSig_CastDurationAsDuration, tipb.ScalarFuncSig_CastIntAsDuration, tipb.ScalarFuncSig_CastRealAsDuration,
+			tipb.ScalarFuncSig_CastTimeAsDuration, tipb.ScalarFuncSig_CastStringAsDuration, tipb.ScalarFuncSig_CastJsonAsDuration:
+			return true*/
+			/*case tipb.ScalarFuncSig_CastDecimalAsJson, tipb.ScalarFuncSig_CastDurationAsJson, tipb.ScalarFuncSig_CastIntAsJson, tipb.ScalarFuncSig_CastRealAsJson,
+			tipb.ScalarFuncSig_CastTimeAsJson, tipb.ScalarFuncSig_CastStringAsJson, tipb.ScalarFuncSig_CastJsonAsJson:
+			return true*/
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {
@@ -1183,7 +1205,8 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 			if storeType == kv.UnSpecified {
 				storageName = "storage layer"
 			}
-			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ") can not be pushed to " + storageName))
+			scalarFunc.RetType.CompactStr()
+			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") can not be pushed to " + storageName))
 		}
 		return false
 	}
