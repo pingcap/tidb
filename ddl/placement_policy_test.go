@@ -373,15 +373,21 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	tk.MustExec("drop placement policy if exists x")
 }
 
-// TODO: sylzd
 func (s *testDBSuite6) TestAlterDBWithPlacementPolicy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create placement policy x PRIMARY_REGION=\"cn-east-1\";")
-	tk.MustExec("ALTER DATABASE test PLACEMENT POLICY=`x`;")
-//	tk.MustExec("ALTER DATABASE test default PLACEMENT POLICY=`x`;")
-	tk.MustExec("create table t(a int);")
+	tk.MustExec("create placement policy y PRIMARY_REGION=\"cn-east-2\";")
 
+	tk.MustExec("ALTER DATABASE test PLACEMENT POLICY=`x`;")
+
+	// Test for Show Create Database
+	tk.MustQuery(`show create database test`).Check(testutil.RowsWithSep("|",
+		"test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PLACEMENT POLICY=`x` */",
+	))
+	// Test for Alter Placement Policy affect table created.
+	tk.MustExec("create table t(a int);")
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
@@ -389,7 +395,28 @@ func (s *testDBSuite6) TestAlterDBWithPlacementPolicy(c *C) {
 			"/*T![placement] PLACEMENT POLICY=`x` */",
 	))
 
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	// Test for Alter Default Placement Policy, And will not update the old table options.
+	tk.MustExec("ALTER DATABASE test DEFAULT PLACEMENT POLICY=`y`;")
+	tk.MustExec("create table t2(a int);")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PLACEMENT POLICY=`x` */",
+	))
+	tk.MustQuery(`show create table t2`).Check(testutil.RowsWithSep("|",
+		"t2 CREATE TABLE `t2` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PLACEMENT POLICY=`y` */",
+	))
+
+
+	tk.MustExec(`DROP TABLE IF EXISTS t, t2`)
+}
+
+func (s *testDBSuite6) TestAlterDBWithDirectPlacement(c *C) {
+
 }
 
 func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
