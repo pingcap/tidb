@@ -586,7 +586,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogBackoffDetail, line, e.checker, fileLine)
 				} else {
 					fields, values := splitByColon(line)
-					for i := 0; i < len(fields); i += 1 {
+					for i := 0; i < len(fields); i++ {
 						valid := e.setColumnValue(sctx, row, tz, fields[i], values[i], e.checker, fileLine)
 						if !valid {
 							startFlag = false
