@@ -6353,7 +6353,10 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 				if placementSettings == nil {
 					placementSettings = &model.PlacementSettings{}
 				}
-				SetDirectPlacementOpt(placementSettings, ast.PlacementOptionType(op.Tp), op.StrValue, op.UintValue)
+				err = SetDirectPlacementOpt(placementSettings, ast.PlacementOptionType(op.Tp), op.StrValue, op.UintValue)
+				if err != nil {
+					return err
+				}
 			default:
 				return errors.Trace(errors.New("unknown partition option"))
 			}
