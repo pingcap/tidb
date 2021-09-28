@@ -196,6 +196,29 @@ func (s *testInferTypeSuite) createTestCase4Cast() []typeInferTestCase {
 		{"CAST(c_int_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"CAST(c_int_d AS DECIMAL(10))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"CAST(c_int_d AS DECIMAL(10,3))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 3}, // TODO: Flen should be 12
+		{"CAST(c_int_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_bit AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_uint_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_bigint_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_ubigint_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_float_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_ufloat_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_double_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_udouble_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_datetime AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_datetime_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_time AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_time_d AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_char AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_bchar AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(c_varchar AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
+		{"CAST(\"123456789.0123456789\" AS DECIMAL)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.NotNullFlag | mysql.BinaryFlag, 10, 0},          // TODO: Flen should be 11.
+		{"CAST(\"123456789.0123456789\" AS DECIMAL(10,0))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.NotNullFlag | mysql.BinaryFlag, 10, 0},    // TODO: Flen should be 11.
+		{"CAST(\"123456789.0123456789\" AS DECIMAL(5,5))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 5, 5},                          // TODO: Flen should be 7. Flag should be mysql.NotNullFlag | mysql.BinaryFlag.
+		{"CAST(\"123456789.0123456789\" AS DECIMAL(6,5))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 6, 5},                          // TODO: Flen should be 8. Flag should be mysql.NotNullFlag | mysql.BinaryFlag.
+		{"CAST(\"-123456789.0123456789\" AS DECIMAL(64,30))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.NotNullFlag | mysql.BinaryFlag, 64, 30}, // TODO: Flen should be 66.
+		{"CAST(\"-123456789.0123456789\" AS DECIMAL(10,0))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.NotNullFlag | mysql.BinaryFlag, 10, 0},   // TODO: Flen should be 11.
+		{"CAST(\"-123456789.0123456789\" AS DECIMAL(5,5))", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 5, 5},                         // TODO: Flen should be 7. Flag should be mysql.NotNullFlag | mysql.BinaryFlag.
 		{"CAST(c_int_d AS JSON)", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag | mysql.ParseToJSONFlag, 12582912 / 3, 0},
 		{"CAST(c_int_d AS SIGNED)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 22, 0},         // TODO: Flen should be 11.
 		{"CAST(c_int_d AS SIGNED INTEGER)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 22, 0}, // TODO: Flen should be 11.
