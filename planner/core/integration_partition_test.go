@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = SerialSuites(&testIntegrationPartitionSerialSuite{})
@@ -54,11 +56,25 @@ func (s *testIntegrationPartitionSerialSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func SetUpTest(t *testing.T) (kv.Storage, *domain.Domain) {
+	var err error
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	return store, dom
+}
+
 func (s *testIntegrationPartitionSerialSuite) TearDownTest(c *C) {
 	s.dom.Close()
 	err := s.store.Close()
 	c.Assert(err, IsNil)
 }
+
+func TearDownTest(t *testing.T, store kv.Storage, dom *domain.Domain) {
+	dom.Close()
+	err := store.Close()
+	require.NoError(t, err)
+}
+
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionPushDown(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database list_push_down")
