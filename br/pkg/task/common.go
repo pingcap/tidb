@@ -84,7 +84,6 @@ const (
 	crypterAES128KeyLen = 16
 	crypterAES192KeyLen = 24
 	crypterAES256KeyLen = 32
-	crypterIvLen        = 16
 )
 
 // TLSConfig is the common configuration for TLS connection.
@@ -335,9 +334,7 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	// Set [16]uint8 to CipherIv if cipherType is PlainText
 	if cfg.CipherInfo.CipherType == encryptionpb.EncryptionMethod_PLAINTEXT {
-		cfg.CipherInfo.CipherIv = make([]byte, crypterIvLen)
 		return nil
 	}
 
@@ -360,8 +357,6 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 		return errors.Annotate(err, "Cipher type and key not match")
 	}
 
-	// regards cipher key[:16] as cipher iv
-	cfg.CipherInfo.CipherIv = cfg.CipherInfo.CipherKey[:crypterIvLen]
 	return nil
 }
 
@@ -590,7 +585,12 @@ func ReadBackupMeta(
 		}
 	}
 
-	decryptBackupMeta, err := metautil.Decrypt(metaData, &cfg.CipherInfo)
+	// the prefix of backupmeta file is iv(16 bytes) if encryption method is valid
+	var iv []byte
+	if cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT {
+		iv = metaData[:metautil.CrypterIvLen]
+	}
+	decryptBackupMeta, err := metautil.Decrypt(metaData[len(iv):], &cfg.CipherInfo, iv)
 	if err != nil {
 		return nil, nil, nil, errors.Annotate(err, "decrypt failed with wrong key")
 	}

@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -41,6 +42,9 @@ const (
 
 	// MetaFileSize represents the limit size of one MetaFile
 	MetaFileSize = 128 * units.MiB
+
+	// CrypterIvLen represents the length of iv of crypter method
+	CrypterIvLen = 16
 )
 
 const (
@@ -51,24 +55,37 @@ const (
 	MetaV2
 )
 
-func Decrypt(content []byte, cipher *backuppb.CipherInfo) ([]byte, error) {
-	if encryptionpb.EncryptionMethod_UNKNOWN == cipher.CipherType {
-		return content, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
-	} else if encryptionpb.EncryptionMethod_PLAINTEXT == cipher.CipherType {
-		return content, nil
+func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv []byte, err error) {
+	switch cipher.CipherType {
+	case encryptionpb.EncryptionMethod_PLAINTEXT:
+		return content, iv, nil
+	case encryptionpb.EncryptionMethod_AES128_CTR,
+		encryptionpb.EncryptionMethod_AES192_CTR,
+		encryptionpb.EncryptionMethod_AES256_CTR:
+		// generate radom iv for aes crypter
+		iv = make([]byte, CrypterIvLen)
+		_, err = rand.Read(iv)
+		if err != nil {
+			return content, iv, errors.Trace(err)
+		}
+		encryptedContent, err = encrypt.AESEncryptWithCBC(content, cipher.CipherKey, iv)
+		return
+	default:
+		return content, iv, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
 	}
-
-	return encrypt.AESDecryptWithECB(content, cipher.CipherKey)
 }
 
-func Encrypt(content []byte, cipher *backuppb.CipherInfo) ([]byte, error) {
-	if encryptionpb.EncryptionMethod_UNKNOWN == cipher.CipherType {
-		return content, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
-	} else if encryptionpb.EncryptionMethod_PLAINTEXT == cipher.CipherType {
+func Decrypt(content []byte, cipher *backuppb.CipherInfo, iv []byte) ([]byte, error) {
+	switch cipher.CipherType {
+	case encryptionpb.EncryptionMethod_PLAINTEXT:
 		return content, nil
+	case encryptionpb.EncryptionMethod_AES128_CTR,
+		encryptionpb.EncryptionMethod_AES192_CTR,
+		encryptionpb.EncryptionMethod_AES256_CTR:
+		return encrypt.AESDecryptWithCBC(content, cipher.CipherKey, iv)
+	default:
+		return content, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
 	}
-
-	return encrypt.AESEncryptWithECB(content, cipher.CipherKey)
 }
 
 func walkLeafMetaFile(
@@ -90,7 +107,7 @@ func walkLeafMetaFile(
 			return errors.Trace(err)
 		}
 
-		decryptContent, err := Decrypt(content, cipher)
+		decryptContent, err := Decrypt(content, cipher, node.CipherIv)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -604,12 +621,12 @@ func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 	log.Debug("backup meta", zap.Reflect("meta", writer.backupMeta))
 	log.Info("save backup meta", zap.Int("size", len(backupMetaData)))
 
-	encryptBuff, err := Encrypt(backupMetaData, writer.cipher)
+	encryptBuff, iv, err := Encrypt(backupMetaData, writer.cipher)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	return writer.storage.WriteFile(ctx, MetaFile, encryptBuff)
+	return writer.storage.WriteFile(ctx, MetaFile, append(iv, encryptBuff...))
 }
 
 // fillMetasV1 keep the compatibility for old version.
@@ -669,19 +686,20 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 	writer.metafileSeqNum["metafiles"] += 1
 	fname := fmt.Sprintf("backupmeta.%s.%09d", name, writer.metafileSeqNum["metafiles"])
 
-	encypterContent, err := Encrypt(content, writer.cipher)
+	encyptedContent, iv, err := Encrypt(content, writer.cipher)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	if err = writer.storage.WriteFile(ctx, fname, encypterContent); err != nil {
+	if err = writer.storage.WriteFile(ctx, fname, encyptedContent); err != nil {
 		return errors.Trace(err)
 	}
 	checksum := sha256.Sum256(content)
 	file := &backuppb.File{
-		Name:   fname,
-		Sha256: checksum[:],
-		Size_:  uint64(len(content)),
+		Name:     fname,
+		Sha256:   checksum[:],
+		Size_:    uint64(len(content)),
+		CipherIv: iv,
 	}
 
 	index.MetaFiles = append(index.MetaFiles, file)

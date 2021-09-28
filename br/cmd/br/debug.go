@@ -347,12 +347,12 @@ func encodeBackupMetaCommand() *cobra.Command {
 				fileName += "_from_json"
 			}
 
-			decryptContent, err := metautil.Encrypt(backupMeta, &cfg.CipherInfo)
+			encryptedContent, iv, err := metautil.Encrypt(backupMeta, &cfg.CipherInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			err = s.WriteFile(ctx, fileName, decryptContent)
+			err = s.WriteFile(ctx, fileName, append(iv, encryptedContent...))
 			if err != nil {
 				return errors.Trace(err)
 			}

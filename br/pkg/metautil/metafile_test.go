@@ -193,21 +193,21 @@ func TestEncryptAndDecrypt(t *testing.T) {
 			CipherType: v.method,
 			CipherKey:  []byte(v.rightKey),
 		}
-		encryptData, err := Encrypt(originalData, &cipher)
+		encryptData, iv, err := Encrypt(originalData, &cipher)
 		if v.method == encryptionpb.EncryptionMethod_UNKNOWN {
 			require.Error(t, err)
 		} else if v.method == encryptionpb.EncryptionMethod_PLAINTEXT {
 			require.Nil(t, err)
 			require.Equal(t, originalData, encryptData)
 
-			decryptData, err := Decrypt(encryptData, &cipher)
+			decryptData, err := Decrypt(encryptData, &cipher, iv)
 			require.Nil(t, err)
 			require.Equal(t, decryptData, originalData)
 		} else {
 			require.Nil(t, err)
 			require.NotEqual(t, originalData, encryptData)
 
-			decryptData, err := Decrypt(encryptData, &cipher)
+			decryptData, err := Decrypt(encryptData, &cipher, iv)
 			require.Nil(t, err)
 			require.Equal(t, decryptData, originalData)
 
@@ -215,7 +215,7 @@ func TestEncryptAndDecrypt(t *testing.T) {
 				CipherType: v.method,
 				CipherKey:  []byte(v.wrongKey),
 			}
-			_, err = Decrypt(encryptData, &wrongCipher)
+			_, err = Decrypt(encryptData, &wrongCipher, iv)
 			require.Error(t, err)
 		}
 	}
