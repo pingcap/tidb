@@ -44,7 +44,7 @@ func TestInMemoryAlloc(t *testing.T) {
 	tblInfo := &model.TableInfo{
 		Columns: []*model.ColumnInfo{columnInfo},
 	}
-	alloc := autoid.NewAllocatorFromTempTblInfo(tblInfo)
+	alloc := autoid.NewAllocatorFromTempTblInfo(tblInfo).Get(autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 
 	// alloc 1
@@ -94,7 +94,7 @@ func TestInMemoryAlloc(t *testing.T) {
 
 	// test unsigned
 	columnInfo.FieldType.Flag |= mysql.UnsignedFlag
-	alloc = autoid.NewAllocatorFromTempTblInfo(tblInfo)
+	alloc = autoid.NewAllocatorFromTempTblInfo(tblInfo).Get(autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 
 	var n uint64 = math.MaxUint64 - 2

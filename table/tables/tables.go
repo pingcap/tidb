@@ -1437,11 +1437,7 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	} else if ctx.GetSessionVars().IDAllocator == nil {
 		// Use an independent allocator for global temporary tables.
 		if t.meta.TempTableType == model.TempTableGlobal {
-			if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
-				return autoid.NewAllocators(t.meta.Version, alloc)
-			}
-			// If the session is not in a txn, for example, in "show create table", use the original allocator.
-			// Otherwise the would be a nil pointer dereference.
+			return ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocators()
 		}
 		return t.allocs
 	}
@@ -1826,8 +1822,8 @@ type TemporaryTable struct {
 	modified bool
 	// The stats of this table. So far it's always pseudo stats.
 	stats *statistics.Table
-	// The autoID allocator of this table.
-	autoIDAllocator autoid.Allocator
+	// The autoID allocators of this table.
+	autoIDAllocators autoid.Allocators
 	// Table size.
 	size int64
 
@@ -1837,16 +1833,16 @@ type TemporaryTable struct {
 // TempTableFromMeta builds a TempTable from model.TableInfo.
 func TempTableFromMeta(tblInfo *model.TableInfo) tableutil.TempTable {
 	return &TemporaryTable{
-		modified:        false,
-		stats:           statistics.PseudoTable(tblInfo),
-		autoIDAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
-		meta:            tblInfo,
+		modified:         false,
+		stats:            statistics.PseudoTable(tblInfo),
+		autoIDAllocators: autoid.NewAllocatorFromTempTblInfo(tblInfo),
+		meta:             tblInfo,
 	}
 }
 
-// GetAutoIDAllocator is implemented from TempTable.GetAutoIDAllocator.
-func (t *TemporaryTable) GetAutoIDAllocator() autoid.Allocator {
-	return t.autoIDAllocator
+// GetAutoIDAllocator is implemented from TempTable.GetAutoIDAllocators.
+func (t *TemporaryTable) GetAutoIDAllocators() autoid.Allocators {
+	return t.autoIDAllocators
 }
 
 // SetModified is implemented from TempTable.SetModified.

@@ -1508,20 +1508,13 @@ func (tr *TableRestore) restoreTable(
 				return false, err
 			}
 		} else {
+			maxRowID := tr.tableInfo.Core.AutoIncID
 			if model.AutoIncrementIDIsSeparated(tr.tableInfo.Core.Version) {
-				cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, tr.tableInfo.Core.AutoRowID)
-				if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(cp.AllocBase, false); err != nil {
-					return false, err
-				}
-				autoIncID := tr.tableInfo.Core.AutoIncID
-				if err := tr.alloc.Get(autoid.AutoIncrementType).Rebase(autoIncID, false); err != nil {
-					return false, err
-				}
-			} else {
-				cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
-				if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(cp.AllocBase, false); err != nil {
-					return false, err
-				}
+				maxRowID = tr.tableInfo.Core.AutoRowID
+			}
+			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, maxRowID)
+			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(cp.AllocBase, false); err != nil {
+				return false, err
 			}
 		}
 		rc.saveCpCh <- saveCp{

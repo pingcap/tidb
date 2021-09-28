@@ -1710,6 +1710,8 @@ func buildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInf
 	tblInfo.Indices = newIndices
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
+	tblInfo.AutoRandID = 0
+	tblInfo.AutoRowID = 0
 	tblInfo.ForeignKeys = nil
 	// Ignore TiFlash replicas for temporary tables.
 	if s.TemporaryKeyword != ast.TemporaryNone {
@@ -2004,18 +2006,14 @@ func (d *ddl) CreateTableWithInfo(
 	} else if actionType == model.ActionCreateTable {
 		d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
 		if tbInfo.AutoRowID > 1 {
-			newEnd := tbInfo.AutoIncID - 1
+			newEnd := tbInfo.AutoRowID - 1
 			if err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.RowIDAllocType); err != nil {
 				return errors.Trace(err)
 			}
 		}
 		if tbInfo.AutoIncID > 1 {
 			newEnd := tbInfo.AutoIncID - 1
-			if model.AutoIncrementIDIsSeparated(tbInfo.Version) {
-				err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.AutoIncrementType)
-			} else {
-				err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.RowIDAllocType)
-			}
+			err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.AutoIncrementType)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2780,12 +2778,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		allocType = autoid.AutoRandomType
 	case ast.TableOptionAutoIncrement:
 		actionType = model.ActionRebaseAutoID
-		tbInfo := t.Meta()
-		if model.AutoIncrementIDIsSeparated(tbInfo.Version) {
-			allocType = autoid.AutoIncrementType
-		} else {
-			allocType = autoid.RowIDAllocType
-		}
+		allocType = autoid.AutoIncrementType
 	case ast.TableOptionRowID:
 		actionType = model.ActionRebaseRowID
 		allocType = autoid.RowIDAllocType

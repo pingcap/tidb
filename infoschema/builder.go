@@ -413,11 +413,12 @@ func reconstructAllocators(s kv.Storage, dbID int64, oldTbl table.Table, newTbl 
 		return as.Remove(autoid.RowIDAllocType).Add(rowID)
 	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
 		unsigned := newTbl.IsAutoIncColUnsigned()
+		cacheOpt := autoid.CustomAutoIncCacheOption(newTbl.AutoIdCache)
 		if model.AutoIncrementIDIsSeparated(newTbl.Version) {
-			incID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.AutoIncrementType)
+			incID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.AutoIncrementType, cacheOpt)
 			return as.Remove(autoid.AutoIncrementType).Add(incID)
 		}
-		rowID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.RowIDAllocType)
+		rowID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.RowIDAllocType, cacheOpt)
 		return as.Remove(autoid.RowIDAllocType).Remove(autoid.AutoIncrementType).Add(rowID)
 	case model.ActionRebaseAutoRandomBase:
 		unsigned := newTbl.IsAutoRandomBitColUnsigned()

@@ -5808,7 +5808,7 @@ func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	tk.MustExec("drop table if exists t1")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int) shard_row_id_bits = 5")
-	tk.MustExec(fmt.Sprintf("alter table t1 auto_increment = %d;", 1<<56))
+	tk.MustExec(fmt.Sprintf("alter table t1 row_id = %d;", 1<<56))
 	tk.MustExec("insert into t1 set a=1;")
 
 	// Test increase shard_row_id_bits failed by overflow global auto ID.
@@ -5830,7 +5830,7 @@ func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	tk.MustExec("create table t1 (a int) shard_row_id_bits = 10")
 	tk.MustExec("alter table t1 SHARD_ROW_ID_BITS = 5;")
 	checkShardRowID(10, 5)
-	tk.MustExec(fmt.Sprintf("alter table t1 auto_increment = %d;", 1<<56))
+	tk.MustExec(fmt.Sprintf("alter table t1 row_id = %d;", 1<<56))
 	_, err = tk.Exec("insert into t1 set a=1;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[autoid:1467]Failed to read auto-increment value from storage engine")

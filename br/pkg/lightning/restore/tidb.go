@@ -373,6 +373,21 @@ func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName strin
 	return errors.Annotatef(err, "%s", query)
 }
 
+func AlterRowID(ctx context.Context, g glue.SQLExecutor, tableName string, rowIDBase int64) error {
+	logger := log.With(zap.String("table", tableName), zap.Int64("row_id", rowIDBase))
+	query := fmt.Sprintf("ALTER TABLE %s ROW_ID=%d", tableName, rowIDBase)
+	task := logger.Begin(zap.InfoLevel, "alter table row_id")
+	err := g.ExecuteWithLog(ctx, query, "alter table row_id", logger)
+	task.End(zap.ErrorLevel, err)
+	if err != nil {
+		task.Error(
+			"alter table row_id failed, please perform the query manually",
+			zap.String("query", query),
+		)
+	}
+	return errors.Annotatef(err, "%s", query)
+}
+
 func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase int64) error {
 	logger := log.With(zap.String("table", tableName), zap.Int64("auto_random", randomBase))
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)

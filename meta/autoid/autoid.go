@@ -511,18 +511,24 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
-	separated := model.AutoIncrementIDIsSeparated(tblInfo.Version)
 	var allocs []Allocator
-	if hasRowID || (hasAutoIncID && !separated) {
-		alloc := NewAllocator(store, dbID, tblInfo.ID, false, RowIDAllocType, idCacheOpt)
-		allocs = append(allocs, alloc)
-	}
-	if hasAutoIncID && separated {
-		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, idCacheOpt)
-		allocs = append(allocs, alloc)
+	if model.AutoIncrementIDIsSeparated(tblInfo.Version) {
+		if hasRowID {
+			alloc := NewAllocator(store, dbID, tblInfo.ID, false, RowIDAllocType)
+			allocs = append(allocs, alloc)
+		}
+		if hasAutoIncID {
+			alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, idCacheOpt)
+			allocs = append(allocs, alloc)
+		}
+	} else {
+		if hasRowID || hasAutoIncID {
+			alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt)
+			allocs = append(allocs, alloc)
+		}
 	}
 	if tblInfo.ContainsAutoRandomBits() {
-		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt)
+		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType)
 		allocs = append(allocs, alloc)
 	}
 	return NewAllocators(tblInfo.Version, allocs...)
@@ -560,10 +566,6 @@ func (alloc *allocator) AllocSeqCache() (int64, int64, int64, error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	return alloc.alloc4Sequence()
-}
-
-func validIncrementAndOffset(increment, offset int64) bool {
-	return (increment >= minIncrement && increment <= maxIncrement) && (offset >= minIncrement && offset <= maxIncrement)
 }
 
 // CalcNeededBatchSize is used to calculate batch size for autoID allocation.

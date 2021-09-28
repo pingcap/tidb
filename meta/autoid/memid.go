@@ -22,17 +22,24 @@ import (
 )
 
 // NewAllocatorFromTempTblInfo creates an in-memory allocator from a temporary table info.
-func NewAllocatorFromTempTblInfo(tblInfo *model.TableInfo) Allocator {
+func NewAllocatorFromTempTblInfo(tblInfo *model.TableInfo) Allocators {
+	var allocators []Allocator
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
-	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
-	// Temporary tables don't support auto_random and sequence.
-	if hasRowID || hasAutoIncID {
-		return &inMemoryAllocator{
-			isUnsigned: tblInfo.IsAutoIncColUnsigned(),
+	if hasRowID {
+		allocators = append(allocators, &inMemoryAllocator{
+			isUnsigned: false,
 			allocType:  RowIDAllocType,
-		}
+		})
 	}
-	return nil
+	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
+	if hasAutoIncID {
+		allocators = append(allocators, &inMemoryAllocator{
+			isUnsigned: tblInfo.IsAutoIncColUnsigned(),
+			allocType:  AutoIncrementType,
+		})
+	}
+	// Temporary tables don't support auto_random and sequence.
+	return NewAllocators(tblInfo.Version, allocators...)
 }
 
 // inMemoryAllocator is typically used for temporary tables.

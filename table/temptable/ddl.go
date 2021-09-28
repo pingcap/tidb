@@ -175,8 +175,7 @@ func newTemporaryTableFromTableInfo(sctx sessionctx.Context, tbInfo *model.Table
 	}
 
 	// AutoID is allocated in mocked..
-	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
-	allocs := autoid.NewAllocators(tbInfo.Version, alloc)
+	allocs := autoid.NewAllocatorFromTempTblInfo(tbInfo)
 	return tables.TableFromMeta(allocs, tbInfo)
 }
 

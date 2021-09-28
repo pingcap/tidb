@@ -675,13 +675,10 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 	switch job.Type {
 	case model.ActionRebaseAutoID:
 		tblInfo.AutoIncID = newBase
-		if model.AutoIncrementIDIsSeparated(tblInfo.Version) {
-			tp = autoid.AutoIncrementType
-		} else {
-			tp = autoid.RowIDAllocType
-		}
+		tp = autoid.AutoIncrementType
 	case model.ActionRebaseAutoRandomBase:
 		tblInfo.AutoRandID = newBase
+		tp = autoid.AutoRandomType
 	case model.ActionRebaseRowID:
 		tblInfo.AutoRowID = newBase
 		tp = autoid.RowIDAllocType
