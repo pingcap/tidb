@@ -3462,9 +3462,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 	if sel.SelectStmtOpts != nil {
-		if sel.SelectStmtOpts.CalcFoundRows && b.ctx.GetSessionVars().NoopFuncsMode != variable.OnInt {
+		noopFuncsMode := b.ctx.GetSessionVars().NoopFuncsMode
+		if sel.SelectStmtOpts.CalcFoundRows && noopFuncsMode != variable.OnInt {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
-			if b.ctx.GetSessionVars().NoopFuncsMode == variable.OffInt {
+			if noopFuncsMode == variable.OffInt {
 				return nil, err
 			}
 			// NoopFuncsMode is Warn, append an error

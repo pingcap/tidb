@@ -199,7 +199,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_lru_scan_depth", Value: "1024"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_rseg_truncate_frequency", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLAutoIsNull, Value: Off, Type: TypeBool, IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		// checkSQLAutoIsNull requires TiDBEnableNoopFuncs>0 for the same scope otherwise an error will be returned.
+		// checkSQLAutoIsNull requires TiDBEnableNoopFuncs!=OFF for the same scope otherwise an error will be returned.
 		// See also https://github.com/pingcap/tidb/issues/28230
 		feature := "sql_auto_is_null"
 		if TiDBOptOn(normalizedValue) {

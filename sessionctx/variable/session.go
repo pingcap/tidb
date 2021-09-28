@@ -1149,7 +1149,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		enableIndexMerge:            false,
-		NoopFuncsMode:               DefTiDBEnableNoopFuncs,
+		NoopFuncsMode:               TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,

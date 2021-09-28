@@ -196,13 +196,13 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		if db == "" {
 			return nil, errors.Trace(ErrNoDB)
 		}
-
 		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
-	if ctx.GetSessionVars().NoopFuncsMode != variable.OnInt {
+	noopFuncsMode := ctx.GetSessionVars().NoopFuncsMode
+	if noopFuncsMode != variable.OnInt {
 		if _, ok := noopFuncs[funcName]; ok {
 			err := ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
-			if ctx.GetSessionVars().NoopFuncsMode == variable.OffInt {
+			if noopFuncsMode == variable.OffInt {
 				return nil, err
 			}
 			// NoopFuncsMode is Warn, append an error

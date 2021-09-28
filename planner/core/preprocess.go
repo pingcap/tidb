@@ -976,16 +976,15 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 }
 
 func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
-	noopFuncs := p.ctx.GetSessionVars().NoopFuncsMode
+	noopFuncsMode := p.ctx.GetSessionVars().NoopFuncsMode
 	for _, item := range stmt.Items {
-		if !item.NullOrder {
+		if !item.NullOrder && noopFuncsMode != variable.OnInt {
 			err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("GROUP BY expr ASC|DESC")
-			if noopFuncs == variable.OffInt {
+			if noopFuncsMode == variable.OffInt {
 				p.err = err
 				return
-			} else if noopFuncs == variable.WarnInt {
-				p.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			}
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}
 }
