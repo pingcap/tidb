@@ -67,36 +67,36 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 		return ver, errors.Trace(err)
 	}
-	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
-	if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
-		return ver, errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
-	}
-	var bundle *placement.Bundle
+	// placement rules meta inheritance.
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	bundle, err = getBundleFromTblInfo(t, job, tbInfo, dbInfo)
+	err = inheritPlacementRuleFromDB(tbInfo, dbInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
+	// build table & partition bundles if any.
+	tableBundle, err := getBundleFromTblInfo(t, job, tbInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	partitionBundles, err := getBundleFromPartitionDef(t, job, tbInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	bundles := make([]*placement.Bundle, 0, 1+len(partitionBundles))
+	bundles = append(bundles, tableBundle)
+	bundles = append(bundles, partitionBundles...)
+
 	// Do the http request only when the rules is existed.
 	syncPlacementRules := func() error {
-		// bundle being nil means there is no specified or inherited placement rules.
-		if bundle == nil {
+		// bundles being 0 means there is no specified or inherited placement rules.
+		if len(bundles) == 0 {
 			return nil
 		}
-		if bundle.Rules == nil {
-			return nil
-		}
-		err = bundle.Tidy()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// todo: partitions should use the default table level placement rules or it's specified one.
-		bundle.Reset(tbInfo.ID)
-		err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
+		err = infosync.PutRuleBundles(context.TODO(), bundles)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return errors.Wrapf(err, "failed to notify PD the placement rules")
@@ -138,57 +138,44 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 }
 
-func getBundleFromDBInfo(t *meta.Meta, job *model.Job, dbInfo *model.DBInfo) (*placement.Bundle, error) {
-	dbBundleWrapper := func(bundle *placement.Bundle) *placement.Bundle {
-		bundle.Index = placement.RuleIndexDatabase
-		bundle.Override = true
-		return bundle
+func inheritPlacementRuleFromDB(tbInfo *model.TableInfo, dbInfo *model.DBInfo) error {
+	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
+	if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
+		return ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name)
 	}
-	if dbInfo.DirectPlacementOpts != nil {
-		// check the direct placement option compatibility.
-		if err := checkPolicyValidation(dbInfo.DirectPlacementOpts); err != nil {
-			return nil, errors.Trace(err)
+	if tbInfo.DirectPlacementOpts == nil && tbInfo.PlacementPolicyRef == nil {
+		if dbInfo.DirectPlacementOpts != nil {
+			clone := *dbInfo.DirectPlacementOpts
+			tbInfo.DirectPlacementOpts = &clone
 		}
-		// build bundle from direct placement options.
-		bundle, err := placement.NewBundleFromOptions(dbInfo.DirectPlacementOpts)
-		if err != nil {
-			return nil, errors.Trace(err)
+		if dbInfo.PlacementPolicyRef != nil {
+			clone := *dbInfo.PlacementPolicyRef
+			tbInfo.PlacementPolicyRef = &clone
 		}
-		return dbBundleWrapper(bundle), nil
 	}
-	if dbInfo.PlacementPolicyRef != nil {
-		// placement policy reference will override the direct placement options.
-		po, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, dbInfo.PlacementPolicyRef.ID)
-		if err != nil {
-			return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(dbInfo.PlacementPolicyRef.Name))
-		}
-		// build bundle from placement policy.
-		bundle, err := placement.NewBundleFromOptions(po.PlacementSettings)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return dbBundleWrapper(bundle), nil
-	}
-	return nil, nil
+	return nil
 }
 
-func getBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, dbInfo *model.DBInfo) (*placement.Bundle, error) {
+func getBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) (*placement.Bundle, error) {
 	tableBundleWrapper := func(bundle *placement.Bundle) *placement.Bundle {
 		bundle.Index = placement.RuleIndexTable
 		bundle.Override = true
 		return bundle
 	}
+	var (
+		bundle *placement.Bundle
+		err    error
+	)
 	if tbInfo.DirectPlacementOpts != nil {
 		// check the direct placement option compatibility.
-		if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
+		if err = checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// build bundle from direct placement options.
-		bundle, err := placement.NewBundleFromOptions(tbInfo.DirectPlacementOpts)
+		bundle, err = placement.NewBundleFromOptions(tbInfo.DirectPlacementOpts)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return tableBundleWrapper(bundle), nil
 	}
 	if tbInfo.PlacementPolicyRef != nil {
 		// placement policy reference will override the direct placement options.
@@ -197,13 +184,72 @@ func getBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo,
 			return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
 		}
 		// build bundle from placement policy.
-		bundle, err := placement.NewBundleFromOptions(po.PlacementSettings)
+		bundle, err = placement.NewBundleFromOptions(po.PlacementSettings)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return tableBundleWrapper(bundle), nil
 	}
-	return getBundleFromDBInfo(t, job, dbInfo)
+	if bundle == nil {
+		return nil, nil
+	}
+	err = bundle.Tidy()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bundle.Reset(tbInfo.ID)
+
+	// build the default partition rules in the table-level bundle.
+	if tbInfo.Partition != nil {
+		ids := make([]int64, 0, len(tbInfo.Partition.Definitions))
+		for _, pDef := range tbInfo.Partition.Definitions {
+			ids = append(ids, pDef.ID)
+		}
+		bundle.Append(ids)
+	}
+	return tableBundleWrapper(bundle), nil
+}
+
+func getBundleFromPartitionDef(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) ([]*placement.Bundle, error) {
+	partitionBundleWrapper := func(bundle *placement.Bundle) *placement.Bundle {
+		bundle.Index = placement.RuleIndexPartition
+		bundle.Override = true
+		return bundle
+	}
+	if tbInfo.Partition == nil {
+		return nil, nil
+	}
+	bundles := make([]*placement.Bundle, 0, len(tbInfo.Partition.Definitions))
+	// If the partition has the placement rules on their own, build the partition-level bundles additionally.
+	for _, def := range tbInfo.Partition.Definitions {
+		if def.DirectPlacementOpts != nil {
+			// check the direct placement option compatibility.
+			if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
+				return nil, errors.Trace(err)
+			}
+			// build bundle from direct placement options.
+			bundle, err := placement.NewBundleFromOptions(tbInfo.DirectPlacementOpts)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			bundles = append(bundles, partitionBundleWrapper(bundle))
+			continue
+		}
+		if def.PlacementPolicyRef != nil {
+			// placement policy reference will override the direct placement options.
+			po, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, tbInfo.PlacementPolicyRef.ID)
+			if err != nil {
+				return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+			}
+			// build bundle from placement policy.
+			bundle, err := placement.NewBundleFromOptions(po.PlacementSettings)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			bundles = append(bundles, partitionBundleWrapper(bundle))
+			continue
+		}
+	}
+	return bundles, nil
 }
 
 func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {

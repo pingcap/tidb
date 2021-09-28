@@ -339,6 +339,24 @@ func (b *Bundle) Reset(newID int64) *Bundle {
 	return b
 }
 
+func (b *Bundle) Append(newIDs []int64) *Bundle {
+	newRules := make([]*Rule, 0, len(b.Rules)*(len(newIDs)+1))
+	newRules = append(newRules, b.Rules...)
+	for _, newID := range newIDs {
+		// Involve all the table level objects.
+		startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
+		endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
+		for _, rule := range b.Rules {
+			rule.Clone()
+			rule.StartKeyHex = startKey
+			rule.EndKeyHex = endKey
+			newRules = append(newRules, rule)
+		}
+	}
+	b.Rules = newRules
+	return b
+}
+
 // Clone is used to duplicate a bundle.
 func (b *Bundle) Clone() *Bundle {
 	newBundle := &Bundle{}
