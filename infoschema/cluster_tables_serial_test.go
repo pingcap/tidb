@@ -77,6 +77,7 @@ func TestClusterTables(t *testing.T) {
 	t.Run("SelectClusterTablePrivilege", SubTestSelectClusterTablePrivilege(s))
 	t.Run("StmtSummaryEvictedCountTable", SubTestStmtSummaryEvictedCountTable(s))
 	t.Run("StmtSummaryHistoryTable", SubTestStmtSummaryHistoryTable(s))
+	t.Run("Issue26379", SubTestIssue26379(s))
 }
 
 func SubTestForClusterServerInfo(s *clusterTablesSuite) func(*testing.T) {
@@ -400,6 +401,58 @@ func SubTestStmtSummaryHistoryTable(s *clusterTablesSuite) func(*testing.T) {
 			"create table `table` ( `insert` int )",
 			"set global `tidb_enable_stmt_summary` = ?",
 		))
+	}
+}
+
+func SubTestIssue26379(s *clusterTablesSuite) func(*testing.T) {
+	return func(t *testing.T) {
+		tk := s.newTestKitWithRoot(t)
+
+		// Clear all statements.
+		tk.MustExec("set session tidb_enable_stmt_summary = 0")
+		tk.MustExec("set session tidb_enable_stmt_summary = ''")
+		tk.MustExec("set @@global.tidb_stmt_summary_max_stmt_count=10")
+
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b varchar(10), c int, d int, key k(a))")
+
+		_, digest1 := parser.NormalizeDigest("select * from t where a = 3")
+		_, digest2 := parser.NormalizeDigest("select * from t where b = 'b'")
+		_, digest3 := parser.NormalizeDigest("select * from t where c = 6")
+		_, digest4 := parser.NormalizeDigest("select * from t where d = 5")
+		fillStatementCache := func() {
+			tk.MustQuery("select * from t where a = 3")
+			tk.MustQuery("select * from t where b = 'b'")
+			tk.MustQuery("select * from t where c = 6")
+			tk.MustQuery("select * from t where d = 5")
+		}
+		fillStatementCache()
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s'", digest1.String())).Check(testkit.Rows(digest1.String()))
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s'", digest1.String())).Check(testkit.Rows(digest1.String()))
+		fillStatementCache()
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s'", digest2.String())).Check(testkit.Rows(digest2.String()))
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s'", digest2.String())).Check(testkit.Rows(digest2.String()))
+		fillStatementCache()
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s'", digest3.String())).Check(testkit.Rows(digest3.String()))
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s'", digest3.String())).Check(testkit.Rows(digest3.String()))
+		fillStatementCache()
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s'", digest4.String())).Check(testkit.Rows(digest4.String()))
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s'", digest4.String())).Check(testkit.Rows(digest4.String()))
+		fillStatementCache()
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s' or digest = '%s'", digest1.String(), digest2.String())).Sort().Check(testkit.Rows(digest1.String(), digest2.String()))
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s' or digest = '%s'", digest1.String(), digest2.String())).Sort().Check(testkit.Rows(digest1.String(), digest2.String()))
+		re := tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s' and digest = '%s'", digest1.String(), digest2.String()))
+		require.Equal(t, 0, len(re.Rows()))
+		re = tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s' and digest = '%s'", digest1.String(), digest2.String()))
+		require.Equal(t, 0, len(re.Rows()))
+		fillStatementCache()
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest in ('%s', '%s', '%s', '%s')", digest1.String(), digest2.String(), digest3.String(), digest4.String())).Sort().Check(testkit.Rows(digest1.String(), digest4.String(), digest2.String(), digest3.String()))
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest in ('%s', '%s', '%s', '%s')", digest1.String(), digest2.String(), digest3.String(), digest4.String())).Sort().Check(testkit.Rows(digest1.String(), digest4.String(), digest2.String(), digest3.String()))
+		fillStatementCache()
+		tk.MustQuery("select count(*) from information_schema.statements_summary where digest=''").Check(testkit.Rows("0"))
+		tk.MustQuery("select count(*) from information_schema.statements_summary where digest is null").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from information_schema.cluster_statements_summary where digest=''").Check(testkit.Rows("0"))
+		tk.MustQuery("select count(*) from information_schema.cluster_statements_summary where digest is null").Check(testkit.Rows("1"))
 	}
 }
 
