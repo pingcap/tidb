@@ -266,7 +266,6 @@ func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {
 	//	tk.MustGetErrCode("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`default`;", mysql.ErrPlacementPolicyNotExists)
 }
 
-
 func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
