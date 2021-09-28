@@ -60,8 +60,8 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 		stores: stores,
 	}
 
-	kvStores, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
-	require.Len(t, kvStores, 0)
+	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
+	require.Error(t, err)
 	require.Equal(t, codes.Canceled, status.Code(errors.Cause(err)))
 }
 
@@ -100,8 +100,8 @@ func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
 		stores: stores,
 	}
 
-	kvStores, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
-	require.Len(t, kvStores, 0)
+	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
+	require.Error(t, err)
 	require.Equal(t, codes.Unknown, status.Code(errors.Cause(err)))
 }
 func TestCheckStoresAlive(t *testing.T) {
