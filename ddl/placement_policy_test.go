@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/testutil"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -224,6 +225,47 @@ func (s *testDBSuite6) TestConstraintCompatibility(c *C) {
 	}
 	tk.MustExec("drop placement policy x")
 }
+
+func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {
+	// TODO: waiting for related parser merged
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists TestAlterDB;")
+	tk.MustExec("create database TestAlterDB;")
+	tk.MustExec("use TestAlterDB")
+	// Test for `=default`
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PLACEMENT POLICY=`y` */",
+	))
+	tk.MustExec("ALTER DATABASE TestAlterDB PLACEMENT POLICY=default;")
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
+	// Test for `SET DEFAULT`
+	tk.MustExec("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`y`;")
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PLACEMENT POLICY=`y` */",
+	))
+	tk.MustExec("ALTER DATABASE TestAlterDB PLACEMENT POLICY SET DEFAULT")
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
+	// Test for default `SET default`
+	tk.MustExec("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`y`;")
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PLACEMENT POLICY=`y` */",
+	))
+	tk.MustExec("ALTER DATABASE TestAlterDB default PLACEMENT POLICY SET DEFAULT")
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
+	// Test for "=`default`"
+	// TODO: how can we split “default” (policy name) with default (keyword)?  or we just support SET DEFAULT syntax?
+	//	tk.MustGetErrCode("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`default`;", mysql.ErrPlacementPolicyNotExists)
+}
+
 
 func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
