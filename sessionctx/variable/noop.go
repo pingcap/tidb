@@ -207,7 +207,6 @@ var noopSysVars = []*SysVar{
 				if vars.NoopFuncsMode == OffInt {
 					return Off, errMsg
 				}
-				//vars.StmtCtx.AppendWarning(ErrFunctionsNoopImpl.GenWithStackByArgs(fmt.Sprintf("%d", vars.NoopFuncsMode)))
 				vars.StmtCtx.AppendWarning(errMsg)
 			}
 			if scope == ScopeGlobal {

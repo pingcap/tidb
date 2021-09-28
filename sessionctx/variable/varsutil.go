@@ -131,28 +131,27 @@ func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 
 // checkReadOnly requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.
 func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag, offlineMode bool) (string, error) {
-	feature := "READ ONLY"
+	errMsg := ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
 	if offlineMode {
-		feature = "OFFLINE MODE"
+		errMsg = ErrFunctionsNoopImpl.GenWithStackByArgs("OFFLINE MODE")
 	}
 	if TiDBOptOn(normalizedValue) {
-		if scope == ScopeSession {
+		if scope == ScopeSession && vars.NoopFuncsMode != OnInt {
 			if vars.NoopFuncsMode == OffInt {
-				return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+				return Off, errMsg
 			}
-			if vars.NoopFuncsMode == WarnInt {
-				vars.StmtCtx.AppendWarning(ErrFunctionsNoopImpl.GenWithStackByArgs(feature))
-			}
-		} else {
+			vars.StmtCtx.AppendWarning(errMsg)
+		}
+		if scope == ScopeGlobal {
 			val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
 			if err != nil {
 				return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
 			}
 			if val == Off {
-				return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+				return Off, errMsg
 			}
 			if val == Warn {
-				vars.StmtCtx.AppendWarning(ErrFunctionsNoopImpl.GenWithStackByArgs(feature))
+				vars.StmtCtx.AppendWarning(errMsg)
 			}
 		}
 	}
