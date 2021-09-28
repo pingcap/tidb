@@ -396,7 +396,7 @@ func (manager *DuplicateManager) storeDuplicateData(
 
 	loggerIndexName := "PRIMARY"
 	if req.indexInfo != nil {
-		loggerIndexName = loggerIndexName
+		loggerIndexName = req.indexInfo.Name.O
 	}
 	superLogger := log.With(
 		zap.String("table", decoder.Name()),

@@ -24,6 +24,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 )
 
@@ -134,6 +135,10 @@ func (s *iteratorSuite) TestDuplicateIterator(c *C) {
 		db:          db,
 		keyAdapter:  keyAdapter,
 		duplicateDB: duplicateDB,
+		tableInfo: &checkpoints.TidbTableInfo{
+			DB:   "db",
+			Name: "name",
+		},
 	}
 	iter := newDuplicateIter(context.Background(), engineFile, &pebble.IterOptions{})
 	sort.Slice(pairs, func(i, j int) bool {
@@ -241,6 +246,10 @@ func (s *iteratorSuite) TestDuplicateIterSeek(c *C) {
 		db:          db,
 		keyAdapter:  keyAdapter,
 		duplicateDB: duplicateDB,
+		tableInfo: &checkpoints.TidbTableInfo{
+			DB:   "db",
+			Name: "name",
+		},
 	}
 	iter := newDuplicateIter(context.Background(), engineFile, &pebble.IterOptions{})
 
