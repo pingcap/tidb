@@ -237,8 +237,16 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
 
-	if directPlacementOpts != nil && placementPolicyRef != nil {
-		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(placementPolicyRef.Name))
+	if (directPlacementOpts != nil && placementPolicyRef != nil) ||
+		(directPlacementOpts != nil && dbInfo.PlacementPolicyRef != nil) ||
+		(placementPolicyRef != nil && dbInfo.DirectPlacementOpts != nil) {
+		var policyName model.CIStr
+		if placementPolicyRef != nil {
+			policyName = placementPolicyRef.Name
+		} else {
+			policyName = dbInfo.PlacementPolicyRef.Name
+		}
+		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(policyName))
 	}
 
 	if directPlacementOpts != nil {

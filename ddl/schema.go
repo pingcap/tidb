@@ -153,15 +153,15 @@ func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, errors.Trace(err)
 	}
 
-	if placementPolicyRef != nil {
-		if dbInfo.PlacementPolicyRef != nil && (dbInfo.PlacementPolicyRef.ID == placementPolicyRef.ID) {
-			job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
-			return ver, nil
-		}
-		dbInfo.PlacementPolicyRef = placementPolicyRef
-	} else if directPlacementOpts != nil {
-		dbInfo.DirectPlacementOpts = directPlacementOpts
+	// Notice: dbInfo.DirectPlacementOpts and dbInfo.PlacementPolicyRef can not be both not nil.
+	if (dbInfo.DirectPlacementOpts == directPlacementOpts) && (dbInfo.PlacementPolicyRef == placementPolicyRef) {
+		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+		return ver, nil
 	}
+
+	// If placementPolicyRef and directPlacementOpts are both nil, And placement of dbInfo is not nil, it will remove all placement options.
+	dbInfo.PlacementPolicyRef = placementPolicyRef
+	dbInfo.DirectPlacementOpts = directPlacementOpts
 
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)
