@@ -424,7 +424,7 @@ func testGetPolicyDependency(storage kv.Storage, name string) []int64 {
 	return ids
 }
 
-func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
+func (s *testDBSuite6) TestPolicyCacheAndPolicyDependency(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
@@ -599,4 +599,11 @@ func testGetPartitionDefinitionsByName(c *C, ctx sessionctx.Context, db string, 
 		}
 	}
 	return ptDef
+}
+
+func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop placement policy if exists x")
+
 }
