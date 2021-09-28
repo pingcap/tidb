@@ -6344,68 +6344,23 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 				policyRefInfo = &model.PolicyRefInfo{
 					Name: model.NewCIStr(op.StrValue),
 				}
-			case ast.TableOptionPlacementPrimaryRegion:
+			case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
+				ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
+				ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
+				ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
+				ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
+				ast.TableOptionPlacementVoterConstraints:
 				if placementSettings == nil {
 					placementSettings = &model.PlacementSettings{}
 				}
-				placementSettings.PrimaryRegion = op.StrValue
-			case ast.TableOptionPlacementRegions:
-				if placementSettings == nil {
-					placementSettings = &model.PlacementSettings{}
-				}
-				placementSettings.Regions = op.StrValue
-			case ast.TableOptionPlacementFollowerCount:
-				if placementSettings == nil {
-					placementSettings = &model.PlacementSettings{}
-				}
-				placementSettings.Followers = op.UintValue
-			case ast.TableOptionPlacementVoterCount:
-				if placementSettings == nil {
-					placementSettings = &model.PlacementSettings{}
-				}
-				placementSettings.Voters = op.UintValue
-			case ast.TableOptionPlacementLearnerCount:
-				if placementSettings == nil {
-					placementSettings = &model.PlacementSettings{}
-				}
-				placementSettings.Learners = op.UintValue
-			case ast.TableOptionPlacementSchedule:
-				if placementSettings == nil {
-					placementSettings = &model.PlacementSettings{}
-				}
-				placementSettings.Schedule = op.StrValue
-			case ast.TableOptionPlacementConstraints:
-				if placementSettings == nil {
-					placementSettings = &model.PlacementSettings{}
-				}
-				placementSettings.Constraints = op.StrValue
-			case ast.TableOptionPlacementLeaderConstraints:
-				if placementSettings == nil {
-					placementSettings = &model.PlacementSettings{}
-				}
-				placementSettings.LeaderConstraints = op.StrValue
-			case ast.TableOptionPlacementLearnerConstraints:
-				if placementSettings == nil {
-					placementSettings = &model.PlacementSettings{}
-				}
-				placementSettings.LearnerConstraints = op.StrValue
-			case ast.TableOptionPlacementFollowerConstraints:
-				if placementSettings == nil {
-					placementSettings = &model.PlacementSettings{}
-				}
-				placementSettings.FollowerConstraints = op.StrValue
-			case ast.TableOptionPlacementVoterConstraints:
-				if placementSettings == nil {
-					placementSettings = &model.PlacementSettings{}
-				}
-				placementSettings.VoterConstraints = op.StrValue
+				SetDirectPlacementOpt(placementSettings, ast.PlacementOptionType(op.Tp), op.StrValue, op.UintValue)
 			default:
 				return errors.Trace(errors.New("unknown partition option"))
 			}
 		}
 	}
 
-	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
+	// Can not use both a placement policy and direct assignment. If you specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
 	if placementSettings != nil && policyRefInfo != nil {
 		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(policyRefInfo.Name))
 	}
