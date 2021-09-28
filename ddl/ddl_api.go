@@ -240,9 +240,9 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 			}
 			err = d.ModifySchemaCharsetAndCollate(ctx, stmt, toCharset, toCollate)
 		case ast.DatabaseOptionCollate:
-			info, err := collate.GetCollationByName(val.Value)
-			if err != nil {
-				return errors.Trace(err)
+			info, errGetCollate := collate.GetCollationByName(val.Value)
+			if errGetCollate != nil {
+				return errors.Trace(errGetCollate)
 			}
 			if toCharset == "" {
 				toCharset = info.CharsetName
