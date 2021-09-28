@@ -128,7 +128,7 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		return nil, fmt.Errorf("%w: options can not be nil", ErrInvalidPlacementOptions)
 	}
 
-	if len(options.LeaderConstraints) > 0 || len(options.LearnerConstraints) > 0 || len(options.FollowerConstraints) > 0 || options.Learners > 0 {
+	if len(options.LeaderConstraints) > 0 || len(options.LearnerConstraints) > 0 || len(options.FollowerConstraints) > 0 || len(options.Constraints) > 0 || options.Learners > 0 {
 		return nil, fmt.Errorf("%w: should be PRIMARY_REGION=.. REGIONS=.. FOLLOWERS=.. SCHEDULE=.., mixed other constraints into options %s", ErrInvalidPlacementOptions, options)
 	}
 
