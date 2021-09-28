@@ -401,6 +401,10 @@ func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table
 	panic("Unsupported Operation")
 }
 
+func (be *tidbBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
+	return nil
+}
+
 func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64) error {
 	return nil
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
@@ -204,6 +205,10 @@ type AbstractBackend interface {
 	// CollectRemoteDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
 	//  the data import by other lightning.
 	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (hasDupe bool, err error)
+
+	// ResolveDuplicateRows resolves duplicated rows by deleting/inserting data
+	// according to the required algorithm.
+	ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error
 }
 
 // Backend is the delivery target for Lightning
@@ -366,6 +371,9 @@ func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table
 func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
 	return be.abstract.CollectRemoteDuplicateRows(ctx, tbl, tableName)
 }
+
+func (be Backend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
+	return be.abstract.ResolveDuplicateRows(ctx, tbl, tableName, algorithm)
 }
 
 // Close the opened engine to prepare it for importing.

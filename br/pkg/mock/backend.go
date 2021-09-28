@@ -16,6 +16,7 @@ import (
 	model "github.com/pingcap/parser/model"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
 	kv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	config "github.com/pingcap/tidb/br/pkg/lightning/config"
 	table "github.com/pingcap/tidb/table"
 )
 
@@ -267,6 +268,20 @@ func (m *MockBackend) ResetEngine(arg0 context.Context, arg1 uuid.UUID) error {
 func (mr *MockBackendMockRecorder) ResetEngine(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetEngine", reflect.TypeOf((*MockBackend)(nil).ResetEngine), arg0, arg1)
+}
+
+// ResolveDuplicateRows mocks base method
+func (m *MockBackend) ResolveDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string, arg3 config.DuplicateResolutionAlgorithm) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResolveDuplicateRows", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResolveDuplicateRows indicates an expected call of ResolveDuplicateRows
+func (mr *MockBackendMockRecorder) ResolveDuplicateRows(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveDuplicateRows", reflect.TypeOf((*MockBackend)(nil).ResolveDuplicateRows), arg0, arg1, arg2, arg3)
 }
 
 // RetryImportDelay mocks base method

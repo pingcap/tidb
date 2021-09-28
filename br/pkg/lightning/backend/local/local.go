@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -66,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/tikv/client-go/v2/oracle"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -801,6 +803,7 @@ type local struct {
 	pdCtl    *pdutil.PdController
 	conns    common.GRPCConns
 	splitCli split.SplitClient
+	tikvCli  *tikvclient.KVStore
 	tls      *common.TLS
 	pdAddr   string
 	g        glue.Glue
@@ -937,10 +940,23 @@ func NewLocalBackend(
 		}
 	}
 
+	// The following copies tikv.NewTxnClient without creating yet another pdClient.
+	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(pdAddr, ","), tls.TLSConfig())
+	if err != nil {
+		return backend.MakeBackend(nil), err
+	}
+	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()))
+	pdCliForTiKV := &tikvclient.CodecPDClient{Client: pdCtl.GetPDClient()}
+	tikvCli, err := tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
+	if err != nil {
+		return backend.MakeBackend(nil), err
+	}
+
 	local := &local{
 		engines:  sync.Map{},
 		pdCtl:    pdCtl,
 		splitCli: splitCli,
+		tikvCli:  tikvCli,
 		tls:      tls,
 		pdAddr:   pdAddr,
 		g:        g,
@@ -1173,6 +1189,9 @@ func (local *local) Close() {
 			log.L().Warn("remove local db file failed", zap.Error(err))
 		}
 	}
+
+	local.tikvCli.Close()
+	local.pdCtl.Close()
 }
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
@@ -2109,6 +2128,89 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 		return false, errors.Annotate(err, "collect remote duplicate rows failed")
 	}
 	return hasDupe, nil
+}
+
+func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
+	logger := log.With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
+	defer func() {
+		logger.End(zap.ErrorLevel, err)
+	}()
+
+	switch algorithm {
+	case config.DupeResAlgUnsafeNoop:
+		logger.Warn("[resolve-dupe] skipping resolution since algorithm is 'unsafe-noop'. this table will become inconsistent!")
+		return nil
+	case config.DupeResAlgKeepAnyOne:
+		panic("keep-any-one is not yet supported")
+	case config.DupeResAlgDelete:
+		break
+	}
+
+	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
+	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &kv.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Collect all duplicating rows from downstream TiDB.
+	// TODO: what if there are 1,000,000 duplicate rows? need some pagination scheme.
+	handleRows, err := local.errorMgr.GetConflictKeys(ctx, tableName)
+	if err != nil {
+		return err
+	}
+
+	// Starts a Delete transaction.
+	txn, err := local.tikvCli.Begin()
+	if err != nil {
+		return err
+	}
+	txn.SetPessimistic(true)
+	defer func() {
+		if txn != nil && err != nil {
+			txn.Rollback()
+		}
+	}()
+
+	deleteKey := func(key []byte) error {
+		logger.Debug("[resolve-dupe] will delete key", logutil.Key("key", key))
+		return txn.Delete(key)
+	}
+
+	// Collect all rows & index keys into the deletion transaction.
+	// (if the number of duplicates is small this should fit entirely in memory)
+	// (Txn's MemBuf's bufferSizeLimit is currently infinity)
+	for _, handleRow := range handleRows {
+		logger.Debug("[resolve-dupe] found row to resolve",
+			logutil.Key("handle", handleRow[0]),
+			logutil.Key("row", handleRow[1]))
+
+		if err := deleteKey(handleRow[0]); err != nil {
+			return err
+		}
+
+		handle, err := decoder.DecodeHandleFromTable(handleRow[0])
+		if err != nil {
+			return err
+		}
+
+		err = decoder.IterRawIndexKeys(handle, handleRow[1], deleteKey)
+		if err != nil {
+			return err
+		}
+	}
+
+	logger.Info("[resolve-dupe] number of KV pairs to be deleted", zap.Int("count", txn.Len()))
+
+	// Commit the transaction.
+	err = txn.Commit(ctx)
+	txn = nil
+	if err != nil {
+		return errors.Annotate(err, "cannot delete duplicated entries")
+	}
+
+	return nil
 }
 
 func (e *File) unfinishedRanges(ranges []Range) []Range {
