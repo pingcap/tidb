@@ -375,15 +375,17 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 
 func (s *testDBSuite6) TestAlterDBWithPlacementPolicy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+	tk.MustExec("drop database if exists TestAlterDB;")
+	tk.MustExec("create database TestAlterDB;")
+	tk.MustExec("use TestAlterDB")
 	tk.MustExec("create placement policy x PRIMARY_REGION=\"cn-east-1\";")
 	tk.MustExec("create placement policy y PRIMARY_REGION=\"cn-east-2\";")
 
-	tk.MustExec("ALTER DATABASE test PLACEMENT POLICY=`x`;")
+	tk.MustExec("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`x`;")
 
 	// Test for Show Create Database
-	tk.MustQuery(`show create database test`).Check(testutil.RowsWithSep("|",
-		"test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
 			"/*T![placement] PLACEMENT POLICY=`x` */",
 	))
 	// Test for Alter Placement Policy affect table created.
@@ -396,7 +398,7 @@ func (s *testDBSuite6) TestAlterDBWithPlacementPolicy(c *C) {
 	))
 
 	// Test for Alter Default Placement Policy, And will not update the old table options.
-	tk.MustExec("ALTER DATABASE test DEFAULT PLACEMENT POLICY=`y`;")
+	tk.MustExec("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`y`;")
 	tk.MustExec("create table t2(a int);")
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
@@ -416,13 +418,15 @@ func (s *testDBSuite6) TestAlterDBWithPlacementPolicy(c *C) {
 
 func (s *testDBSuite6) TestAlterDBWithDirectPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+	tk.MustExec("drop database if exists TestAlterDB;")
+	tk.MustExec("create database TestAlterDB;")
+	tk.MustExec("use TestAlterDB")
 
-	tk.MustExec("ALTER DATABASE test PRIMARY_REGION=\"se\" FOLLOWERS=2;")
+	tk.MustExec("ALTER DATABASE TestAlterDB PRIMARY_REGION=\"se\" FOLLOWERS=2;")
 
 	// Test for Show Create Database
-	tk.MustQuery(`show create database test`).Check(testutil.RowsWithSep("|",
-		"test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
 			"/*T![placement] PRIMARY_REGION=\"se\" FOLLOWERS=2 */",
 	))
 	// Test for Alter Placement Rule affect table created.
