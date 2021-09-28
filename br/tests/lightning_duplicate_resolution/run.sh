@@ -21,9 +21,9 @@ check_cluster_version 5 2 0 'duplicate detection' || exit 0
 run_lightning
 
 # Ensure all tables are consistent.
-run_sql 'admin check table a'
-run_sql 'admin check table b'
-run_sql 'admin check table c'
+run_sql 'admin check table dup_resolve.a'
+run_sql 'admin check table dup_resolve.b'
+run_sql 'admin check table dup_resolve.c'
 
 ## Table "a" has a clustered integer key and generated column.
 
