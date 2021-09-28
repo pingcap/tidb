@@ -307,7 +307,6 @@ func SubTestStmtSummaryEvictedCountTable(s *clusterTablesSuite) func(*testing.T)
 		// no evict happened, no record in cluster evicted table.
 		tk.MustQuery("select count(*) from information_schema.cluster_statements_summary_evicted;").Check(testkit.Rows("0"))
 		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
-		// no evict happened, no record in cluster evicted table.
 		// cleanup side effects
 		defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
 		defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
