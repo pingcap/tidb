@@ -153,9 +153,8 @@ func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, errors.Trace(err)
 	}
 
-
 	if placementPolicyRef != nil {
-		if  dbInfo.PlacementPolicyRef != nil && (dbInfo.PlacementPolicyRef.ID == placementPolicyRef.ID) {
+		if dbInfo.PlacementPolicyRef != nil && (dbInfo.PlacementPolicyRef.ID == placementPolicyRef.ID) {
 			job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 			return ver, nil
 		}
@@ -163,7 +162,6 @@ func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ 
 	} else if directPlacementOpts != nil {
 		dbInfo.DirectPlacementOpts = directPlacementOpts
 	}
-
 
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)

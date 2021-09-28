@@ -201,7 +201,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 	}
 
 	// TODO sylzd: 这样有点丑，重新组织下char/colate/placement
-	if isAlterCharCol{
+	if isAlterCharCol {
 		if toCollate == "" {
 			if toCollate, err = charset.GetDefaultCollation(toCharset); err != nil {
 				return errors.Trace(err)
@@ -230,15 +230,12 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		err = d.callHookOnChanged(err)
 		return errors.Trace(err)
 	}
-	// TODO: alter placement
-	// Do the DDL job.
 	dbName := model.NewCIStr(stmt.Name)
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
-
 
 	if directPlacementOpts != nil && placementPolicyRef != nil {
 		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(placementPolicyRef.Name))
@@ -251,6 +248,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		}
 	}
 
+	// Do the DDL job.
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,

@@ -623,7 +623,6 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionTruncateTablePartition, jobIDs: []int64{firstID + 29}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 29)}, cancelState: model.StatePublic},
 		{act: model.ActionModifySchemaCharsetAndCollate, jobIDs: []int64{firstID + 31}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionModifySchemaCharsetAndCollate, jobIDs: []int64{firstID + 32}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 32)}, cancelState: model.StatePublic},
-		// TODO: sylzd model.ActionModifySchemaDefaultPlacement
 
 		{act: model.ActionAddPrimaryKey, jobIDs: []int64{firstID + 33}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
 		{act: model.ActionAddPrimaryKey, jobIDs: []int64{firstID + 34}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
@@ -662,6 +661,10 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 72}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 72)}, cancelState: model.StateWriteOnly},
 		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 73}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 73)}, cancelState: model.StateDeleteOnly},
 		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 74}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 74)}, cancelState: model.StateWriteReorganization},
+
+		// for alter db placement
+		{act: model.ActionModifySchemaDefaultPlacement, jobIDs: []int64{firstID + 75}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionModifySchemaDefaultPlacement, jobIDs: []int64{firstID + 76}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 76)}, cancelState: model.StatePublic},
 	}
 
 	return tests

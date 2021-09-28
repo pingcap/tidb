@@ -118,7 +118,7 @@ func IsJobRollbackable(job *model.Job) bool {
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable, model.ActionModifyTableAutoIdCache,
 		model.ActionModifySchemaDefaultPlacement:
-			//TODO: sylzd
+		//TODO: sylzd
 		return job.SchemaState == model.StateNone
 	}
 	return true

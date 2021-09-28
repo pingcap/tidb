@@ -411,7 +411,6 @@ func (s *testDBSuite6) TestAlterDBWithPlacementPolicy(c *C) {
 			"/*T![placement] PLACEMENT POLICY=`y` */",
 	))
 
-
 	tk.MustExec(`DROP TABLE IF EXISTS t, t2`)
 }
 
