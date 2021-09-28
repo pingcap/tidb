@@ -142,7 +142,8 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 
 func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var placementPolicyRef *model.PolicyRefInfo
-	if err := job.DecodeArgs(&placementPolicyRef); err != nil {
+	var directPlacementOpts *model.PlacementSettings
+	if err := job.DecodeArgs(&placementPolicyRef, &directPlacementOpts); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -152,12 +153,17 @@ func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, errors.Trace(err)
 	}
 
-	if dbInfo.PlacementPolicyRef != nil && (dbInfo.PlacementPolicyRef.ID == placementPolicyRef.ID) {
-		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
-		return ver, nil
+
+	if placementPolicyRef != nil {
+		if  dbInfo.PlacementPolicyRef != nil && (dbInfo.PlacementPolicyRef.ID == placementPolicyRef.ID) {
+			job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
+			return ver, nil
+		}
+		dbInfo.PlacementPolicyRef = placementPolicyRef
+	} else if directPlacementOpts != nil {
+		dbInfo.DirectPlacementOpts = directPlacementOpts
 	}
 
-	dbInfo.PlacementPolicyRef = placementPolicyRef
 
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)

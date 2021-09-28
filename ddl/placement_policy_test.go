@@ -416,7 +416,24 @@ func (s *testDBSuite6) TestAlterDBWithPlacementPolicy(c *C) {
 }
 
 func (s *testDBSuite6) TestAlterDBWithDirectPlacement(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
 
+	tk.MustExec("ALTER DATABASE test PRIMARY_REGION=\"se\" FOLLOWERS=2;")
+
+	// Test for Show Create Database
+	tk.MustQuery(`show create database test`).Check(testutil.RowsWithSep("|",
+		"test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PRIMARY_REGION=\"se\" FOLLOWERS=2 */",
+	))
+	// Test for Alter Placement Rule affect table created.
+	tk.MustExec("create table t(a int);")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PRIMARY_REGION=\"se\" FOLLOWERS=2 */",
+	))
 }
 
 func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {

@@ -317,7 +317,6 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.S
 	return nil
 }
 
-// TODO:sylzd 做啥用
 func (b *Builder) applyModifySchemaDefaultPlacement(m *meta.Meta, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
@@ -331,6 +330,7 @@ func (b *Builder) applyModifySchemaDefaultPlacement(m *meta.Meta, diff *model.Sc
 	}
 	newDbInfo := b.copySchemaTables(di.Name.L)
 	newDbInfo.PlacementPolicyRef = di.PlacementPolicyRef
+	newDbInfo.DirectPlacementOpts = di.DirectPlacementOpts
 	return nil
 }
 

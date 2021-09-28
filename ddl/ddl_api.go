@@ -158,6 +158,9 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 	var toCharset, toCollate string
 	var isAlterCharCol bool
 	var policyName model.CIStr
+	var placementPolicyRef *model.PolicyRefInfo
+	var directPlacementOpts *model.PlacementSettings
+
 	for _, val := range stmt.Options {
 		switch val.Tp {
 		case ast.DatabaseOptionCharset:
@@ -180,10 +183,20 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 			toCollate = info.Name
 			isAlterCharCol = true
 		case ast.DatabaseOptionPlacementPrimaryRegion, ast.DatabaseOptionPlacementRegions, ast.DatabaseOptionPlacementFollowerCount, ast.DatabaseOptionPlacementVoterCount, ast.DatabaseOptionPlacementLearnerCount, ast.DatabaseOptionPlacementSchedule, ast.DatabaseOptionPlacementConstraints, ast.DatabaseOptionPlacementLeaderConstraints, ast.DatabaseOptionPlacementLearnerConstraints, ast.DatabaseOptionPlacementFollowerConstraints, ast.DatabaseOptionPlacementVoterConstraints:
-			//TODO: sylzd
-			fmt.Println(val)
+			if directPlacementOpts == nil {
+				directPlacementOpts = &model.PlacementSettings{}
+			}
+			err := SetDirectPlacementOpt(directPlacementOpts, ast.PlacementOptionType(val.Tp), val.Value, val.UintValue)
+			if err != nil {
+				return err
+			}
 		case ast.DatabaseOptionPlacementPolicy:
 			policyName = model.NewCIStr(val.Value)
+			policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(policyName)
+			if !ok {
+				return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(policyName))
+			}
+			placementPolicyRef = &model.PolicyRefInfo{ID: policy.ID, Name: policyName}
 		}
 	}
 
@@ -225,18 +238,25 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
-	policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(policyName)
-	if !ok {
-		return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(policyName))
+
+
+	if directPlacementOpts != nil && placementPolicyRef != nil {
+		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(placementPolicyRef.Name))
 	}
-	placementPolicyRef := &model.PolicyRefInfo{ID: policy.ID, Name: policyName}
+
+	if directPlacementOpts != nil {
+		// check the direct placement option compatibility.
+		if err := checkPolicyValidation(directPlacementOpts); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		Type:       model.ActionModifySchemaDefaultPlacement,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{placementPolicyRef},
+		Args:       []interface{}{placementPolicyRef, directPlacementOpts},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -1848,7 +1868,7 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	}
 
 	if tbInfo.PlacementPolicyRef == nil && tbInfo.DirectPlacementOpts == nil {
-		// Set the defaults from Schema. Note: they are mutual exlusive!
+		// Set the defaults from Schema. Note: they are mutual exclusive!
 		if placementPolicyRef != nil {
 			tbInfo.PlacementPolicyRef = placementPolicyRef
 		} else if directPlacementOpts != nil {

@@ -745,7 +745,6 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropSchema:
 		ver, err = onDropSchema(d, t, job)
 	case model.ActionModifySchemaDefaultPlacement:
-		// TODO: sylzd
 		ver, err = onModifySchemaDefaultPlacement(t, job)
 	case model.ActionCreateTable:
 		ver, err = onCreateTable(d, t, job)
