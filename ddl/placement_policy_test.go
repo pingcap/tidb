@@ -137,24 +137,21 @@ func (s *testDBSuite6) TestConstraintCompatibility(c *C) {
 	tk.MustExec("drop placement policy if exists x")
 
 	cases := []struct {
+		name     string
 		settings string
 		success  bool
 		errmsg   string
 	}{
-		// Dict is not allowed for common constraint.
 		{
-			settings: "PRIMARY_REGION=\"cn-east-1\" " +
-				"REGIONS=\"cn-east-1,cn-east-2\" " +
-				"LEARNERS=1 " +
+			name: "Dict is not allowed for common constraint",
+			settings: "LEARNERS=1 " +
 				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1]\" " +
 				"CONSTRAINTS=\"{'+disk=ssd':2}\"",
 			errmsg: "invalid label constraints format: should be [constraint1, ...] (error yaml: unmarshal errors:\n  line 1: cannot unmarshal !!map into []string)",
 		},
-		// Special constraints may be incompatible with itself.
 		{
-			settings: "PRIMARY_REGION=\"cn-east-1\" " +
-				"REGIONS=\"cn-east-1,cn-east-2\" " +
-				"LEARNERS=1 " +
+			name: "constraints may be incompatible with itself",
+			settings: "LEARNERS=1 " +
 				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-2]\"",
 			errmsg: "conflicting label constraints: '+zone=cn-west-2' and '+zone=cn-west-1'",
 		},
@@ -162,32 +159,8 @@ func (s *testDBSuite6) TestConstraintCompatibility(c *C) {
 			settings: "PRIMARY_REGION=\"cn-east-1\" " +
 				"REGIONS=\"cn-east-1,cn-east-2\" " +
 				"LEARNERS=1 " +
-				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, -zone=cn-west-1]\"",
-			errmsg: "conflicting label constraints: '-zone=cn-west-1' and '+zone=cn-west-1'",
-		},
-		{
-			settings: "PRIMARY_REGION=\"cn-east-1\" " +
-				"REGIONS=\"cn-east-1,cn-east-2\" " +
-				"LEARNERS=1 " +
 				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-1]\"",
 			success: true,
-		},
-		// Special constraints may be incompatible with common constraint.
-		{
-			settings: "PRIMARY_REGION=\"cn-east-1\" " +
-				"REGIONS=\"cn-east-1, cn-east-2\" " +
-				"FOLLOWERS=2 " +
-				"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-				"CONSTRAINTS=\"[+zone=cn-east-2]\"",
-			errmsg: "conflicting label constraints: '+zone=cn-east-2' and '+zone=cn-east-1'",
-		},
-		{
-			settings: "PRIMARY_REGION=\"cn-east-1\" " +
-				"REGIONS=\"cn-east-1, cn-east-2\" " +
-				"FOLLOWERS=2 " +
-				"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-				"CONSTRAINTS=\"[+disk=ssd,-zone=cn-east-1]\"",
-			errmsg: "conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'",
 		},
 	}
 
@@ -199,8 +172,8 @@ func (s *testDBSuite6) TestConstraintCompatibility(c *C) {
 			tk.MustExec("drop placement policy if exists x")
 		} else {
 			err := tk.ExecToErr(sql)
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, ca.errmsg)
+			c.Assert(err, NotNil, Commentf(ca.name))
+			c.Assert(err.Error(), Equals, ca.errmsg, Commentf(ca.name))
 		}
 	}
 
