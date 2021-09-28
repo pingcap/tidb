@@ -44,7 +44,7 @@ const (
 	// DefaultTiDBEnableSlowLog enables TiDB to log slow queries.
 	DefaultTiDBEnableSlowLog = true
 	// DefaultAuditLogMaxSize is the default size of audit log files;
-	DefaultAuditLogMaxSize = 10 // MB
+	DefaultAuditLogMaxSize = 300 // MB
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.

@@ -168,7 +168,7 @@ query-log-max-len = 4096
 audit-log-file = "tidb-audit.log"
 
 # Max audit log file size im MB (upper limit to 4096MB).
-audit-log-max-size = 10
+audit-log-max-size = 300
 
 # File logging.
 [log.file]
