@@ -2066,11 +2066,16 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	return nil
 }
 
-func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
+func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (hasDupe bool, err error) {
 	if local.duplicateDB == nil {
 		return false, nil
 	}
-	log.L().Info("Begin collect duplicate local keys", zap.String("table", tableName))
+
+	logger := log.With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect duplicate local keys")
+	defer func() {
+		logger.End(zap.ErrorLevel, err)
+	}()
+
 	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return false, err
@@ -2080,7 +2085,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 	if err != nil {
 		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
-	hasDupe, err := duplicateManager.CollectDuplicateRowsFromLocalIndex(ctx, tbl, tableName, local.duplicateDB)
+	hasDupe, err = duplicateManager.CollectDuplicateRowsFromLocalIndex(ctx, tbl, tableName, local.duplicateDB)
 	if err != nil {
 		return false, errors.Annotate(err, "collect local duplicate rows failed")
 	}

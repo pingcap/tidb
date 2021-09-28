@@ -241,6 +241,12 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 	req *DuplicateRequest,
 	hasDupe *atomic.Bool,
 ) error {
+	logger := log.With(
+		zap.String("table", decoder.Name()),
+		zap.Int64("tableID", req.tableID),
+		logutil.Key("startKey", req.start),
+		logutil.Key("endKey", req.end))
+
 	startKey := codec.EncodeBytes([]byte{}, req.start)
 	endKey := codec.EncodeBytes([]byte{}, req.end)
 
@@ -272,6 +278,12 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 				end = req.end
 			}
 
+			logger.Debug("[detect-dupe] get duplicate stream",
+				zap.Int("localStreamID", idx),
+				logutil.Region(region.Region),
+				logutil.Leader(region.Leader),
+				logutil.Key("regionStartKey", start),
+				logutil.Key("regionEndKey", end))
 			cli, err := manager.getDuplicateStream(ctx, region, start, end)
 			if err != nil {
 				r, err := manager.splitCli.GetRegionByID(ctx, region.Region.GetId())
@@ -297,11 +309,16 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 
 		for idx, cli := range waitingClients {
 			region := watingRegions[idx]
+			cliLogger := logger.With(
+				zap.Int("localStreamID", idx),
+				logutil.Region(region.Region),
+				logutil.Leader(region.Leader))
 			for {
 				resp, reqErr := cli.Recv()
 				hasErr := false
 				if reqErr != nil {
 					if errors.Cause(reqErr) == io.EOF {
+						cliLogger.Debug("[detect-dupe] exhausted duplication stream")
 						break
 					}
 					hasErr = true
@@ -316,20 +333,18 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 					}
 				}
 				if hasErr {
-					log.L().Warn("meet error when recving duplicate detect response from TiKV, retry again",
-						logutil.Region(region.Region), logutil.Leader(region.Leader), zap.Error(reqErr))
+					cliLogger.Warn("[detect-dupe] meet error when recving duplicate detect response from TiKV, retry again",
+						zap.Error(reqErr))
 					break
 				}
 				if resp.GetKeyError() != nil {
-					log.L().Warn("meet key error in duplicate detect response from TiKV, retry again ",
-						logutil.Region(region.Region), logutil.Leader(region.Leader),
+					cliLogger.Warn("[detect-dupe] meet key error in duplicate detect response from TiKV, retry again ",
 						zap.String("KeyError", resp.GetKeyError().GetMessage()))
 					break
 				}
 
 				if resp.GetRegionError() != nil {
-					log.L().Warn("meet key error in duplicate detect response from TiKV, retry again ",
-						logutil.Region(region.Region), logutil.Leader(region.Leader),
+					cliLogger.Warn("[detect-dupe] meet key error in duplicate detect response from TiKV, retry again ",
 						zap.String("RegionError", resp.GetRegionError().GetMessage()))
 
 					r, err := restore.PaginateScanRegion(ctx, manager.splitCli, watingRegions[idx].Region.GetStartKey(), watingRegions[idx].Region.GetEndKey(), scanRegionLimit)
@@ -374,8 +389,18 @@ func (manager *DuplicateManager) storeDuplicateData(
 	var err error
 	var dataConflictInfos []errormanager.DataConflictInfo
 	indexHandles := makePendingIndexHandlesWithCapacity(len(resp.Pairs))
+
+	loggerIndexName := "PRIMARY"
+	if req.indexInfo != nil {
+		loggerIndexName = loggerIndexName
+	}
+	superLogger := log.With(
+		zap.String("table", decoder.Name()),
+		zap.Int64("tableID", req.tableID),
+		zap.String("index", loggerIndexName))
+
 	for _, kv := range resp.Pairs {
-		logger := log.With(
+		logger := superLogger.With(
 			logutil.Key("key", kv.Key), logutil.Key("value", kv.Value),
 			zap.Uint64("commit-ts", kv.CommitTs))
 
@@ -389,6 +414,8 @@ func (manager *DuplicateManager) storeDuplicateData(
 			logger.Error("decode handle error", log.ShortError(err))
 			continue
 		}
+		logger.Debug("[detect-dupe] remote dupe response",
+			logutil.Redact(zap.Stringer("handle", h)))
 
 		conflictInfo := errormanager.DataConflictInfo{
 			RawKey:   kv.Key,
@@ -433,6 +460,8 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 		return false, errors.Trace(err)
 	}
 
+	logger := log.With(zap.String("table", tableName))
+
 	allRanges := make([]tidbkv.KeyRange, 0)
 	tableIDs := physicalTableIDs(tbl.Meta())
 	// Collect row handle duplicates.
@@ -449,6 +478,9 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 		}
 		allRanges = append(allRanges, keyRanges...)
 		for _, r := range keyRanges {
+			logger.Debug("[detect-dupe] collect local range",
+				logutil.Key("startKey", r.StartKey),
+				logutil.Key("endKey", r.EndKey))
 			startKey := codec.EncodeBytes([]byte{}, r.StartKey)
 			endKey := codec.EncodeBytes([]byte{}, r.EndKey)
 			opts := &pebble.IterOptions{
@@ -472,6 +504,11 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 					if err != nil {
 						return err
 					}
+					logger.Debug("[detect-dupe] found local data conflict",
+						logutil.Key("key", rawKey),
+						logutil.Key("value", rawValue),
+						logutil.Redact(zap.Stringer("handle", h)))
+
 					conflictInfo := errormanager.DataConflictInfo{
 						RawKey:   rawKey,
 						RawValue: rawValue,
@@ -518,10 +555,13 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 				LowerBound: startKey,
 				UpperBound: endKey,
 			}
-			log.L().Info("collect index from db",
-				logutil.Key("start", startKey),
-				logutil.Key("end", endKey),
-			)
+			indexLogger := logger.With(
+				zap.Int64("tableID", tableID),
+				zap.String("index", indexInfo.Name.O),
+				zap.Int64("indexID", indexInfo.ID),
+				logutil.Key("startKey", startKey),
+				logutil.Key("endKey", endKey))
+			indexLogger.Info("[detect-dupe] collect index from db")
 
 			if err := func() error {
 				iter := db.NewIter(opts)
@@ -530,8 +570,8 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 				for iter.First(); iter.Valid(); iter.Next() {
 					rawKey, _, _, err := manager.keyAdapter.Decode(nil, iter.Key())
 					if err != nil {
-						log.L().Error(
-							"decode key error when query handle for duplicate index",
+						indexLogger.Error(
+							"[detect-dupe] decode key error when query handle for duplicate index",
 							zap.Binary("key", iter.Key()),
 						)
 						return err
@@ -540,11 +580,15 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 					copy(rawValue, iter.Value())
 					h, err := decoder.DecodeHandleFromIndex(indexInfo, rawKey, rawValue)
 					if err != nil {
-						log.L().Error("decode handle error from index for duplicatedb",
+						indexLogger.Error("[detect-dupe] decode handle error from index for duplicatedb",
 							zap.Error(err), logutil.Key("rawKey", rawKey),
 							logutil.Key("value", rawValue))
 						return err
 					}
+					indexLogger.Debug("[detect-dupe] found local index conflict, stashing",
+						logutil.Key("key", rawKey),
+						logutil.Key("value", rawValue),
+						logutil.Redact(zap.Stringer("handle", h)))
 					handles.append(
 						errormanager.DataConflictInfo{
 							RawKey:   rawKey,
