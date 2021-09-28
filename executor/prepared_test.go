@@ -391,4 +391,3 @@ func (s *testPrepareSuite) TestIssue28087And28162(c *C) {
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
-
