@@ -621,7 +621,7 @@ func (s *testIntegrationSuite1) TestDisableTablePartition(c *C) {
 
 func (s *testIntegrationSuite1) generatePartitionTableByNum(num int) string {
 	buf := bytes.NewBuffer(make([]byte, 0, 1024*1024))
-	buf.WriteString("create table t (id int) partition by list  (id) (")
+	buf.WriteString("create table gen_t (id int) partition by list  (id) (")
 	for i := 0; i < num; i++ {
 		if i > 0 {
 			buf.WriteString(",")
@@ -762,10 +762,14 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		s.generatePartitionTableByNum(ddl.PartitionCountLimit),
 	}
 
-	for _, sql := range validCases {
+	for id, sql := range validCases {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(sql)
-		tbl := testGetTableByName(c, s.ctx, "test", "t")
+		tblName := "t"
+		if id == len(validCases)-1 {
+			tblName = "gen_t"
+		}
+		tbl := testGetTableByName(c, s.ctx, "test", tblName)
 		tblInfo := tbl.Meta()
 		c.Assert(tblInfo.Partition, NotNil)
 		c.Assert(tblInfo.Partition.Enable, Equals, true)
@@ -1199,7 +1203,7 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartitionByListColumns(c *C) {
 	);`)
 	tk.MustExec(`insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null)`)
 	tk.MustExec(`alter table t drop partition p1`)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -2174,7 +2178,7 @@ func checkPartitionDelRangeDone(c *C, s *testIntegrationSuite, partitionPrefix k
 	return hasOldPartitionData
 }
 
-func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
+func (s *testIntegrationSuite5) TestTruncatePartitionAndDropTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	// Test truncate common table.
@@ -3424,7 +3428,6 @@ func (s *testSerialDBSuite1) TestAddTableWithPartition(c *C) {
 	tk.MustExec("drop table if exists partition_list_table;")
 
 	// for local temporary table
-	tk.MustExec("set tidb_enable_noop_functions=1")
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists local_partition_table;")
 	tk.MustGetErrCode("create temporary table local_partition_table (a int, b int) partition by hash(a) partitions 3;", errno.ErrPartitionNoTemporary)

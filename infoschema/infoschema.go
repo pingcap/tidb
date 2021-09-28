@@ -402,6 +402,18 @@ func (is *infoSchema) RuleBundles() []*placement.Bundle {
 	return bundles
 }
 
+func (is *infoSchema) setPolicy(policy *model.PolicyInfo) {
+	is.policyMutex.Lock()
+	defer is.policyMutex.Unlock()
+	is.policyMap[policy.Name.L] = policy
+}
+
+func (is *infoSchema) deletePolicy(name string) {
+	is.policyMutex.Lock()
+	defer is.policyMutex.Unlock()
+	delete(is.policyMap, name)
+}
+
 func (is *infoSchema) SetBundle(bundle *placement.Bundle) {
 	is.ruleBundleMutex.Lock()
 	defer is.ruleBundleMutex.Unlock()

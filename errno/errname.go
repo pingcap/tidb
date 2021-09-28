@@ -1058,6 +1058,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPlacementPolicyExists:           mysql.Message("Placement policy '%-.192s' already exists", nil),
 	ErrPlacementPolicyNotExists:        mysql.Message("Unknown placement policy '%-.192s'", nil),
 	ErrPlacementPolicyWithDirectOption: mysql.Message("Placement policy '%s' can't co-exist with direct placement options", nil),
+	ErrPlacementPolicyInUse:            mysql.Message("Placement policy '%-.192s' is still in use", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),
