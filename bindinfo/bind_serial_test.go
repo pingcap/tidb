@@ -16,12 +16,9 @@ package bindinfo_test
 
 import (
 	"context"
-	"flag"
 	"fmt"
-	"os"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -29,126 +26,48 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/logutil"
-	utilparser "github.com/pingcap/tidb/util/parser"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/tikv/client-go/v2/testutils"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	logLevel := os.Getenv("log_level")
-	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	autoid.SetStep(5000)
-	TestingT(t)
-}
+func TestExplain(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-var _ = Suite(&testSuite{})
-
-type testSuite struct {
-	cluster testutils.Cluster
-	store   kv.Storage
-	domain  *domain.Domain
-	*parser.Parser
-}
-
-var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in bind test")
-
-func (s *testSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	s.Parser = parser.New()
-	flag.Lookup("mockTikv")
-	useMockTikv := *mockTikv
-	if useMockTikv {
-		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c testutils.Cluster) {
-				mockstore.BootstrapWithSingleStore(c)
-				s.cluster = c
-			}),
-		)
-		c.Assert(err, IsNil)
-		s.store = store
-		session.SetSchemaLease(0)
-		session.DisableStats4Test()
-	}
-	bindinfo.Lease = 0
-	d, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	d.SetStatsUpdating(true)
-	s.domain = d
-}
-
-func (s *testSuite) TearDownSuite(c *C) {
-	s.domain.Close()
-	s.store.Close()
-	testleak.AfterTest(c)()
-}
-
-func (s *testSuite) TearDownTest(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-	}
-}
-
-func (s *testSuite) cleanBindingEnv(tk *testkit.TestKit) {
-	tk.MustExec("delete from mysql.bind_info where source != 'builtin'")
-	s.domain.BindHandle().Clear()
-}
-
-func normalizeWithDefaultDB(c *C, sql, db string) (string, string) {
-	testParser := parser.New()
-	stmt, err := testParser.ParseOneStmt(sql, "", "")
-	c.Assert(err, IsNil)
-	normalized, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
-	return normalized, digest.String()
-}
-
-func (s *testSuite) TestExplain(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
 
-	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
-	c.Assert(tk.HasPlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"))
+	require.True(t, tk.HasPlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin"))
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
-	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"))
 
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 
 	// Add test for SetOprStmt
 	tk.MustExec("create index index_id on t1(id)")
-	c.Assert(tk.HasPlan("SELECT * from t1 union SELECT * from t1", "IndexReader"), IsFalse)
-	c.Assert(tk.HasPlan("SELECT * from t1 use index(index_id) union SELECT * from t1", "IndexReader"), IsTrue)
+	require.False(t, tk.HasPlan("SELECT * from t1 union SELECT * from t1", "IndexReader"))
+	require.True(t, tk.HasPlan("SELECT * from t1 use index(index_id) union SELECT * from t1", "IndexReader"))
 
 	tk.MustExec("create global binding for SELECT * from t1 union SELECT * from t1 using SELECT * from t1 use index(index_id) union SELECT * from t1")
 
-	c.Assert(tk.HasPlan("SELECT * from t1 union SELECT * from t1", "IndexReader"), IsTrue)
+	require.True(t, tk.HasPlan("SELECT * from t1 union SELECT * from t1", "IndexReader"))
 
 	tk.MustExec("drop global binding for SELECT * from t1 union SELECT * from t1")
 }
 
 // TestBindingSymbolList tests sql with "?, ?, ?, ?", fixes #13871
-func (s *testSuite) TestBindingSymbolList(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestBindingSymbolList(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b));")
@@ -156,89 +75,93 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 
 	// before binding
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
+	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"))
 
 	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select a, b from t use index (ib) where a = 1 limit 0, 1`)
 
 	// after binding
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ib(b)"), IsTrue)
+	require.Equal(t, "t:ib", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ib(b)"))
 
 	// Normalize
 	sql, hash := parser.NormalizeDigest("select a, b from test . t where a = 1 limit 0, 1")
 
-	bindData := s.domain.BindHandle().GetBindRecord(hash.String(), sql, "test")
-	c.Assert(bindData, NotNil)
-	c.Check(bindData.OriginalSQL, Equals, "select `a` , `b` from `test` . `t` where `a` = ? limit ...")
+	bindData := dom.BindHandle().GetBindRecord(hash.String(), sql, "test")
+	require.NotNil(t, bindData)
+	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
-	c.Check(bind.BindSQL, Equals, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` = 1 LIMIT 0,1")
-	c.Check(bindData.Db, Equals, "test")
-	c.Check(bind.Status, Equals, "using")
-	c.Check(bind.Charset, NotNil)
-	c.Check(bind.Collation, NotNil)
-	c.Check(bind.CreateTime, NotNil)
-	c.Check(bind.UpdateTime, NotNil)
+	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` = 1 LIMIT 0,1", bind.BindSQL)
+	require.Equal(t, "test", bindData.Db)
+	require.Equal(t, "using", bind.Status)
+	require.NotNil(t, bind.Charset)
+	require.NotNil(t, bind.Collation)
+	require.NotNil(t, bind.CreateTime)
+	require.NotNil(t, bind.UpdateTime)
 }
 
-func (s *testSuite) TestDMLSQLBind(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestDMLSQLBind(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b), key idx_c(c))")
 	tk.MustExec("create table t2(a int, b int, c int, key idx_b(b), key idx_c(c))")
 
 	tk.MustExec("delete from t1 where b = 1 and c > 1")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t1:idx_b")
-	c.Assert(tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_b(b)"), IsTrue)
+	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_b(b)"))
 	tk.MustExec("create global binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1,idx_c) */ from t1 where b = 1 and c > 1")
 	tk.MustExec("delete from t1 where b = 1 and c > 1")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t1:idx_c")
-	c.Assert(tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_c(c)"), IsTrue)
+	require.Equal(t, "t1:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_c(c)"))
 
-	c.Assert(tk.HasPlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "HashJoin"), IsTrue)
+	require.True(t, tk.HasPlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "HashJoin"))
 	tk.MustExec("create global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b using delete /*+ inl_join(t1) */ t1, t2 from t1 inner join t2 on t1.b = t2.b")
-	c.Assert(tk.HasPlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "IndexJoin"), IsTrue)
+	require.True(t, tk.HasPlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "IndexJoin"))
 
 	tk.MustExec("update t1 set a = 1 where b = 1 and c > 1")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t1:idx_b")
-	c.Assert(tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_b(b)"), IsTrue)
+	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_b(b)"))
 	tk.MustExec("create global binding for update t1 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t1,idx_c) */ t1 set a = 1 where b = 1 and c > 1")
 	tk.MustExec("delete from t1 where b = 1 and c > 1")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t1:idx_c")
-	c.Assert(tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_c(c)"), IsTrue)
+	require.Equal(t, "t1:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_c(c)"))
 
-	c.Assert(tk.HasPlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "HashJoin"), IsTrue)
+	require.True(t, tk.HasPlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "HashJoin"))
 	tk.MustExec("create global binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b")
-	c.Assert(tk.HasPlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "IndexJoin"), IsTrue)
+	require.True(t, tk.HasPlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "IndexJoin"))
 
 	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_b")
-	c.Assert(tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"), IsTrue)
+	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"))
 	tk.MustExec("create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert /*+ use_index(t2,idx_c) */ into t1 select * from t2 where t2.b = 1 and t2.c > 1")
 	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_b")
-	c.Assert(tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"), IsTrue)
+	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"))
 	tk.MustExec("drop global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1")
 	tk.MustExec("create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1")
 	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_c")
-	c.Assert(tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)"), IsTrue)
+	require.Equal(t, "t2:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)"))
 
 	tk.MustExec("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_b")
-	c.Assert(tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"), IsTrue)
+	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"))
 	tk.MustExec("create global binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1")
 	tk.MustExec("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_c")
-	c.Assert(tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)"), IsTrue)
+	require.Equal(t, "t2:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)"))
 }
 
-func (s *testSuite) TestBestPlanInBaselines(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestBestPlanInBaselines(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b));")
@@ -246,37 +169,39 @@ func (s *testSuite) TestBestPlanInBaselines(c *C) {
 
 	// before binding
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
+	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"))
 
 	tk.MustQuery("select a, b from t where b = 3 limit 1, 100")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
-	c.Assert(tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"), IsTrue)
+	require.Equal(t, "t:ib", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"))
 
 	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ia) */ a, b from t where a = 1 limit 0, 1`)
 	tk.MustExec(`create global binding for select a, b from t where b = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ib) */ a, b from t where b = 1 limit 0, 1`)
 
-	sql, hash := normalizeWithDefaultDB(c, "select a, b from t where a = 1 limit 0, 1", "test")
-	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
-	c.Check(bindData, NotNil)
-	c.Check(bindData.OriginalSQL, Equals, "select `a` , `b` from `test` . `t` where `a` = ? limit ...")
+	sql, hash := utilNormalizeWithDefaultDB(t, "select a, b from t where a = 1 limit 0, 1", "test")
+	bindData := dom.BindHandle().GetBindRecord(hash, sql, "test")
+	require.NotNil(t, bindData)
+	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
-	c.Check(bind.BindSQL, Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `ia`)*/ `a`,`b` FROM `test`.`t` WHERE `a` = 1 LIMIT 0,1")
-	c.Check(bindData.Db, Equals, "test")
-	c.Check(bind.Status, Equals, "using")
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `ia`)*/ `a`,`b` FROM `test`.`t` WHERE `a` = 1 LIMIT 0,1", bind.BindSQL)
+	require.Equal(t, "test", bindData.Db)
+	require.Equal(t, "using", bind.Status)
 
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 10")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
+	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"))
 
 	tk.MustQuery("select a, b from t where b = 3 limit 1, 100")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
-	c.Assert(tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"), IsTrue)
+	require.Equal(t, "t:ib", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"))
 }
 
-func (s *testSuite) TestErrorBind(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestErrorBind(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustGetErrMsg("create global binding for select * from t using select * from t", "[schema:1146]Table 'test.t' doesn't exist")
 	tk.MustExec("drop table if exists t")
@@ -286,44 +211,46 @@ func (s *testSuite) TestErrorBind(c *C) {
 	tk.MustExec("create index index_t on t(i,s)")
 
 	_, err := tk.Exec("create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
-	c.Assert(err, IsNil, Commentf("err %v", err))
+	require.NoError(t, err, "err %v", err)
 
 	sql, hash := parser.NormalizeDigest("select * from test . t where i > ?")
-	bindData := s.domain.BindHandle().GetBindRecord(hash.String(), sql, "test")
-	c.Check(bindData, NotNil)
-	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t` where `i` > ?")
+	bindData := dom.BindHandle().GetBindRecord(hash.String(), sql, "test")
+	require.NotNil(t, bindData)
+	require.Equal(t, "select * from `test` . `t` where `i` > ?", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
-	c.Check(bind.BindSQL, Equals, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 100")
-	c.Check(bindData.Db, Equals, "test")
-	c.Check(bind.Status, Equals, "using")
-	c.Check(bind.Charset, NotNil)
-	c.Check(bind.Collation, NotNil)
-	c.Check(bind.CreateTime, NotNil)
-	c.Check(bind.UpdateTime, NotNil)
+	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 100", bind.BindSQL)
+	require.Equal(t, "test", bindData.Db)
+	require.Equal(t, "using", bind.Status)
+	require.NotNil(t, bind.Charset)
+	require.NotNil(t, bind.Collation)
+	require.NotNil(t, bind.CreateTime)
+	require.NotNil(t, bind.UpdateTime)
 
 	tk.MustExec("drop index index_t on t")
 	_, err = tk.Exec("select * from t where i > 10")
-	c.Check(err, IsNil)
+	require.NoError(t, err)
 
-	s.domain.BindHandle().DropInvalidBindRecord()
+	dom.BindHandle().DropInvalidBindRecord()
 
 	rs, err := tk.Exec("show global bindings")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	chk := rs.NewChunk()
 	err = rs.Next(context.TODO(), chk)
-	c.Check(err, IsNil)
-	c.Check(chk.NumRows(), Equals, 0)
+	require.NoError(t, err)
+	require.Equal(t, 0, chk.NumRows())
 }
 
-func (s *testSuite) TestDMLEvolveBaselines(c *C) {
+func TestDMLEvolveBaselines(t *testing.T) {
 	originalVal := config.CheckTableBeforeDrop
 	config.CheckTableBeforeDrop = true
 	defer func() {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c(c))")
@@ -333,63 +260,65 @@ func (s *testSuite) TestDMLEvolveBaselines(c *C) {
 
 	tk.MustExec("create global binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t,idx_c) */ from t where b = 1 and c > 1")
 	rows := tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
+	require.Len(t, rows, 1)
 	tk.MustExec("delete /*+ use_index(t,idx_b) */ from t where b = 2 and c > 1")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tk.MustExec("admin flush bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
+	require.Len(t, rows, 1)
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
+	require.Len(t, rows, 1)
 
 	tk.MustExec("create global binding for update t set a = 1 where b = 1 and c > 1 using update /*+ use_index(t,idx_c) */ t set a = 1 where b = 1 and c > 1")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 2)
+	require.Len(t, rows, 2)
 	tk.MustExec("update /*+ use_index(t,idx_b) */ t set a = 2 where b = 2 and c > 1")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tk.MustExec("admin flush bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 2)
+	require.Len(t, rows, 2)
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 2)
+	require.Len(t, rows, 2)
 
 	tk.MustExec("create table t1 like t")
 	tk.MustExec("create global binding for insert into t1 select * from t where t.b = 1 and t.c > 1 using insert into t1 select /*+ use_index(t,idx_c) */ * from t where t.b = 1 and t.c > 1")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 3)
+	require.Len(t, rows, 3)
 	tk.MustExec("insert into t1 select /*+ use_index(t,idx_b) */ * from t where t.b = 2 and t.c > 2")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tk.MustExec("admin flush bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 3)
+	require.Len(t, rows, 3)
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 3)
+	require.Len(t, rows, 3)
 
 	tk.MustExec("create global binding for replace into t1 select * from t where t.b = 1 and t.c > 1 using replace into t1 select /*+ use_index(t,idx_c) */ * from t where t.b = 1 and t.c > 1")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 4)
+	require.Len(t, rows, 4)
 	tk.MustExec("replace into t1 select /*+ use_index(t,idx_b) */ * from t where t.b = 2 and t.c > 2")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tk.MustExec("admin flush bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 4)
+	require.Len(t, rows, 4)
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 4)
+	require.Len(t, rows, 4)
 }
 
-func (s *testSuite) TestAddEvolveTasks(c *C) {
+func TestAddEvolveTasks(t *testing.T) {
 	originalVal := config.CheckTableBeforeDrop
 	config.CheckTableBeforeDrop = true
 	defer func() {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
@@ -399,29 +328,31 @@ func (s *testSuite) TestAddEvolveTasks(c *C) {
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 	// It cannot choose table path although it has lowest cost.
 	tk.MustQuery("select * from t where a >= 4 and b >= 1 and c = 0")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
+	require.Equal(t, "t:idx_a", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
-	c.Assert(rows[0][3], Equals, "pending verify")
+	require.Len(t, rows, 2)
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
+	require.Equal(t, "pending verify", rows[0][3])
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
+	require.Len(t, rows, 2)
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
 	status := rows[0][3].(string)
-	c.Assert(status == "using" || status == "rejected", IsTrue)
+	require.True(t, status == "using" || status == "rejected")
 }
 
-func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
+func TestRuntimeHintsInEvolveTasks(t *testing.T) {
 	originalVal := config.CheckTableBeforeDrop
 	config.CheckTableBeforeDrop = true
 	defer func() {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
@@ -431,13 +362,15 @@ func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
 	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000) */ * from t where a >= 4 and b >= 1 and c = 0")
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
+	require.Len(t, rows, 2)
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
 }
 
-func (s *testSuite) TestDefaultSessionVars(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestDefaultSessionVars(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery(`show variables like "%baselines%"`).Sort().Check(testkit.Rows(
 		"tidb_capture_plan_baselines OFF",
 		"tidb_evolve_plan_baselines OFF",
@@ -448,10 +381,14 @@ func (s *testSuite) TestDefaultSessionVars(c *C) {
 		"tidb_use_plan_baselines ON"))
 }
 
-func (s *testSuite) TestCaptureBaselinesScope(c *C) {
-	tk1 := testkit.NewTestKit(c, s.store)
-	tk2 := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk1)
+func TestCaptureBaselinesScope(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	utilCleanBindingEnv(tk1, dom)
 	tk1.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
 		"tidb_capture_plan_baselines OFF",
 	))
@@ -495,150 +432,160 @@ func (s *testSuite) TestCaptureBaselinesScope(c *C) {
 	))
 }
 
-func (s *testSuite) TestStmtHints(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestStmtHints(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select /*+ MAX_EXECUTION_TIME(100), MEMORY_QUOTA(1 GB) */ * from t use index(idx)")
 	tk.MustQuery("select * from t")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(1073741824))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(100))
+	require.Equal(t, int64(1073741824), tk.Session().GetSessionVars().StmtCtx.MemQuotaQuery)
+	require.Equal(t, uint64(100), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 	tk.MustQuery("select a, b from t")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemQuotaQuery, Equals, int64(0))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(0))
+	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemQuotaQuery)
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 }
 
-func (s *testSuite) TestPrivileges(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestPrivileges(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	rows := tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
+	require.Len(t, rows, 1)
 	tk.MustExec("create user test@'%'")
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil), IsTrue)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil))
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 0)
+	require.Len(t, rows, 0)
 }
 
-func (s *testSuite) TestHintsSetEvolveTask(c *C) {
+func TestHintsSetEvolveTask(t *testing.T) {
 	originalVal := config.CheckTableBeforeDrop
 	config.CheckTableBeforeDrop = true
 	defer func() {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, index idx_a(a))")
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx_a) where a > 10")
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 	tk.MustQuery("select * from t use index(idx_a) where a > 0")
-	bindHandle := s.domain.BindHandle()
+	bindHandle := dom.BindHandle()
 	bindHandle.SaveEvolveTasksToStore()
 	// Verify the added Binding for evolution contains valid ID and Hint, otherwise, panic may happen.
-	sql, hash := normalizeWithDefaultDB(c, "select * from t where a > ?", "test")
+	sql, hash := utilNormalizeWithDefaultDB(t, "select * from t where a > ?", "test")
 	bindData := bindHandle.GetBindRecord(hash, sql, "test")
-	c.Check(bindData, NotNil)
-	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t` where `a` > ?")
-	c.Assert(len(bindData.Bindings), Equals, 2)
+	require.NotNil(t, bindData)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Len(t, bindData.Bindings, 2)
 	bind := bindData.Bindings[1]
-	c.Assert(bind.Status, Equals, bindinfo.PendingVerify)
-	c.Assert(bind.ID, Not(Equals), "")
-	c.Assert(bind.Hint, NotNil)
+	require.Equal(t, bindinfo.PendingVerify, bind.Status)
+	require.NotEqual(t, "", bind.ID)
+	require.NotNil(t, bind.Hint)
 }
 
-func (s *testSuite) TestHintsSetID(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestHintsSetID(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, index idx_a(a))")
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(test.t, idx_a) */ * from t where a > 10")
-	bindHandle := s.domain.BindHandle()
+	bindHandle := dom.BindHandle()
 	// Verify the added Binding contains ID with restored query block.
-	sql, hash := normalizeWithDefaultDB(c, "select * from t where a > ?", "test")
+	sql, hash := utilNormalizeWithDefaultDB(t, "select * from t where a > ?", "test")
 	bindData := bindHandle.GetBindRecord(hash, sql, "test")
-	c.Check(bindData, NotNil)
-	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t` where `a` > ?")
-	c.Assert(len(bindData.Bindings), Equals, 1)
+	require.NotNil(t, bindData)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Len(t, bindData.Bindings, 1)
 	bind := bindData.Bindings[0]
-	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
-	s.cleanBindingEnv(tk)
+	utilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
-	c.Check(bindData, NotNil)
-	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t` where `a` > ?")
-	c.Assert(len(bindData.Bindings), Equals, 1)
+	require.NotNil(t, bindData)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Len(t, bindData.Bindings, 1)
 	bind = bindData.Bindings[0]
-	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
-	s.cleanBindingEnv(tk)
+	utilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@sel_1 t, idx_a) */ * from t where a > 10")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
-	c.Check(bindData, NotNil)
-	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t` where `a` > ?")
-	c.Assert(len(bindData.Bindings), Equals, 1)
+	require.NotNil(t, bindData)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Len(t, bindData.Bindings, 1)
 	bind = bindData.Bindings[0]
-	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
-	s.cleanBindingEnv(tk)
+	utilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@qb1 t, idx_a) qb_name(qb1) */ * from t where a > 10")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
-	c.Check(bindData, NotNil)
-	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t` where `a` > ?")
-	c.Assert(len(bindData.Bindings), Equals, 1)
+	require.NotNil(t, bindData)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Len(t, bindData.Bindings, 1)
 	bind = bindData.Bindings[0]
-	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
-	s.cleanBindingEnv(tk)
+	utilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(T, IDX_A) */ * from t where a > 10")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
-	c.Check(bindData, NotNil)
-	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t` where `a` > ?")
-	c.Assert(len(bindData.Bindings), Equals, 1)
+	require.NotNil(t, bindData)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Len(t, bindData.Bindings, 1)
 	bind = bindData.Bindings[0]
-	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
-	s.cleanBindingEnv(tk)
+	utilCleanBindingEnv(tk, dom)
 	err := tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
-	c.Assert(terror.ErrorEqual(err, parser.ErrWarnOptimizerHintParseError), IsTrue)
+	require.True(t, terror.ErrorEqual(err, parser.ErrWarnOptimizerHintParseError))
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
-	c.Check(bindData, NotNil)
-	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t` where `a` > ?")
-	c.Assert(len(bindData.Bindings), Equals, 1)
+	require.NotNil(t, bindData)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Len(t, bindData.Bindings, 1)
 	bind = bindData.Bindings[0]
-	c.Assert(bind.ID, Equals, "")
+	require.Equal(t, "", bind.ID)
 }
 
-func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
+func TestNotEvolvePlanForReadStorageHint(t *testing.T) {
 	originalVal := config.CheckTableBeforeDrop
 	config.CheckTableBeforeDrop = true
 	defer func() {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,6), (7,7), (8,8), (9,9), (10,10)")
 	tk.MustExec("analyze table t")
 	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	c.Assert(exists, IsTrue)
+	require.True(t, exists)
 	for _, tblInfo := range db.Tables {
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
@@ -651,36 +598,38 @@ func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
 	// Make sure the best plan of the SQL is use TiKV index.
 	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	rows := tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
-	c.Assert(fmt.Sprintf("%v", rows[len(rows)-1][2]), Equals, "cop[tikv]")
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[len(rows)-1][2]))
 
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select /*+ read_from_storage(tiflash[t]) */ * from t where a >= 1 and b >= 1")
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 
 	// Even if index of TiKV has lower cost, it chooses TiFlash.
 	rows = tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
-	c.Assert(fmt.Sprintf("%v", rows[len(rows)-1][2]), Equals, "cop[tiflash]")
+	require.Equal(t, "cop[tiflash]", fmt.Sprintf("%v", rows[len(rows)-1][2]))
 
 	tk.MustExec("admin flush bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	// None evolve task, because of the origin binding is a read_from_storage binding.
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][1], Equals, "SELECT /*+ read_from_storage(tiflash[`t`])*/ * FROM `test`.`t` WHERE `a` >= 1 AND `b` >= 1")
-	c.Assert(rows[0][3], Equals, "using")
+	require.Len(t, rows, 1)
+	require.Equal(t, "SELECT /*+ read_from_storage(tiflash[`t`])*/ * FROM `test`.`t` WHERE `a` >= 1 AND `b` >= 1", rows[0][1])
+	require.Equal(t, "using", rows[0][3])
 }
 
-func (s *testSuite) TestBindingWithIsolationRead(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestBindingWithIsolationRead(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b))")
 	tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,6), (7,7), (8,8), (9,9), (10,10)")
 	tk.MustExec("analyze table t")
 	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	c.Assert(exists, IsTrue)
+	require.True(t, exists)
 	for _, tblInfo := range db.Tables {
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
@@ -692,22 +641,24 @@ func (s *testSuite) TestBindingWithIsolationRead(c *C) {
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select * from t use index(idx_a) where a >= 1 and b >= 1")
 	tk.MustExec("set @@tidb_use_plan_baselines = 1")
 	rows := tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
-	c.Assert(rows[len(rows)-1][2], Equals, "cop[tikv]")
+	require.Equal(t, "cop[tikv]", rows[len(rows)-1][2])
 	// Even if we build a binding use index for SQL, but after we set the isolation read for TiFlash, it choose TiFlash instead of index of TiKV.
 	tk.MustExec("set @@tidb_isolation_read_engines = \"tiflash\"")
 	rows = tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
-	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
+	require.Equal(t, "cop[tiflash]", rows[len(rows)-1][2])
 }
 
-func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
+func TestReCreateBindAfterEvolvePlan(t *testing.T) {
 	originalVal := config.CheckTableBeforeDrop
 	config.CheckTableBeforeDrop = true
 	defer func() {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
@@ -718,24 +669,26 @@ func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
 
 	// It cannot choose table path although it has lowest cost.
 	tk.MustQuery("select * from t where a >= 0 and b >= 0")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
+	require.Equal(t, "t:idx_a", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 0 AND `b` >= 0")
-	c.Assert(rows[0][3], Equals, "pending verify")
+	require.Len(t, rows, 2)
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 0 AND `b` >= 0", rows[0][1])
+	require.Equal(t, "pending verify", rows[0][3])
 
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select * from t use index(idx_b) where a >= 1 and b >= 1")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
+	require.Len(t, rows, 1)
 	tk.MustQuery("select * from t where a >= 4 and b >= 1")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
+	require.Equal(t, "t:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 }
 
-func (s *testSuite) TestInvisibleIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestInvisibleIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, unique idx_a(a), index idx_b(b) invisible)")
@@ -747,50 +700,54 @@ func (s *testSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a) ")
 
 	tk.MustQuery("select * from t")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
-	c.Assert(tk.MustUseIndex("select * from t", "idx_a(a)"), IsTrue)
+	require.Equal(t, "t:idx_a", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("select * from t", "idx_a(a)"))
 
 	tk.MustExec(`prepare stmt1 from 'select * from t'`)
 	tk.MustExec("execute stmt1")
-	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.IndexNames, 1)
+	require.Equal(t, "t:idx_a", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 
 	// And then make this index invisible
 	tk.MustExec("alter table t alter index idx_a invisible")
 	tk.MustQuery("select * from t")
-	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.IndexNames, 0)
 
 	tk.MustExec("execute stmt1")
-	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.IndexNames, 0)
 
 	tk.MustExec("drop binding for select * from t")
 }
 
-func (s *testSuite) TestSPMHitInfo(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestSPMHitInfo(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
 
-	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"), IsTrue)
-	c.Assert(tk.HasPlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"))
+	require.True(t, tk.HasPlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin"))
 
 	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
-	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
+	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"))
 	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 }
 
-func (s *testSuite) TestReCreateBind(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestReCreateBind(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
@@ -803,25 +760,27 @@ func (s *testSuite) TestReCreateBind(c *C) {
 		"select * from `test` . `t` using",
 	))
 	rows := tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from `test` . `t`")
-	c.Assert(rows[0][3], Equals, "using")
+	require.Len(t, rows, 1)
+	require.Equal(t, "select * from `test` . `t`", rows[0][0])
+	require.Equal(t, "using", rows[0][3])
 
 	tk.MustExec("create global binding for select * from t using select * from t")
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from `test` . `t`")
-	c.Assert(rows[0][3], Equals, "using")
+	require.Len(t, rows, 1)
+	require.Equal(t, "select * from `test` . `t`", rows[0][0])
+	require.Equal(t, "using", rows[0][3])
 
 	rows = tk.MustQuery("select original_sql, status from mysql.bind_info where source != 'builtin';").Rows()
-	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[0][1], Equals, "deleted")
-	c.Assert(rows[1][1], Equals, "using")
+	require.Len(t, rows, 2)
+	require.Equal(t, "deleted", rows[0][1])
+	require.Equal(t, "using", rows[1][1])
 }
 
-func (s *testSuite) TestExplainShowBindSQL(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestExplainShowBindSQL(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key(a))")
@@ -836,43 +795,49 @@ func (s *testSuite) TestExplainShowBindSQL(c *C) {
 	// explain analyze do not support verbose yet.
 }
 
-func (s *testSuite) TestDMLIndexHintBind(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestDMLIndexHintBind(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, key idx_b(b), key idx_c(c))")
 
 	tk.MustExec("delete from t where b = 1 and c > 1")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
-	c.Assert(tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_b(b)"), IsTrue)
+	require.Equal(t, "t:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_b(b)"))
 	tk.MustExec("create global binding for delete from t where b = 1 and c > 1 using delete from t use index(idx_c) where b = 1 and c > 1")
 	tk.MustExec("delete from t where b = 1 and c > 1")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
-	c.Assert(tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_c(c)"), IsTrue)
+	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_c(c)"))
 }
 
-func (s *testSuite) TestForbidEvolvePlanBaseLinesBeforeGA(c *C) {
+func TestForbidEvolvePlanBaseLinesBeforeGA(t *testing.T) {
 	originalVal := config.CheckTableBeforeDrop
 	config.CheckTableBeforeDrop = false
 	defer func() {
 		config.CheckTableBeforeDrop = originalVal
 	}()
 
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	err := tk.ExecToErr("set @@tidb_evolve_plan_baselines=0")
-	c.Assert(err, Equals, nil)
+	require.Equal(t, nil, err)
 	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=1")
-	c.Assert(err, ErrorMatches, "Cannot enable baseline evolution feature, it is not generally available now")
+	require.Regexp(t, "Cannot enable baseline evolution feature, it is not generally available now", err)
 	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=oN")
-	c.Assert(err, ErrorMatches, "Cannot enable baseline evolution feature, it is not generally available now")
+	require.Regexp(t, "Cannot enable baseline evolution feature, it is not generally available now", err)
 	err = tk.ExecToErr("admin evolve bindings")
-	c.Assert(err, ErrorMatches, "Cannot enable baseline evolution feature, it is not generally available now")
+	require.Regexp(t, "Cannot enable baseline evolution feature, it is not generally available now", err)
 }
 
-func (s *testSuite) TestExplainTableStmts(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestExplainTableStmts(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int, value decimal(5,2))")
@@ -881,60 +846,76 @@ func (s *testSuite) TestExplainTableStmts(c *C) {
 	tk.MustExec("desc table t")
 }
 
-func (s *testSuite) TestSPMWithoutUseDatabase(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk1 := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
-	s.cleanBindingEnv(tk1)
+func TestSPMWithoutUseDatabase(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+	utilCleanBindingEnv(tk, dom)
+	utilCleanBindingEnv(tk1, dom)
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key(a))")
 	tk.MustExec("create global binding for select * from t using select * from t force index(a)")
 
 	err := tk1.ExecToErr("select * from t")
-	c.Assert(err, ErrorMatches, "*No database selected")
+	require.Regexp(t, ".*No database selected", err)
 	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
-	c.Assert(tk1.MustUseIndex("select * from test.t", "a"), IsTrue)
+	require.True(t, tk1.MustUseIndex("select * from test.t", "a"))
 	tk1.MustExec("select * from test.t")
 	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestBindingWithoutCharset(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestBindingWithoutCharset(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(10) CHARACTER SET utf8)")
 	tk.MustExec("create global binding for select * from t where a = 'aa' using select * from t where a = 'aa'")
 	rows := tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` = ?")
-	c.Assert(rows[0][1], Equals, "SELECT * FROM `test`.`t` WHERE `a` = 'aa'")
+	require.Len(t, rows, 1)
+	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
+	require.Equal(t, "SELECT * FROM `test`.`t` WHERE `a` = 'aa'", rows[0][1])
 }
 
-func (s *testSuite) TestGCBindRecord(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
+func TestGCBindRecord(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	// set lease for gc tests
+	originLease := bindinfo.Lease
+	bindinfo.Lease = 0
+
+	defer func() {
+		bindinfo.Lease = originLease
+	}()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key(a))")
 
 	tk.MustExec("create global binding for select * from t where a = 1 using select * from t use index(a) where a = 1")
 	rows := tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` = ?")
-	c.Assert(rows[0][3], Equals, "using")
+	require.Len(t, rows, 1)
+	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
+	require.Equal(t, "using", rows[0][3])
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
 		"using",
 	))
 
-	h := s.domain.BindHandle()
+	h := dom.BindHandle()
 	// bindinfo.Lease is set to 0 for test env in SetUpSuite.
-	c.Assert(h.GCBindRecord(), IsNil)
+	require.NoError(t, h.GCBindRecord())
 	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` = ?")
-	c.Assert(rows[0][3], Equals, "using")
+	require.Len(t, rows, 1)
+	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
+	require.Equal(t, "using", rows[0][3])
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
 		"using",
 	))
@@ -944,7 +925,7 @@ func (s *testSuite) TestGCBindRecord(c *C) {
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
 		"deleted",
 	))
-	c.Assert(h.GCBindRecord(), IsNil)
+	require.NoError(t, h.GCBindRecord())
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
 }
