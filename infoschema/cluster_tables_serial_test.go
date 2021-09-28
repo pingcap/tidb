@@ -302,10 +302,12 @@ func SubTestStmtSummaryEvictedCountTable(s *clusterTablesSuite) func(*testing.T)
 		tk := s.newTestKitWithRoot(t)
 		// disable refreshing
 		tk.MustExec("set global tidb_stmt_summary_refresh_interval=9999")
-		// set information_schema.statements_summary's size to 1
+		// set information_schema.statements_summary's size to 2
+		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 2")
+		// no evict happened, no record in cluster evicted table.
+		tk.MustQuery("select count(*) from information_schema.cluster_statements_summary_evicted;").Check(testkit.Rows("0"))
 		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
 		// no evict happened, no record in cluster evicted table.
-		tk.MustQuery("select count(*) from information_schema.cluster_statements_summary_evicted;").Check(testkit.Rows("1"))
 		// cleanup side effects
 		defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
 		defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
