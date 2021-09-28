@@ -162,7 +162,7 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 
 	table.MockTableFromMeta(tb.Meta())
-	alc := tb.Allocators(nil).Get(autoid.RowIDAllocType)
+	alc := tb.Allocators(nil).Get(autoid.AutoIncrementType)
 	require.NotNil(t, alc)
 
 	err = alc.Rebase(0, false)

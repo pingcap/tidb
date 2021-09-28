@@ -289,39 +289,10 @@ func BuildBackupRangeAndSchema(
 				zap.String("db", dbInfo.Name.O),
 				zap.String("table", tableInfo.Name.O),
 			)
-
-			tblVer := autoid.AllocOptionTableInfoVersion(tableInfo.Version)
-			idAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.RowIDAllocType, tblVer)
-			seqAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.SequenceType, tblVer)
-			randAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.AutoRandomType, tblVer)
-
-			var globalAutoID int64
-			switch {
-			case tableInfo.IsSequence():
-				globalAutoID, err = seqAlloc.NextGlobalAutoID()
-			case tableInfo.IsView() || !utils.NeedAutoID(tableInfo):
-				// no auto ID for views or table without either rowID nor auto_increment ID.
-			default:
-				globalAutoID, err = idAlloc.NextGlobalAutoID()
-			}
+			err := setTableInfoAutoIDs(storage, dbInfo, tableInfo, logger)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			tableInfo.AutoIncID = globalAutoID
-
-			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
-				// this table has auto_random id, we need backup and rebase in restoration
-				var globalAutoRandID int64
-				globalAutoRandID, err = randAlloc.NextGlobalAutoID()
-				if err != nil {
-					return nil, nil, errors.Trace(err)
-				}
-				tableInfo.AutoRandID = globalAutoRandID
-				logger.Debug("change table AutoRandID",
-					zap.Int64("AutoRandID", globalAutoRandID))
-			}
-			logger.Debug("change table AutoIncID",
-				zap.Int64("AutoIncID", globalAutoID))
 
 			// remove all non-public indices
 			n := 0
@@ -353,6 +324,60 @@ func BuildBackupRangeAndSchema(
 		return nil, nil, nil
 	}
 	return ranges, backupSchemas, nil
+}
+
+func setTableInfoAutoIDs(storage kv.Storage, dbInfo *model.DBInfo, tableInfo *model.TableInfo, logger *zap.Logger) error {
+	if tableInfo.IsView() {
+		return nil
+	}
+	if tableInfo.IsSequence() {
+		seqAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.SequenceType)
+		nextSeqID, err := seqAlloc.NextGlobalAutoID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tableInfo.AutoIncID = nextSeqID
+		logger.Debug("change sequence AutoIncID",
+			zap.Int64("sequence nextID", nextSeqID))
+		return nil
+	}
+
+	var autoIDs meta.AutoIDGroup
+	err := kv.RunInNewTxn(context.Background(), storage, true, func(ctx context.Context, txn kv.Transaction) error {
+		var err1 error
+		acc := meta.NewMeta(txn).GetAutoIDAccessors(dbInfo.ID, tableInfo.ID)
+		autoIDs, err1 = acc.Get()
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	autoIncIDsSeparated := tableInfo.Version >= model.TableInfoVersion5
+	if !autoIncIDsSeparated {
+		tableInfo.AutoIncID = autoIDs.RowID + 1
+		logger.Debug("change table AutoIncID",
+			zap.Int64("AutoIncID", tableInfo.AutoIncID))
+	} else {
+		if utils.HasRowID(tableInfo) {
+			tableInfo.AutoRowID = autoIDs.RowID + 1
+			logger.Debug("change table AutoRowID",
+				zap.Int64("AutoRowID", tableInfo.AutoRowID))
+		}
+		if utils.HasAutoIncID(tableInfo) {
+			tableInfo.AutoIncID = autoIDs.IncrementID + 1
+			logger.Debug("change table AutoIncID",
+				zap.Int64("AutoIncID", tableInfo.AutoIncID))
+		}
+	}
+	if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
+		tableInfo.AutoRandID = autoIDs.RandomID + 1
+		logger.Debug("change table AutoRandID",
+			zap.Int64("AutoRandID", tableInfo.AutoRandID))
+	}
+	return nil
 }
 
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.

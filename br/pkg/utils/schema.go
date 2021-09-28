@@ -17,11 +17,14 @@ import (
 // temporaryDBNamePrefix is the prefix name of system db, e.g. mysql system db will be rename to __TiDB_BR_Temporary_mysql
 const temporaryDBNamePrefix = "__TiDB_BR_Temporary_"
 
-// NeedAutoID checks whether the table needs backing up with an autoid.
-func NeedAutoID(tblInfo *model.TableInfo) bool {
-	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
-	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
-	return hasRowID || hasAutoIncID
+// HasRowID checks whether the tables has _tidb_rowid.
+func HasRowID(tblInfo *model.TableInfo) bool {
+	return !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
+}
+
+// HasAutoIncID checks whether the tables has auto_increment ID.
+func HasAutoIncID(tblInfo *model.TableInfo) bool {
+	return tblInfo.GetAutoIncrementColInfo() != nil
 }
 
 // Database wraps the schema and tables of a database.

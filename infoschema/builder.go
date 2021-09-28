@@ -106,22 +106,12 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	b.copySortedTables(oldTableID, newTableID)
 
 	tblIDs := make([]int64, 0, 2)
-	// We try to reuse the old allocator, so the cached auto ID can be reused.
-	var allocs autoid.Allocators
-	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
-			diff.Type != model.ActionExchangeTablePartition &&
-			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
-			// For normal node's information schema, repaired table is existed.
-			// For repair node's information schema, repaired table is filtered (couldn't find it in `is`).
-			// So here skip to reserve the allocators when repairing table.
-			diff.Type != model.ActionRepairTable &&
-			// Alter sequence will change the sequence info in the allocator, so the old allocator is not valid any more.
-			diff.Type != model.ActionAlterSequence {
-			oldAllocs, _ := b.is.AllocByID(oldTableID)
-			allocs = filterAllocators(diff, oldAllocs)
-		}
 
+	var oldTbl table.Table
+	if tableIDIsValid(oldTableID) {
+		if oldTableID == newTableID {
+			oldTbl, _ = b.is.TableByID(oldTableID)
+		}
 		tmpIDs := tblIDs
 		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
@@ -144,7 +134,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
 		var err error
-		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
+		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, oldTbl, diff.Type, tblIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -207,28 +197,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		}
 	}
 	return tblIDs, nil
-}
-
-func filterAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
-	var newAllocs autoid.Allocators
-	switch diff.Type {
-	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
-		// Only drop auto-increment allocator.
-		newAllocs = oldAllocs.Filter(func(a autoid.Allocator) bool {
-			tp := a.GetType()
-			return tp != autoid.RowIDAllocType && tp != autoid.AutoIncrementType
-		})
-	case model.ActionRebaseAutoRandomBase:
-		// Only drop auto-random allocator.
-		newAllocs = oldAllocs.Filter(func(a autoid.Allocator) bool {
-			tp := a.GetType()
-			return tp != autoid.AutoRandomType
-		})
-	default:
-		// Keep all allocators.
-		newAllocs = oldAllocs
-	}
-	return newAllocs
 }
 
 func appendAffectedIDs(affected []int64, tblInfo *model.TableInfo) []int64 {
@@ -360,7 +328,7 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	b.is.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
-func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64) ([]int64, error) {
+func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, oldTbl table.Table, tp model.ActionType, affected []int64) ([]int64, error) {
 	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -406,29 +374,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
 
-	if len(allocs) == 0 {
-		allocs = autoid.NewAllocatorsFromTblInfo(b.store, dbInfo.ID, tblInfo)
-	} else {
-		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
-		switch tp {
-		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
-			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType, tblVer)
-			allocs = append(allocs, newAlloc)
-		case model.ActionRebaseAutoRandomBase:
-			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
-			allocs = append(allocs, newAlloc)
-		case model.ActionModifyColumn:
-			// Change column attribute from auto_increment to auto_random.
-			if tblInfo.ContainsAutoRandomBits() && allocs.Get(autoid.AutoRandomType) == nil {
-				// Remove auto_increment allocator.
-				allocs = allocs.Filter(func(a autoid.Allocator) bool {
-					return a.GetType() != autoid.AutoIncrementType && a.GetType() != autoid.RowIDAllocType
-				})
-				newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
-				allocs = append(allocs, newAlloc)
-			}
-		}
-	}
+	allocs := reconstructAllocators(b.store, dbInfo.ID, oldTbl, tblInfo, tp)
 	tbl, err := tables.TableFromMeta(allocs, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -446,6 +392,62 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		dbInfo.Tables = append(dbInfo.Tables, newTbl.Meta())
 	}
 	return affected, nil
+}
+
+// reconstructAllocators tries to reuse the old allocator so that the cached auto ID can be reused.
+func reconstructAllocators(s kv.Storage, dbID int64, oldTbl table.Table, newTbl *model.TableInfo,
+	tp model.ActionType) autoid.Allocators {
+	if oldTbl == nil {
+		return autoid.NewAllocatorsFromTblInfo(s, dbID, newTbl)
+	}
+	switch tp {
+	case model.ActionRenameTable, model.ActionExchangeTablePartition, model.ActionRepairTable,
+		model.ActionAlterSequence:
+		return autoid.NewAllocatorsFromTblInfo(s, dbID, newTbl)
+	}
+	// Try to reuse the old allocators.
+	as := oldTbl.Allocators(nil)
+	switch tp {
+	case model.ActionRebaseRowID:
+		as = as.Remove(autoid.RowIDAllocType)
+		rowID := autoid.NewAllocator(s, dbID, newTbl.ID, false, autoid.RowIDAllocType)
+		as = append(as, rowID)
+		return as
+	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+		unsigned := newTbl.IsAutoIncColUnsigned()
+		if model.AutoIncrementIDIsSeparated(newTbl.Version) {
+			as = as.Remove(autoid.AutoIncrementType)
+			incID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.AutoIncrementType)
+			as = append(as, incID)
+			return as
+		}
+		as = as.Remove(autoid.RowIDAllocType).Remove(autoid.AutoIncrementType)
+		rowID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.RowIDAllocType)
+		as = append(as, rowID)
+		return as
+	case model.ActionRebaseAutoRandomBase:
+		unsigned := newTbl.IsAutoRandomBitColUnsigned()
+		as = as.Remove(autoid.AutoRandomType)
+		randID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.AutoRandomType)
+		as = append(as, randID)
+		return as
+	case model.ActionModifyColumn:
+		// Change column attribute from auto_increment to auto_random.
+		if !oldTbl.Meta().ContainsAutoRandomBits() && newTbl.ContainsAutoRandomBits() {
+			unsigned := newTbl.IsAutoRandomBitColUnsigned()
+			if model.AutoIncrementIDIsSeparated(newTbl.Version) {
+				as = as.Remove(autoid.AutoIncrementType)
+				randID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.AutoRandomType)
+				as = append(as, randID)
+				return as
+			}
+			as = as.Remove(autoid.RowIDAllocType).Remove(autoid.AutoIncrementType)
+			randID := autoid.NewAllocator(s, dbID, newTbl.ID, unsigned, autoid.AutoRandomType)
+			as = append(as, randID)
+			return as
+		}
+	}
+	return as
 }
 
 // ConvertCharsetCollateToLowerCaseIfNeed convert the charset / collation of table and its columns to lower case,

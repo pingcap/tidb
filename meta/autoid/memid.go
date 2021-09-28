@@ -72,11 +72,6 @@ func (alloc *inMemoryAllocator) Alloc(ctx context.Context, n uint64, increment, 
 	if n == 0 {
 		return 0, 0, nil
 	}
-	if alloc.allocType == AutoIncrementType || alloc.allocType == RowIDAllocType {
-		if !validIncrementAndOffset(increment, offset) {
-			return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
-		}
-	}
 	if alloc.isUnsigned {
 		return alloc.alloc4Unsigned(n, increment, offset)
 	}

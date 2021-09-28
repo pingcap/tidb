@@ -1025,7 +1025,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " COMPRESSION='%s'", tableInfo.Compression)
 	}
 
-	incrementAllocator := allocators.Get(autoid.RowIDAllocType)
+	incrementAllocator := allocators.GetAutoIncrement(tableInfo.Version)
 	if hasAutoIncID && incrementAllocator != nil {
 		autoIncID, err := incrementAllocator.NextGlobalAutoID()
 		if err != nil {

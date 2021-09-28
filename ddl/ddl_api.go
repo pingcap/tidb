@@ -2003,17 +2003,24 @@ func (d *ddl) CreateTableWithInfo(
 		}
 	} else if actionType == model.ActionCreateTable {
 		d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
-		if tbInfo.AutoIncID > 1 {
-			// Default tableAutoIncID base is 0.
-			// If the first ID is expected to greater than 1, we need to do rebase.
+		if tbInfo.AutoRowID > 1 {
 			newEnd := tbInfo.AutoIncID - 1
 			if err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.RowIDAllocType); err != nil {
 				return errors.Trace(err)
 			}
 		}
+		if tbInfo.AutoIncID > 1 {
+			newEnd := tbInfo.AutoIncID - 1
+			if model.AutoIncrementIDIsSeparated(tbInfo.Version) {
+				err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.AutoIncrementType)
+			} else {
+				err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.RowIDAllocType)
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 		if tbInfo.AutoRandID > 1 {
-			// Default tableAutoRandID base is 0.
-			// If the first ID is expected to greater than 1, we need to do rebase.
 			newEnd := tbInfo.AutoRandID - 1
 			err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.AutoRandomType)
 		}
@@ -2674,16 +2681,14 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 						opt.UintValue = shardRowIDBitsMax
 					}
 					err = d.ShardRowID(sctx, ident, opt.UintValue)
-				case ast.TableOptionAutoIncrement:
-					err = d.RebaseAutoID(sctx, ident, int64(opt.UintValue), autoid.RowIDAllocType, opt.BoolValue)
+				case ast.TableOptionRowID, ast.TableOptionAutoIncrement, ast.TableOptionAutoRandomBase:
+					err = d.RebaseAutoID(sctx, ident, int64(opt.UintValue), opt.Tp, opt.BoolValue)
 				case ast.TableOptionAutoIdCache:
 					if opt.UintValue > uint64(math.MaxInt64) {
 						// TODO: Refine this error.
 						return errors.New("table option auto_id_cache overflows int64")
 					}
 					err = d.AlterTableAutoIDCache(sctx, ident, int64(opt.UintValue))
-				case ast.TableOptionAutoRandomBase:
-					err = d.RebaseAutoID(sctx, ident, int64(opt.UintValue), autoid.AutoRandomType, opt.BoolValue)
 				case ast.TableOptionComment:
 					spec.Comment = opt.StrValue
 					err = d.AlterTableComment(sctx, ident, spec)
@@ -2744,14 +2749,17 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 	return nil
 }
 
-func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64, tp autoid.AllocatorType, force bool) error {
+func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64, tp ast.TableOptionType, force bool) error {
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var actionType model.ActionType
+	var (
+		actionType model.ActionType
+		allocType  autoid.AllocatorType
+	)
 	switch tp {
-	case autoid.AutoRandomType:
+	case ast.TableOptionAutoRandomBase:
 		tbInfo := t.Meta()
 		if tbInfo.AutoRandomBits == 0 {
 			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomRebaseNotApplicable))
@@ -2769,12 +2777,21 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
 		}
 		actionType = model.ActionRebaseAutoRandomBase
-	case autoid.RowIDAllocType:
+		allocType = autoid.AutoRandomType
+	case ast.TableOptionAutoIncrement:
 		actionType = model.ActionRebaseAutoID
+		tbInfo := t.Meta()
+		if model.AutoIncrementIDIsSeparated(tbInfo.Version) {
+			allocType = autoid.AutoIncrementType
+		} else {
+			allocType = autoid.RowIDAllocType
+		}
+	case ast.TableOptionRowID:
+		actionType = model.ActionRebaseRowID
+		allocType = autoid.RowIDAllocType
 	}
-
 	if !force {
-		newBase, err = adjustNewBaseToNextGlobalID(ctx, t, tp, newBase)
+		newBase, err = adjustNewBaseToNextGlobalID(ctx, t, allocType, newBase)
 		if err != nil {
 			return err
 		}

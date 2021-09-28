@@ -869,7 +869,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 	})
 
-	err = checkAndApplyAutoRandomBits(d, t, dbInfo, tblInfo, oldCol, jobParam.newCol, jobParam.updatedAutoRandomBits)
+	err = checkAndApplyAutoRandomBits(t, dbInfo, tblInfo, oldCol, jobParam.newCol, jobParam.updatedAutoRandomBits)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1592,7 +1592,7 @@ func adjustColumnInfoInModifyColumn(
 	return nil
 }
 
-func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+func checkAndApplyAutoRandomBits(m *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
 	oldCol *model.ColumnInfo, newCol *model.ColumnInfo, newAutoRandBits uint64) error {
 	if newAutoRandBits == 0 {
 		return nil
@@ -1602,18 +1602,20 @@ func checkAndApplyAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo, 
 	if err != nil {
 		return err
 	}
-	return applyNewAutoRandomBits(d, m, dbInfo, tblInfo, oldCol, newAutoRandBits)
+	return applyNewAutoRandomBits(m, dbInfo, tblInfo, oldCol, newAutoRandBits)
 }
 
 // checkNewAutoRandomBits checks whether the new auto_random bits number can cause overflow.
 func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.ColumnInfo,
 	newCol *model.ColumnInfo, newAutoRandBits uint64, tblInfoVer uint16) error {
-	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
-
 	idAcc := idAccessors.RandomID()
 	convertedFromAutoInc := mysql.HasAutoIncrementFlag(oldCol.Flag)
 	if convertedFromAutoInc {
-		idAcc = idAccessors.IncrementID(tblInfoVer)
+		if !model.AutoIncrementIDIsSeparated(tblInfoVer) {
+			idAcc = idAccessors.RowID()
+		} else {
+			idAcc = idAccessors.IncrementID()
+		}
 	}
 	// Generate a new auto ID first to prevent concurrent update in DML.
 	_, err := idAcc.Inc(1)
@@ -1627,6 +1629,7 @@ func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.Colu
 	// Find the max number of available shard bits by
 	// counting leading zeros in current inc part of auto_random ID.
 	usedBits := uint64(64 - bits.LeadingZeros64(uint64(currentIncBitsVal)))
+	newLayout := autoid.NewShardIDLayout(&newCol.FieldType, newAutoRandBits)
 	if usedBits > newLayout.IncrementalBits {
 		overflowCnt := usedBits - newLayout.IncrementalBits
 		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, newAutoRandBits-overflowCnt, newAutoRandBits, oldCol.Name.O)
@@ -1637,28 +1640,29 @@ func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.Colu
 
 // applyNewAutoRandomBits set auto_random bits to TableInfo and
 // migrate auto_increment ID to auto_random ID if possible.
-func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
+func applyNewAutoRandomBits(m *meta.Meta, dbInfo *model.DBInfo,
 	tblInfo *model.TableInfo, oldCol *model.ColumnInfo, newAutoRandBits uint64) error {
 	tblInfo.AutoRandomBits = newAutoRandBits
 	needMigrateFromAutoIncToAutoRand := mysql.HasAutoIncrementFlag(oldCol.Flag)
 	if !needMigrateFromAutoIncToAutoRand {
 		return nil
 	}
-	autoRandAlloc := autoid.NewAllocatorsFromTblInfo(d.store, dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
-	if autoRandAlloc == nil {
-		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
-		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+	idAcc := m.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID)
+	var autoIncAcc meta.AutoIDAccessor
+	if model.AutoIncrementIDIsSeparated(tblInfo.Version) {
+		autoIncAcc = idAcc.IncrementID()
+	} else {
+		autoIncAcc = idAcc.RowID()
 	}
-	idAcc := m.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID).RowID()
-	nextAutoIncID, err := idAcc.Get()
+	nextAutoIncID, err := autoIncAcc.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = autoRandAlloc.Rebase(nextAutoIncID, false)
-	if err != nil {
+	if err := autoIncAcc.Del(); err != nil {
 		return errors.Trace(err)
 	}
-	if err := idAcc.Del(); err != nil {
+	err = idAcc.RandomID().Put(nextAutoIncID)
+	if err != nil {
 		return errors.Trace(err)
 	}
 	return nil

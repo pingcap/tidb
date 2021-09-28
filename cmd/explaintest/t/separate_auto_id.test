@@ -1,0 +1,6 @@
+-- See https://github.com/pingcap/tidb/issues/982 for the original issue.
+drop table if exists t;
+create table t (c bigint auto_increment, unique key(c));
+insert into t values();
+insert into t values();
+select *, _tidb_rowid from t;

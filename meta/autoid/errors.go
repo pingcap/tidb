@@ -21,13 +21,12 @@ import (
 
 // Error instances.
 var (
-	errInvalidTableID            = dbterror.ClassAutoid.NewStd(mysql.ErrInvalidTableID)
-	errInvalidIncrementAndOffset = dbterror.ClassAutoid.NewStd(mysql.ErrInvalidIncrementAndOffset)
-	errNotImplemented            = dbterror.ClassAutoid.NewStd(mysql.ErrNotImplemented)
-	ErrAutoincReadFailed         = dbterror.ClassAutoid.NewStd(mysql.ErrAutoincReadFailed)
-	ErrWrongAutoKey              = dbterror.ClassAutoid.NewStd(mysql.ErrWrongAutoKey)
-	ErrInvalidAllocatorType      = dbterror.ClassAutoid.NewStd(mysql.ErrUnknownAllocatorType)
-	ErrAutoRandReadFailed        = dbterror.ClassAutoid.NewStd(mysql.ErrAutoRandReadFailed)
+	errInvalidTableID       = dbterror.ClassAutoid.NewStd(mysql.ErrInvalidTableID)
+	errNotImplemented       = dbterror.ClassAutoid.NewStd(mysql.ErrNotImplemented)
+	ErrAutoincReadFailed    = dbterror.ClassAutoid.NewStd(mysql.ErrAutoincReadFailed)
+	ErrWrongAutoKey         = dbterror.ClassAutoid.NewStd(mysql.ErrWrongAutoKey)
+	ErrInvalidAllocatorType = dbterror.ClassAutoid.NewStd(mysql.ErrUnknownAllocatorType)
+	ErrAutoRandReadFailed   = dbterror.ClassAutoid.NewStd(mysql.ErrAutoRandReadFailed)
 )
 
 const (
@@ -61,6 +60,4 @@ const (
 	AutoRandomAlterAddColumn = "unsupported add column '%s' constraint AUTO_RANDOM when altering '%s.%s'"
 	// AutoRandomAlterChangeFromAutoInc is reported when the column is changing from a non-auto_increment or a non-primary key.
 	AutoRandomAlterChangeFromAutoInc = "auto_random can only be converted from auto_increment clustered primary key"
-	// AutoRandomAllocatorNotFound is reported when auto_random ID allocator not found during changing from auto_inc to auto_random.
-	AutoRandomAllocatorNotFound = "auto_random ID allocator not found in table '%s.%s'"
 )
