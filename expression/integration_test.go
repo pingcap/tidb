@@ -10338,3 +10338,17 @@ func (s *testIntegrationSuite) TestLastInsertId(c *C) {
 	tk.MustExec(`INSERT INTO lastinsertid VALUES (NULL);`)
 	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
 }
+
+func (s *testIntegrationSuite) TestIdentity(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists identity;`)
+	tk.MustExec(`create table identity (id int not null primary key auto_increment);`)
+	tk.MustQuery("SELECT @@identity;").Check(testkit.Rows("0"))
+	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
+	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("1 1"))
+	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
+	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("2 2"))
+	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
+	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
+}
