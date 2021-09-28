@@ -230,7 +230,6 @@ func getBundleFromPartitionDef(t *meta.Meta, job *model.Job, tbInfo *model.Table
 			}
 			bundle.Reset(placement.RuleIndexPartition, []int64{def.ID})
 			bundles = append(bundles, bundle)
-			continue
 		}
 	}
 	return bundles, nil
