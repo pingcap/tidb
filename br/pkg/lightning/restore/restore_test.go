@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/docker/go-units"
@@ -1932,6 +1933,7 @@ func (s *tableRestoreSuite) TestEstimate(c *C) {
 	mockBackend := mock.NewMockBackend(controller)
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
+	c.Assert(err, IsNil)
 
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
@@ -1969,6 +1971,7 @@ func (s *tableRestoreSuite) TestEstimate(c *C) {
 	c.Assert(source, Greater, s.tableMeta.TotalSize)
 	rc.cfg.TikvImporter.Backend = config.BackendTiDB
 	source, err = rc.estimateSourceData(ctx)
+	c.Assert(err, IsNil)
 	c.Assert(source, Equals, s.tableMeta.TotalSize)
 }
 
@@ -2387,6 +2390,86 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 			c.Assert(msgs[0], Matches, ca.expectMsg)
 		}
 	}
+}
+
+func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid(c *C) {
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize:          config.ReadBlockSize,
+			DataCharacterSet:       "gb18030",
+			DataInvalidCharReplace: string(utf8.RuneError),
+			CSV: config.CSVConfig{
+				Separator:       "，",
+				Delimiter:       `"`,
+				Header:          true,
+				NotNull:         false,
+				Null:            `\N`,
+				BackslashEscape: true,
+				TrimLastSep:     false,
+			},
+			IgnoreColumns: nil,
+		},
+	}
+	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
+	c.Assert(err, IsNil)
+	mockStore, err := storage.NewLocalStorage(c.MkDir())
+	c.Assert(err, IsNil)
+	csvContent, err := charsetConvertor.Encode(string([]byte("\"colA\"，\"colB\"\n\"a\"，\"b\"")))
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	csvFile := "db1.gbk_table.csv"
+	err = mockStore.WriteFile(ctx, csvFile, []byte(csvContent))
+	c.Assert(err, IsNil)
+
+	rc := &Controller{
+		cfg:           cfg,
+		checkTemplate: NewSimpleTemplate(),
+		store:         mockStore,
+		dbInfos: map[string]*checkpoints.TidbDBInfo{
+			"db1": {
+				Name: "db1",
+				Tables: map[string]*checkpoints.TidbTableInfo{
+					"gbk_table": {
+						ID:   1,
+						DB:   "db1",
+						Name: "gbk_table",
+						Core: &model.TableInfo{
+							Columns: []*model.ColumnInfo{
+								{
+									Name: model.NewCIStr("colA"),
+									FieldType: types.FieldType{
+										Flag: 1,
+									},
+								},
+								{
+									Name: model.NewCIStr("colB"),
+									FieldType: types.FieldType{
+										Flag: 1,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		ioWorkers: worker.NewPool(ctx, 1, "io"),
+	}
+	msgs, err := rc.SchemaIsValid(ctx, &mydump.MDTableMeta{
+		DB:   "db1",
+		Name: "gbk_table",
+		DataFiles: []mydump.FileInfo{
+			{
+				FileMeta: mydump.SourceFileMeta{
+					FileSize: 1 * units.TiB,
+					Path:     csvFile,
+					Type:     mydump.SourceTypeCSV,
+				},
+			},
+		},
+	})
+	c.Assert(err, IsNil)
+	c.Assert(msgs, HasLen, 0)
 }
 
 type testChecksumMgr struct {

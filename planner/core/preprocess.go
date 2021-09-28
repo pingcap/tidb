@@ -1527,6 +1527,11 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			return
 		}
 	}
+	scope := config.GetTxnScopeFromConfig()
+	if p.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && scope != kv.GlobalReplicaScope {
+		p.ReadReplicaScope = scope
+	}
+
 	// If the statement is in auto-commit mode, we will check whether there exists read_ts, if exists,
 	// we will directly use it. The txnScope will be defined by the zone label, if it is not set, we will use
 	// global txnScope directly.
@@ -1545,7 +1550,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return ts, nil
 			}
 			p.LastSnapshotTS = ts
-			p.setStalenessReturn()
+			p.IsStaleness = true
 		}
 	case readTS == 0 && node != nil:
 		// If we didn't use read_ts, and node isn't nil, it means we use 'select table as of timestamp ... '
@@ -1565,7 +1570,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return calculateTsExpr(ctx, node)
 			}
 			p.LastSnapshotTS = ts
-			p.setStalenessReturn()
+			p.IsStaleness = true
 		}
 	case readTS == 0 && node == nil && readStaleness != 0:
 		ts, p.err = calculateTsWithReadStaleness(p.ctx, readStaleness)
@@ -1581,7 +1586,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 				return calculateTsWithReadStaleness(p.ctx, readStaleness)
 			}
 			p.LastSnapshotTS = ts
-			p.setStalenessReturn()
+			p.IsStaleness = true
 		}
 	}
 	if p.LastSnapshotTS != ts {
@@ -1626,10 +1631,4 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 	}
 	p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	return p.InfoSchema
-}
-
-func (p *preprocessor) setStalenessReturn() {
-	scope := config.GetTxnScopeFromConfig()
-	p.IsStaleness = true
-	p.ReadReplicaScope = scope
 }
