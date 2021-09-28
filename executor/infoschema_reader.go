@@ -2768,15 +2768,15 @@ func (e *memtableRetriever) setDataForRegionLabel(ctx sessionctx.Context) error 
 	var rows [][]types.Datum
 	rules, err := infosync.GetAllLabelRules(context.TODO())
 	failpoint.Inject("mockOutputOfRegionLabel", func() {
-		convert := func(i interface{}) interface{} {
-			return i
+		convert := func(i interface{}) []interface{} {
+			return []interface{}{i}
 		}
 		rules = []*label.Rule{
 			{
 				ID:       "schema/test/test_label",
 				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
-				Rule: convert(map[string]interface{}{
+				Data: convert(map[string]interface{}{
 					"start_key": "7480000000000000ff395f720000000000fa",
 					"end_key":   "7480000000000000ff3a5f720000000000fa",
 				}),
@@ -2802,17 +2802,21 @@ func (e *memtableRetriever) setDataForRegionLabel(ctx sessionctx.Context) error 
 		}
 
 		labels := rule.Labels.Restore()
-		keyRange := make(map[string]string)
-		for k, v := range rule.Rule.(map[string]interface{}) {
-			keyRange[k] = v.(string)
+		var ranges []string
+		for _, data := range rule.Data {
+			if kv, ok := data.(map[string]interface{}); ok {
+				startKey := kv["start_key"]
+				endKey := kv["end_key"]
+				ranges = append(ranges, fmt.Sprintf("[%s, %s]", startKey, endKey))
+			}
 		}
+		kr := strings.Join(ranges, ", ")
 
 		row := types.MakeDatums(
 			rule.ID,
 			rule.RuleType,
 			labels,
-			keyRange["start_key"],
-			keyRange["end_key"],
+			kr,
 		)
 		rows = append(rows, row)
 	}
@@ -2834,8 +2838,8 @@ func checkRule(rule *label.Rule) (dbName, tableName string, err error) {
 		err = errors.New("the label rule has no label")
 		return
 	}
-	if rule.Rule == nil {
-		err = errors.New("the label rule has no rule")
+	if rule.Data == nil {
+		err = errors.New("the label rule has no data")
 		return
 	}
 	dbName = s[1]
