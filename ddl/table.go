@@ -237,6 +237,11 @@ func getBundleFromPartitionDef(t *meta.Meta, job *model.Job, tbInfo *model.Table
 				job.State = model.JobStateCancelled
 				return nil, errors.Trace(err)
 			}
+			err = bundle.Tidy()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			bundle.Reset(tbInfo.ID)
 			bundles = append(bundles, partitionBundleWrapper(bundle))
 			continue
 		}
@@ -253,6 +258,11 @@ func getBundleFromPartitionDef(t *meta.Meta, job *model.Job, tbInfo *model.Table
 				job.State = model.JobStateCancelled
 				return nil, errors.Trace(err)
 			}
+			err = bundle.Tidy()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			bundle.Reset(tbInfo.ID)
 			bundles = append(bundles, partitionBundleWrapper(bundle))
 			continue
 		}
