@@ -339,6 +339,7 @@ func (b *Bundle) Reset(newID int64) *Bundle {
 	return b
 }
 
+// Append is used to append a slice of partition ids to use the default table-level rules.
 func (b *Bundle) Append(newIDs []int64) *Bundle {
 	newRules := make([]*Rule, 0, len(b.Rules)*(len(newIDs)+1))
 	newRules = append(newRules, b.Rules...)
