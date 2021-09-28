@@ -190,6 +190,13 @@ func newSession(t *testing.T, store kv.Storage) session.Session {
 	return se
 }
 
+// RefreshConnectionID refresh the connection ID for session of the testkit
+func (tk *TestKit) RefreshConnectionID() {
+	if tk.session != nil {
+		tk.session.SetConnectionID(testKitIDGenerator.Inc())
+	}
+}
+
 // MustGetErrCode executes a sql statement and assert it's error code.
 func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	_, err := tk.Exec(sql)
