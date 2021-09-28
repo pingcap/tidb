@@ -56,6 +56,228 @@
             "ExecuteSQL": "execute stmt using @v1"
           }
         ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select cast(? as decimal)\"",
+        "Executes": [
+          {
+            "Vars": [{"Name": "v1", "Value": "\"123456789.0123456789012345678901234567890123456789\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"1234567.1234567\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"0.99999\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"99999.0\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-123456789.0123456789012345678901234567890123456789\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-1234567.1234567\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-0.99999\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-99999.0\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select cast(? as decimal(10,0))\"",
+        "Executes": [
+          {
+            "Vars": [{"Name": "v1", "Value": "\"123456789.0123456789012345678901234567890123456789\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"1234567.1234567\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"0.99999\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"99999.0\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-123456789.0123456789012345678901234567890123456789\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-1234567.1234567\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-0.99999\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-99999.0\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select cast(? as decimal(5,4))\"",
+        "Executes": [
+          {
+            "Vars": [{"Name": "v1", "Value": "\"123456789.0123456789012345678901234567890123456789\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"1234567.1234567\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"0.99999\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"99999.0\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-123456789.0123456789012345678901234567890123456789\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-1234567.1234567\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-0.99999\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-99999.0\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select cast(? as decimal(64, 30))\"",
+        "Executes": [
+          {
+            "Vars": [{"Name": "v1", "Value": "\"123456789.0123456789012345678901234567890123456789\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"1234567.1234567\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"0.99999\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"99999.0\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-123456789.0123456789012345678901234567890123456789\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-1234567.1234567\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-0.99999\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-99999.0\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select cast(? as decimal(15,5))\"",
+        "Executes": [
+          {
+            "Vars": [{"Name": "v1", "Value": "\"123456789.0123456789012345678901234567890123456789\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"1234567.1234567\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"0.99999\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"99999.0\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-123456789.0123456789012345678901234567890123456789\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-1234567.1234567\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-0.99999\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-99999.0\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          }
+        ]
+      },
+      {
+        "PrepareStmt": "prepare stmt from \"select cast(? as decimal(5,5))\"",
+        "Executes": [
+          {
+            "Vars": [{"Name": "v1", "Value": "\"123456789.0123456789012345678901234567890123456789\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"1234567.1234567\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"0.99999\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"99999.0\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-123456789.0123456789012345678901234567890123456789\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-1234567.1234567\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-0.99999\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          },
+          {
+            "Vars": [{"Name": "v1", "Value": "\"-99999.0\""}],
+            "ExecuteSQL": "execute stmt using @v1"
+          }
+        ]
       }
     ]
   }
