@@ -194,9 +194,9 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 
 func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (ec *ExprCollation, err error) {
 	switch funcName {
-	case ast.Concat, ast.ConcatWS, ast.Lower, ast.Reverse, ast.Upper, ast.Quote, ast.Coalesce:
+	case ast.Concat, ast.ConcatWS, ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote, ast.Coalesce:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
-	case ast.Left, ast.Right, ast.Repeat, ast.Trim, ast.LTrim, ast.RTrim, ast.Substr, ast.SubstringIndex, ast.Replace:
+	case ast.Left, ast.Right, ast.Repeat, ast.Trim, ast.LTrim, ast.RTrim, ast.Substr, ast.SubstringIndex, ast.Replace, ast.Substring, ast.Mid, ast.Translate:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0])
 	case ast.InsertFunc:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[3])
@@ -210,9 +210,9 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		if argTps[0] == types.ETString {
 			return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
 		}
-	case ast.Locate, ast.Instr:
+	case ast.Locate, ast.Instr, ast.Position:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1])
-	case ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ:
+	case ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.Strcmp:
 		// if compare type is string, we should determine which collation should be used.
 		if argTps[0] == types.ETString {
 			ec, err = CheckAndDeriveCollationFromExprs(ctx, funcName, types.ETInt, args...)

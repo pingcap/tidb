@@ -333,7 +333,7 @@ func TestDeriveCollation(t *testing.T) {
 		ec  *ExprCollation
 	}{
 		{
-			[]string{ast.Left, ast.Right, ast.Repeat, ast.Substr},
+			[]string{ast.Left, ast.Right, ast.Repeat, ast.Substr, ast.Substring, ast.Mid},
 			[]Expression{
 				newConstString("a", CoercibilityCoercible, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
 				newConstInt(CoercibilityExplicit),
@@ -366,7 +366,7 @@ func TestDeriveCollation(t *testing.T) {
 			&ExprCollation{CoercibilityCoercible, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 		{
-			[]string{ast.Replace},
+			[]string{ast.Replace, ast.Translate},
 			[]Expression{
 				newConstString("a", CoercibilityExplicit, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
 				newConstString("啊", CoercibilityExplicit, charset.CharsetGBK, charset.CollationGBKBin),
@@ -474,7 +474,7 @@ func TestDeriveCollation(t *testing.T) {
 			&ExprCollation{CoercibilityNumeric, ASCII, charset.CharsetBin, charset.CollationBin},
 		},
 		{
-			[]string{ast.Locate, ast.Instr},
+			[]string{ast.Locate, ast.Instr, ast.Position},
 			[]Expression{
 				newColInt(CoercibilityNumeric),
 				newColInt(CoercibilityNumeric),
@@ -496,7 +496,7 @@ func TestDeriveCollation(t *testing.T) {
 			&ExprCollation{CoercibilityCoercible, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 		{
-			[]string{ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ},
+			[]string{ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.Strcmp},
 			[]Expression{
 				newColString(charset.CharsetASCII, charset.CollationASCII),
 				newColString(charset.CharsetGBK, charset.CollationGBKBin),
@@ -507,7 +507,7 @@ func TestDeriveCollation(t *testing.T) {
 			&ExprCollation{CoercibilityNumeric, ASCII, charset.CharsetGBK, charset.CollationGBKBin},
 		},
 		{
-			[]string{ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ},
+			[]string{ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.Strcmp},
 			[]Expression{
 				newColString(charset.CharsetLatin1, charset.CollationLatin1),
 				newColString(charset.CharsetGBK, charset.CollationGBKBin),
@@ -516,6 +516,40 @@ func TestDeriveCollation(t *testing.T) {
 			types.ETInt,
 			true,
 			nil,
+		},
+		{
+			[]string{ast.Bin, ast.FromBase64, ast.Hex, ast.Oct, ast.Space, ast.ToBase64, ast.Unhex, ast.WeightString},
+			[]Expression{
+				newColString(charset.CharsetLatin1, charset.CollationLatin1),
+			},
+			[]types.EvalType{types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityCoercible, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{ast.ASCII, ast.BitLength, ast.CharLength, ast.CharacterLength, ast.Length, ast.OctetLength, ast.Ord},
+			[]Expression{
+				newColString(charset.CharsetLatin1, charset.CollationLatin1),
+			},
+			[]types.EvalType{types.ETString},
+			types.ETInt,
+			false,
+			&ExprCollation{CoercibilityNumeric, ASCII, charset.CharsetBin, charset.CollationBin},
+		},
+		{
+			[]string{
+				ast.ExportSet, ast.Elt, ast.MakeSet,
+			},
+			[]Expression{
+				newColInt(CoercibilityExplicit),
+				newColString(charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
+				newColString(charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
+			},
+			[]types.EvalType{types.ETString, types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 	}
 
