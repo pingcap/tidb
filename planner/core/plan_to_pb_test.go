@@ -79,5 +79,5 @@ func TestColumnToProto(t *testing.T) {
 		FieldType: *tp,
 	}
 	pc = util.ColumnToProto(col2)
-	require.Equal(t, 2, len(pc.Elems))
+	require.Len(t, pc.Elems, 2)
 }
