@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -146,62 +147,33 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 
 	followers := options.Followers
 	if followers == 0 {
-		followers = uint64(len(regions))
-	}
-	if followers == 0 {
-		followers = 3
+		followers = 2
 	}
 	schedule := options.Schedule
 
-	var Rules []*Rule
-	var constraints Constraints
-	var err error
-
-	if len(regions) == 0 {
-		constraints, err  = NewConstraints(nil)
-		if err != nil {
-			return nil, err
-		}
-		Rules = append(Rules, NewRule(Voter, followers, constraints))
-		return &Bundle{Rules: Rules}, nil
+	// regions must include the primary
+	sort.Strings(regions)
+	primaryIndex := sort.SearchStrings(regions, primaryRegion)
+	if primaryIndex >= len(regions) || regions[primaryIndex] != primaryRegion {
+		return nil, fmt.Errorf("%w: primary region must be included in regions", ErrInvalidPlacementOptions)
 	}
+
+	var Rules []*Rule
 
 	switch strings.ToLower(schedule) {
 	case "", "even":
-		constraints, err = NewConstraints([]string{fmt.Sprintf("+region=%s", primaryRegion)})
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid PrimaryRegion '%s'", err, primaryRegion)
-		}
-		Rules = append(Rules, NewRule(Leader, 1, constraints))
+		Rules = append(Rules, NewRule(Leader, 1, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+		Rules = append(Rules, NewRule(Follower, followers, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
 	case "majority_in_primary":
-		// We already have the leader, so we need to calculate how many additional followers
-		// need to be in the primary region for quorum
-		followersInPrimary := uint64(math.Ceil(float64(followers) / 2))
-		constraints, err = NewConstraints([]string{fmt.Sprintf("+region=%s", primaryRegion)})
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid PrimaryRegion, '%s'", err, primaryRegion)
-		}
-		Rules = append(Rules, NewRule(Leader, 1, constraints))
-		Rules = append(Rules, NewRule(Follower, followersInPrimary, constraints))
-		// even split the remaining followers
-		followers = followers - followersInPrimary
+		// calculate how many replicas need to be in the primary region for quorum
+		primaryCount := uint64(math.Ceil(float64(followers+1)/2)) + 1
+		Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+
+		// delete primary from regions
+		regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
+		Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
 	default:
 		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacementOptions, schedule)
-	}
-
-	count := followers / uint64(len(regions))
-	rem := followers - count*uint64(len(regions))
-	for _, region := range regions {
-		constraints, err = NewConstraints([]string{fmt.Sprintf("+region=%s", region)})
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid region of 'Regions', '%s'", err, region)
-		}
-		replica := count
-		if rem > 0 {
-			replica += 1
-			rem--
-		}
-		Rules = append(Rules, NewRule(Follower, replica, constraints))
 	}
 
 	return &Bundle{Rules: Rules}, nil

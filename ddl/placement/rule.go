@@ -145,7 +145,13 @@ func NewMergeRules(replicas uint64, constr1, constr2 string) ([]*Rule, error) {
 // NewRule constructs *Rule from role, count, and constraints. It is here to
 // consistent the behavior of creating new rules.
 func NewRule(role PeerRoleType, replicas uint64, cnst Constraints) *Rule {
-	return &Rule{Role: role, Count: int(replicas), Constraints: cnst}
+	return &Rule{
+		Role:           role,
+		Count:          int(replicas),
+		Constraints:    cnst,
+		LocationLabels: []string{"region", "zone", "rack", "host"},
+		IsolationLevel: "region",
+	}
 }
 
 // NewRules constructs []*Rule from a yaml-compatible representation of
@@ -212,4 +218,8 @@ func (r *Rule) Clone() *Rule {
 	n := &Rule{}
 	*n = *r
 	return n
+}
+
+func (r *Rule) String() string {
+	return fmt.Sprintf("%+v", *r)
 }
