@@ -200,7 +200,6 @@ func TestSyncerSimple(t *testing.T) {
 	currVer := fmt.Sprintf("%v", currentVer)
 	checkRespKV(t, 1, key, currVer, resp.Kvs...)
 	d.SchemaSyncer().Close()
-	d.SchemaSyncer().CleanGroup().Wait()
 	resp, err = cli.Get(context.Background(), key)
 	require.NoError(t, err)
 	require.Len(t, resp.Kvs, 0)

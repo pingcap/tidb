@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -56,11 +55,6 @@ func (s *MockSchemaSyncer) Init(ctx context.Context) error {
 // GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
 func (s *MockSchemaSyncer) GlobalVersionCh() clientv3.WatchChan {
 	return s.globalVerCh
-}
-
-// CleanGroup implements SchemaSyncer.CleanGroup interface.
-func (s *MockSchemaSyncer) CleanGroup() *sync.WaitGroup {
-	return nil
 }
 
 // WatchGlobalSchemaVer implements SchemaSyncer.WatchGlobalSchemaVer interface.

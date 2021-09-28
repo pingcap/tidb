@@ -96,8 +96,6 @@ type SchemaSyncer interface {
 	StartCleanWork()
 	// Close ends SchemaSyncer.
 	Close()
-	// CleanGroup returns a wait group for clean up works.
-	CleanGroup() *sync.WaitGroup
 }
 
 type ownerChecker interface {
@@ -460,6 +458,7 @@ func (s *schemaVersionSyncer) StartCleanWork() {
 
 func (s *schemaVersionSyncer) Close() {
 	s.cancel()
+	s.cleanGroup.Wait()
 
 	err := s.removeSelfVersionPath()
 	if err != nil {
@@ -526,8 +525,4 @@ func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) 
 		return true
 	}
 	return false
-}
-
-func (s *schemaVersionSyncer) CleanGroup() *sync.WaitGroup {
-	return &s.cleanGroup
 }
