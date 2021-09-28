@@ -557,7 +557,7 @@ func (s *testPrepareSerialSuite) TestExpressionIndexPreparePlanCache(c *C) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(len(res.Rows()), Equals, 5)
 	c.Assert(res.Rows()[2][3], Matches, ".*expression_index.*")
 	c.Assert(res.Rows()[2][4], Matches, ".*[123,123].*")
 

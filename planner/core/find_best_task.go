@@ -1634,13 +1634,14 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 // keepAccessCondsAsFilter4TablePlan is used to keep the access conditions as
 // filter conditions when the following conditions are met:
 // 1. Filter conditions are nil.
-// 2. Access conditions satisfies the conditions of the MaybeOverOptimized4PlanCache function.
-func keepAccessCondsAsFilter4TablePlan(ctx sessionctx.Context, access_conds []expression.Expression, filter_conds []expression.Expression) []expression.Expression {
-	if filter_conds == nil && expression.MaybeOverOptimized4PlanCache(ctx, access_conds) {
-		filter_conds = make([]expression.Expression, len(access_conds))
-		copy(filter_conds, access_conds)
+// 2. Access conditions satisfies the conditions of the
+// MaybeOverOptimized4PlanCache function.
+func keepAccessCondsAsFilter4TablePlan(ctx sessionctx.Context, accessConds []expression.Expression, filterConds []expression.Expression) []expression.Expression {
+	if filterConds == nil && expression.MaybeOverOptimized4PlanCache(ctx, accessConds) {
+		filterConds = make([]expression.Expression, len(accessConds))
+		copy(filterConds, accessConds)
 	}
-	return filter_conds
+	return filterConds
 }
 
 // GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
