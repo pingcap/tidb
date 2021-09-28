@@ -147,19 +147,18 @@ func (s *testDBSuite6) TestPlacementValidation(c *C) {
 			settings: "LEARNERS=1 " +
 				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1]\" " +
 				"CONSTRAINTS=\"{'+disk=ssd':2}\"",
-			errmsg: "invalid label constraints format: should be [constraint1, ...] (error yaml: unmarshal errors:\n  line 1: cannot unmarshal !!map into []string)",
+			errmsg: "invalid label constraints format: 'Constraints' should be [constraint1, ...] or any yaml compatible array representation",
 		},
 		{
 			name: "constraints may be incompatible with itself",
 			settings: "LEARNERS=1 " +
 				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-2]\"",
-			errmsg: "conflicting label constraints: '+zone=cn-west-2' and '+zone=cn-west-1'",
+			errmsg: "invalid label constraints format: should be [constraint1, ...] (error conflicting label constraints: '+zone=cn-west-2' and '+zone=cn-west-1'), {constraint1: cnt1, ...} (error yaml: unmarshal errors:\n" +
+				"  line 1: cannot unmarshal !!seq into map[string]int), or any yaml compatible representation: invalid LearnerConstraints",
 		},
 		{
 			settings: "PRIMARY_REGION=\"cn-east-1\" " +
-				"REGIONS=\"cn-east-1,cn-east-2\" " +
-				"LEARNERS=1 " +
-				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-1]\"",
+				"REGIONS=\"cn-east-1,cn-east-2\" ",
 			success: true,
 		},
 	}
