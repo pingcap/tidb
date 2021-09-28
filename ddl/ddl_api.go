@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/placementpolicy"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 )
@@ -73,8 +72,26 @@ const (
 	longBlobMaxLength     = 4294967295
 )
 
-func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
+func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, directPlacementOpts *model.PlacementSettings, placementPolicyRef *model.PolicyRefInfo) error {
 	dbInfo := &model.DBInfo{Name: schema}
+	if directPlacementOpts != nil && placementPolicyRef != nil {
+		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(placementPolicyRef.Name))
+	}
+	if directPlacementOpts != nil {
+		// check the direct placement option compatibility.
+		if err := checkPolicyValidation(directPlacementOpts); err != nil {
+			return errors.Trace(err)
+		}
+		dbInfo.DirectPlacementOpts = directPlacementOpts
+	}
+	if placementPolicyRef != nil {
+		// placement policy reference will override the direct placement options.
+		policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(placementPolicyRef.Name)
+		if !ok {
+			return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(placementPolicyRef.Name))
+		}
+		dbInfo.PlacementPolicyRef = &model.PolicyRefInfo{ID: policy.ID, Name: placementPolicyRef.Name}
+	}
 	if charsetInfo != nil {
 		chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetInfo.Chs, Col: charsetInfo.Col})
 		if err != nil {
@@ -158,6 +175,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 				return ErrConflictingDeclarations.GenWithStackByArgs(toCharset, info.CharsetName)
 			}
 			toCollate = info.Name
+
 		}
 	}
 	if toCollate == "" {
@@ -389,6 +407,7 @@ func typesNeedCharset(tp byte) bool {
 }
 
 func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate string) error {
+	var err error
 	if typesNeedCharset(tp.Tp) {
 		tp.Charset = colCharset
 		tp.Collate = colCollate
@@ -399,6 +418,9 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate 
 
 	// Use default value for flen or decimal when they are unspecified.
 	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(tp.Tp)
+	if tp.Decimal == types.UnspecifiedLength {
+		tp.Decimal = defaultDecimal
+	}
 	if tp.Flen == types.UnspecifiedLength {
 		tp.Flen = defaultFlen
 		if mysql.HasUnsignedFlag(tp.Flag) && tp.Tp != mysql.TypeLonglong && mysql.IsIntegerType(tp.Tp) {
@@ -406,11 +428,11 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate 
 			// because it has no prefix "+" or "-" character.
 			tp.Flen--
 		}
+	} else {
+		// Adjust the field type for blob/text types if the flen is set.
+		err = adjustBlobTypesFlen(tp, colCharset)
 	}
-	if tp.Decimal == types.UnspecifiedLength {
-		tp.Decimal = defaultDecimal
-	}
-	return nil
+	return err
 }
 
 // buildColumnAndConstraint builds table.Column and ast.Constraint from the parameters.
@@ -556,24 +578,31 @@ func processColumnFlags(col *table.Column) {
 	}
 }
 
-func adjustBlobTypesFlen(col *table.Column) {
-	if col.FieldType.Tp == mysql.TypeBlob {
-		if col.FieldType.Flen <= tinyBlobMaxLength {
-			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to TINYBLOB", col.FieldType.Flen))
-			col.FieldType.Flen = tinyBlobMaxLength
-			col.FieldType.Tp = mysql.TypeTinyBlob
-		} else if col.FieldType.Flen <= blobMaxLength {
-			col.FieldType.Flen = blobMaxLength
-		} else if col.FieldType.Flen <= mediumBlobMaxLength {
-			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to MEDIUMBLOB", col.FieldType.Flen))
-			col.FieldType.Flen = mediumBlobMaxLength
-			col.FieldType.Tp = mysql.TypeMediumBlob
-		} else if col.FieldType.Flen <= longBlobMaxLength {
-			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to LONGBLOB", col.FieldType.Flen))
-			col.FieldType.Flen = longBlobMaxLength
-			col.FieldType.Tp = mysql.TypeLongBlob
+func adjustBlobTypesFlen(tp *types.FieldType, colCharset string) error {
+	cs, err := charset.GetCharsetInfo(colCharset)
+	// when we meet the unsupported charset, we do not adjust.
+	if err != nil {
+		return err
+	}
+	l := tp.Flen * cs.Maxlen
+	if tp.Tp == mysql.TypeBlob {
+		if l <= tinyBlobMaxLength {
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to TINYBLOB", tp.Flen))
+			tp.Flen = tinyBlobMaxLength
+			tp.Tp = mysql.TypeTinyBlob
+		} else if l <= blobMaxLength {
+			tp.Flen = blobMaxLength
+		} else if l <= mediumBlobMaxLength {
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to MEDIUMBLOB", tp.Flen))
+			tp.Flen = mediumBlobMaxLength
+			tp.Tp = mysql.TypeMediumBlob
+		} else if l <= longBlobMaxLength {
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to LONGBLOB", tp.Flen))
+			tp.Flen = longBlobMaxLength
+			tp.Tp = mysql.TypeLongBlob
 		}
 	}
+	return nil
 }
 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
@@ -587,8 +616,6 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		// TODO: remove this version field after there is no old version.
 		Version: model.CurrLatestColumnInfoVersion,
 	})
-
-	adjustBlobTypesFlen(col)
 
 	if !isExplicitTimeStamp() {
 		// Check and set TimestampFlag, OnUpdateNowFlag and NotNullFlag.
@@ -1609,6 +1636,24 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 			}
 		}
 	}
+	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
+	if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
+		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+	}
+	if tbInfo.DirectPlacementOpts != nil {
+		// check the direct placement option compatibility.
+		if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if tbInfo.PlacementPolicyRef != nil {
+		// placement policy reference will override the direct placement options.
+		policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(tbInfo.PlacementPolicyRef.Name)
+		if !ok {
+			return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+		}
+		tbInfo.PlacementPolicyRef.ID = policy.ID
+	}
 	return nil
 }
 
@@ -1688,13 +1733,13 @@ func buildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInf
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionID are left as uninitialized value.
 func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return buildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "")
+	return buildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "", nil, nil)
 }
 
 // buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
-func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
-	tbInfo, err := buildTableInfoWithStmt(ctx, s, dbCharset, dbCollate)
+func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (*model.TableInfo, error) {
+	tbInfo, err := buildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef, directPlacementOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -1711,7 +1756,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 }
 
 // BuildSessionTemporaryTableInfo builds model.TableInfo from a SQL statement.
-func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSchema, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
+func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSchema, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (*model.TableInfo, error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	//build tableInfo
 	var tbInfo *model.TableInfo
@@ -1729,13 +1774,13 @@ func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSc
 		}
 		tbInfo, err = buildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithCheck(ctx, s, dbCharset, dbCollate)
+		tbInfo, err = buildTableInfoWithCheck(ctx, s, dbCharset, dbCollate, placementPolicyRef, directPlacementOpts)
 	}
 	return tbInfo, err
 }
 
 // buildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
-func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
+func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (*model.TableInfo, error) {
 	colDefs := s.Cols
 	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
 	if err != nil {
@@ -1772,14 +1817,25 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 
+	if err = handleTableOptions(s.Options, tbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if tbInfo.PlacementPolicyRef == nil && tbInfo.DirectPlacementOpts == nil {
+		// Set the defaults from Schema. Note: they are mutual exlusive!
+		if placementPolicyRef != nil {
+			tbInfo.PlacementPolicyRef = placementPolicyRef
+		} else if directPlacementOpts != nil {
+			tbInfo.DirectPlacementOpts = directPlacementOpts
+		}
+	}
+
+	// After handleTableOptions, so the partitions can get defaults from Table level
 	err = buildTablePartitionInfo(ctx, s.Partition, tbInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if err = handleTableOptions(s.Options, tbInfo); err != nil {
-		return nil, errors.Trace(err)
-	}
 	return tbInfo, nil
 }
 
@@ -1829,7 +1885,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if s.ReferTable != nil {
 		tbInfo, err = buildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate)
+		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate, schema.PlacementPolicyRef, schema.DirectPlacementOpts)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -2021,8 +2077,9 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 		SchemaName: schema.Name.L,
 		Type:       model.ActionRecoverTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args: []interface{}{tbInfo, recoverInfo.CurAutoIncID, recoverInfo.DropJobID,
-			recoverInfo.SnapshotTS, recoverTableCheckFlagNone, recoverInfo.CurAutoRandID},
+		Args: []interface{}{tbInfo, recoverInfo.AutoIDs.RowID, recoverInfo.DropJobID,
+			recoverInfo.SnapshotTS, recoverTableCheckFlagNone, recoverInfo.AutoIDs.RandomID,
+			recoverInfo.OldSchemaName, recoverInfo.OldTableName},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -2234,6 +2291,37 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd in
 	return nil
 }
 
+// SetDirectPlacementOpt tries to make the PlacementSettings assignments generic for Schema/Table/Partition
+func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placementOptionType ast.PlacementOptionType, stringVal string, uintVal uint64) error {
+	switch placementOptionType {
+	case ast.PlacementOptionPrimaryRegion:
+		placementSettings.PrimaryRegion = stringVal
+	case ast.PlacementOptionRegions:
+		placementSettings.Regions = stringVal
+	case ast.PlacementOptionFollowerCount:
+		placementSettings.Followers = uintVal
+	case ast.PlacementOptionVoterCount:
+		placementSettings.Voters = uintVal
+	case ast.PlacementOptionLearnerCount:
+		placementSettings.Learners = uintVal
+	case ast.PlacementOptionSchedule:
+		placementSettings.Schedule = stringVal
+	case ast.PlacementOptionConstraints:
+		placementSettings.Constraints = stringVal
+	case ast.PlacementOptionLeaderConstraints:
+		placementSettings.LeaderConstraints = stringVal
+	case ast.PlacementOptionLearnerConstraints:
+		placementSettings.LearnerConstraints = stringVal
+	case ast.PlacementOptionFollowerConstraints:
+		placementSettings.FollowerConstraints = stringVal
+	case ast.PlacementOptionVoterConstraints:
+		placementSettings.VoterConstraints = stringVal
+	default:
+		return errors.Trace(errors.New("unknown placement policy option"))
+	}
+	return nil
+}
+
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	for _, op := range options {
@@ -2273,6 +2361,23 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				if op.StrValue != "" && !strings.EqualFold(op.StrValue, "memory") {
 					return errors.Trace(errUnsupportedEngineTemporary)
 				}
+			}
+		case ast.TableOptionPlacementPolicy:
+			tbInfo.PlacementPolicyRef = &model.PolicyRefInfo{
+				Name: model.NewCIStr(op.StrValue),
+			}
+		case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
+			ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
+			ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
+			ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
+			ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
+			ast.TableOptionPlacementVoterConstraints:
+			if tbInfo.DirectPlacementOpts == nil {
+				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			err := SetDirectPlacementOpt(tbInfo.DirectPlacementOpts, ast.PlacementOptionType(op.Tp), op.StrValue, op.UintValue)
+			if err != nil {
+				return err
 			}
 		}
 	}
@@ -3383,14 +3488,19 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	if err != nil {
 		return err
 	}
+	var multiSchemaInfo *model.MultiSchemaInfo
+	if ctx.GetSessionVars().EnableChangeMultiSchema {
+		multiSchemaInfo = &model.MultiSchemaInfo{}
+	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		Type:       model.ActionDropColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{colName},
+		SchemaID:        schema.ID,
+		TableID:         t.Meta().ID,
+		SchemaName:      schema.Name.L,
+		Type:            model.ActionDropColumn,
+		BinlogInfo:      &model.HistoryInfo{},
+		MultiSchemaInfo: multiSchemaInfo,
+		Args:            []interface{}{colName},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -3455,14 +3565,19 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	if err != nil {
 		return err
 	}
+	var multiSchemaInfo *model.MultiSchemaInfo
+	if ctx.GetSessionVars().EnableChangeMultiSchema {
+		multiSchemaInfo = &model.MultiSchemaInfo{}
+	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		Type:       model.ActionDropColumns,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{colNames, ifExists},
+		SchemaID:        schema.ID,
+		TableID:         t.Meta().ID,
+		SchemaName:      schema.Name.L,
+		Type:            model.ActionDropColumns,
+		BinlogInfo:      &model.HistoryInfo{},
+		MultiSchemaInfo: multiSchemaInfo,
+		Args:            []interface{}{colNames, ifExists},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -3479,7 +3594,7 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 	colName := spec.OldColumnName.Name
 	col := table.FindCol(t.VisibleCols(), colName.L)
 	if col == nil {
-		err = ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+		err = ErrCantDropFieldOrKey.GenWithStackByArgs(colName)
 		if spec.IfExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return false, nil
@@ -3487,7 +3602,7 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 		return false, err
 	}
 
-	if err = isDroppableColumn(tblInfo, colName); err != nil {
+	if err = isDroppableColumn(ctx.GetSessionVars().EnableChangeMultiSchema, tblInfo, colName); err != nil {
 		return false, errors.Trace(err)
 	}
 	// We don't support dropping column with PK handle covered now.
@@ -3935,9 +4050,6 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 			return nil, errFKIncompatibleColumns.GenWithStackByArgs(originalColName, fkInfo.Name)
 		}
 	}
-
-	// Adjust the flen for blob types after the default flen is set.
-	adjustBlobTypesFlen(newCol)
 
 	// Copy index related options to the new spec.
 	indexFlags := col.FieldType.Flag & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
@@ -5527,7 +5639,7 @@ func checkIsDropPrimaryKey(indexName model.CIStr, indexInfo *model.IndexInfo, t 
 	if isPK {
 		// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
 		if indexInfo == nil && !t.Meta().PKIsHandle {
-			return isPK, ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
+			return isPK, ErrCantDropFieldOrKey.GenWithStackByArgs("PRIMARY")
 		}
 		if t.Meta().PKIsHandle {
 			return isPK, ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
@@ -5540,7 +5652,7 @@ func checkIsDropPrimaryKey(indexName model.CIStr, indexInfo *model.IndexInfo, t 
 	return isPK, nil
 }
 
-func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
+func isDroppableColumn(multiSchemaChange bool, tblInfo *model.TableInfo, colName model.CIStr) error {
 	if ok, dep, isHidden := hasDependentByGeneratedColumn(tblInfo, colName); ok {
 		if isHidden {
 			return errDependentByFunctionalIndex.GenWithStackByArgs(dep)
@@ -5553,7 +5665,7 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 			colName, tblInfo.Name)
 	}
 	// We only support dropping column with single-value none Primary Key index covered now.
-	if !isColumnCanDropWithIndex(colName.L, tblInfo.Indices) {
+	if !isColumnCanDropWithIndex(multiSchemaChange, colName.L, tblInfo.Indices) {
 		return errCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
 	}
 	// Check the column with foreign key.
@@ -5864,7 +5976,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	}
 
 	// It is necessary to specify the table.ID and partition.ID manually.
-	newTableInfo, err := buildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
+	newTableInfo, err := buildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate, oldTableInfo.PlacementPolicyRef, oldTableInfo.DirectPlacementOpts)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6144,7 +6256,8 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 		}
 		return ErrInvalidAttributesSpec.GenWithStackByArgs(err)
 	}
-	rule.Reset(meta.ID, schema.Name.L, meta.Name.L)
+	ids := getIDs([]*model.TableInfo{meta})
+	rule.Reset(schema.Name.L, meta.Name.L, "", ids...)
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -6191,7 +6304,7 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 		}
 		return ErrInvalidAttributesSpec.GenWithStackByArgs(sb.String(), err)
 	}
-	rule.Reset(partitionID, schema.Name.L, meta.Name.L, spec.PartitionNames[0].L)
+	rule.Reset(schema.Name.L, meta.Name.L, spec.PartitionNames[0].L, partitionID)
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -6211,35 +6324,13 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 	return errors.Trace(err)
 }
 
-func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*placementpolicy.PolicyInfo, error) {
-	policyInfo := &placementpolicy.PolicyInfo{}
+func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*model.PolicyInfo, error) {
+	policyInfo := &model.PolicyInfo{PlacementSettings: &model.PlacementSettings{}}
 	policyInfo.Name = name
 	for _, opt := range options {
-		switch opt.Tp {
-		case ast.PlacementOptionPrimaryRegion:
-			policyInfo.PrimaryRegion = opt.StrValue
-		case ast.PlacementOptionRegions:
-			policyInfo.Regions = opt.StrValue
-		case ast.PlacementOptionFollowerCount:
-			policyInfo.Followers = opt.UintValue
-		case ast.PlacementOptionVoterCount:
-			policyInfo.Voters = opt.UintValue
-		case ast.PlacementOptionLearnerCount:
-			policyInfo.Learners = opt.UintValue
-		case ast.PlacementOptionSchedule:
-			policyInfo.Schedule = opt.StrValue
-		case ast.PlacementOptionConstraints:
-			policyInfo.Constraints = opt.StrValue
-		case ast.PlacementOptionLearnerConstraints:
-			policyInfo.LearnerConstraints = opt.StrValue
-		case ast.PlacementOptionFollowerConstraints:
-			policyInfo.FollowerConstraints = opt.StrValue
-		case ast.PlacementOptionVoterConstraints:
-			policyInfo.VoterConstraints = opt.StrValue
-		case ast.PlacementOptionLeaderConstraints:
-			policyInfo.LeaderConstraints = opt.StrValue
-		default:
-			return nil, errors.Trace(errors.New("unknown placement policy option"))
+		err := SetDirectPlacementOpt(policyInfo.PlacementSettings, opt.Tp, opt.StrValue, opt.UintValue)
+		if err != nil {
+			return nil, err
 		}
 	}
 	return policyInfo, nil
@@ -6264,7 +6355,7 @@ func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlac
 		return errors.Trace(err)
 	}
 
-	err = checkPolicyValidation(policyInfo)
+	err = checkPolicyValidation(policyInfo.PlacementSettings)
 	if err != nil {
 		return err
 	}
@@ -6294,6 +6385,10 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 		return err
 	}
 
+	if err = checkPlacementPolicyNotInUseFromInfoSchema(is, policy); err != nil {
+		return err
+	}
+
 	job := &model.Job{
 		SchemaID:   policy.ID,
 		SchemaName: policy.Name.L,
@@ -6320,7 +6415,7 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 		return errors.Trace(err)
 	}
 
-	err = checkPolicyValidation(newPolicyInfo)
+	err = checkPolicyValidation(newPolicyInfo.PlacementSettings)
 	if err != nil {
 		return err
 	}

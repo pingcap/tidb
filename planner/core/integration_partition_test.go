@@ -875,6 +875,20 @@ PARTITION BY LIST COLUMNS(col1) (
 	tk.MustQuery(`SELECT COL1 FROM PK_LP9465 HAVING COL1>=-12354348921530`).Sort().Check(testkit.Rows("8263677"))
 }
 
+func (s *testIntegrationPartitionSerialSuite) TestIssue27544(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue_27544")
+	tk.MustExec("use issue_27544")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`create table t3 (a datetime) partition by list (mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1) (
+		partition p0 values in (2),
+		partition p1 values in (3),
+		partition p3 values in (4))`)
+	tk.MustExec(`insert into t3 values ('1921-05-10 15:20:10')`) // success without any error
+	tk.MustExec(`insert into t3 values ('1921-05-10 15:20:20')`)
+	tk.MustExec(`insert into t3 values ('1921-05-10 15:20:30')`)
+}
+
 func (s *testIntegrationPartitionSerialSuite) TestIssue27012(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database issue_27012")
@@ -942,6 +956,22 @@ PARTITION BY LIST COLUMNS(col1) (
 )`)
 	tk.MustExec(`insert into NT_LP27390 values(-4123498)`)
 	tk.MustQuery(`SELECT COL1 FROM NT_LP27390 WHERE COL1 IN (46015556,-4123498,54419751)`).Sort().Check(testkit.Rows("-4123498"))
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestIssue27493(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue_27493")
+	tk.MustExec("use issue_27493")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`CREATE TABLE UK_LP17321 (
+  COL1 mediumint(16) DEFAULT '82' COMMENT 'NUMERIC UNIQUE INDEX',
+  COL3 bigint(20) DEFAULT NULL,
+  UNIQUE KEY UM_COL (COL1,COL3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST (COL1 DIV COL3) (
+  PARTITION P0 VALUES IN (NULL,0)
+)`)
+	tk.MustQuery(`select * from UK_LP17321 where col1 is null`).Check(testkit.Rows()) // without any error
 }
 
 func genListPartition(begin, end int) string {
