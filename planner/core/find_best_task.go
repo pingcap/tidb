@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -1342,6 +1343,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *util.AccessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
+	indexConds = keepAccessCondsAsFilter4TablePlan(is.ctx, path.AccessConds, indexConds)
 
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
 
@@ -1627,6 +1629,18 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 		return corrCol, corr
 	}
 	return nil, corr
+}
+
+// keepAccessCondsAsFilter4TablePlan is used to keep the access conditions as
+// filter conditions when the following conditions are met:
+// 1. Filter conditions are nil.
+// 2. Access conditions satisfies the conditions of the MaybeOverOptimized4PlanCache function.
+func keepAccessCondsAsFilter4TablePlan(ctx sessionctx.Context, access_conds []expression.Expression, filter_conds []expression.Expression) []expression.Expression {
+	if filter_conds == nil && expression.MaybeOverOptimized4PlanCache(ctx, access_conds) {
+		filter_conds = make([]expression.Expression, len(access_conds))
+		copy(filter_conds, access_conds)
+	}
+	return filter_conds
 }
 
 // GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
@@ -1935,6 +1949,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats *property.StatsInfo) *mppTask {
+	ts.filterCondition = keepAccessCondsAsFilter4TablePlan(ts.ctx, ts.AccessCondition, ts.filterCondition)
 	filterCondition, rootTaskConds := SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
 	filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, filterCondition, ts.ctx.GetClient(), ts.StoreType)
@@ -1956,6 +1971,7 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
+	ts.filterCondition = keepAccessCondsAsFilter4TablePlan(ts.ctx, ts.AccessCondition, ts.filterCondition)
 	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
 	ts.filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ts.ctx.GetClient(), ts.StoreType)

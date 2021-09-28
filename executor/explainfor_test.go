@@ -568,3 +568,56 @@ func (s *testPrepareSerialSuite) TestExpressionIndexPreparePlanCache(c *C) {
 	c.Assert(res.Rows()[2][3], Matches, ".*expression_index.*")
 	c.Assert(res.Rows()[2][4], Matches, ".*[1234,1234].*")
 }
+
+func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists UK_GCOL_VIRTUAL_18588;")
+	tk.MustExec("CREATE TABLE `UK_GCOL_VIRTUAL_18588` (`COL1` bigint(20), UNIQUE KEY `UK_COL1` (`COL1`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into UK_GCOL_VIRTUAL_18588 values('8502658334322817163');")
+	tk.MustExec(`prepare stmt from 'select col1 from UK_GCOL_VIRTUAL_18588 where col1 between ? and ? or col1 < ?';`)
+	tk.MustExec("set @a=5516958330762833919, @b=8551969118506051323, @c=2887622822023883594;")
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("8502658334322817163"))
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
+
+	tk.MustExec("set @a=-1696020282760139948, @b=-2619168038882941276, @c=-4004648990067362699;")
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexFullScan.*")
+
+	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
+		"where col1 between -1696020282760139948 and -2619168038882941276 or col1 < -4004648990067362699;")
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*FullScan.*")
+	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
+		"where col1 between 5516958330762833919 and 8551969118506051323 or col1 < 2887622822023883594;")
+	c.Assert(len(res.Rows()), Equals, 2)
+	c.Assert(res.Rows()[1][0], Matches, ".*RangeScan.*")
+}
