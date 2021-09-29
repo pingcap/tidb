@@ -57,13 +57,14 @@ func (column *ColumnInfo) Dump(buffer []byte, d *textDumper) []byte {
 
 	buffer = append(buffer, 0x0c)
 
-	if !d.isNull && len(d.chsName) > 0 {
+	dumpTp := dumpType(column.Type)
+	if !d.isNull && len(d.chsName) > 0 && dumpTp == mysql.TypeString {
 		buffer = dumpUint16(buffer, uint16(mysql.CharsetNameToID(d.chsName)))
 	} else {
 		buffer = dumpUint16(buffer, column.Charset)
 	}
 	buffer = dumpUint32(buffer, column.ColumnLength)
-	buffer = append(buffer, dumpType(column.Type))
+	buffer = append(buffer, dumpTp)
 	buffer = dumpUint16(buffer, dumpFlag(column.Type, column.Flag))
 	buffer = append(buffer, column.Decimal)
 	buffer = append(buffer, 0, 0)

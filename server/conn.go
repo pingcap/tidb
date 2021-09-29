@@ -866,6 +866,15 @@ func (cc *clientConn) skipInitConnect() bool {
 	return checker != nil && checker.RequestDynamicVerification(activeRoles, "CONNECTION_ADMIN", false)
 }
 
+func (cc *clientConn) initTextDumper(ctx context.Context) {
+	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetResults)
+	if err != nil {
+		chs = ""
+		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
+	}
+	cc.textDumper = newTextDumper(chs)
+}
+
 // initConnect runs the initConnect SQL statement if it has been specified.
 // The semantics are MySQL compatible.
 func (cc *clientConn) initConnect(ctx context.Context) error {
@@ -1188,12 +1197,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
 	}
-	chs, err := variable.GetSessionOrGlobalSystemVar(vars, variable.CharacterSetResults)
-	if err != nil {
-		logutil.Logger(ctx).Info("get character_set_results system variable failed", zap.Error(err))
-	}
-	cc.textDumper = newTextDumper(chs)
-	defer cc.textDumper.clean()
 
 	dataStr := string(hack.String(data))
 	switch cmd {
@@ -1944,6 +1947,8 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 		return err
 	}
 	data := cc.alloc.AllocWithLen(4, 1024)
+	cc.initTextDumper(ctx)
+	defer cc.textDumper.clean()
 	for _, column := range columns {
 		// Current we doesn't output defaultValue but reserve defaultValue length byte to make mariadb client happy.
 		// https://dev.mysql.com/doc/internals/en/com-query-response.html#column-definition
@@ -2030,6 +2035,8 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	if stmtDetailRaw != nil {
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
+	cc.initTextDumper(ctx)
+	defer cc.textDumper.clean()
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			switch value.(string) {
