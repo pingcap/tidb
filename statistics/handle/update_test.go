@@ -2329,3 +2329,73 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeRatio(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
 }
+
+func (s *testSerialStatsSuite) TestCollectColumnStatsUsage(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	h := s.do.StatsHandle()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, c int)")
+	tk.MustExec("insert into t1 values (1,2,3), (4,5,6), (7,8,9)")
+	tk.MustExec("create table t2 (a int primary key, b int, c int)")
+	tk.MustExec("insert into t2 values (1,2,3), (4,5,6), (7,8,9)")
+
+	tests := []struct {
+		sql    string
+		result []string
+	}{
+		{
+			sql:    "select * from t1 where a > 2",
+			result: []string{"t1 a"},
+		},
+		{
+			sql:    "select * from t1 where b in (2, 5) or c = 5",
+			result: []string{"t1 b", "t1 c"},
+		},
+		{
+			sql:    "select b, count(*) from t1 group by b",
+			result: []string{},
+		},
+		{
+			sql:    "select * from t1 order by c",
+			result: []string{},
+		},
+		{
+			sql:    "select * from t2 where a > 2",
+			result: []string{"t2 a"},
+		},
+		{
+			sql:    "select * from t1, t2 where t1.b = t2.c",
+			result: []string{"t1 b", "t2 a", "t2 c"},
+		},
+		{
+			sql:    "select * from t1 where b > all(select b from t2 where c > 2)",
+			result: []string{"t2 c"},
+		},
+	}
+
+	// TODO: make a builtin view instead
+	const subquery = `SELECT c.table_schema     AS table_schema,
+       c.table_name       AS table_name,
+       c.column_name      AS column_name,
+       u.last_used_at     AS last_used_at,
+       u.last_analyzed_at AS last_analyzed_at
+FROM   information_schema.columns AS c
+       JOIN information_schema.tables AS t
+         ON c.table_schema = t.table_schema
+            AND c.table_name = t.table_name
+       JOIN mysql.column_stats_usage AS u
+         ON u.table_id = t.tidb_table_id
+            AND u.column_id = c.ordinal_position`
+
+	for _, tt := range tests {
+		tk.MustExec("delete from mysql.column_stats_usage")
+		tk.MustExec(tt.sql)
+		// Here we execute `select 1` so that ResetContextOfStmt is called and StatementContext.ColStatsUsage is merged to session.statsCollector.
+		tk.MustExec("select 1")
+		c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+		tk.MustQuery(fmt.Sprintf("select table_name, column_name from (%s) as c where table_schema = 'test'", subquery)).Check(testkit.Rows(tt.result...))
+	}
+}

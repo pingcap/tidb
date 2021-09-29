@@ -176,8 +176,8 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		return
 	}
 	for _, col := range stableColsStats(statsTbl.Columns) {
-		// Pass a nil StatementContext to avoid column stats being marked as needed.
-		if col.IsInvalid(nil, false) {
+		// Set needLoad to false to avoid column stats being marked as needed.
+		if col.IsInvalid(false, false) {
 			continue
 		}
 		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.Count, false))
@@ -450,4 +450,62 @@ func (e *ShowExec) fetchShowAnalyzeStatus() {
 			e.result.AppendDatum(i, &val)
 		}
 	}
+}
+
+func (e *ShowExec) fetchShowColumnStatsUsage() error {
+	do := domain.GetDomain(e.ctx)
+	h := do.StatsHandle()
+	colStatsMap, err := h.LoadColumnStatsUsage()
+	if err != nil {
+		return err
+	}
+	dbs := do.InfoSchema().AllSchemas()
+
+	appendTableForColumnStatsUsage := func(dbName string, tbl *model.TableInfo, global bool, def *model.PartitionDefinition) {
+		tblID := tbl.ID
+		if def != nil {
+			tblID = def.ID
+		}
+		partitionName := ""
+		if def != nil {
+			partitionName = def.Name.O
+		} else if global {
+			partitionName = "global"
+		}
+		for _, col := range tbl.Columns {
+			tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
+			colStatsUsage, ok := colStatsMap[tblColID]
+			if !ok {
+				continue
+			}
+			e.appendRow([]interface{}{
+				dbName,
+				tbl.Name.O,
+				partitionName,
+				col.Name.O,
+				colStatsUsage.LastUsedAt,
+				colStatsUsage.LastAnalyzedAt,
+			})
+		}
+	}
+
+	for _, db := range dbs {
+		for _, tbl := range db.Tables {
+			pi := tbl.GetPartitionInfo()
+			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+				appendTableForColumnStatsUsage(db.Name.O, tbl, pi != nil, nil)
+				// TODO: do we need to show partition-level column stats usage?
+				if pi != nil {
+					for _, def := range pi.Definitions {
+						appendTableForColumnStatsUsage(db.Name.O, tbl, false, &def)
+					}
+				}
+			} else {
+				for _, def := range pi.Definitions {
+					appendTableForColumnStatsUsage(db.Name.O, tbl, false, &def)
+				}
+			}
+		}
+	}
+	return nil
 }

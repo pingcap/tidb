@@ -102,6 +102,8 @@ type Handle struct {
 	globalMap tableDeltaMap
 	// feedback is used to store query feedback info.
 	feedback *statistics.QueryFeedbackMap
+	// colStatsUsage stores the last time when the column stats are used(needed).
+	colStatsUsage colStatsUsageMap
 
 	lease atomic2.Duration
 
@@ -174,6 +176,7 @@ func (h *Handle) Clear() {
 	h.mu.ctx.GetSessionVars().SetProjectionConcurrency(0)
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
+	h.colStatsUsage = make(colStatsUsageMap)
 	h.mu.rateMap = make(errorRateDeltaMap)
 	h.mu.Unlock()
 }
@@ -190,6 +193,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:        make(tableDeltaMap),
 		feedback:         statistics.NewQueryFeedbackMap(),
+		colStatsUsage:    make(colStatsUsageMap),
 		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 		pool:             pool,
 	}
@@ -1773,4 +1777,23 @@ func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int
 		return true
 	}
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
+}
+
+type colStatsUsage struct {
+	LastUsedAt     types.Time
+	LastAnalyzedAt types.Time
+}
+
+func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsUsage, error) {
+	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, last_used_at, last_analyzed_at from mysql.column_stats_usage")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	colStatsMap := make(map[model.TableColumnID]colStatsUsage, len(rows))
+	for _, row := range rows {
+		key := model.TableColumnID{TableID: row.GetInt64(0), ColumnID: row.GetInt64(1)}
+		value := colStatsUsage{LastUsedAt: row.GetTime(2), LastAnalyzedAt: row.GetTime(3)}
+		colStatsMap[key] = value
+	}
+	return colStatsMap, nil
 }

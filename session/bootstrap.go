@@ -348,6 +348,14 @@ const (
 		key idx(filter_type),
 		primary key(id)
 	);`
+	// CreateColumnStatsUsageTable stores the column stats usage information.
+	CreateColumnStatsUsageTable = `CREATE TABLE IF NOT EXISTS mysql.column_stats_usage (
+		table_id BIGINT(64) NOT NULL,
+		column_id BIGINT(64) NOT NULL,
+		last_used_at TIMESTAMP,
+		last_analyzed_at TIMESTAMP,
+		PRIMARY KEY (table_id, column_id) CLUSTERED
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -513,11 +521,13 @@ const (
 	version74 = 74
 	// version75 update mysql.*.host from char(60) to char(255)
 	version75 = 75
+	// version76 adds mysql.column_stats_usage table
+	version76 = 76
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version75
+var currentBootstrapVersion int64 = version76
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -596,6 +606,7 @@ var (
 		upgradeToVer73,
 		upgradeToVer74,
 		upgradeToVer75,
+		upgradeToVer76,
 	}
 )
 
@@ -1571,6 +1582,13 @@ func upgradeToVer75(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Host CHAR(255)")
 }
 
+func upgradeToVer76(s Session, ver int64) {
+	if ver >= version76 {
+		return
+	}
+	doReentrantDDL(s, CreateColumnStatsUsageTable)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1651,6 +1669,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGlobalGrantsTable)
 	// Create capture_plan_baselines_blacklist
 	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
+	// Create column_stats_usage table
+	mustExecute(s, CreateColumnStatsUsageTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
