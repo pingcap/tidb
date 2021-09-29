@@ -178,6 +178,19 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "bar", mustDecodeStr(t, bs))
 
+	dp = newTextDumper("gbk")
+	columns[0].Type = mysql.TypeVarchar
+	dt := []types.Datum{types.NewStringDatum("一")}
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums(dt).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0xd2, 0xbb}, []byte(mustDecodeStr(t, bs)))
+
+	columns[0].Charset = uint16(mysql.CharsetNameToID("gbk"))
+	dp = newTextDumper("binary")
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums(dt).ToRow(), dp)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0xd2, 0xbb}, []byte(mustDecodeStr(t, bs)))
+
 	var d types.Datum
 
 	sc := mock.NewContext().GetSessionVars().StmtCtx
