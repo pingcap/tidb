@@ -630,8 +630,8 @@ func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */\n" +
 		"PARTITION BY RANGE ( `a` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100) ,\n" +
-		"  PARTITION `p1` VALUES LESS THAN (200) \n" +
+		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
+		"  PARTITION `p1` VALUES LESS THAN (200)\n" +
 		")"))
 	tk.MustExec("drop table if exists t")
 
@@ -641,8 +641,8 @@ func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */\n" +
 		"PARTITION BY RANGE ( `a` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100)  /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */,\n" +
-		"  PARTITION `p1` VALUES LESS THAN (200) \n" +
+		"  PARTITION `p0` VALUES LESS THAN (100) /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */,\n" +
+		"  PARTITION `p1` VALUES LESS THAN (200)\n" +
 		")"))
 	tk.MustExec("drop table if exists t")
 
@@ -653,7 +653,7 @@ func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */\n" +
 		"PARTITION BY RANGE ( `a` ) (\n" +
-		"  PARTITION `p0` VALUES LESS THAN (100)  /*T![placement] CONSTRAINTS=\"[+zone=changzhou]\" */,\n" +
-		"  PARTITION `p1` VALUES LESS THAN (200) \n" +
+		"  PARTITION `p0` VALUES LESS THAN (100) /*T![placement] CONSTRAINTS=\"[+zone=changzhou]\" */,\n" +
+		"  PARTITION `p1` VALUES LESS THAN (200)\n" +
 		")"))
 }

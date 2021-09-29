@@ -1266,7 +1266,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 	if partitionInfo.Type == model.PartitionTypeRange {
 		for i, def := range partitionInfo.Definitions {
 			lessThans := strings.Join(def.LessThan, ",")
-			fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s) ", def.Name, lessThans)
+			fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
 			if def.DirectPlacementOpts != nil {
 				// add direct placement info here
 				appendDirectPlacementInfo(def.DirectPlacementOpts, buf)
@@ -1297,7 +1297,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 					values.WriteString(strings.Join(inValues, ","))
 				}
 			}
-			fmt.Fprintf(buf, "  PARTITION `%s` VALUES IN (%s) ", def.Name, values.String())
+			fmt.Fprintf(buf, "  PARTITION `%s` VALUES IN (%s)", def.Name, values.String())
 			if def.DirectPlacementOpts != nil {
 				// add direct placement info here
 				appendDirectPlacementInfo(def.DirectPlacementOpts, buf)
