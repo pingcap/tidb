@@ -215,8 +215,13 @@ func TestEncryptAndDecrypt(t *testing.T) {
 				CipherType: v.method,
 				CipherKey:  []byte(v.wrongKey),
 			}
-			_, err = Decrypt(encryptData, &wrongCipher, iv)
-			require.Error(t, err)
+			decryptData, err = Decrypt(encryptData, &wrongCipher, iv)
+			if len(v.rightKey) != len(v.wrongKey) {
+				require.Error(t, err)
+			} else {
+				require.Nil(t, err)
+				require.NotEqual(t, decryptData, originalData)
+			}
 		}
 	}
 }

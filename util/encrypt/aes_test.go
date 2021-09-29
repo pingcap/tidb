@@ -361,6 +361,75 @@ func TestAESDecryptWithOFB(t *testing.T) {
 	}
 }
 
+func TestAESEncryptWithCTR(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		str     string
+		key     string
+		iv      string
+		expect  string
+		isError bool
+	}{
+		// 128 bits key
+		{"pingcap", "1234567890123456", "1234567890123456", "0515A36BBF3DE0", false},
+		{"pingcap123", "1234567890123456", "1234567890123456", "0515A36BBF3DE0DBE9DD", false},
+		// 192 bits key
+		{"pingcap", "123456789012345678901234", "1234567890123456", "45A57592449893", false}, // 192 bit
+		// negtive cases: invalid key length
+		{"pingcap", "12345678901234567", "1234567890123456", "", true},
+		{"pingcap", "123456789012345", "1234567890123456", "", true},
+	}
+
+	for _, tt := range tests {
+		str := []byte(tt.str)
+		key := []byte(tt.key)
+		iv := []byte(tt.iv)
+
+		crypted, err := AESEncryptWithCTR(str, key, iv)
+		if tt.isError {
+			require.Errorf(t, err, "%v", tt)
+			continue
+		}
+		require.NoErrorf(t, err, "%v", tt)
+		result := toHex(crypted)
+		require.Equalf(t, tt.expect, result, "%v", tt)
+	}
+}
+
+func TestAESDecryptWithCTR(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		str     string
+		key     string
+		iv      string
+		expect  string
+		isError bool
+	}{
+		// 128 bits key
+		{"0515A36BBF3DE0", "1234567890123456", "1234567890123456", "pingcap", false},
+		{"0515A36BBF3DE0DBE9DD", "1234567890123456", "1234567890123456", "pingcap123", false},
+		// 192 bits key
+		{"45A57592449893", "123456789012345678901234", "1234567890123456", "pingcap", false}, // 192 bit
+		// negtive cases: invalid key length
+		{"pingcap", "12345678901234567", "1234567890123456", "", true},
+		{"pingcap", "123456789012345", "1234567890123456", "", true},
+	}
+
+	for _, tt := range tests {
+		str, _ := hex.DecodeString(tt.str)
+		key := []byte(tt.key)
+		iv := []byte(tt.iv)
+
+		plainText, err := AESDecryptWithCTR(str, key, iv)
+		if tt.isError {
+			require.Errorf(t, err, "%v", tt)
+			continue
+		}
+		require.NoErrorf(t, err, "%v", tt)
+		require.Equalf(t, tt.expect, string(plainText), "%v", tt)
+	}
+}
+
 func TestAESDecryptWithCBC(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

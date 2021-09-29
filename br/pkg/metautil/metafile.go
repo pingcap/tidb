@@ -5,10 +5,10 @@ package metautil
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"sync"
 	"time"
 
@@ -62,13 +62,13 @@ func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv 
 	case encryptionpb.EncryptionMethod_AES128_CTR,
 		encryptionpb.EncryptionMethod_AES192_CTR,
 		encryptionpb.EncryptionMethod_AES256_CTR:
-		// generate radom iv for aes crypter
+		// generate random iv for aes crypter
 		iv = make([]byte, CrypterIvLen)
 		_, err = rand.Read(iv)
 		if err != nil {
 			return content, iv, errors.Trace(err)
 		}
-		encryptedContent, err = encrypt.AESEncryptWithCBC(content, cipher.CipherKey, iv)
+		encryptedContent, err = encrypt.AESEncryptWithCTR(content, cipher.CipherKey, iv)
 		return
 	default:
 		return content, iv, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
@@ -82,7 +82,7 @@ func Decrypt(content []byte, cipher *backuppb.CipherInfo, iv []byte) ([]byte, er
 	case encryptionpb.EncryptionMethod_AES128_CTR,
 		encryptionpb.EncryptionMethod_AES192_CTR,
 		encryptionpb.EncryptionMethod_AES256_CTR:
-		return encrypt.AESDecryptWithCBC(content, cipher.CipherKey, iv)
+		return encrypt.AESDecryptWithCTR(content, cipher.CipherKey, iv)
 	default:
 		return content, errors.Annotate(berrors.ErrInvalidArgument, "cipher type invalid")
 	}
