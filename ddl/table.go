@@ -776,7 +776,11 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 	defer s.put(ctx)
 
 	// Check next global max auto ID first.
-	autoIncID, err := tbl.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID()
+	alloc := tbl.Allocators(ctx).Get(autoid.RowIDAllocType)
+	if alloc == nil {
+		return nil
+	}
+	autoIncID, err := alloc.NextGlobalAutoID()
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -83,20 +83,6 @@ const (
 	SequenceType
 )
 
-func (a AllocatorType) String() string {
-	switch a {
-	case RowIDAllocType:
-		return "_tidb_rowid"
-	case AutoIncrementType:
-		return "auto_increment"
-	case AutoRandomType:
-		return "auto_random"
-	case SequenceType:
-		return "sequence"
-	}
-	return "unknown"
-}
-
 // CustomAutoIncCacheOption is one kind of AllocOption to customize the allocator step length.
 type CustomAutoIncCacheOption int64
 

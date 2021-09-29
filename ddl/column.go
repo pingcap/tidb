@@ -1609,12 +1609,12 @@ func checkAndApplyAutoRandomBits(m *meta.Meta, dbInfo *model.DBInfo, tblInfo *mo
 func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.ColumnInfo,
 	newCol *model.ColumnInfo, newAutoRandBits uint64, tblInfoVer uint16) error {
 	idAcc := idAccessors.RandomID()
-	convertedFromAutoInc := mysql.HasAutoIncrementFlag(oldCol.Flag)
-	if convertedFromAutoInc {
-		if !model.AutoIncrementIDIsSeparated(tblInfoVer) {
-			idAcc = idAccessors.RowID()
-		} else {
+	if mysql.HasAutoIncrementFlag(oldCol.Flag) {
+		// Converted from auto_increment ID meta key.
+		if model.AutoIncrementIDIsSeparated(tblInfoVer) {
 			idAcc = idAccessors.IncrementID()
+		} else {
+			idAcc = idAccessors.RowID()
 		}
 	}
 	// Generate a new auto ID first to prevent concurrent update in DML.
