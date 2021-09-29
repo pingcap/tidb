@@ -1634,8 +1634,8 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 // keepAccessCondsAsFilter4TablePlan is used to keep the access conditions as
 // filter conditions when the following conditions are met:
 // 1. Filter conditions are nil.
-// 2. Access conditions satisfies the conditions of the
-// MaybeOverOptimized4PlanCache function.
+// 2. Access conditions contains the lazy constant, see the MaybeOverOptimized4PlanCache
+// function for more details.
 func keepAccessCondsAsFilter4TablePlan(ctx sessionctx.Context, accessConds []expression.Expression, filterConds []expression.Expression) []expression.Expression {
 	if filterConds == nil && expression.MaybeOverOptimized4PlanCache(ctx, accessConds) {
 		filterConds = make([]expression.Expression, len(accessConds))
