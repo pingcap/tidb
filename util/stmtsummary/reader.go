@@ -561,7 +561,7 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return ssElement.minResultRows
 	},
 	AvgResultRowsStr: func(ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
-		return avgInt(int64(ssElement.sumResultRows), ssElement.execCount)
+		return avgInt(ssElement.sumResultRows, ssElement.execCount)
 	},
 	PreparedStr: func(ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
 		return ssElement.prepared
