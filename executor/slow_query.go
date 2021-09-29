@@ -590,6 +590,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 					fieldValues := strings.Split(line, " ")
 					for i := 0; i < len(fieldValues)-1; i += 2 {
 						field := strings.TrimSuffix(fieldValues[i], ":")
+						// if trim does not work, it means it is not a field
 						if field == fieldValues[i] {
 							needCompatibleParse = true
 							break
@@ -599,7 +600,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 					}
 					// compatible for Backoff_types: [tikvRPC regionMiss], but low performance with regex
 					// see issue: https://github.com/pingcap/tidb/issues/27895
-					if needCompatibleParse{
+					if needCompatibleParse {
 						fields, values = splitByColon(line)
 					}
 					for i := 0; i < len(fields); i++ {
