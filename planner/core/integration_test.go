@@ -4055,7 +4055,6 @@ func (s *testIntegrationSerialSuite) TestSelectIgnoreTemporaryTableInView(c *C) 
 	tk.MustExec("use test")
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("create table t2 (c int, d int)")
 	tk.MustExec("create view v1 as select * from t1 order by a")
@@ -4418,7 +4417,6 @@ func (s *testIntegrationSerialSuite) TestTemporaryTableForCte(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("create temporary table tmp1(a int, b int, c int);")
 	tk.MustExec("insert into tmp1 values (1,1,1),(2,2,2),(3,3,3),(4,4,4);")
 	rows := tk.MustQuery("with cte1 as (with cte2 as (select * from tmp1) select * from cte2) select * from cte1 left join tmp1 on cte1.c=tmp1.c;")
@@ -4523,4 +4521,30 @@ func (s *testIntegrationSuite) TestIssue27797(c *C) {
 	tk.MustExec("insert into IDT_HP24172(col1) values(8388607);")
 	result = tk.MustQuery("select col2 from IDT_HP24172 where col1 = 8388607 and col1 in (select col1 from IDT_HP24172);")
 	result.Check(testkit.Rows("<nil>"))
+}
+
+func (s *testIntegrationSuite) TestIssue28154(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer func() {
+		tk.Exec("drop table if exists t")
+	}()
+	tk.MustExec("create table t(a TEXT)")
+	tk.MustExec("insert into t values('abc')")
+	result := tk.MustQuery("select * from t where from_base64('')")
+	result.Check(testkit.Rows())
+	_, err := tk.Exec("update t set a = 'def' where from_base64('')")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect DOUBLE value: ''")
+	result = tk.MustQuery("select * from t where from_base64('invalidbase64')")
+	result.Check(testkit.Rows())
+	tk.MustExec("update t set a = 'hig' where from_base64('invalidbase64')")
+	result = tk.MustQuery("select * from t where from_base64('test')")
+	result.Check(testkit.Rows())
+	_, err = tk.Exec("update t set a = 'xyz' where from_base64('test')")
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, "\\[types:1292\\]Truncated incorrect DOUBLE value.*")
+	result = tk.MustQuery("select * from t")
+	result.Check(testkit.Rows("abc"))
 }

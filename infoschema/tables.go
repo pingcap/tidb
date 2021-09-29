@@ -1448,8 +1448,7 @@ var tableRegionLabelCols = []columnInfo{
 	{name: "RULE_ID", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 	{name: "RULE_TYPE", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag},
 	{name: "REGION_LABEL", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
-	{name: "START_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
-	{name: "END_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
+	{name: "RANGES", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
