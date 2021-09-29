@@ -2863,7 +2863,6 @@ func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
 
 	// Cover the temporary table.
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	for val := range []int{0, 1} {
 		tk.MustExec("set tidb_constraint_check_in_place = ?", val)
 

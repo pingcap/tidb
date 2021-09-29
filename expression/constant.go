@@ -372,6 +372,18 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 	if len(c.hashcode) > 0 {
 		return c.hashcode
 	}
+
+	if c.DeferredExpr != nil {
+		c.hashcode = c.DeferredExpr.HashCode(sc)
+		return c.hashcode
+	}
+
+	if c.ParamMarker != nil {
+		c.hashcode = append(c.hashcode, parameterFlag)
+		c.hashcode = codec.EncodeInt(c.hashcode, int64(c.ParamMarker.order))
+		return c.hashcode
+	}
+
 	_, err := c.Eval(chunk.Row{})
 	if err != nil {
 		terror.Log(err)
@@ -425,10 +437,8 @@ func (c *Constant) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rT
 
 // Coercibility returns the coercibility value which is used to check collations.
 func (c *Constant) Coercibility() Coercibility {
-	if c.HasCoercibility() {
-		return c.collationInfo.Coercibility()
+	if !c.HasCoercibility() {
+		c.SetCoercibility(deriveCoercibilityForConstant(c))
 	}
-
-	c.SetCoercibility(deriveCoercibilityForConstant(c))
 	return c.collationInfo.Coercibility()
 }

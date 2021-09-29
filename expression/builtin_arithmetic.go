@@ -136,7 +136,9 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 		retTp.Flen = mysql.MaxDecimalWidth
 		return
 	}
-	retTp.Flen = a.Flen + decb + precIncrement
+	aPrec := types.DecimalLength2Precision(a.Flen, a.Decimal, mysql.HasUnsignedFlag(a.Flag))
+	retTp.Flen = aPrec + decb + precIncrement
+	retTp.Flen = types.Precision2LengthNoTruncation(retTp.Flen, retTp.Decimal, mysql.HasUnsignedFlag(retTp.Flag))
 	if retTp.Flen > mysql.MaxDecimalWidth {
 		retTp.Flen = mysql.MaxDecimalWidth
 	}
@@ -263,6 +265,9 @@ func (s *builtinArithmeticPlusDecimalSig) evalDecimal(row chunk.Row) (*types.MyD
 	c := &types.MyDecimal{}
 	err = types.DecimalAdd(a, b, c)
 	if err != nil {
+		if err == types.ErrOverflow {
+			err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+		}
 		return nil, true, err
 	}
 	return c, false, nil
@@ -386,6 +391,9 @@ func (s *builtinArithmeticMinusDecimalSig) evalDecimal(row chunk.Row) (*types.My
 	c := &types.MyDecimal{}
 	err = types.DecimalSub(a, b, c)
 	if err != nil {
+		if err == types.ErrOverflow {
+			err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+		}
 		return nil, true, err
 	}
 	return c, false, nil
@@ -584,6 +592,9 @@ func (s *builtinArithmeticMultiplyDecimalSig) evalDecimal(row chunk.Row) (*types
 	c := &types.MyDecimal{}
 	err = types.DecimalMul(a, b, c)
 	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
+		if err == types.ErrOverflow {
+			err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s * %s)", s.args[0].String(), s.args[1].String()))
+		}
 		return nil, true, err
 	}
 	return c, false, nil
@@ -711,6 +722,8 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row chunk.Row) (*types.M
 		if frac < s.baseBuiltinFunc.tp.Decimal {
 			err = c.Round(c, s.baseBuiltinFunc.tp.Decimal, types.ModeHalfEven)
 		}
+	} else if err == types.ErrOverflow {
+		err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s / %s)", s.args[0].String(), s.args[1].String()))
 	}
 	return c, false, err
 }
