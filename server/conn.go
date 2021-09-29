@@ -1624,15 +1624,6 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 	return nil
 }
 
-// handlePlanRecreator dose the export/import work for reproducing sql queries.
-func (cc *clientConn) handlePlanRecreator(ctx context.Context, info executor.PlanRecreatorInfo) (string, error) {
-	switch info.(type) {
-	case *executor.PlanRecreatorSingleInfo:
-		return info.Process()
-	}
-	return "", errors.New("plan recreator: not supporting info type")
-}
-
 func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
