@@ -131,6 +131,7 @@ type DBStore struct {
 	BuildStatsConcurrency      int `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
 	IndexSerialScanConcurrency int `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
 	ChecksumTableConcurrency   int `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
+	Vars         map[string]string  `toml:"-" json:"-"`
 }
 
 type Config struct {

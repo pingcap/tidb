@@ -100,6 +100,13 @@ func DBFromConfig(dsn config.DBStore) (*sql.DB, error) {
 			"autocommit": "1",
 		},
 	}
+
+	if dsn.Vars != nil {
+		for k,v := range dsn.Vars {
+			param.Vars[k] = v
+		}
+	}
+
 	db, err := param.Connect()
 	if err != nil {
 		if isUnknownSystemVariableErr(err) {

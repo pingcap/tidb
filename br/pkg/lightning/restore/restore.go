@@ -333,8 +333,7 @@ func NewRestoreControllerWithPauser(
 			maxOpenFiles = math.MaxInt32
 		}
 
-		backend, err = local.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, &cfg.TikvImporter,
-			cfg.Checkpoint.Enable, g, maxOpenFiles)
+		backend, err = local.NewLocalBackend(ctx, tls, cfg, g, maxOpenFiles)
 		if err != nil {
 			return nil, errors.Annotate(err, "build local backend failed")
 		}
