@@ -378,6 +378,8 @@ func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 	tk.MustExec("drop database if exists TestAlterDB;")
 	tk.MustExec("create database TestAlterDB;")
 	tk.MustExec("use TestAlterDB")
+	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("drop placement policy if exists y")
 	tk.MustExec("create placement policy x PRIMARY_REGION=\"cn-east-1\";")
 	tk.MustExec("create placement policy y PRIMARY_REGION=\"cn-east-2\";")
 
@@ -445,6 +447,8 @@ func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 	tk.MustGetErrCode("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`y`;", mysql.ErrPlacementPolicyWithDirectOption)
 
 	tk.MustExec(`DROP DATABASE IF EXISTS TestAlterDB;`)
+	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("drop placement policy if exists y")
 }
 
 func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
