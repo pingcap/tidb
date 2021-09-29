@@ -3461,8 +3461,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
 		}
 	}
+	noopFuncsMode := b.ctx.GetSessionVars().NoopFuncsMode
 	if sel.SelectStmtOpts != nil {
-		noopFuncsMode := b.ctx.GetSessionVars().NoopFuncsMode
 		if sel.SelectStmtOpts.CalcFoundRows && noopFuncsMode != variable.OnInt {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
 			if noopFuncsMode == variable.OffInt {
@@ -3470,7 +3470,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			}
 			// NoopFuncsMode is Warn, append an error
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-
 		}
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
@@ -3585,9 +3584,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
-		if sel.LockInfo.LockType == ast.SelectLockForShare && b.ctx.GetSessionVars().NoopFuncsMode != variable.OnInt {
+		if sel.LockInfo.LockType == ast.SelectLockForShare && noopFuncsMode != variable.OnInt {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
-			if b.ctx.GetSessionVars().NoopFuncsMode == variable.OffInt {
+			if noopFuncsMode == variable.OffInt {
 				return nil, err
 			}
 			// NoopFuncsMode is Warn, append an error

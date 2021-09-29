@@ -984,6 +984,7 @@ func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
 				p.err = err
 				return
 			}
+			// NoopFuncsMode is Warn, append an error
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}
