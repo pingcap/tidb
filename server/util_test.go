@@ -89,28 +89,28 @@ func TestDumpBinaryTime(t *testing.T) {
 func TestTextDumper(t *testing.T) {
 	t.Parallel()
 	// Encode bytes to utf-8.
-	d := newTextDumper("utf-8")
+	d := newResultEncoder("utf-8")
 	src := []byte("test_string")
 	result := d.encode(src)
 	require.Equal(t, src, result)
 
 	// Encode bytes to GBK.
-	d = newTextDumper("gbk")
+	d = newResultEncoder("gbk")
 	result = d.encode([]byte("一"))
 	require.Equal(t, []byte{0xd2, 0xbb}, result)
 
 	// Encode bytes to binary.
-	d = newTextDumper("binary")
+	d = newResultEncoder("binary")
 	result = d.encode([]byte("一"))
 	require.Equal(t, "一", string(result))
 
-	d = newTextDumper("")
+	d = newResultEncoder("")
 	require.True(t, d.charsetNeedDynUpdate())
-	d = newTextDumper("binary")
+	d = newResultEncoder("binary")
 	require.True(t, d.charsetNeedDynUpdate())
-	d = newTextDumper("utf-8")
+	d = newResultEncoder("utf-8")
 	require.False(t, d.charsetNeedDynUpdate())
-	d = newTextDumper("gbk")
+	d = newResultEncoder("gbk")
 	require.False(t, d.charsetNeedDynUpdate())
 }
 
@@ -122,7 +122,7 @@ func TestDumpTextValue(t *testing.T) {
 		Decimal: mysql.NotFixedDec,
 	}}
 
-	dp := &textDumper{}
+	dp := &resultEncoder{}
 	null := types.NewIntDatum(0)
 	null.SetNull()
 	bs, err := dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{null}).ToRow(), dp)
@@ -178,7 +178,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "bar", mustDecodeStr(t, bs))
 
-	dp = newTextDumper("gbk")
+	dp = newResultEncoder("gbk")
 	columns[0].Type = mysql.TypeVarchar
 	dt := []types.Datum{types.NewStringDatum("一")}
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums(dt).ToRow(), dp)
@@ -186,7 +186,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.Equal(t, []byte{0xd2, 0xbb}, []byte(mustDecodeStr(t, bs)))
 
 	columns[0].Charset = uint16(mysql.CharsetNameToID("gbk"))
-	dp = newTextDumper("binary")
+	dp = newResultEncoder("binary")
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums(dt).ToRow(), dp)
 	require.NoError(t, err)
 	require.Equal(t, []byte{0xd2, 0xbb}, []byte(mustDecodeStr(t, bs)))

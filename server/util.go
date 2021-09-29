@@ -234,12 +234,21 @@ func dumpBinaryDateTime(data []byte, t types.Time) []byte {
 	return data
 }
 
-func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
+func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultEncoder) ([]byte, error) {
+	if d == nil {
+		d = &resultEncoder{}
+	}
 	buffer = append(buffer, mysql.OKHeader)
 	nullBitmapOff := len(buffer)
 	numBytes4Null := (len(columns) + 7 + 2) / 8
 	for i := 0; i < numBytes4Null; i++ {
 		buffer = append(buffer, 0)
+	}
+	if d.charsetNeedDynUpdate() {
+		origin := d.encoding.Name()
+		defer func() {
+			d.encoding.UpdateEncoding(charset.Formatted(origin))
+		}()
 	}
 	for i := range columns {
 		if row.IsNull(i) {
@@ -247,6 +256,13 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 			bitPos := byte((i + 2) % 8)
 			buffer[nullBitmapOff+bytePos] |= 1 << bitPos
 			continue
+		}
+		if d.charsetNeedDynUpdate() {
+			chs, _, err := charset.GetCharsetInfoByID(int(columns[i].Charset))
+			if err != nil {
+				logutil.BgLogger().Info("unknown charset ID", zap.Error(err))
+			}
+			d.encoding.UpdateEncoding(charset.Formatted(chs))
 		}
 		switch columns[i].Type {
 		case mysql.TypeTiny:
@@ -265,17 +281,17 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-			buffer = dumpLengthEncodedString(buffer, row.GetBytes(i))
+			buffer = dumpLengthEncodedString(buffer, d.encode(row.GetBytes(i)))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			buffer = dumpBinaryDateTime(buffer, row.GetTime(i))
 		case mysql.TypeDuration:
 			buffer = append(buffer, dumpBinaryTime(row.GetDuration(i, 0).Duration)...)
 		case mysql.TypeEnum:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetEnum(i).String()))
+			buffer = dumpLengthEncodedString(buffer, d.encode(hack.Slice(row.GetEnum(i).String())))
 		case mysql.TypeSet:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetSet(i).String()))
+			buffer = dumpLengthEncodedString(buffer, d.encode(hack.Slice(row.GetSet(i).String())))
 		case mysql.TypeJSON:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetJSON(i).String()))
+			buffer = dumpLengthEncodedString(buffer, d.encode(hack.Slice(row.GetJSON(i).String())))
 		default:
 			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}
@@ -283,7 +299,7 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 	return buffer, nil
 }
 
-type textDumper struct {
+type resultEncoder struct {
 	chsName  string
 	encoding charset.Encoding
 	buffer   []byte
@@ -291,9 +307,9 @@ type textDumper struct {
 	isNull   bool
 }
 
-// newTextDumper creates a new textDumper.
-func newTextDumper(chs string) *textDumper {
-	return &textDumper{
+// newResultEncoder creates a new resultEncoder.
+func newResultEncoder(chs string) *resultEncoder {
+	return &resultEncoder{
 		chsName:  chs,
 		encoding: *charset.NewEncoding(chs),
 		buffer:   nil,
@@ -302,16 +318,16 @@ func newTextDumper(chs string) *textDumper {
 	}
 }
 
-// clean prevent the textDumper from holding too much memory.
-func (d *textDumper) clean() {
+// clean prevent the resultEncoder from holding too much memory.
+func (d *resultEncoder) clean() {
 	d.buffer = nil
 }
 
-func (d *textDumper) charsetNeedDynUpdate() bool {
+func (d *resultEncoder) charsetNeedDynUpdate() bool {
 	return d.isBinary || d.isNull
 }
 
-func (d *textDumper) encode(src []byte) []byte {
+func (d *resultEncoder) encode(src []byte) []byte {
 	if !d.encoding.Enabled() {
 		return src
 	}
@@ -322,9 +338,9 @@ func (d *textDumper) encode(src []byte) []byte {
 	return result
 }
 
-func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *textDumper) ([]byte, error) {
+func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultEncoder) ([]byte, error) {
 	if d == nil {
-		d = &textDumper{}
+		d = &resultEncoder{}
 	}
 	tmp := make([]byte, 0, 20)
 	if d.charsetNeedDynUpdate() {

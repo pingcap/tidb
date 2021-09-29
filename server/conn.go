@@ -187,7 +187,7 @@ type clientConn struct {
 	lastActive   time.Time         // last active time
 	authPlugin   string            // default authentication plugin
 	isUnixSocket bool              // connection is Unix Socket file
-	textDumper   *textDumper       // textDumper is used to encode the string result to different charsets.
+	rsEncoder    *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -872,7 +872,7 @@ func (cc *clientConn) initTextDumper(ctx context.Context) {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
 	}
-	cc.textDumper = newTextDumper(chs)
+	cc.rsEncoder = newResultEncoder(chs)
 }
 
 // initConnect runs the initConnect SQL statement if it has been specified.
@@ -1948,7 +1948,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 	}
 	data := cc.alloc.AllocWithLen(4, 1024)
 	cc.initTextDumper(ctx)
-	defer cc.textDumper.clean()
+	defer cc.rsEncoder.clean()
 	for _, column := range columns {
 		// Current we doesn't output defaultValue but reserve defaultValue length byte to make mariadb client happy.
 		// https://dev.mysql.com/doc/internals/en/com-query-response.html#column-definition
@@ -1957,7 +1957,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 		column.DefaultValue = []byte{}
 
 		data = data[0:4]
-		data = column.Dump(data, cc.textDumper)
+		data = column.Dump(data, cc.rsEncoder)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
@@ -1992,6 +1992,8 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		buf = buf[:stackSize]
 		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.String("stack", string(buf)))
 	}()
+	cc.initTextDumper(ctx)
+	defer cc.rsEncoder.clean()
 	var err error
 	if mysql.HasCursorExistsFlag(serverStatus) {
 		err = cc.writeChunksWithFetchSize(ctx, rs, serverStatus, fetchSize)
@@ -2013,7 +2015,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 	}
 	for _, v := range columns {
 		data = data[0:4]
-		data = v.Dump(data, cc.textDumper)
+		data = v.Dump(data, cc.rsEncoder)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
@@ -2035,8 +2037,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	if stmtDetailRaw != nil {
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
-	cc.initTextDumper(ctx)
-	defer cc.textDumper.clean()
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			switch value.(string) {
@@ -2073,9 +2073,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		for i := 0; i < rowCount; i++ {
 			data = data[0:4]
 			if binary {
-				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i))
+				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
 			} else {
-				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i), cc.textDumper)
+				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
 			}
 			if err != nil {
 				reg.End()
@@ -2150,7 +2150,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	var err error
 	for _, row := range curRows {
 		data = data[0:4]
-		data, err = dumpBinaryRow(data, rs.Columns(), row)
+		data, err = dumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
 		if err != nil {
 			return err
 		}

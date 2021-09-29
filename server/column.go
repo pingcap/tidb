@@ -37,9 +37,9 @@ type ColumnInfo struct {
 }
 
 // Dump dumps ColumnInfo to bytes.
-func (column *ColumnInfo) Dump(buffer []byte, d *textDumper) []byte {
+func (column *ColumnInfo) Dump(buffer []byte, d *resultEncoder) []byte {
 	if d == nil {
-		d = &textDumper{}
+		d = &resultEncoder{}
 	}
 	nameDump, orgnameDump := []byte(column.Name), []byte(column.OrgName)
 	if len(nameDump) > maxColumnNameSize {
@@ -57,14 +57,13 @@ func (column *ColumnInfo) Dump(buffer []byte, d *textDumper) []byte {
 
 	buffer = append(buffer, 0x0c)
 
-	dumpTp := dumpType(column.Type)
-	if !d.isNull && len(d.chsName) > 0 && dumpTp == mysql.TypeString {
+	if !d.isNull && len(d.chsName) > 0 && isStringColumnType(column.Type) {
 		buffer = dumpUint16(buffer, uint16(mysql.CharsetNameToID(d.chsName)))
 	} else {
 		buffer = dumpUint16(buffer, column.Charset)
 	}
 	buffer = dumpUint32(buffer, column.ColumnLength)
-	buffer = append(buffer, dumpTp)
+	buffer = append(buffer, dumpType(column.Type))
 	buffer = dumpUint16(buffer, dumpFlag(column.Type, column.Flag))
 	buffer = append(buffer, column.Decimal)
 	buffer = append(buffer, 0, 0)
@@ -75,6 +74,16 @@ func (column *ColumnInfo) Dump(buffer []byte, d *textDumper) []byte {
 	}
 
 	return buffer
+}
+
+func isStringColumnType(tp byte) bool {
+	switch tp {
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
+		mysql.TypeEnum, mysql.TypeSet, mysql.TypeJSON:
+		return true
+	}
+	return false
 }
 
 func dumpFlag(tp byte, flag uint16) uint16 {
