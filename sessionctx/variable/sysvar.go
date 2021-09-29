@@ -807,6 +807,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: LastInsertID, Value: "", skipInit: true, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(s.StmtCtx.PrevLastInsertID, 10), nil
 	}},
+	{Scope: ScopeSession, Name: Identity, Value: "", skipInit: true, GetSession: func(s *SessionVars) (string, error) {
+		return strconv.FormatUint(s.StmtCtx.PrevLastInsertID, 10), nil
+	}},
 	{Scope: ScopeNone, Name: "have_ssl", Value: "DISABLED"},
 	{Scope: ScopeNone, Name: "have_openssl", Value: "DISABLED"},
 	{Scope: ScopeNone, Name: "ssl_ca", Value: ""},
@@ -2136,6 +2139,8 @@ const (
 	DefaultAuthPlugin = "default_authentication_plugin"
 	// LastInsertID is the name of 'last_insert_id' system variable.
 	LastInsertID = "last_insert_id"
+	// Identity is the name of 'identity' system variable.
+	Identity = "identity"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
