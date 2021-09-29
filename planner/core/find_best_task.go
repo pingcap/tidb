@@ -1635,6 +1635,13 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 // filter conditions when the following conditions are met:
 // 1. Access conditions contains the lazy constant, see the MaybeOverOptimized4PlanCache
 // function for more details.
+// For example: When we have an index idx(col1), and there is a prepare stmt
+// like 'select col1 from t where col1 between $a and $b or col1 < $c`. The normal
+// plan will be `IndexReader -> IndexRangeScan` when `$a < $b`, the `Selection`
+// will be eliminated. But when the `$a > $b`, we will get `IndexReader -> IndexFullScan`.
+// And the result will be wrong without `Selection`. So we need to keep the `Selection`
+// when the `Selection` is be eliminated and the `accessConditions` in `DataSource`
+// contains the lazy constant.
 func keepAccessCondsAsFilter4PlanCache(ctx sessionctx.Context, accessConds []expression.Expression, filterConds []expression.Expression) []expression.Expression {
 	if expression.MaybeOverOptimized4PlanCache(ctx, accessConds) {
 		additionFilterConds := make([]expression.Expression, len(accessConds))
