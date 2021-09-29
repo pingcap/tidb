@@ -271,7 +271,7 @@ func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64
 	}
 	var newBase, newEnd uint64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		if allocatorStats != nil {
 			txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
 		}
@@ -330,7 +330,7 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 	}
 	var newBase, newEnd int64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		if allocatorStats != nil {
 			txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
 		}
