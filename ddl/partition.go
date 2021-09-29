@@ -487,13 +487,44 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 			}
 		}
 		comment, _ := def.Comment()
+		var directPlacementOpts *model.PlacementSettings
+		var placementPolicyRef *model.PolicyRefInfo
+		// the partition inheritance of placement rules don't have to copy the placement elements to themselves.
+		// For example:
+		// t placement policy x (p1 placement policy y, p2)
+		// p2 will share the same rule as table t does, but it won't copy the meta to itself. we will
+		// append p2 range to the coverage of table t's rules. This mechanism is good for cascading change
+		// when policy x is altered.
+		for _, opt := range def.Options {
+			switch opt.Tp {
+			case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
+				ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
+				ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
+				ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
+				ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
+				ast.TableOptionPlacementVoterConstraints:
+				if directPlacementOpts == nil {
+					directPlacementOpts = &model.PlacementSettings{}
+				}
+				err := SetDirectPlacementOpt(directPlacementOpts, ast.PlacementOptionType(opt.Tp), opt.StrValue, opt.UintValue)
+				if err != nil {
+					return nil, err
+				}
+			case ast.TableOptionPlacementPolicy:
+				placementPolicyRef = &model.PolicyRefInfo{
+					Name: model.NewCIStr(opt.StrValue),
+				}
+			}
+		}
 		err := checkTooLongTable(def.Name)
 		if err != nil {
 			return nil, err
 		}
 		piDef := model.PartitionDefinition{
-			Name:    def.Name,
-			Comment: comment,
+			Name:                def.Name,
+			Comment:             comment,
+			DirectPlacementOpts: directPlacementOpts,
+			PlacementPolicyRef:  placementPolicyRef,
 		}
 
 		buf := new(bytes.Buffer)
