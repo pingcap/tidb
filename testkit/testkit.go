@@ -53,7 +53,12 @@ func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
 	}
 }
 
-// Session return a session
+// SetSession set the session of testkit
+func (tk *TestKit) SetSession(session session.Session) {
+	tk.session = session
+}
+
+// Session return the session associated with the testkit
 func (tk *TestKit) Session() session.Session {
 	return tk.session
 }
@@ -178,6 +183,13 @@ func newSession(t *testing.T, store kv.Storage) session.Session {
 	return se
 }
 
+// RefreshConnectionID refresh the connection ID for session of the testkit
+func (tk *TestKit) RefreshConnectionID() {
+	if tk.session != nil {
+		tk.session.SetConnectionID(testKitIDGenerator.Inc())
+	}
+}
+
 // MustGetErrCode executes a sql statement and assert it's error code.
 func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	_, err := tk.Exec(sql)
@@ -187,4 +199,22 @@ func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	tk.require.Truef(ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
 	sqlErr := terror.ToSQLError(tErr)
 	tk.require.Equalf(errCode, int(sqlErr.Code), "Assertion failed, origin err:\n  %v", sqlErr)
+}
+
+// MustGetErrMsg executes a sql statement and assert it's error message.
+func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
+	err := tk.ExecToErr(sql)
+	tk.require.Error(err)
+	tk.require.Equal(errStr, err.Error())
+}
+
+// MustUseIndex checks if the result execution plan contains specific index(es).
+func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][3], "index:"+index) {
+			return true
+		}
+	}
+	return false
 }
