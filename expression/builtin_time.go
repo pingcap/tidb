@@ -5826,6 +5826,7 @@ func (c *makeTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	tp, decimal := args[2].GetType().EvalType(), 0
 
 	switch tp {
+	case types.ETInt:
 	case types.ETString:
 		decimal = types.UnspecifiedLength
 	default:
