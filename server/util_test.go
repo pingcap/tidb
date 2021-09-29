@@ -86,32 +86,23 @@ func TestDumpBinaryTime(t *testing.T) {
 	require.Equal(t, []byte{12, 0, 0, 0, 0, 0, 0, 1, 26, 128, 26, 6, 0}, d)
 }
 
-func TestTextDumper(t *testing.T) {
+func TestResultEncoder(t *testing.T) {
 	t.Parallel()
 	// Encode bytes to utf-8.
 	d := newResultEncoder("utf-8")
 	src := []byte("test_string")
-	result := d.encode(src)
+	result := d.encodeMeta(src)
 	require.Equal(t, src, result)
 
 	// Encode bytes to GBK.
 	d = newResultEncoder("gbk")
-	result = d.encode([]byte("一"))
+	result = d.encodeMeta([]byte("一"))
 	require.Equal(t, []byte{0xd2, 0xbb}, result)
 
 	// Encode bytes to binary.
 	d = newResultEncoder("binary")
-	result = d.encode([]byte("一"))
+	result = d.encodeMeta([]byte("一"))
 	require.Equal(t, "一", string(result))
-
-	d = newResultEncoder("")
-	require.True(t, d.charsetNeedDynUpdate())
-	d = newResultEncoder("binary")
-	require.True(t, d.charsetNeedDynUpdate())
-	d = newResultEncoder("utf-8")
-	require.False(t, d.charsetNeedDynUpdate())
-	d = newResultEncoder("gbk")
-	require.False(t, d.charsetNeedDynUpdate())
 }
 
 func TestDumpTextValue(t *testing.T) {
