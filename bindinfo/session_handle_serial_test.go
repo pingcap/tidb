@@ -21,13 +21,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/session/txninfo"
-
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/stmtsummary"
