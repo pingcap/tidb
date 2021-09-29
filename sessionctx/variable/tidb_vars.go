@@ -740,7 +740,7 @@ const (
 	DefTiDBTopSQLMaxStatementCount        = 200
 	DefTiDBTopSQLMaxCollect               = 10000
 	DefTiDBTopSQLReportIntervalSeconds    = 60
-	DefTiDBEnableGlobalTemporaryTable     = false
+	DefTiDBEnableGlobalTemporaryTable     = true
 	DefTMPTableSize                       = 16777216
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBEnableOrderedResultMode        = false

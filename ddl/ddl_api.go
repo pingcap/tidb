@@ -1908,7 +1908,7 @@ func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.Cr
 	case ast.TemporaryGlobal:
 		tbInfo.TempTableType = model.TempTableGlobal
 		if !ctx.GetSessionVars().EnableGlobalTemporaryTable {
-			return errors.New("global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table")
+			return errors.New("It is switched off by tidb_enable_global_temporary_table")
 		}
 		// "create global temporary table ... on commit preserve rows"
 		if !s.OnCommitDelete {
