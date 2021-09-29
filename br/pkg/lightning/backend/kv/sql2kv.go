@@ -377,13 +377,13 @@ func (kvcodec *tableKVEncoder) Encode(
 		if isAutoRandom && isPk {
 			incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoRandomType)
-			if err := alloc.Rebase(value.GetInt64()&((1<<incrementalBits)-1), false); err != nil {
+			if err := alloc.Rebase(context.Background(), value.GetInt64()&((1<<incrementalBits)-1), false); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
 		if isAutoIncCol {
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoIncrementType)
-			if err := alloc.Rebase(getAutoRecordID(value, &col.FieldType), false); err != nil {
+			if err := alloc.Rebase(context.Background(), getAutoRecordID(value, &col.FieldType), false); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
