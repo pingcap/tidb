@@ -57,7 +57,7 @@ In order to add the `--initialize-secure` bootstrap option, the following suppor
 
 1. Support for Socket Authentication (`auth_socket`) [PR in Review](https://github.com/pingcap/tidb/pull/27561)
 2. Stale socket files are automatically cleaned up on server start [PR Merged](https://github.com/pingcap/tidb/pull/27886)
-3. TiDB listens on both TCP **and** unix socket by default (No PR)
+3. TiDB listens on both TCP **and** unix socket by default [PR in Review](https://github.com/pingcap/tidb/pull/28486)
 
 ## Test Design
 
