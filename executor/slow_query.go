@@ -585,7 +585,23 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				} else if strings.HasPrefix(line, variable.SlowLogCopBackoffPrefix) {
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogBackoffDetail, line, e.checker, fileLine)
 				} else {
-					fields, values := splitByColon(line)
+					needCompatibleParse := false
+					var fields, values []string
+					fieldValues := strings.Split(line, " ")
+					for i := 0; i < len(fieldValues)-1; i += 2 {
+						field := strings.TrimSuffix(fieldValues[i], ":")
+						if field == fieldValues[i] {
+							needCompatibleParse = true
+							break
+						}
+						fields = append(fields, field)
+						values = append(values, fieldValues[i+1])
+					}
+					// compatible for Backoff_types: [tikvRPC regionMiss], but low performance with regex
+					// see issue: https://github.com/pingcap/tidb/issues/27895
+					if needCompatibleParse{
+						fields, values = splitByColon(line)
+					}
 					for i := 0; i < len(fields); i++ {
 						valid := e.setColumnValue(sctx, row, tz, fields[i], values[i], e.checker, fileLine)
 						if !valid {
