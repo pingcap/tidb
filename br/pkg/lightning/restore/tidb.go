@@ -102,7 +102,7 @@ func DBFromConfig(dsn config.DBStore) (*sql.DB, error) {
 	}
 
 	if dsn.Vars != nil {
-		for k,v := range dsn.Vars {
+		for k, v := range dsn.Vars {
 			param.Vars[k] = v
 		}
 	}
