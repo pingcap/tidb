@@ -28,7 +28,8 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check test
+dev: checklist check explaintest devgotest gogenerate br_unit_test
+	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
@@ -98,6 +99,29 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	mv overalls.coverprofile coverage.txt
 	bash <(curl -s https://codecov.io/bash)
 endif
+
+devgotest: failpoint-enable
+ifeq ("$(TRAVIS_COVERAGE)", "1")
+	@echo "Running in TRAVIS_COVERAGE mode."
+	$(GO) get github.com/go-playground/overalls
+	@export log_level=info; \
+	$(OVERALLS) -project=github.com/pingcap/tidb \
+			-covermode=count \
+			-ignore='.git,br,vendor,cmd,docs,tests,LICENSES' \
+			-concurrency=4 \
+			-- -coverpkg=./... \
+			|| { $(FAILPOINT_DISABLE); exit 1; }
+else
+# grep regex: Filter out all tidb logs starting with:
+# - '[20' (like [2021/09/15 ...] [INFO]..)
+# - 'PASS:' to ignore passed tests
+# - 'ok ' to ignore passed directories
+	@echo "Running in native mode."
+	@export log_level=info; export TZ='Asia/Shanghai'; \
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
+endif
+	@$(FAILPOINT_DISABLE)
+
 
 gotest: failpoint-enable
 ifeq ("$(TRAVIS_COVERAGE)", "1")
