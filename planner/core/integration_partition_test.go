@@ -743,7 +743,6 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionTempTable(c *C) {
 	tk.MustExec("use list_partition_temp_table")
 	tk.MustExec("drop table if exists tlist")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
-	tk.MustExec("set tidb_enable_global_temporary_table = true")
 	c.Assert(tk.ExecToErr("create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows"), ErrorMatches, ".*Cannot create temporary table with partitions.*")
 	c.Assert(tk.ExecToErr("create global temporary table t(a int, b int) partition by list columns (a) (partition p0 values in (0)) on commit delete rows"), ErrorMatches, ".*Cannot create temporary table with partitions.*")
 }
