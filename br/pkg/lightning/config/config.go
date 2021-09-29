@@ -253,7 +253,6 @@ const (
 	CheckpointOrigin
 )
 
-
 func (t *CheckpointKeepStrategy) UnmarshalTOML(v interface{}) error {
 	switch val := v.(type) {
 	case bool:
@@ -465,11 +464,11 @@ type TikvImporter struct {
 }
 
 type Checkpoint struct {
-	Schema           string `toml:"schema" json:"schema"`
-	DSN              string `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
-	Driver           string `toml:"driver" json:"driver"`
-	Enable           bool   `toml:"enable" json:"enable"`
-	KeepAfterSuccess CheckpointKeepStrategy   `toml:"keep-after-success" json:"keep-after-success"`
+	Schema           string                 `toml:"schema" json:"schema"`
+	DSN              string                 `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
+	Driver           string                 `toml:"driver" json:"driver"`
+	Enable           bool                   `toml:"enable" json:"enable"`
+	KeepAfterSuccess CheckpointKeepStrategy `toml:"keep-after-success" json:"keep-after-success"`
 }
 
 type Cron struct {

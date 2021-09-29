@@ -796,9 +796,9 @@ func (s *configTestSuite) TestDataCharacterSet(c *C) {
 }
 
 func (s *configTestSuite) TestCheckpointKeepStrategy(c *C) {
-	tomlCases := map[interface{}]config.CheckpointKeepStrategy {
-		true: config.CheckpointRename,
-		false: config.CheckpointRemove,
+	tomlCases := map[interface{}]config.CheckpointKeepStrategy{
+		true:     config.CheckpointRename,
+		false:    config.CheckpointRemove,
 		"remove": config.CheckpointRemove,
 		"rename": config.CheckpointRename,
 		"origin": config.CheckpointOrigin,
@@ -810,13 +810,13 @@ func (s *configTestSuite) TestCheckpointKeepStrategy(c *C) {
 		c.Assert(cp, Equals, strategy)
 	}
 
-	defaultCp := "[checkpoint]\r\n"
+	defaultCp := "enable = true\r\n"
 	cpCfg := &config.Checkpoint{}
 	_, err := toml.Decode(defaultCp, cpCfg)
 	c.Assert(err, IsNil)
 	c.Assert(cpCfg.KeepAfterSuccess, Equals, config.CheckpointRemove)
 
-	cpFmt := "[checkpoint]\r\nkeep-after-success = %v\r\n"
+	cpFmt := "keep-after-success = %v\r\n"
 	for key, strategy := range tomlCases {
 		cpValue := key
 		if strVal, ok := key.(string); ok {
@@ -829,7 +829,7 @@ func (s *configTestSuite) TestCheckpointKeepStrategy(c *C) {
 		c.Assert(cpCfg.KeepAfterSuccess, Equals, strategy)
 	}
 
-	marshalTextCases := map[config.CheckpointKeepStrategy]string {
+	marshalTextCases := map[config.CheckpointKeepStrategy]string{
 		config.CheckpointRemove: "remove",
 		config.CheckpointRename: "rename",
 		config.CheckpointOrigin: "origin",
