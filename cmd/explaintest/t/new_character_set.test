@@ -12,11 +12,11 @@ drop table if exists 一;
 create table 一 (二 char(20));
 show create table 一;
 
--- @@character_set_results = null or binary
+-- @@character_set_results = null or binary.
 drop table if exists t;
 set names utf8mb4;
-create table t (a varchar(255) charset gbk, b varchar(255) charset utf8mb4);
-insert into t values ('一', '一');
+create table t (a varchar(255) charset gbk, b varchar(255) charset utf8mb4, c varchar(255) charset binary);
+insert into t values ('一', '一', '一');
 set @@character_set_results = null;
 select * from t;
 set @@character_set_results = BINARY;

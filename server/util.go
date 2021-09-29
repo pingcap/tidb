@@ -244,25 +244,12 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resul
 	for i := 0; i < numBytes4Null; i++ {
 		buffer = append(buffer, 0)
 	}
-	if d.charsetNeedDynUpdate() {
-		origin := d.encoding.Name()
-		defer func() {
-			d.encoding.UpdateEncoding(charset.Formatted(origin))
-		}()
-	}
 	for i := range columns {
 		if row.IsNull(i) {
 			bytePos := (i + 2) / 8
 			bitPos := byte((i + 2) % 8)
 			buffer[nullBitmapOff+bytePos] |= 1 << bitPos
 			continue
-		}
-		if d.charsetNeedDynUpdate() {
-			chs, _, err := charset.GetCharsetInfoByID(int(columns[i].Charset))
-			if err != nil {
-				logutil.BgLogger().Info("unknown charset ID", zap.Error(err))
-			}
-			d.encoding.UpdateEncoding(charset.Formatted(chs))
 		}
 		switch columns[i].Type {
 		case mysql.TypeTiny:
@@ -281,17 +268,21 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resul
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-			buffer = dumpLengthEncodedString(buffer, d.encode(row.GetBytes(i)))
+			d.updateDataEncoding(columns[i].Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(row.GetBytes(i)))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			buffer = dumpBinaryDateTime(buffer, row.GetTime(i))
 		case mysql.TypeDuration:
 			buffer = append(buffer, dumpBinaryTime(row.GetDuration(i, 0).Duration)...)
 		case mysql.TypeEnum:
-			buffer = dumpLengthEncodedString(buffer, d.encode(hack.Slice(row.GetEnum(i).String())))
+			d.updateDataEncoding(columns[i].Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetEnum(i).String())))
 		case mysql.TypeSet:
-			buffer = dumpLengthEncodedString(buffer, d.encode(hack.Slice(row.GetSet(i).String())))
+			d.updateDataEncoding(columns[i].Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetSet(i).String())))
 		case mysql.TypeJSON:
-			buffer = dumpLengthEncodedString(buffer, d.encode(hack.Slice(row.GetJSON(i).String())))
+			d.updateDataEncoding(columns[i].Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetJSON(i).String())))
 		default:
 			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}
@@ -302,7 +293,11 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resul
 type resultEncoder struct {
 	chsName  string
 	encoding charset.Encoding
-	buffer   []byte
+
+	dataEncoding charset.Encoding
+
+	buffer []byte
+
 	isBinary bool
 	isNull   bool
 }
@@ -323,15 +318,43 @@ func (d *resultEncoder) clean() {
 	d.buffer = nil
 }
 
-func (d *resultEncoder) charsetNeedDynUpdate() bool {
-	return d.isBinary || d.isNull
+func (d *resultEncoder) updateDataEncoding(chsID uint16) {
+	chs, _, err := charset.GetCharsetInfoByID(int(chsID))
+	if err != nil {
+		logutil.BgLogger().Warn("unknown charset ID", zap.Error(err))
+	}
+	d.dataEncoding.UpdateEncoding(charset.Formatted(chs))
 }
 
-func (d *resultEncoder) encode(src []byte) []byte {
-	if !d.encoding.Enabled() {
+// Only replace the charset when @@character_set_results is valid and
+// the target column is a non-binary string.
+func (d *resultEncoder) columnTypeInfoCharsetID(info *ColumnInfo) uint16 {
+	if d.isNull || len(d.chsName) == 0 || !isStringColumnType(info.Type) {
+		return info.Charset
+	}
+	if info.Charset == mysql.BinaryDefaultCollationID {
+		return mysql.BinaryDefaultCollationID
+	}
+	return uint16(mysql.CharsetNameToID(d.chsName))
+}
+
+func (d *resultEncoder) encodeMeta(src []byte) []byte {
+	return d.encodeWith(src, &d.encoding)
+}
+
+func (d *resultEncoder) encodeData(src []byte) []byte {
+	if d.isNull || d.isBinary {
+		// Use the column charset to encode.
+		return d.encodeWith(src, &d.dataEncoding)
+	}
+	return d.encodeWith(src, &d.encoding)
+}
+
+func (d *resultEncoder) encodeWith(src []byte, enc *charset.Encoding) []byte {
+	if !enc.Enabled() {
 		return src
 	}
-	result, err := d.encoding.Encode(d.buffer, src)
+	result, err := enc.Encode(d.buffer, src)
 	if err != nil {
 		logutil.BgLogger().Debug("encode error", zap.Error(err))
 	}
@@ -343,23 +366,10 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultE
 		d = &resultEncoder{}
 	}
 	tmp := make([]byte, 0, 20)
-	if d.charsetNeedDynUpdate() {
-		origin := d.encoding.Name()
-		defer func() {
-			d.encoding.UpdateEncoding(charset.Formatted(origin))
-		}()
-	}
 	for i, col := range columns {
 		if row.IsNull(i) {
 			buffer = append(buffer, 0xfb)
 			continue
-		}
-		if d.charsetNeedDynUpdate() {
-			chs, _, err := charset.GetCharsetInfoByID(int(col.Charset))
-			if err != nil {
-				logutil.BgLogger().Info("unknown charset ID", zap.Error(err))
-			}
-			d.encoding.UpdateEncoding(charset.Formatted(chs))
 		}
 		switch col.Type {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
@@ -399,18 +409,22 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultE
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-			buffer = dumpLengthEncodedString(buffer, d.encode(row.GetBytes(i)))
+			d.updateDataEncoding(col.Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(row.GetBytes(i)))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetTime(i).String()))
 		case mysql.TypeDuration:
 			dur := row.GetDuration(i, int(col.Decimal))
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(dur.String()))
 		case mysql.TypeEnum:
-			buffer = dumpLengthEncodedString(buffer, d.encode(hack.Slice(row.GetEnum(i).String())))
+			d.updateDataEncoding(col.Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetEnum(i).String())))
 		case mysql.TypeSet:
-			buffer = dumpLengthEncodedString(buffer, d.encode(hack.Slice(row.GetSet(i).String())))
+			d.updateDataEncoding(col.Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetSet(i).String())))
 		case mysql.TypeJSON:
-			buffer = dumpLengthEncodedString(buffer, d.encode(hack.Slice(row.GetJSON(i).String())))
+			d.updateDataEncoding(col.Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetJSON(i).String())))
 		default:
 			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}
