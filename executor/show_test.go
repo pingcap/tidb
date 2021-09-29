@@ -954,7 +954,6 @@ func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd]\"")
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
@@ -963,8 +962,7 @@ func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 			"/*T![placement] PRIMARY_REGION=\"cn-east-1\" "+
 			"REGIONS=\"cn-east-1, cn-east-2\" "+
 			"FOLLOWERS=2 "+
-			"CONSTRAINTS=\"[+disk=ssd]\" "+
-			"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" */",
+			"CONSTRAINTS=\"[+disk=ssd]\" */",
 	))
 
 	// case for policy
@@ -973,7 +971,6 @@ func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
 	tk.MustExec("create table t(a int)" +
 		"PLACEMENT POLICY=\"x\"")
@@ -1092,7 +1089,6 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 func (s *testSuite5) TestShowCreateStmtIgnoreLocalTemporaryTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_noop_functions=true")
 
 	// SHOW CREATE VIEW ignores local temporary table with the same name
 	tk.MustExec("drop view if exists v1")
@@ -1453,7 +1449,6 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
 	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 " + expect))
 
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	tk.MustExec("create temporary table t6 (i int primary key, j int)")
 	expect = "CREATE TEMPORARY TABLE `t6` (\n" +
 		"  `i` int(11) NOT NULL,\n" +
