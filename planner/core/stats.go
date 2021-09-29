@@ -343,8 +343,6 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 	if selected != nil {
 		ds.possibleAccessPaths[0] = selected
 		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
-		// TODO: Can we make a more careful check on whether the optimization depends on mutable constants?
-		ds.ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 		if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
 			var tableName string
 			if ds.TableAsName.O == "" {
