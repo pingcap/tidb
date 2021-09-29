@@ -755,4 +755,21 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
 	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1)")
 	c.Assert(res.Rows()[3][0], Matches, ".*TableRangeScan.*")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a int primary key, b int, c int, d int);")
+	tk.MustExec(`prepare stmt from 'select * from t where ((a > ? and a < 5 and b > 2) or (a > ? and a < 10 and c > 3)) and d = 5;';`)
+	tk.MustExec("set @a=1, @b=8;")
+	tk.MustQuery("execute stmt using @a,@b;").Check(testkit.Rows())
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[0][0], Matches, ".*TableReader.*")
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	// The duplicate expressions can not be eliminated because the conditions are not the same.
+	// So this may be a bad case in some situations.
+	c.Assert(res.Rows()[1][4], Equals, "eq(test.t.d, 5), or(and(gt(test.t.a, 1), and(lt(test.t.a, 5), gt(test.t.b, 2))), and(gt(test.t.a, 8), and(lt(test.t.a, 10), gt(test.t.c, 3)))), or(and(gt(test.t.a, 1), lt(test.t.a, 5)), and(gt(test.t.a, 8), lt(test.t.a, 10)))")
+	c.Assert(res.Rows()[2][0], Matches, ".*TableRangeScan.*")
 }

@@ -1650,6 +1650,7 @@ func keepAccessCondsAsFilter4PlanCache(ctx sessionctx.Context, accessConds []exp
 		additionFilterConds := make([]expression.Expression, len(accessConds))
 		copy(additionFilterConds, accessConds)
 		filterConds = append(filterConds, additionFilterConds...)
+		filterConds = expression.RemoveDupExprs(ctx, filterConds)
 	}
 	return filterConds
 }
