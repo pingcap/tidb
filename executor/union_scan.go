@@ -19,6 +19,9 @@ import (
 	"fmt"
 	"runtime/trace"
 
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -226,10 +229,24 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			if err != nil {
 				return nil, err
 			}
-			checkKey := tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
-			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
+			checkKey1 := tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
+			if _, err := us.memBufSnap.Get(context.TODO(), checkKey1); err == nil {
 				continue
 			}
+			iter, err := us.memBuf.Iter([]byte("t"), []byte("u"))
+			s := ""
+			if err == nil {
+				for {
+					if !iter.Valid() {
+						break
+					}
+					s = fmt.Sprintf("%s-(%v, %v)", s, iter.Key(), iter.Value())
+					iter.Next()
+				}
+			}
+			logutil.BgLogger().Info("MYLOG check key",
+				zap.String("k1", fmt.Sprintf("%v", checkKey1)),
+				zap.String("iter result", s))
 			// Though the handle does not appear in added rows,
 			// there may be still some conflicts on unique indexes when common handle is not enabled.
 			// UnionScan with two records which have same primary index is weird which should be handled here.
@@ -274,28 +291,13 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 					if err != nil {
 						return nil, err
 					}
+
 					if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
 						flag, err := us.memBuf.GetFlags(checkKey)
 						if err != nil {
 							return nil, err
 						}
-						// I do think this fix is too tricky, but seems I have no choice, it's hard to understand how it works.
-						// Here is the basic logic for optimistic and pessimistic transactions.
-						// OPTIMISTIC:
-						// There is no unique check in some executor, so we check every unique key here.
-						// The `SelectForUpdate` statements will mark keys as locked but do not actually acquire the lock.
-						// Also the key is left in membuffer, so when we try getting it, it'll return the value.
-						// Only newly added rows need to overwrite snapshot rows, so we ignore the locked keys here.
-						// PESSIMISTIC:
-						// The unique check for pessimistic transactions is well covered.
-						// For locked keys, there should not be any transactions with duplicated entries being executed.
-						// But we still want to avoid less inconsistency behavior. Consider the following case.
-						// T1 begins pessimistic and lock the primary key and change the key value from PK1 to PK2.
-						// T2 begins pessimistic and insert a record with PK2 and got blocked.
-						// T1 commits, T2 got executed.
-						// T2 scans all records, we do not want neither duplicate entries nor T2's newly added entries here(can not be seen by this snapshot).
-						// In this case, T2 should skip the locked keys and read it's newly added entry only.
-						if flag.HasLocked() == isPessimistic {
+						if flag.HasReadable() {
 							continue ITER
 						}
 					}

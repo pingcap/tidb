@@ -19,8 +19,8 @@ type KeyFlags uint8
 
 const (
 	flagPresumeKNE KeyFlags = 1 << iota
-	flagKeyLocked
 	flagNeedLocked
+	flagReadable
 )
 
 // HasPresumeKeyNotExists returns whether the associated key use lazy check.
@@ -33,9 +33,9 @@ func (f KeyFlags) HasNeedLocked() bool {
 	return f&flagNeedLocked != 0
 }
 
-// HasLocked returns whether the associated key has acquired pessimistic lock.
-func (f KeyFlags) HasLocked() bool {
-	return f&flagKeyLocked != 0
+// HasReadable returns whether the in-transaction operations is able to read the key.
+func (f KeyFlags) HasReadable() bool {
+	return f&flagReadable == 0
 }
 
 // FlagsOp describes KeyFlags modify operation.
@@ -44,10 +44,10 @@ type FlagsOp uint16
 const (
 	// SetPresumeKeyNotExists marks the existence of the associated key is checked lazily.
 	SetPresumeKeyNotExists FlagsOp = iota
-	// SetKeyLocked marks the associated key has acquired lock.
-	SetKeyLocked
 	// SetNeedLocked marks the associated key need to be acquired lock.
 	SetNeedLocked
+	// SetReadable marks the key is readable by in-transaction read.
+	SetReadable
 )
 
 // ApplyFlagsOps applys flagspos to origin.
@@ -56,8 +56,8 @@ func ApplyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 		switch op {
 		case SetPresumeKeyNotExists:
 			origin |= flagPresumeKNE
-		case SetKeyLocked:
-			origin |= flagKeyLocked
+		case SetReadable:
+			origin |= flagReadable
 		case SetNeedLocked:
 			origin |= flagNeedLocked
 		}

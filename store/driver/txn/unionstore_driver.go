@@ -143,8 +143,8 @@ func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {
 	if flag.HasPresumeKeyNotExists() {
 		v = kv.ApplyFlagsOps(v, kv.SetPresumeKeyNotExists)
 	}
-	if flag.HasLocked() {
-		v = kv.ApplyFlagsOps(v, kv.SetKeyLocked)
+	if flag.HasReadable() {
+		v = kv.ApplyFlagsOps(v, kv.SetReadable)
 	}
 	if flag.HasNeedLocked() {
 		v = kv.ApplyFlagsOps(v, kv.SetNeedLocked)
