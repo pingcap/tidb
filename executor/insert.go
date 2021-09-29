@@ -188,8 +188,8 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 }
 
 // updateDupRow updates a duplicate row to a new row.
-func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, kvGetter kv.Getter, row toBeCheckedRow, handle kv.Handle, onDuplicate []*expression.Assignment) error {
-	oldRow, err := getOldRow(ctx, e.ctx, kvGetter, row.t, handle, e.GenExprs)
+func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Transaction, row toBeCheckedRow, handle kv.Handle, onDuplicate []*expression.Assignment) error {
+	oldRow, err := getOldRow(ctx, e.ctx, txn, row.t, handle, e.GenExprs)
 	if err != nil {
 		return err
 	}
@@ -237,7 +237,6 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 
-	txnValueGetter := e.txnValueGetter(txn)
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
@@ -245,7 +244,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			err = e.updateDupRow(ctx, i, txnValueGetter, r, handle, e.OnDuplicate)
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
 			if err == nil {
 				continue
 			}
@@ -255,7 +254,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		}
 
 		for _, uk := range r.uniqueKeys {
-			val, err := txnValueGetter.Get(ctx, uk.newKey)
+			val, err := txn.Get(ctx, uk.newKey)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					continue
@@ -267,7 +266,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			err = e.updateDupRow(ctx, i, txnValueGetter, r, handle, e.OnDuplicate)
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the

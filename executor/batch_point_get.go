@@ -113,7 +113,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		// The snapshot may contains cache that can reduce RPC call.
 		snapshot = txn.GetSnapshot()
 	} else {
-		snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
+		snapshot = e.ctx.GetSnapshotWithTS(e.snapshotTS)
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
@@ -123,22 +123,21 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
 		stmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
-	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	replicaReadType := e.ctx.GetSessionVars().GetReplicaRead()
+	if replicaReadType.IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
 	snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
 	snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
-	failpoint.Inject("assertBatchPointStalenessOption", func(val failpoint.Value) {
+	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
-		if len(assertScope) > 0 {
-			if e.isStaleness && assertScope != e.readReplicaScope {
-				panic("batch point get staleness option fail")
-			}
+		if replicaReadType.IsClosestRead() && assertScope != e.readReplicaScope {
+			panic("batch point get replica option fail")
 		}
 	})
 
-	if e.isStaleness && e.readReplicaScope != kv.GlobalTxnScope {
+	if replicaReadType.IsClosestRead() && e.readReplicaScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
@@ -147,12 +146,6 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		})
 	}
 	setResourceGroupTagForTxn(stmtCtx, snapshot)
-	// Avoid network requests for the temporary table.
-	if e.tblInfo.TempTableType == model.TempTableGlobal {
-		snapshot = temporaryTableSnapshot{snapshot, nil}
-	} else if e.tblInfo.TempTableType == model.TempTableLocal {
-		snapshot = temporaryTableSnapshot{snapshot, e.ctx.GetSessionVars().TemporaryTableData}
-	}
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
@@ -167,39 +160,6 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	e.snapshot = snapshot
 	e.batchGetter = batchGetter
 	return nil
-}
-
-// Temporary table would always use memBuffer in session as snapshot.
-// temporaryTableSnapshot inherits kv.Snapshot and override the BatchGet methods to return empty.
-type temporaryTableSnapshot struct {
-	kv.Snapshot
-	sessionData variable.TemporaryTableData
-}
-
-func (s temporaryTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	values := make(map[string][]byte)
-	if s.sessionData == nil {
-		return values, nil
-	}
-
-	for _, key := range keys {
-		val, err := s.sessionData.Get(ctx, key)
-		if err == kv.ErrNotExist {
-			continue
-		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		if len(val) == 0 {
-			continue
-		}
-
-		values[string(key)] = val
-	}
-
-	return values, nil
 }
 
 // Close implements the Executor interface.

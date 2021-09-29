@@ -148,7 +148,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
-		e.snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
+		e.snapshot = e.ctx.GetSnapshotWithTS(snapshotTS)
 	}
 	if err := e.verifyTxnScope(); err != nil {
 		return err
@@ -161,13 +161,14 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
-	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
+	if readReplicaType.IsFollowerRead() {
+		e.snapshot.SetOption(kv.ReplicaRead, readReplicaType)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	e.snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
 	e.snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
-	if e.isStaleness && e.readReplicaScope != kv.GlobalTxnScope {
+	if readReplicaType.IsClosestRead() && e.readReplicaScope != kv.GlobalTxnScope {
 		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
@@ -175,12 +176,10 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			},
 		})
 	}
-	failpoint.Inject("assertPointStalenessOption", func(val failpoint.Value) {
+	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
-		if len(assertScope) > 0 {
-			if e.isStaleness && assertScope != e.readReplicaScope {
-				panic("batch point get staleness option fail")
-			}
+		if readReplicaType.IsClosestRead() && assertScope != e.readReplicaScope {
+			panic("point get replica option fail")
 		}
 	})
 	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
@@ -402,16 +401,6 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 			}
 		}
 		// fallthrough to snapshot get.
-	}
-
-	// Global temporary table is always empty, so no need to send the request.
-	if e.tblInfo.TempTableType == model.TempTableGlobal {
-		return nil, nil
-	}
-
-	// Local temporary table always get snapshot value from session
-	if e.tblInfo.TempTableType == model.TempTableLocal {
-		return e.ctx.GetSessionVars().TemporaryTableSnapshotReader(e.tblInfo).Get(ctx, key)
 	}
 
 	lock := e.tblInfo.Lock

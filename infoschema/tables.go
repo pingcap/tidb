@@ -1448,8 +1448,7 @@ var tableRegionLabelCols = []columnInfo{
 	{name: "RULE_ID", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 	{name: "RULE_TYPE", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag},
 	{name: "REGION_LABEL", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
-	{name: "START_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
-	{name: "END_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
+	{name: "RANGES", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1987,11 +1986,6 @@ func (it *infoschemaTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
 }
 
-// RebaseAutoID implements table.Table RebaseAutoID interface.
-func (it *infoschemaTable) RebaseAutoID(ctx context.Context, sctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
-	return table.ErrUnsupportedOp
-}
-
 // Meta implements table.Table Meta interface.
 func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
@@ -2068,11 +2062,6 @@ func (vt *VirtualTable) UpdateRecord(ctx context.Context, sctx sessionctx.Contex
 // Allocators implements table.Table Allocators interface.
 func (vt *VirtualTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 	return nil
-}
-
-// RebaseAutoID implements table.Table RebaseAutoID interface.
-func (vt *VirtualTable) RebaseAutoID(ctx context.Context, sctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
-	return table.ErrUnsupportedOp
 }
 
 // Meta implements table.Table Meta interface.

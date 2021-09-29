@@ -1643,8 +1643,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &stmtSummaryTableRetriever{
-					table:   v.Table,
-					columns: v.Columns,
+					table:     v.Table,
+					columns:   v.Columns,
+					extractor: v.Extractor.(*plannercore.StatementsSummaryExtractor),
 				},
 			}
 		case strings.ToLower(infoschema.TableColumns):
@@ -2608,6 +2609,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	for i, col := range v.OuterHashKeys {
 		outerTypes[col.Index] = outerTypes[col.Index].Clone()
 		outerTypes[col.Index].Collate = innerTypes[v.InnerHashKeys[i].Index].Collate
+		outerTypes[col.Index].Flag = col.RetType.Flag
 	}
 
 	var (
