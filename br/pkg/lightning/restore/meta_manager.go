@@ -966,7 +966,7 @@ func (m noopTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.
 }
 
 func (m noopTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
-	return false, nil
+	return true, nil
 }
 
 func (m noopTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (bool, bool, error) {
