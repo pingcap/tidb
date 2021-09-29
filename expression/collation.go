@@ -331,7 +331,7 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 	return true
 }
 
-// isValidString check if str can convert to sdtChs charset without data lose.
+// isValidString check if str can convert to dstChs charset without data loss.
 func isValidString(str string, dstChs string) bool {
 	switch dstChs {
 	case charset.CharsetASCII:
@@ -342,13 +342,13 @@ func isValidString(str string, dstChs string) bool {
 		}
 		return true
 	case charset.CharsetLatin1:
-		// for backward compatibility, we do not block SQL like select '啊' = convert('a' using latin1) collate latin1_bin;
+		// For backward compatibility, we do not block SQL like select '啊' = convert('a' using latin1) collate latin1_bin;
 		return true
 	case charset.CharsetUTF8, charset.CharsetUTF8MB4:
-		// string in tidb is actually use utf8mb4 encoding.
+		// String in tidb is actually use utf8mb4 encoding.
 		return true
 	case charset.CharsetBinary:
-		// convert to binary is always safe.
+		// Convert to binary is always safe.
 		return true
 	default:
 		e, _ := charset.Lookup(dstChs)
@@ -375,7 +375,10 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 	dstCharset, dstCollation := exprs[0].GetType().Charset, exprs[0].GetType().Collate
 	unknownCS := false
 
+	// Aggregate arguments one by one, agg(a, b, c) := agg(agg(a, b), c).
 	for _, arg := range exprs[1:] {
+		// If one of the arguments is binary charset, we allow it can be used with other charsets.
+		// If they have the same coercibility, let the binary charset one to be the winner because binary has more precedence.
 		if dstCollation == charset.CollationBin || arg.GetType().Collate == charset.CollationBin {
 			if coercibility > arg.Coercibility() || (coercibility == arg.Coercibility() && arg.GetType().Collate == charset.CollationBin) {
 				coercibility, dstCharset, dstCollation = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate
@@ -384,6 +387,13 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 			continue
 		}
 
+		// If charset is different, only if conversion without data loss is allowed:
+		//		1. ASCII repertoire is always convertable.
+		//		2. Non-Unicode charset can convert to Unicode charset.
+		//		3. utf8 can convert to utf8mb4.
+		//		4. constant value is allowed because we can eval and convert it directly.
+		// If we can not aggregate this two collations, we will get CoercibilityNone and wait for an explicit COLLATE clause, if
+		// there is no explicit COLLATE clause, we will get an error.
 		if dstCharset != arg.GetType().Charset {
 			switch {
 			case coercibility < arg.Coercibility():
@@ -420,6 +430,8 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 			coercibility, dstCharset, dstCollation = CoercibilityNone, charset.CharsetBin, charset.CollationBin
 			unknownCS = true
 		} else {
+			// If charset is the same, use lower coercibility, if coercibility is the same and none of them are _bin,
+			// derive to CoercibilityNone and _bin collation.
 			switch {
 			case coercibility == arg.Coercibility():
 				if dstCollation == arg.GetType().Collate {
