@@ -1307,17 +1307,19 @@ func onAlterTablePartitionOptions(t *meta.Meta, job *model.Job) (ver int64, err 
 	}
 
 	ptInfo := tblInfo.GetPartitionInfo()
-	if ptInfo.GetNameByID(partitionID) == "" {
-		job.State = model.JobStateCancelled
-		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
-	}
-	for idx, ptDef := range ptInfo.Definitions {
-		if ptDef.ID == partitionID {
-			ptDef.DirectPlacementOpts = placementSettings
-			ptDef.PlacementPolicyRef = policyRefInfo
-			ptInfo.Definitions[idx] = ptDef
+	isFound := false
+	definitions := ptInfo.Definitions
+	for i := range definitions {
+		if partitionID == definitions[i].ID {
+			definitions[i].DirectPlacementOpts = placementSettings
+			definitions[i].PlacementPolicyRef = policyRefInfo
+			isFound = true
 			break
 		}
+	}
+	if !isFound {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
