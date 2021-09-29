@@ -12,24 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package options
+package infoschema
 
 import (
-	"github.com/pingcap/tidb/kv"
-	storekv "github.com/tikv/client-go/v2/kv"
+	"testing"
+
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-// GetTiKVReplicaReadType maps kv.ReplicaReadType to tikv/kv.ReplicaReadType.
-func GetTiKVReplicaReadType(t kv.ReplicaReadType) storekv.ReplicaReadType {
-	switch t {
-	case kv.ReplicaReadLeader:
-		return storekv.ReplicaReadLeader
-	case kv.ReplicaReadFollower:
-		return storekv.ReplicaReadFollower
-	case kv.ReplicaReadMixed:
-		return storekv.ReplicaReadMixed
-	case kv.ReplicaReadClosest:
-		return storekv.ReplicaReadMixed
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	return 0
+	goleak.VerifyTestMain(m, opts...)
 }

@@ -24,6 +24,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite1) TestExplainPrivileges(c *C) {
@@ -351,4 +352,16 @@ func (s *testSuite2) TestExplainAnalyzeCTEMemoryAndDiskInfo(c *C) {
 
 	c.Assert(rows[4][7].(string), Not(Equals), "N/A")
 	c.Assert(rows[4][8].(string), Not(Equals), "N/A")
+}
+
+func (s *testSuite) TestExplainStatementsSummary(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("desc select * from information_schema.statements_summary").Check(testkit.Rows(
+		`MemTableScan_4 10000.00 root table:STATEMENTS_SUMMARY `))
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest is null").Check(testutil.RowsWithSep("|",
+		`Selection_5|8000.00|root| isnull(Column#5)`, `└─MemTableScan_6|10000.00|root|table:STATEMENTS_SUMMARY|`))
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest = 'abcdefg'").Check(testutil.RowsWithSep(" ",
+		`MemTableScan_5 10000.00 root table:STATEMENTS_SUMMARY digests: ["abcdefg"]`))
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest in ('a','b','c')").Check(testutil.RowsWithSep(" ",
+		`MemTableScan_5 10000.00 root table:STATEMENTS_SUMMARY digests: ["a","b","c"]`))
 }

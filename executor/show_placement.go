@@ -132,6 +132,31 @@ func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
 	return nil
 }
 
+func (e *ShowExec) fetchShowPlacementForDB(_ context.Context) (err error) {
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil {
+		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, e.DBName.String()) {
+			return e.dbAccessDenied()
+		}
+	}
+
+	dbInfo, ok := e.is.SchemaByName(e.DBName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	placement, err := e.getDBPlacement(dbInfo)
+	if err != nil {
+		return err
+	}
+
+	if placement != nil {
+		e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), placement.String()})
+	}
+
+	return nil
+}
+
 func (e *ShowExec) fetchShowPlacementForTable(_ context.Context) (err error) {
 	tbl, err := e.getTable()
 	if err != nil {
@@ -157,6 +182,10 @@ func (e *ShowExec) fetchShowPlacement(_ context.Context) error {
 		return err
 	}
 
+	if err := e.fetchAllDBPlacements(); err != nil {
+		return err
+	}
+
 	return e.fetchAllTablePlacements()
 }
 
@@ -167,6 +196,31 @@ func (e *ShowExec) fetchAllPlacementPolicies() error {
 		name := policy.Name
 		settings := policy.PlacementSettings
 		e.appendRow([]interface{}{"POLICY " + name.String(), settings.String()})
+	}
+
+	return nil
+}
+
+func (e *ShowExec) fetchAllDBPlacements() error {
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+
+	dbs := e.is.AllSchemas()
+	sort.Slice(dbs, func(i, j int) bool { return dbs[i].Name.O < dbs[j].Name.O })
+
+	for _, dbInfo := range dbs {
+		if e.ctx.GetSessionVars().User != nil && checker != nil && !checker.DBIsVisible(activeRoles, dbInfo.Name.O) {
+			continue
+		}
+
+		placement, err := e.getDBPlacement(dbInfo)
+		if err != nil {
+			return err
+		}
+
+		if placement != nil {
+			e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), placement.String()})
+		}
 	}
 
 	return nil
@@ -224,6 +278,15 @@ func (e *ShowExec) fetchAllTablePlacements() error {
 	}
 
 	return nil
+}
+
+func (e *ShowExec) getDBPlacement(dbInfo *model.DBInfo) (*model.PlacementSettings, error) {
+	placement := dbInfo.DirectPlacementOpts
+	if placement != nil {
+		return placement, nil
+	}
+
+	return e.getPolicyPlacement(dbInfo.PlacementPolicyRef)
 }
 
 func (e *ShowExec) getTablePlacement(tblInfo *model.TableInfo) (*model.PlacementSettings, error) {

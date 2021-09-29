@@ -593,7 +593,12 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 	switch dataFileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
-		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, nil)
+		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+		charsetConvertor, err := mydump.NewCharsetConvertor(rc.cfg.Mydumper.DataCharacterSet, rc.cfg.Mydumper.DataInvalidCharReplace)
+		if err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
@@ -765,7 +770,12 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 	switch tableMeta.DataFiles[0].FileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
-		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, nil)
+		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+		charsetConvertor, err := mydump.NewCharsetConvertor(rc.cfg.Mydumper.DataCharacterSet, rc.cfg.Mydumper.DataInvalidCharReplace)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -825,7 +835,7 @@ outloop:
 		rowCount += 1
 
 		var dataChecksum, indexChecksum verification.KVChecksum
-		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, offset)
+		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
 		parser.RecycleRow(lastRow)
 		if encodeErr != nil {
 			err = errors.Annotatef(encodeErr, "in file at offset %d", offset)
