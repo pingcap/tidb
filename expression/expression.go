@@ -1050,22 +1050,22 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		sourceType := function.GetArgs()[0].GetType()
 		retType := function.RetType
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastDecimalAsInt /*, tipb.ScalarFuncSig_CastDurationAsInt*/, tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastRealAsInt,
-			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastStringAsInt /*, tipb.ScalarFuncSig_CastJsonAsInt*/ :
+		case tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastTimeAsInt,
+			tipb.ScalarFuncSig_CastStringAsInt /*, tipb.ScalarFuncSig_CastDurationAsInt, tipb.ScalarFuncSig_CastJsonAsInt*/ :
 			// TiFlash cast only support cast to Int64 or the source type is the same as the target type
 			return (sourceType.Tp == retType.Tp && mysql.HasUnsignedFlag(sourceType.Flag) == mysql.HasUnsignedFlag(retType.Flag)) || retType.Tp == mysql.TypeLonglong
-		case /*tipb.ScalarFuncSig_CastDecimalAsReal, tipb.ScalarFuncSig_CastDurationAsReal,*/ tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastRealAsReal,
-			/*tipb.ScalarFuncSig_CastTimeAsReal,*/ tipb.ScalarFuncSig_CastStringAsReal /*, tipb.ScalarFuncSig_CastJsonAsReal*/ :
+		case tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastStringAsReal: /*, tipb.ScalarFuncSig_CastDecimalAsReal,
+			  tipb.ScalarFuncSig_CastDurationAsReal, tipb.ScalarFuncSig_CastTimeAsReal, tipb.ScalarFuncSig_CastJsonAsReal*/
 			// TiFlash cast only support cast to Float64 or the source type is the same as the target type
 			return sourceType.Tp == retType.Tp || retType.Tp == mysql.TypeDouble
-		case tipb.ScalarFuncSig_CastDecimalAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal*/, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal,
-			tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
+		case tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastTimeAsDecimal,
+			tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
 			return isValidTiFlashDecimalType(function.RetType)
-		case tipb.ScalarFuncSig_CastDecimalAsString /*, tipb.ScalarFuncSig_CastDurationAsString*/, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastRealAsString,
-			tipb.ScalarFuncSig_CastTimeAsString, tipb.ScalarFuncSig_CastStringAsString /*, tipb.ScalarFuncSig_CastJsonAsString*/ :
+		case tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastTimeAsString,
+			tipb.ScalarFuncSig_CastStringAsString /*, tipb.ScalarFuncSig_CastDurationAsString, tipb.ScalarFuncSig_CastJsonAsString*/ :
 			return true
-		case tipb.ScalarFuncSig_CastDecimalAsTime /*, tipb.ScalarFuncSig_CastDurationAsTime*/, tipb.ScalarFuncSig_CastIntAsTime, tipb.ScalarFuncSig_CastRealAsTime,
-			tipb.ScalarFuncSig_CastTimeAsTime, tipb.ScalarFuncSig_CastStringAsTime /*, tipb.ScalarFuncSig_CastJsonAsTime*/ :
+		case tipb.ScalarFuncSig_CastDecimalAsTime, tipb.ScalarFuncSig_CastIntAsTime, tipb.ScalarFuncSig_CastRealAsTime, tipb.ScalarFuncSig_CastTimeAsTime,
+			tipb.ScalarFuncSig_CastStringAsTime /*, tipb.ScalarFuncSig_CastDurationAsTime, tipb.ScalarFuncSig_CastJsonAsTime*/ :
 			// ban the function of casting year type as time type pushing down to tiflash because of https://github.com/pingcap/tidb/issues/26215
 			return function.GetArgs()[0].GetType().Tp != mysql.TypeYear
 			/*case tipb.ScalarFuncSig_CastDecimalAsDuration, tipb.ScalarFuncSig_CastDurationAsDuration, tipb.ScalarFuncSig_CastIntAsDuration, tipb.ScalarFuncSig_CastRealAsDuration,
