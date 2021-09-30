@@ -1812,6 +1812,10 @@ func (b *builtinDegreesSig) evalReal(ctx EvalContext, row chunk.Row) (float64, b
 		return 0, isNull, err
 	}
 	res := val * 180 / math.Pi
+	if math.IsInf(res, 0) {
+		s := fmt.Sprintf("degrees(%s)", b.args[0])
+		return 0, false, types.ErrOverflow.GenWithStackByArgs("DOUBLE", s)
+	}
 	return res, false, nil
 }
 
