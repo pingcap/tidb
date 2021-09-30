@@ -805,7 +805,6 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 	c.Assert(db.PlacementPolicyRef.Name.O, Equals, "PolicySchemaTest")
 }
 
-
 func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists TestAlterDB;")
