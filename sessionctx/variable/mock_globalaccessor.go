@@ -18,13 +18,22 @@ package variable
 type MockGlobalAccessor struct {
 	SessionVars *SessionVars // can be overwritten if needed for correctness.
 	vals        map[string]string
+	testSuite   bool
 }
 
 // NewMockGlobalAccessor implements GlobalVarAccessor interface.
 func NewMockGlobalAccessor() *MockGlobalAccessor {
+	return new(MockGlobalAccessor)
+}
+
+// NewMockGlobalAccessor4Tests creates a new MockGlobalAccessor for use in the testsuite.
+// It behaves like the real GlobalVarAccessor and has a list of sessionvars.
+// Because we use the real GlobalVarAccessor outside of tests,
+// this is unsafe to use by default (performance regression).
+func NewMockGlobalAccessor4Tests() *MockGlobalAccessor {
 	tmp := new(MockGlobalAccessor)
 	tmp.vals = make(map[string]string)
-
+	tmp.testSuite = true
 	// There's technically a test bug here where the sessionVars won't match
 	// the session vars in the test which this MockGlobalAccessor is assigned to.
 	// But if the test requires accurate sessionVars, it can do the following:
@@ -45,11 +54,18 @@ func NewMockGlobalAccessor() *MockGlobalAccessor {
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (m *MockGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
+	if !m.testSuite {
+		v, ok := sysVars[name]
+		if ok {
+			return v.Value, nil
+		}
+		return "", nil
+	}
 	v, ok := m.vals[name]
 	if ok {
 		return v, nil
 	}
-	return "", nil
+	return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
