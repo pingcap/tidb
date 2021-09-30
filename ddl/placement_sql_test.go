@@ -883,6 +883,7 @@ func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 			"/*T![placement] PRIMARY_REGION=\"se\" FOLLOWERS=2 */",
 	))
 	tk.MustGetErrCode("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`x` FOLLOWERS=2;", mysql.ErrPlacementPolicyWithDirectOption)
+	tk.MustGetErrCode("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`y` PRIMARY_REGION=\"se\" FOLLOWERS=2;", mysql.ErrPlacementPolicyWithDirectOption)
 	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
 		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
 			"/*T![placement] PRIMARY_REGION=\"se\" FOLLOWERS=2 */",
@@ -893,15 +894,12 @@ func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
 			"/*T![placement] PLACEMENT POLICY=`x` */",
 	))
-	// Test for change direct options to policy.
+	// Test for change policy to direct options.
 	tk.MustExec("ALTER DATABASE TestAlterDB PRIMARY_REGION=\"se\" FOLLOWERS=2;")
 	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
 		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
 			"/*T![placement] PRIMARY_REGION=\"se\" FOLLOWERS=2 */",
 	))
-
-	// Test for change policy to direct options.
-	tk.MustGetErrCode("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`y` PRIMARY_REGION=\"se\" FOLLOWERS=2;", mysql.ErrPlacementPolicyWithDirectOption)
 
 	tk.MustExec(`DROP DATABASE IF EXISTS TestAlterDB;`)
 	tk.MustExec("drop placement policy if exists x")
