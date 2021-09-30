@@ -583,10 +583,7 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			Regions:       "us",
 		},
 		output: []*Rule{
-			NewRule(Leader, 1, NewConstraintsDirect(
-				NewConstraintDirect("region", In, "us"),
-			)),
-			NewRule(Follower, 2, NewConstraintsDirect(
+			NewRule(Voter, 3, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
 		},
@@ -599,11 +596,11 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			Regions:       "bj,sh,us",
 		},
 		output: []*Rule{
-			NewRule(Leader, 1, NewConstraintsDirect(
+			NewRule(Voter, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
 			NewRule(Follower, 2, NewConstraintsDirect(
-				NewConstraintDirect("region", In, "bj", "sh", "us"),
+				NewConstraintDirect("region", In, "bj", "sh"),
 			)),
 		},
 	})
@@ -653,11 +650,11 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			Followers:     5,
 		},
 		output: []*Rule{
-			NewRule(Leader, 1, NewConstraintsDirect(
+			NewRule(Voter, 3, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
-			NewRule(Follower, 5, NewConstraintsDirect(
-				NewConstraintDirect("region", In, "sh", "us"),
+			NewRule(Follower, 3, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "sh"),
 			)),
 		},
 	})
