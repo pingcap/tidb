@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testDBSuite6) TestAlterTableAlterPartition(c *C) {
