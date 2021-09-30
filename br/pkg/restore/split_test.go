@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"sync"
+	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -14,7 +16,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/pd/server/core"
 	"github.com/tikv/pd/server/schedule/placement"
 	"google.golang.org/grpc/codes"
@@ -22,11 +26,12 @@ import (
 )
 
 type TestClient struct {
-	mu           sync.RWMutex
-	stores       map[uint64]*metapb.Store
-	regions      map[uint64]*restore.RegionInfo
-	regionsInfo  *core.RegionsInfo // For now it's only used in ScanRegions
-	nextRegionID uint64
+	mu              sync.RWMutex
+	stores          map[uint64]*metapb.Store
+	regions         map[uint64]*restore.RegionInfo
+	regionsInfo     *core.RegionsInfo // For now it's only used in ScanRegions
+	nextRegionID    uint64
+	injectInScatter func() error
 
 	scattered map[uint64]bool
 }
@@ -41,11 +46,12 @@ func NewTestClient(
 		regionsInfo.SetRegion(core.NewRegionInfo(regionInfo.Region, regionInfo.Leader))
 	}
 	return &TestClient{
-		stores:       stores,
-		regions:      regions,
-		regionsInfo:  regionsInfo,
-		nextRegionID: nextRegionID,
-		scattered:    map[uint64]bool{},
+		stores:          stores,
+		regions:         regions,
+		regionsInfo:     regionsInfo,
+		nextRegionID:    nextRegionID,
+		scattered:       map[uint64]bool{},
+		injectInScatter: func() error { return nil },
 	}
 }
 
@@ -169,7 +175,7 @@ func (c *TestClient) ScatterRegion(ctx context.Context, regionInfo *restore.Regi
 		return status.Errorf(codes.Unknown, "region %d is not fully replicated", regionInfo.Region.Id)
 	}
 	c.scattered[regionInfo.Region.Id] = true
-	return nil
+	return c.injectInScatter()
 }
 
 func (c *TestClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
@@ -213,6 +219,71 @@ func (c *TestClient) checkScatter(check *C) {
 			check.Fatalf("region %d has not been scattered: %#v", key, regions[key])
 		}
 	}
+}
+
+func (c *TestClient) cancelInjectError() {
+	c.injectInScatter = func() error { return nil }
+}
+
+type assertRetryNotThanBackoffer struct {
+	max     int
+	already int
+	t       *testing.T
+}
+
+func assertRetryNotThan(t *testing.T, times int) utils.Backoffer {
+	return &assertRetryNotThanBackoffer{
+		max:     times,
+		already: 0,
+		t:       t,
+	}
+}
+
+// NextBackoff returns a duration to wait before retrying again
+func (b *assertRetryNotThanBackoffer) NextBackoff(err error) time.Duration {
+	b.already++
+	if b.already >= b.max {
+		b.t.Logf("retry more than %d time: test failed", b.max)
+		b.t.FailNow()
+	}
+	return 0
+}
+
+// Attempt returns the remain attempt times
+func (b *assertRetryNotThanBackoffer) Attempt() int {
+	return b.max - b.already
+}
+
+func TestScatterFinishInTime(t *testing.T) {
+	client := initTestClient()
+	ranges := initRanges()
+	rewriteRules := initRewriteRules()
+	regionSplitter := restore.NewRegionSplitter(client)
+
+	ctx := context.Background()
+	err := regionSplitter.Split(ctx, ranges, rewriteRules, func(key [][]byte) {})
+	if err != nil {
+		require.Nil(t, err)
+	}
+	regions := client.GetAllRegions()
+	if !validateRegions(regions) {
+		for _, region := range regions {
+			t.Logf("region: %v\n", region.Region)
+		}
+		t.Log("get wrong result")
+		t.Fail()
+	}
+
+	regionInfos := make([]*restore.RegionInfo, 0, len(regions))
+	for _, info := range regions {
+		regionInfos = append(regionInfos, info)
+	}
+	// When using a exponential backoffer, if we try to backoff more than 40 times in 10 regions,
+	// it would cost time unacceptable.
+	regionSplitter.ScatterRegionsWithBackoffer(ctx,
+		regionInfos,
+		assertRetryNotThan(t, 40))
+
 }
 
 // region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
