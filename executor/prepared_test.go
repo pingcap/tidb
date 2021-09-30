@@ -17,6 +17,8 @@ package executor_test
 import (
 	"crypto/tls"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -636,4 +639,75 @@ func (s *testSerialSuite) TestIssue28064(c *C) {
 		"├─Selection_7(Build) 0.00 cop[tikv]  eq(test.t28064.a, 123), eq(test.t28064.b, 234), eq(test.t28064.c, 345)",
 		"│ └─IndexRangeScan_5 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
 		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+}
+
+func (s *testSerialSuite) TestTiFlashPlanCacheable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test;")
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("insert into t values(1);")
+	tk.MustExec("analyze table t;")
+	tk.MustExec("prepare stmt from 'select /*+ read_from_storage(tiflash[t]) */ * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 2)
+	c.Assert(res.Rows()[1][2], Matches, "cop[tiflash]")
+
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	// The TiFlash plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// test the mpp plan
+	tk.MustExec("set @@session.tidb_allow_mpp = 1;")
+	tk.MustExec("set @@session.tidb_enforce_mpp = 1;")
+	tk.MustExec("prepare stmt from 'select count(t1.a) from t t1 join t t2 on t1.a = t2.a where t1.a > ?;';")
+	tk.MustExec("set @a = 0;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(res.Rows()[1][0], Matches, ".*TableReader.*")
+	c.Assert(res.Rows()[2][2], Matches, "cop[tiflash]")
+
+	tk.MustExec("set @a = 1;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("0"))
+	// The TiFlash plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }

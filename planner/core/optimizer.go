@@ -215,7 +215,7 @@ func checkPlanCacheable4PlanCache(sctx sessionctx.Context, plan PhysicalPlan) {
 
 // useTiFlash used to check whether the plan use the TiFlash engine.
 func useTiFlash(p PhysicalPlan) bool {
-	if len(p.Children()) > 0 {
+	if len(p.Children()) > 1 {
 		for _, plan := range p.Children() {
 			return useTiFlash(plan)
 		}
