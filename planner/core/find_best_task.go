@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -1342,6 +1343,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *util.AccessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
+	indexConds = keepAccessCondsAsFilter4PlanCache(is.ctx, path.AccessConds, indexConds)
 
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
 
@@ -1627,6 +1629,30 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 		return corrCol, corr
 	}
 	return nil, corr
+}
+
+// keepAccessCondsAsFilter4PlanCache is used to keep the access conditions as
+// filter conditions when the following conditions are met:
+// 1. Access conditions contains the lazy constant, see the MaybeOverOptimized4PlanCache
+// function for more details.
+// For example: if we have an table schema like `t(col1 int, col2 int, key idx(col1)),
+// and a prepare stmt like 'select col1 from t where (col1 between $a and $b or col1 < $c) and col2 < 1;`.
+// The normal plan will be `IndexReader -> Selection[col2 < 1] -> IndexRangeScan`
+// when `$a < $b`, the conditions related to col1 in `Selection` will be eliminated.
+// But when the `$a > $b`, we will get `IndexReader -> Selection[col2 < 1] -> IndexFullScan`.
+// And the result will be wrong without conditions related to col1 in `Selection`.
+// So we need to keep the `accessConditions` in `DataSource` to `Selection` when
+// the `accessConditions` in `DataSource` contains the lazy constant. After use
+// this function the `Selection` will be `((col1 > $a and col1 < $b) or col1 < $c))
+// and col2 < 1`.
+func keepAccessCondsAsFilter4PlanCache(ctx sessionctx.Context, accessConds []expression.Expression, filterConds []expression.Expression) []expression.Expression {
+	if expression.MaybeOverOptimized4PlanCache(ctx, accessConds) {
+		additionFilterConds := make([]expression.Expression, len(accessConds))
+		copy(additionFilterConds, accessConds)
+		filterConds = append(filterConds, additionFilterConds...)
+		filterConds = expression.RemoveDupExprs(ctx, filterConds)
+	}
+	return filterConds
 }
 
 // GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
@@ -1956,6 +1982,7 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
+	ts.filterCondition = keepAccessCondsAsFilter4PlanCache(ts.ctx, ts.AccessCondition, ts.filterCondition)
 	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
 	ts.filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ts.ctx.GetClient(), ts.StoreType)
