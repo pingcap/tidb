@@ -1387,7 +1387,7 @@ const (
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
-func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
+func (do *Domain) NotifyUpdatePrivilege() error {
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), privilegeKey, "")
@@ -1396,13 +1396,13 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 		}
 	}
 	// update locally
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	if stmt, err := exec.ParseWithParams(context.Background(), `FLUSH PRIVILEGES`); err == nil {
-		_, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
-		if err != nil {
-			logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
-		}
+	sysSessionPool := do.SysSessionPool()
+	ctx, err := sysSessionPool.Get()
+	if err != nil {
+		return err
 	}
+	defer sysSessionPool.Put(ctx)
+	return do.PrivilegeHandle().Update(ctx.(sessionctx.Context))
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
