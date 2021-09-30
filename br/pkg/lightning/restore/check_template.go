@@ -15,8 +15,6 @@
 package restore
 
 import (
-	"fmt"
-
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 )
@@ -97,7 +95,7 @@ func (c *SimpleTemplate) FailedCount(t CheckType) int {
 
 func (c *SimpleTemplate) Output() string {
 	c.t.SetAllowedRowLength(170)
-	c.t.SetRowPainter(table.RowPainter(func(row table.Row) text.Colors {
+	c.t.SetRowPainter(func(row table.Row) text.Colors {
 		if passed, ok := row[3].(bool); ok {
 			if !passed {
 				if typ, ok := row[2].(CheckType); ok {
@@ -111,18 +109,6 @@ func (c *SimpleTemplate) Output() string {
 			}
 		}
 		return nil
-	}))
-	res := c.t.Render()
-	summary := "\n"
-	if c.criticalFailedCount > 0 {
-		summary += fmt.Sprintf("%d critical check failed", c.criticalFailedCount)
-	}
-	if c.warnFailedCount > 0 {
-		msg := fmt.Sprintf("%d performance check failed", c.warnFailedCount)
-		if len(summary) > 1 {
-			msg = "," + msg
-		}
-		summary += msg
-	}
-	return res + summary
+	})
+	return c.t.Render() + "\n"
 }

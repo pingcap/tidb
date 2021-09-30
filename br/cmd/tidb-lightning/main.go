@@ -23,6 +23,7 @@ import (
 	"syscall"
 
 	"github.com/pingcap/tidb/br/pkg/lightning"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"go.uber.org/zap"
@@ -86,13 +87,18 @@ func main() {
 		return app.RunOnce(context.Background(), cfg, nil)
 	}()
 
+	finished := true
+	if common.IsContextCanceledError(err) {
+		err = nil
+		finished = false
+	}
 	if err != nil {
 		logger.Error("tidb lightning encountered error stack info", zap.Error(err))
 		logger.Error("tidb lightning encountered error", log.ShortError(err))
 		fmt.Fprintln(os.Stderr, "tidb lightning encountered error: ", err)
 	} else {
-		logger.Info("tidb lightning exit")
-		fmt.Fprintln(os.Stdout, "tidb lightning exit")
+		logger.Info("tidb lightning exit", zap.Bool("finished", finished))
+		fmt.Fprintf(os.Stdout, "tidb lightning exit, finished=%v\n", finished)
 	}
 
 	// call Sync() with log to stdout may return error in some case, so just skip it
