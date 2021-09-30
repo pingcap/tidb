@@ -1360,6 +1360,9 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 		resultTp.Flen = mysql.MaxIntWidth
 	}
 	expression.SetBinFlagOrBinStr(b, resultTp)
+	// align the null flag
+	resultTp.Flag |= (a.Flag & mysql.NotNullFlag) & (b.Flag & mysql.NotNullFlag)
+
 	return resultTp
 }
 

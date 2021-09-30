@@ -216,8 +216,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 			switch value.Kind() {
 			case types.KindNull:
 				retType.Flag &= ^mysql.NotNullFlag
-			default:
-				retType.Flag |= mysql.NotNullFlag
+				// the const value would require being nullable after aligning data type in union, so keep it as the same
 			}
 		}
 		if err != nil {
