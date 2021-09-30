@@ -24,6 +24,7 @@ import (
 // but changing them has no effect on behavior.
 
 var noopSysVars = []*SysVar{
+	{Scope: ScopeGlobal, Name: MaxConnections, Value: "151", Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, AutoConvertOutOfRange: true},
 	// It is unsafe to pretend that any variation of "read only" is enabled when the server
 	// does not support it. It is possible that these features will be supported in future,
 	// but until then...
@@ -490,7 +491,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: AvoidTemporalUpgrade, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "key_cache_age_threshold", Value: "300"},
 	{Scope: ScopeGlobal, Name: InnodbStatusOutput, Value: Off, Type: TypeBool, AutoConvertNegativeBool: true},
-	{Scope: ScopeSession, Name: "identity", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "min_examined_row_limit", Value: "0"},
 	{Scope: ScopeGlobal, Name: "sync_frm", Type: TypeBool, Value: On},
 	{Scope: ScopeGlobal, Name: "innodb_online_alter_log_max_size", Value: "134217728"},
