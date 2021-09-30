@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testDBSuite6) TestPlacementPolicy(c *C) {
@@ -371,84 +370,6 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	checkFunc(tbl.Meta().DirectPlacementOpts)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop placement policy if exists x")
-}
-
-func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists TestAlterDB;")
-	tk.MustExec("create database TestAlterDB;")
-	tk.MustExec("use TestAlterDB")
-	tk.MustExec("drop placement policy if exists x")
-	tk.MustExec("drop placement policy if exists y")
-	tk.MustExec("create placement policy x PRIMARY_REGION=\"cn-east-1\";")
-	tk.MustExec("create placement policy y PRIMARY_REGION=\"cn-east-2\";")
-
-	// Policy Test
-	tk.MustExec("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`x`;")
-	// Test for Show Create Database
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
-		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
-			"/*T![placement] PLACEMENT POLICY=`x` */",
-	))
-	// Test for Alter Placement Policy affect table created.
-	tk.MustExec("create table t(a int);")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PLACEMENT POLICY=`x` */",
-	))
-	// Test for Alter Default Placement Policy, And will not update the old table options.
-	tk.MustExec("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`y`;")
-	tk.MustExec("create table t2(a int);")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PLACEMENT POLICY=`x` */",
-	))
-	tk.MustQuery(`show create table t2`).Check(testutil.RowsWithSep("|",
-		"t2 CREATE TABLE `t2` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PLACEMENT POLICY=`y` */",
-	))
-
-	// Reset Test
-	tk.MustExec("drop database if exists TestAlterDB;")
-	tk.MustExec("create database TestAlterDB;")
-	tk.MustExec("use TestAlterDB")
-
-	// DirectOption Test
-	tk.MustExec("ALTER DATABASE TestAlterDB PRIMARY_REGION=\"se\" FOLLOWERS=2;")
-	// Test for Show Create Database
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
-		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
-			"/*T![placement] PRIMARY_REGION=\"se\" FOLLOWERS=2 */",
-	))
-	// Test for Alter Placement Rule affect table created.
-	tk.MustExec("create table t3(a int);")
-	tk.MustQuery(`show create table t3`).Check(testutil.RowsWithSep("|",
-		"t3 CREATE TABLE `t3` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PRIMARY_REGION=\"se\" FOLLOWERS=2 */",
-	))
-	// Test for override default option
-	tk.MustExec("create table t4(a int) PLACEMENT POLICY=\"x\";")
-	tk.MustQuery(`show create table t4`).Check(testutil.RowsWithSep("|",
-		"t4 CREATE TABLE `t4` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PLACEMENT POLICY=`x` */",
-	))
-
-	// Hybrid Test
-	tk.MustGetErrCode("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`y`;", mysql.ErrPlacementPolicyWithDirectOption)
-
-	tk.MustExec(`DROP DATABASE IF EXISTS TestAlterDB;`)
-	tk.MustExec("drop placement policy if exists x")
-	tk.MustExec("drop placement policy if exists y")
 }
 
 func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {

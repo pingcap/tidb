@@ -191,16 +191,8 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
 
-	if (directPlacementOpts != nil && placementPolicyRef != nil) ||
-		(directPlacementOpts != nil && dbInfo.PlacementPolicyRef != nil) ||
-		(placementPolicyRef != nil && dbInfo.DirectPlacementOpts != nil) {
-		var policyName model.CIStr
-		if placementPolicyRef != nil {
-			policyName = placementPolicyRef.Name
-		} else {
-			policyName = dbInfo.PlacementPolicyRef.Name
-		}
-		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(policyName))
+	if directPlacementOpts != nil && placementPolicyRef != nil {
+		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(placementPolicyRef.Name))
 	}
 
 	if directPlacementOpts != nil {
@@ -229,6 +221,8 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 	var policyName model.CIStr
 	var placementPolicyRef *model.PolicyRefInfo
 	var directPlacementOpts *model.PlacementSettings
+	var isAlterCharsetAndCollate bool
+	var isAlterPlacement bool
 
 	for _, val := range stmt.Options {
 		switch val.Tp {
@@ -238,7 +232,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 			} else if toCharset != val.Value {
 				return ErrConflictingDeclarations.GenWithStackByArgs(toCharset, val.Value)
 			}
-			err = d.ModifySchemaCharsetAndCollate(ctx, stmt, toCharset, toCollate)
+			isAlterCharsetAndCollate = true
 		case ast.DatabaseOptionCollate:
 			info, errGetCollate := collate.GetCollationByName(val.Value)
 			if errGetCollate != nil {
@@ -250,7 +244,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 				return ErrConflictingDeclarations.GenWithStackByArgs(toCharset, info.CharsetName)
 			}
 			toCollate = info.Name
-			err = d.ModifySchemaCharsetAndCollate(ctx, stmt, toCharset, toCollate)
+			isAlterCharsetAndCollate = true
 		case ast.DatabaseOptionPlacementPrimaryRegion, ast.DatabaseOptionPlacementRegions, ast.DatabaseOptionPlacementFollowerCount, ast.DatabaseOptionPlacementVoterCount, ast.DatabaseOptionPlacementLearnerCount, ast.DatabaseOptionPlacementSchedule, ast.DatabaseOptionPlacementConstraints, ast.DatabaseOptionPlacementLeaderConstraints, ast.DatabaseOptionPlacementLearnerConstraints, ast.DatabaseOptionPlacementFollowerConstraints, ast.DatabaseOptionPlacementVoterConstraints:
 			if directPlacementOpts == nil {
 				directPlacementOpts = &model.PlacementSettings{}
@@ -259,7 +253,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 			if err != nil {
 				return err
 			}
-			err = d.ModifySchemaDefaultPlacement(ctx, stmt, placementPolicyRef, directPlacementOpts)
+			isAlterPlacement = true
 		case ast.DatabaseOptionPlacementPolicy:
 			policyName = model.NewCIStr(val.Value)
 			if policyName.L == "default" {
@@ -271,10 +265,22 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 				}
 				placementPolicyRef = &model.PolicyRefInfo{ID: policy.ID, Name: policyName}
 			}
-			err = d.ModifySchemaDefaultPlacement(ctx, stmt, placementPolicyRef, directPlacementOpts)
+			isAlterPlacement = true
 		}
 	}
-	return err
+
+	if isAlterCharsetAndCollate {
+		if err = d.ModifySchemaCharsetAndCollate(ctx, stmt, toCharset, toCollate); err != nil {
+			return err
+		}
+	}
+	if isAlterPlacement {
+		if err = d.ModifySchemaDefaultPlacement(ctx, stmt, placementPolicyRef, directPlacementOpts); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
