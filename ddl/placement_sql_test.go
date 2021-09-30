@@ -17,7 +17,6 @@ package ddl_test
 import (
 	"fmt"
 	mysql "github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/util/testutil"
 	"sort"
 
 	. "github.com/pingcap/check"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
