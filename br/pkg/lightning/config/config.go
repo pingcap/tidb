@@ -264,7 +264,7 @@ func (t *CheckpointKeepStrategy) UnmarshalTOML(v interface{}) error {
 	case string:
 		return t.FromStringValue(val)
 	default:
-		return errors.Errorf("invalid op level '%v', please choose valid option between ['off', 'optional', 'required']", v)
+		return errors.Errorf("invalid checkpoint keep strategy '%v', please choose valid option between ['remove', 'rename', 'origin']", v)
 	}
 	return nil
 }
@@ -284,7 +284,7 @@ func (t *CheckpointKeepStrategy) FromStringValue(s string) error {
 	case "origin":
 		*t = CheckpointOrigin
 	default:
-		return errors.Errorf("invalid op level '%s', please choose valid option between ['off', 'optional', 'required']", s)
+		return errors.Errorf("invalid checkpoint keep strategy '%s', please choose valid option between ['remove', 'rename', 'origin']", s)
 	}
 	return nil
 }
