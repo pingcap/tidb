@@ -20,11 +20,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -32,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
@@ -58,7 +55,6 @@ func TestT(t *testing.T) {
 }
 
 var _ = Suite(&testSuite{})
-var _ = SerialSuites(&testSerialSuite{})
 
 type testSuite struct {
 	cluster testutils.Cluster
@@ -148,44 +144,6 @@ func (s *testSuite) TearDownTest(c *C) {
 }
 
 func (s *testSuite) cleanBindingEnv(tk *testkit.TestKit) {
-	tk.MustExec("delete from mysql.bind_info where source != 'builtin'")
-	s.domain.BindHandle().Clear()
-}
-
-type testSerialSuite struct {
-	cluster testutils.Cluster
-	store   kv.Storage
-	domain  *domain.Domain
-}
-
-func (s *testSerialSuite) SetUpSuite(c *C) {
-	flag.Lookup("mockTikv")
-	useMockTikv := *mockTikv
-	if useMockTikv {
-		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c testutils.Cluster) {
-				mockstore.BootstrapWithSingleStore(c)
-				s.cluster = c
-			}),
-		)
-		c.Assert(err, IsNil)
-		s.store = store
-		session.SetSchemaLease(0)
-		session.DisableStats4Test()
-	}
-	bindinfo.Lease = 0
-	d, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	d.SetStatsUpdating(true)
-	s.domain = d
-}
-
-func (s *testSerialSuite) TearDownSuite(c *C) {
-	s.domain.Close()
-	s.store.Close()
-}
-
-func (s *testSerialSuite) cleanBindingEnv(tk *testkit.TestKit) {
 	tk.MustExec("delete from mysql.bind_info where source != 'builtin'")
 	s.domain.BindHandle().Clear()
 }
@@ -1149,81 +1107,4 @@ func (s *testSuite) TestGCBindRecord(c *C) {
 	c.Assert(h.GCBindRecord(), IsNil)
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
-}
-
-func (s *testSerialSuite) TestOptimizeOnlyOnce(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idxa(a))")
-	tk.MustExec("create global binding for select * from t using select * from t use index(idxa)")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/planner/checkOptimizeCountOne", "return"), IsNil)
-	tk.MustQuery("select * from t").Check(testkit.Rows())
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/checkOptimizeCountOne"), IsNil)
-}
-
-func (s *testSerialSuite) TestIssue26377(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_temporary_table = true")
-	tk.MustExec("drop table if exists t1,tmp1")
-	tk.MustExec("create table t1(a int(11))")
-	tk.MustExec("create global temporary table tmp1(a int(11), key idx_a(a)) on commit delete rows;")
-	tk.MustExec("create temporary table tmp2(a int(11), key idx_a(a));")
-
-	queries := []string{
-		"create global binding for with cte1 as (select a from tmp1) select * from cte1 using with cte1 as (select a from tmp1) select * from cte1",
-		"create global binding for select * from t1 inner join tmp1 on t1.a=tmp1.a using select * from  t1 inner join tmp1 on t1.a=tmp1.a;",
-		"create global binding for select * from t1 where t1.a in (select a from tmp1) using select * from t1 where t1.a in (select a from tmp1 use index (idx_a));",
-		"create global binding for select a from t1 union select a from tmp1 using select a from t1 union select a from tmp1 use index (idx_a);",
-		"create global binding for select t1.a, (select a from tmp1 where tmp1.a=1) as t2 from t1 using select t1.a, (select a from tmp1 where tmp1.a=1) as t2 from t1;",
-		"create global binding for select * from (select * from tmp1) using select * from (select * from tmp1);",
-		"create global binding for select * from t1 where t1.a = (select a from tmp1) using select * from t1 where t1.a = (select a from tmp1)",
-	}
-	genLocalTemporarySQL := func(sql string) string {
-		return strings.Replace(sql, "tmp1", "tmp2", -1)
-	}
-	for _, query := range queries {
-		localSQL := genLocalTemporarySQL(query)
-		queries = append(queries, localSQL)
-	}
-
-	for _, q := range queries {
-		tk.MustGetErrCode(q, errno.ErrOptOnTemporaryTable)
-	}
-}
-
-func (s *testSerialSuite) TestIssue27422(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_temporary_table = true")
-	tk.MustExec("drop table if exists t1,tmp1,tmp2")
-	tk.MustExec("create table t1(a int(11))")
-	tk.MustExec("create global temporary table tmp1(a int(11), key idx_a(a)) on commit delete rows;")
-	tk.MustExec("create temporary table tmp2(a int(11), key idx_a(a));")
-
-	queries := []string{
-		"create global binding for insert into t1 (select * from tmp1) using insert into t1 (select * from tmp1);",
-		"create global binding for update t1 inner join tmp1 on t1.a=tmp1.a set t1.a=1 using update t1 inner join tmp1 on t1.a=tmp1.a set t1.a=1",
-		"create global binding for update t1 set t1.a=(select a from tmp1) using update t1 set t1.a=(select a from tmp1)",
-		"create global binding for update t1 set t1.a=1 where t1.a = (select a from tmp1) using update t1 set t1.a=1 where t1.a = (select a from tmp1)",
-		"create global binding for with cte1 as (select a from tmp1) update t1 set t1.a=1 where t1.a in (select a from cte1) using with cte1 as (select a from tmp1) update t1 set t1.a=1 where t1.a in (select a from cte1)",
-		"create global binding for delete from t1 where t1.a in (select a from tmp1) using delete from t1 where t1.a in (select a from tmp1)",
-		"create global binding for delete from t1 where t1.a = (select a from tmp1) using delete from t1 where t1.a = (select a from tmp1)",
-		"create global binding for delete t1 from t1,tmp1 using delete t1 from t1,tmp1",
-	}
-	genLocalTemporarySQL := func(sql string) string {
-		return strings.Replace(sql, "tmp1", "tmp2", -1)
-	}
-	for _, query := range queries {
-		localSQL := genLocalTemporarySQL(query)
-		queries = append(queries, localSQL)
-	}
-
-	for _, q := range queries {
-		tk.MustGetErrCode(q, errno.ErrOptOnTemporaryTable)
-	}
 }
