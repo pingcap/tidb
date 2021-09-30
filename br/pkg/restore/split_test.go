@@ -31,7 +31,7 @@ type TestClient struct {
 	regions         map[uint64]*restore.RegionInfo
 	regionsInfo     *core.RegionsInfo // For now it's only used in ScanRegions
 	nextRegionID    uint64
-	injectInScatter func() error
+	injectInScatter func(*restore.RegionInfo) error
 
 	scattered map[uint64]bool
 }
@@ -51,7 +51,7 @@ func NewTestClient(
 		regionsInfo:     regionsInfo,
 		nextRegionID:    nextRegionID,
 		scattered:       map[uint64]bool{},
-		injectInScatter: func() error { return nil },
+		injectInScatter: func(*restore.RegionInfo) error { return nil },
 	}
 }
 
@@ -170,12 +170,7 @@ func (c *TestClient) BatchSplitRegions(
 }
 
 func (c *TestClient) ScatterRegion(ctx context.Context, regionInfo *restore.RegionInfo) error {
-	if _, ok := c.scattered[regionInfo.Region.Id]; !ok {
-		c.scattered[regionInfo.Region.Id] = false
-		return status.Errorf(codes.Unknown, "region %d is not fully replicated", regionInfo.Region.Id)
-	}
-	c.scattered[regionInfo.Region.Id] = true
-	return c.injectInScatter()
+	return c.injectInScatter(regionInfo)
 }
 
 func (c *TestClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
@@ -212,17 +207,12 @@ func (c *TestClient) SetStoresLabel(ctx context.Context, stores []uint64, labelK
 	return nil
 }
 
-func (c *TestClient) checkScatter(check *C) {
-	regions := c.GetAllRegions()
+func checkScatter(check *C, regions map[uint64]*restore.RegionInfo, scattered map[uint64]bool) {
 	for key := range regions {
-		if !c.scattered[key] {
+		if !scattered[key] {
 			check.Fatalf("region %d has not been scattered: %#v", key, regions[key])
 		}
 	}
-}
-
-func (c *TestClient) cancelInjectError() {
-	c.injectInScatter = func() error { return nil }
 }
 
 type assertRetryNotThanBackoffer struct {
@@ -278,6 +268,15 @@ func TestScatterFinishInTime(t *testing.T) {
 	for _, info := range regions {
 		regionInfos = append(regionInfos, info)
 	}
+	failed := map[uint64]int{}
+	client.injectInScatter = func(r *restore.RegionInfo) error {
+		failed[r.Region.Id] = failed[r.Region.Id] + 1
+		if failed[r.Region.Id] > 7 {
+			return nil
+		}
+		return status.Errorf(codes.Unknown, "region %d is not fully replicated", r.Region.Id)
+	}
+
 	// When using a exponential backoffer, if we try to backoff more than 40 times in 10 regions,
 	// it would cost time unacceptable.
 	regionSplitter.ScatterRegionsWithBackoffer(ctx,
@@ -315,8 +314,17 @@ func (s *testRangeSuite) TestSplitAndScatter(c *C) {
 	for _, info := range regions {
 		regionInfos = append(regionInfos, info)
 	}
+	scattered := map[uint64]bool{}
+	client.injectInScatter = func(regionInfo *restore.RegionInfo) error {
+		if _, ok := scattered[regionInfo.Region.Id]; !ok {
+			scattered[regionInfo.Region.Id] = false
+			return status.Errorf(codes.Unknown, "region %d is not fully replicated", regionInfo.Region.Id)
+		}
+		scattered[regionInfo.Region.Id] = true
+		return nil
+	}
 	regionSplitter.ScatterRegions(ctx, regionInfos)
-	client.checkScatter(c)
+	checkScatter(c, client.GetAllRegions(), scattered)
 }
 
 // region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
