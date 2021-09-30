@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -107,6 +108,18 @@ func (m *code2ErrClassMap) Put(key string, err ErrClass) {
 	m.data.Store(key, err)
 }
 
+var registerFinish uint32
+
+// RegisterFinish makes the register of new error panic.
+// The use pattern should be register all the errors during initialization, and then call RegisterFinish.
+func RegisterFinish() {
+	atomic.StoreUint32(&registerFinish, 1)
+}
+
+func frozen() bool {
+	return atomic.LoadUint32(&registerFinish) != 0
+}
+
 // RegisterErrorClass registers new error class for terror.
 func RegisterErrorClass(classCode int, desc string) ErrClass {
 	errClass := ErrClass(classCode)
@@ -148,6 +161,9 @@ func (ec ErrClass) NotEqualClass(err error) bool {
 }
 
 func (ec ErrClass) initError(code ErrCode) string {
+	if frozen() {
+		panic("register error after initialized is prohibited")
+	}
 	clsMap, ok := ErrClassToMySQLCodes[ec]
 	if !ok {
 		clsMap = make(map[ErrCode]struct{})
