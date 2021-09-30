@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -558,13 +559,10 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 
 	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {
 		var versionStr string
-		if err = tx.QueryRowContext(ctx, "SELECT version()").Scan(&versionStr); err != nil {
+		if versionStr, err = version.FetchVersion(ctx, tx); err != nil {
 			return err
 		}
-		tidbVersion, err := version.ExtractTiDBVersion(versionStr)
-		if err != nil {
-			return err
-		}
+		serverInfo := version.ParseServerInfo(versionStr)
 
 		rows, e := tx.Query(`
 			SELECT table_name, column_name, column_type, extra
@@ -621,7 +619,7 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 		}
 		// shard_row_id/auto random is only available after tidb v4.0.0
 		// `show table next_row_id` is also not available before tidb v4.0.0
-		if tidbVersion.Major < 4 {
+		if serverInfo.ServerType != version.ServerTypeTiDB || serverInfo.ServerVersion.Major < 4 {
 			return nil
 		}
 
@@ -701,7 +699,7 @@ type TableAutoIDInfo struct {
 	Type   string
 }
 
-func FetchTableAutoIDInfos(ctx context.Context, exec common.QueryExecutor, tableName string) ([]*TableAutoIDInfo, error) {
+func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableName string) ([]*TableAutoIDInfo, error) {
 	rows, e := exec.QueryContext(ctx, fmt.Sprintf("SHOW TABLE %s NEXT_ROW_ID", tableName))
 	if e != nil {
 		return nil, errors.Trace(e)

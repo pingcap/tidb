@@ -109,7 +109,8 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 		Columns: columns,
 	}.Init(b.sctx, &property.StatsInfo{}, 0)
 	p.SetSchema(schema)
-	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
+	switch strings.ToUpper(p.Table.Name.O) {
+	case infoschema.ClusterTableSlowLog:
 		extractor := &SlowQueryExtractor{}
 		extractor.Desc = tblScan.Desc
 		if b.ranges != nil {
@@ -119,6 +120,8 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 			}
 		}
 		p.Extractor = extractor
+	case infoschema.ClusterTableStatementsSummary, infoschema.ClusterTableStatementsSummaryHistory:
+		p.Extractor = &StatementsSummaryExtractor{}
 	}
 	return p, nil
 }
