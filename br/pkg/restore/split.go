@@ -300,6 +300,12 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 			if err == nil {
 				// it is safe accroding to the Go language spec.
 				delete(newRegionSet, region.Region.Id)
+			} else if !pdErrorCanRetry(err) {
+				log.Warn("scatter meet error cannot be retried, skipping",
+					logutil.ShortError(err),
+					logutil.Region(region.Region),
+				)
+				delete(newRegionSet, region.Region.Id)
 			}
 			errs = multierr.Append(errs, err)
 		}
