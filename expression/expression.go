@@ -1207,11 +1207,6 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
 	if storeType == kv.TiFlash {
 		switch expr.GetType().Tp {
-		case mysql.TypeDuration:
-			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Duration type"))
-			}
-			return false
 		case mysql.TypeEnum:
 			if pc.sc.InExplainStmt {
 				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Enum type"))
