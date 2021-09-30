@@ -53,8 +53,8 @@ type Column struct {
 	DefaultExpr ast.ExprNode
 }
 
-// ErrorConverter is the a function to convert one error into another
-type ErrorConverter func(error) error
+// errorConverter is the a function to convert one error into another
+type errorConverter func(error) error
 
 // String implements fmt.Stringer interface.
 func (c *Column) String() string {
@@ -292,7 +292,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 // If the handle of err is changed latter, the behavior of forceIgnoreTruncate also need to change.
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
 // The converter will convert the error type before possibly turns the error into warnings in HandleTruncate
-func CastValueWithErrorConvert(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool, converter ErrorConverter) (casted types.Datum, err error) {
+func CastValueWithErrorConvert(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool, converter errorConverter) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.

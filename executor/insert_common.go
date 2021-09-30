@@ -324,16 +324,16 @@ func (e *InsertValues) convertErr(col *table.Column, val *types.Datum, rowIdx in
 }
 
 func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
-	convertedErr := e.convertErr(col, val, rowIdx, err)
-	if convertedErr == nil {
+	err = e.convertErr(col, val, rowIdx, err)
+	if err == nil {
 		return nil
 	}
 
 	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
-		return convertedErr
+		return err
 	}
 	// TODO: should not filter all types of errors here.
-	e.handleWarning(convertedErr)
+	e.handleWarning(err)
 	return nil
 }
 

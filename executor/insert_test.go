@@ -1757,6 +1757,7 @@ func (s *testSuite13) TestIssue26762(c *C) {
 	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
 }
 
+// make sure to return compatible warnings for insert statement when provided value overflows
 func (s *testSuite13) TestIssue26361(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
