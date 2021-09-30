@@ -28,7 +28,8 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check test
+dev: checklist check explaintest devgotest gogenerate br_unit_test
+	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
@@ -99,6 +100,29 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	bash <(curl -s https://codecov.io/bash)
 endif
 
+devgotest: failpoint-enable
+ifeq ("$(TRAVIS_COVERAGE)", "1")
+	@echo "Running in TRAVIS_COVERAGE mode."
+	$(GO) get github.com/go-playground/overalls
+	@export log_level=info; \
+	$(OVERALLS) -project=github.com/pingcap/tidb \
+			-covermode=count \
+			-ignore='.git,br,vendor,cmd,docs,tests,LICENSES' \
+			-concurrency=4 \
+			-- -coverpkg=./... \
+			|| { $(FAILPOINT_DISABLE); exit 1; }
+else
+# grep regex: Filter out all tidb logs starting with:
+# - '[20' (like [2021/09/15 ...] [INFO]..)
+# - 'PASS:' to ignore passed tests
+# - 'ok ' to ignore passed directories
+	@echo "Running in native mode."
+	@export log_level=info; export TZ='Asia/Shanghai'; \
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
+endif
+	@$(FAILPOINT_DISABLE)
+
+
 gotest: failpoint-enable
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
@@ -113,9 +137,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 else
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -v -cover $(PACKAGES_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
-	@echo "timeout-check"
-	grep 'PASS:' gotest.log | go run tools/check/check-timeout.go || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 
@@ -134,6 +156,13 @@ ifeq ($(TARGET), "")
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server tidb-server/main.go
 else
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
+endif
+
+server_debug:
+ifeq ($(TARGET), "")
+	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-debug tidb-server/main.go
+else
+	CGO_ENABLED=1 $(GOBUILD) -gcflags="all=-N -l" $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
 endif
 
 server_check:
@@ -288,6 +317,7 @@ build_for_br_integration_test:
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
+	@export TZ='Asia/Shanghai';
 	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -tags leak $(ARGS) || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 

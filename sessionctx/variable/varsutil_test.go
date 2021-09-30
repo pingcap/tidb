@@ -113,7 +113,7 @@ func assertFieldsGreaterThanZero(t *testing.T, val reflect.Value) {
 
 func TestVarsutil(t *testing.T) {
 	v := NewSessionVars()
-	v.GlobalVarsAccessor = NewMockGlobalAccessor()
+	v.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 
 	err := SetSessionSystemVar(v, "autocommit", "1")
 	require.NoError(t, err)
@@ -510,7 +510,7 @@ func TestSetOverflowBehave(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	v := NewSessionVars()
-	v.GlobalVarsAccessor = NewMockGlobalAccessor()
+	v.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
 
 	testCases := []struct {
@@ -625,6 +625,8 @@ func TestValidate(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
+		// copy iterator variable into a new variable, see issue #27779
+		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeSession)
@@ -640,7 +642,7 @@ func TestValidate(t *testing.T) {
 
 func TestValidateStmtSummary(t *testing.T) {
 	v := NewSessionVars()
-	v.GlobalVarsAccessor = NewMockGlobalAccessor()
+	v.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
 
 	testCases := []struct {
@@ -682,6 +684,8 @@ func TestValidateStmtSummary(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
+		// copy iterator variable into a new variable, see issue #27779
+		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, tc.scope)
@@ -696,7 +700,7 @@ func TestValidateStmtSummary(t *testing.T) {
 
 func TestConcurrencyVariables(t *testing.T) {
 	vars := NewSessionVars()
-	vars.GlobalVarsAccessor = NewMockGlobalAccessor()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 
 	wdConcurrency := 2
 	require.Equal(t, ConcurrencyUnset, vars.windowConcurrency)
