@@ -351,12 +351,24 @@ func (b *Bundle) Reset(ruleIndex int, newIDs []int64) *Bundle {
 	b.Index = ruleIndex
 	b.Override = true
 	newRules := make([]*Rule, 0, len(basicRules)*len(newIDs))
-	for _, newID := range newIDs {
+	for i, newID := range newIDs {
+		// rule.id should be distinguished with each other, otherwise it will be de-duplicated in pd http api.
+		var ruleID string
+		if ruleIndex == RuleIndexPartition {
+			ruleID = "partition_rule_" + strconv.FormatInt(newID, 10)
+		} else {
+			if i == 0 {
+				ruleID = "table_rule_" + strconv.FormatInt(newID, 10)
+			} else {
+				ruleID = "partition_rule_" + strconv.FormatInt(newID, 10)
+			}
+		}
 		// Involve all the table level objects.
 		startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
 		endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
 		for _, rule := range basicRules {
 			clone := rule.Clone()
+			clone.ID = ruleID
 			clone.GroupID = b.ID
 			clone.StartKeyHex = startKey
 			clone.EndKeyHex = endKey
