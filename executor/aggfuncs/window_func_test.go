@@ -15,11 +15,12 @@
 package aggfuncs_test
 
 import (
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
@@ -54,11 +55,11 @@ type windowMemTest struct {
 	updateMemDeltaGens updateMemDeltaGens
 }
 
-func (s *testSuite) testWindowFunc(c *C, p windowTest) {
+func (s *testSuite) testWindowFunc(t *testing.T, p windowTest) {
 	srcChk := p.genSrcChk()
 
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, p.args, false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	finalFunc := aggfuncs.BuildWindowFunctions(s.ctx, desc, 0, p.orderByCols)
 	finalPr, _ := finalFunc.AllocPartialResult()
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
@@ -66,40 +67,40 @@ func (s *testSuite) testWindowFunc(c *C, p windowTest) {
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
-	c.Assert(p.numRows, Equals, len(p.results))
+	require.Equal(t, len(p.results), p.numRows)
 	for i := 0; i < p.numRows; i++ {
 		err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 		result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[i])
-		c.Assert(err, IsNil)
-		c.Assert(result, Equals, 0)
+		require.NoError(t, err)
+		require.Equal(t, 0, result)
 		resultChk.Reset()
 	}
 	finalFunc.ResetPartialResult(finalPr)
 }
 
-func (s *testSuite) testWindowAggMemFunc(c *C, p windowMemTest) {
+func (s *testSuite) testWindowAggMemFunc(t *testing.T, p windowMemTest) {
 	srcChk := p.windowTest.genSrcChk()
 
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.windowTest.funcName, p.windowTest.args, false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	finalFunc := aggfuncs.BuildWindowFunctions(s.ctx, desc, 0, p.windowTest.orderByCols)
 	finalPr, memDelta := finalFunc.AllocPartialResult()
-	c.Assert(memDelta, Equals, p.allocMemDelta)
+	require.Equal(t, p.allocMemDelta, memDelta)
 
 	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.windowTest.dataType)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	i := 0
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		memDelta, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
-		c.Assert(err, IsNil)
-		c.Assert(memDelta, Equals, updateMemDeltas[i])
+		require.NoError(t, err)
+		require.Equal(t, updateMemDeltas[i], memDelta)
 		i++
 	}
 }
@@ -166,7 +167,7 @@ func buildWindowMemTesterWithArgs(funcName string, tp byte, args []expression.Ex
 	return pt
 }
 
-func (s *testSuite) TestWindowFunctions(c *C) {
+func (s *testSuite) TestWindowFunctions(t *testing.T) {
 	tests := []windowTest{
 		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 1, 1, 1),
 		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 0, 2, 1, 1),
@@ -203,6 +204,6 @@ func (s *testSuite) TestWindowFunctions(c *C) {
 		buildWindowTester(ast.WindowFuncRowNumber, mysql.TypeLonglong, 0, 0, 4, 1, 2, 3, 4),
 	}
 	for _, test := range tests {
-		s.testWindowFunc(c, test)
+		s.testWindowFunc(t, test)
 	}
 }

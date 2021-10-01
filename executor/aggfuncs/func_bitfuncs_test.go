@@ -15,24 +15,25 @@
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 )
 
-func (s *testSuite) TestMergePartialResult4BitFuncs(c *C) {
+func (s *testSuite) TestMergePartialResult4BitFuncs(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 5, 0, 0, 0),
 		buildAggTester(ast.AggFuncBitOr, mysql.TypeLonglong, 5, 7, 7, 7),
 		buildAggTester(ast.AggFuncBitXor, mysql.TypeLonglong, 5, 4, 5, 1),
 	}
 	for _, test := range tests {
-		s.testMergePartialResult(c, test)
+		s.testMergePartialResult(t, test)
 	}
 }
 
-func (s *testSuite) TestMemBitFunc(c *C) {
+func (s *testSuite) TestMemBitFunc(t *testing.T) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4BitFuncSize, defaultUpdateMemDeltaGens, false),
@@ -42,6 +43,6 @@ func (s *testSuite) TestMemBitFunc(c *C) {
 			aggfuncs.DefPartialResult4BitFuncSize, defaultUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {
-		s.testAggMemFunc(c, test)
+		s.testAggMemFunc(t, test)
 	}
 }

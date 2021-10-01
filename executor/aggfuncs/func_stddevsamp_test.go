@@ -15,25 +15,26 @@
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 )
 
-func (s *testSuite) TestMergePartialResult4Stddevsamp(c *C) {
+func (s *testSuite) TestMergePartialResult4Stddevsamp(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncStddevSamp, mysql.TypeDouble, 5, 1.5811388300841898, 1, 1.407885953173359),
 	}
 	for _, test := range tests {
-		s.testMergePartialResult(c, test)
+		s.testMergePartialResult(t, test)
 	}
 }
 
-func (s *testSuite) TestStddevsamp(c *C) {
+func (s *testSuite) TestStddevsamp(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncStddevSamp, mysql.TypeDouble, 5, nil, 1.5811388300841898),
 	}
 	for _, test := range tests {
-		s.testAggFunc(c, test)
+		s.testAggFunc(t, test)
 	}
 }

@@ -15,13 +15,14 @@
 package aggfuncs_test
 
 import (
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
 type testSlice []int
@@ -30,7 +31,7 @@ func (a testSlice) Len() int           { return len(a) }
 func (a testSlice) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a testSlice) Less(i, j int) bool { return a[i] < a[j] }
 
-func (s *testSuite) TestPercentile(c *C) {
+func (s *testSuite) TestPercentile(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeLonglong, 5, nil, 2),
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeFloat, 5, nil, 2.0),
@@ -40,7 +41,7 @@ func (s *testSuite) TestPercentile(c *C) {
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeDuration, 5, nil, types.Duration{Duration: time.Duration(2)}),
 	}
 	for _, test := range tests {
-		s.testAggFunc(c, test)
+		s.testAggFunc(t, test)
 	}
 
 	data := testSlice{}
@@ -49,6 +50,6 @@ func (s *testSuite) TestPercentile(c *C) {
 	}
 	for i := 0; i < 10; i++ {
 		index := aggfuncs.PercentileForTesting(data, 100)
-		c.Assert(28, Equals, data[index])
+		require.Equal(t, 28, data[index])
 	}
 }

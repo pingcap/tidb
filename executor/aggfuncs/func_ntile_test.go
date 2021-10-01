@@ -15,14 +15,15 @@
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 
 	"github.com/pingcap/tidb/executor/aggfuncs"
 )
 
-func (s *testSuite) TestMemNtile(c *C) {
+func (s *testSuite) TestMemNtile(t *testing.T) {
 	tests := []windowMemTest{
 		buildWindowMemTester(ast.WindowFuncNtile, mysql.TypeLonglong, 1, 1, 1,
 			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens),
@@ -32,6 +33,6 @@ func (s *testSuite) TestMemNtile(c *C) {
 			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens),
 	}
 	for _, test := range tests {
-		s.testWindowAggMemFunc(c, test)
+		s.testWindowAggMemFunc(t, test)
 	}
 }

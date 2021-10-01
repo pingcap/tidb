@@ -15,7 +15,8 @@
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -23,25 +24,25 @@ import (
 	"github.com/pingcap/tidb/util/set"
 )
 
-func (s *testSuite) TestMergePartialResult4Varpop(c *C) {
+func (s *testSuite) TestMergePartialResult4Varpop(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, 5, types.NewFloat64Datum(float64(2)), types.NewFloat64Datum(float64(2)/float64(3)), types.NewFloat64Datum(float64(59)/float64(8)-float64(19*19)/float64(8*8))),
 	}
 	for _, test := range tests {
-		s.testMergePartialResult(c, test)
+		s.testMergePartialResult(t, test)
 	}
 }
 
-func (s *testSuite) TestVarpop(c *C) {
+func (s *testSuite) TestVarpop(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, 5, nil, types.NewFloat64Datum(float64(2))),
 	}
 	for _, test := range tests {
-		s.testAggFunc(c, test)
+		s.testAggFunc(t, test)
 	}
 }
 
-func (s *testSuite) TestMemVarpop(c *C) {
+func (s *testSuite) TestMemVarpop(t *testing.T) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4VarPopFloat64Size, defaultUpdateMemDeltaGens, false),
@@ -49,6 +50,6 @@ func (s *testSuite) TestMemVarpop(c *C) {
 			aggfuncs.DefPartialResult4VarPopDistinctFloat64Size+set.DefFloat64SetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 	}
 	for _, test := range tests {
-		s.testAggMemFunc(c, test)
+		s.testAggMemFunc(t, test)
 	}
 }

@@ -15,9 +15,9 @@
 package aggfuncs_test
 
 import (
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 
@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func (s *testSuite) TestMergePartialResult4FirstRow(c *C) {
+func (s *testSuite) TestMergePartialResult4FirstRow(t *testing.T) {
 	elems := []string{"e", "d", "c", "b", "a"}
 	enumC, _ := types.ParseEnumName(elems, "c", mysql.DefaultCollationName)
 	enumE, _ := types.ParseEnumName(elems, "e", mysql.DefaultCollationName)
@@ -48,11 +48,11 @@ func (s *testSuite) TestMergePartialResult4FirstRow(c *C) {
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeSet, 5, setE, setED, setE),
 	}
 	for _, test := range tests {
-		s.testMergePartialResult(c, test)
+		s.testMergePartialResult(t, test)
 	}
 }
 
-func (s *testSuite) TestMemFirstRow(c *C) {
+func (s *testSuite) TestMemFirstRow(t *testing.T) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4FirstRowIntSize, defaultUpdateMemDeltaGens, false),
@@ -76,7 +76,7 @@ func (s *testSuite) TestMemFirstRow(c *C) {
 			aggfuncs.DefPartialResult4FirstRowSetSize, firstRowUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {
-		s.testAggMemFunc(c, test)
+		s.testAggMemFunc(t, test)
 	}
 }
 

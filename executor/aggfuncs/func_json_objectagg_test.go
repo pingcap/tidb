@@ -15,7 +15,8 @@
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -23,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 )
 
-func (s *testSuite) TestMergePartialResult4JsonObjectagg(c *C) {
+func (s *testSuite) TestMergePartialResult4JsonObjectagg(t *testing.T) {
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
@@ -64,11 +65,11 @@ func (s *testSuite) TestMergePartialResult4JsonObjectagg(c *C) {
 	}
 
 	for _, test := range tests {
-		s.testMultiArgsMergePartialResult(c, test)
+		s.testMultiArgsMergePartialResult(t, test)
 	}
 }
 
-func (s *testSuite) TestJsonObjectagg(c *C) {
+func (s *testSuite) TestJsonObjectagg(t *testing.T) {
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
@@ -101,11 +102,11 @@ func (s *testSuite) TestJsonObjectagg(c *C) {
 	}
 
 	for _, test := range tests {
-		s.testMultiArgsAggFunc(c, test)
+		s.testMultiArgsAggFunc(t, test)
 	}
 }
 
-func (s *testSuite) TestMemJsonObjectagg(c *C) {
+func (s *testSuite) TestMemJsonObjectagg(t *testing.T) {
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeDate}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
@@ -146,7 +147,7 @@ func (s *testSuite) TestMemJsonObjectagg(c *C) {
 			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg+aggfuncs.DefMapStringInterfaceBucketSize, defaultMultiArgsMemDeltaGens, false),
 		}
 		for _, test := range tests {
-			s.testMultiArgsAggMemFunc(c, test)
+			s.testMultiArgsAggMemFunc(t, test)
 		}
 	}
 }

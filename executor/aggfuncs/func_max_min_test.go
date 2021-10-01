@@ -16,6 +16,7 @@ package aggfuncs_test
 
 import (
 	"fmt"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, isMax bool) (memDeltas []int64, err error) {
@@ -93,7 +95,7 @@ func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 	return maxMinUpdateMemDeltaGens(srcChk, dataType, false)
 }
 
-func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
+func (s *testSuite) TestMergePartialResult4MaxMin(t *testing.T) {
 	elems := []string{"e", "d", "c", "b", "a"}
 	enumA, _ := types.ParseEnum(elems, "a", mysql.DefaultCollationName)
 	enumC, _ := types.ParseEnum(elems, "c", mysql.DefaultCollationName)
@@ -130,11 +132,11 @@ func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeSet, 5, setC, setC, setC),
 	}
 	for _, test := range tests {
-		s.testMergePartialResult(c, test)
+		s.testMergePartialResult(t, test)
 	}
 }
 
-func (s *testSuite) TestMaxMin(c *C) {
+func (s *testSuite) TestMaxMin(t *testing.T) {
 	unsignedType := types.NewFieldType(mysql.TypeLonglong)
 	unsignedType.Flag |= mysql.UnsignedFlag
 	tests := []aggTest{
@@ -159,11 +161,11 @@ func (s *testSuite) TestMaxMin(c *C) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, nil, json.CreateBinary(int64(0))),
 	}
 	for _, test := range tests {
-		s.testAggFunc(c, test)
+		s.testAggFunc(t, test)
 	}
 }
 
-func (s *testSuite) TestMemMaxMin(c *C) {
+func (s *testSuite) TestMemMaxMin(t *testing.T) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4MaxMinIntSize, defaultUpdateMemDeltaGens, false),
@@ -212,7 +214,7 @@ func (s *testSuite) TestMemMaxMin(c *C) {
 			aggfuncs.DefPartialResult4MaxMinSetSize, minUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {
-		s.testAggMemFunc(c, test)
+		s.testAggMemFunc(t, test)
 	}
 }
 
@@ -321,17 +323,17 @@ func (s *testSuite) TestMaxSlidingWindow(c *C) {
 	}
 }
 
-func (s *testSuite) TestDequeReset(c *C) {
+func (s *testSuite) TestDequeReset(t *testing.T) {
 	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})
 	deque.PushBack(0, 12)
 	deque.Reset()
-	c.Assert(len(deque.Items), Equals, 0)
-	c.Assert(deque.IsMax, Equals, true)
+	require.Equal(t, 0, len(deque.Items))
+	require.True(t, deque.IsMax)
 }
 
-func (s *testSuite) TestDequePushPop(c *C) {
+func (s *testSuite) TestDequePushPop(t *testing.T) {
 	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})
@@ -340,28 +342,28 @@ func (s *testSuite) TestDequePushPop(c *C) {
 	for i := 0; i < times; i++ {
 		if i != 0 {
 			front, isEnd := deque.Front()
-			c.Assert(isEnd, Equals, false)
-			c.Assert(front.Item, Equals, 0)
-			c.Assert(front.Idx, Equals, uint64(0))
+			require.False(t, isEnd)
+			require.Equal(t, 0, front.Item)
+			require.Equal(t, uint64(0), front.Idx)
 		}
 		deque.PushBack(uint64(i), i)
 		back, isEnd := deque.Back()
-		c.Assert(isEnd, Equals, false)
-		c.Assert(back.Item, Equals, i)
-		c.Assert(back.Idx, Equals, uint64(i))
+		require.False(t, isEnd)
+		require.Equal(t, i, back.Item)
+		require.Equal(t, uint64(i), back.Idx)
 	}
 
 	// pops element from back of deque
 	for i := 0; i < times; i++ {
 		pair, isEnd := deque.Back()
-		c.Assert(isEnd, Equals, false)
-		c.Assert(pair.Item, Equals, times-i-1)
-		c.Assert(pair.Idx, Equals, uint64(times-i-1))
+		require.False(t, isEnd)
+		require.Equal(t, times-i-1, pair.Item)
+		require.Equal(t, uint64(times-i-1), pair.Idx)
 		front, isEnd := deque.Front()
-		c.Assert(isEnd, Equals, false)
-		c.Assert(front.Item, Equals, 0)
-		c.Assert(front.Idx, Equals, uint64(0))
+		require.False(t, isEnd)
+		require.Equal(t, 0, front.Item)
+		require.Equal(t, uint64(0), front.Idx)
 		err := deque.PopBack()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 }
