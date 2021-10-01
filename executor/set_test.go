@@ -1214,8 +1214,8 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	}()
 
 	// test for tidb_enable_noop_functions
-	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
-	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 
 	_, err := tk.Exec(`select get_lock('lock1', 2);`)
 	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
@@ -1224,15 +1224,15 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 
 	// change session var to 1
 	tk.MustExec(`set tidb_enable_noop_functions=1;`)
-	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("1"))
-	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 	tk.MustQuery(`select get_lock("lock", 10)`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select release_lock("lock")`).Check(testkit.Rows("1"))
 
 	// restore to 0
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
-	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
-	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
+	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 
 	_, err = tk.Exec(`select get_lock('lock2', 10);`)
 	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
@@ -1245,11 +1245,11 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	_, err = tk.Exec(`set tidb_enable_noop_functions=11`)
 	c.Assert(err, NotNil)
 	tk.MustExec(`set tidb_enable_noop_functions="off";`)
-	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 	tk.MustExec(`set tidb_enable_noop_functions="on";`)
-	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("ON"))
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
-	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 
 	_, err = tk.Exec("SET SESSION tx_read_only = 1")
 	c.Assert(terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
