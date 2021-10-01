@@ -25,7 +25,10 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	newtestkit "github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -75,8 +78,10 @@ func TearDownTest(t *testing.T, store kv.Storage, dom *domain.Domain) {
 	require.NoError(t, err)
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionPushDown(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionPushDown(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_push_down")
 	tk.MustExec("use list_push_down")
 	tk.MustExec("drop table if exists tlist")
@@ -94,11 +99,12 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionPushDown(c *C) {
 		SQL  string
 		Plan []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
+	integrationPartitionSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
