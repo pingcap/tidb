@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -850,7 +851,6 @@ func (s *testSessionSuite) TestRetryGlobalTempTable(c *C) {
 
 func (s *testSessionSuite) TestRetryLocalTempTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	tk.MustExec("drop table if exists normal_table")
 	tk.MustExec("create table normal_table(a int primary key, b int)")
 	defer tk.MustExec("drop table if exists normal_table")
@@ -3811,9 +3811,11 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@div_precision_increment;").Check(testkit.Rows("4"))
 
-	tk.Se.GetSessionVars().SetSystemVar("sql_auto_is_null", "0")
+	tk.Se.GetSessionVars().SetSystemVar("sql_auto_is_null", "OFF")
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "ON")
 	tk.MustQuery("SELECT /*+ SET_VAR(sql_auto_is_null=1) */ @@sql_auto_is_null;").Check(testkit.Rows("1"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "OFF")
 	tk.MustQuery("SELECT @@sql_auto_is_null;").Check(testkit.Rows("0"))
 
 	tk.Se.GetSessionVars().SetSystemVar("sort_buffer_size", "262144")
@@ -3973,7 +3975,7 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	defer failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil)
+	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil, nil, nil)
 	c.Assert(err.Error(), Equals, "context canceled")
 }
 
@@ -4771,7 +4773,6 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_temporary_table=on")
 	tk.MustExec("create global temporary table t (c1 int, c2 varchar(512)) on commit delete rows")
-	tk.MustExec("set tidb_enable_noop_functions=on")
 	tk.MustExec("create temporary table tl (c1 int, c2 varchar(512))")
 
 	tk.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows(strconv.Itoa(variable.DefTMPTableSize)))
@@ -4817,9 +4818,9 @@ func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	// variable 'tidb_enable_global_temporary_table' should not be seen when show variables
-	tk.MustQuery("show variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
-	tk.MustQuery("show global variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
+	// variable 'tidb_enable_global_temporary_table' should be seen when show variables
+	tk.MustQuery("show variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows("tidb_enable_global_temporary_table OFF"))
+	tk.MustQuery("show global variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows("tidb_enable_global_temporary_table OFF"))
 
 	// variable 'tidb_enable_global_temporary_table' is turned off by default
 	tk.MustQuery("select @@global.tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
@@ -5029,7 +5030,6 @@ func (s *testSessionSuite) TestAuthPluginForUser(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 (u, v) values(11, 101)")
@@ -5091,7 +5091,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableInsert(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableInsertIgnore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 values(1, 11, 101)")
@@ -5133,7 +5132,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableInsertIgnore(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 values(1, 11, 101)")
@@ -5176,7 +5174,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(c *
 
 func (s *testSessionSuite) TestLocalTemporaryTableReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 values(1, 11, 101)")
@@ -5208,7 +5205,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableReplace(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 
 	tk.MustExec("create temporary table tmp1 (id int primary key, u int unique, v int)")
@@ -5301,7 +5297,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableDelete(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTablePointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 values(1, 11, 101)")
@@ -5340,7 +5335,6 @@ func (s *testSessionSuite) TestLocalTemporaryTablePointGet(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableBatchPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 values(1, 11, 101)")
@@ -5380,7 +5374,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableBatchPointGet(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 values" +
@@ -5472,7 +5465,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
 
 func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
 	tk.MustExec("create temporary table tmp1 (id int primary key, u int unique, v int)")
 
@@ -5660,6 +5652,60 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 	}
 }
 
+func (s *testSessionSuite) TestTemporaryTableInterceptor(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
+	tbl, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tmp1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().TempTableType, Equals, model.TempTableLocal)
+	tblID := tbl.Meta().ID
+
+	// prepare a kv pair for temporary table
+	k := append(tablecodec.EncodeTablePrefix(tblID), 1)
+	err = tk.Se.GetSessionVars().TemporaryTableData.SetTableKey(tblID, k, []byte("v1"))
+	c.Assert(err, IsNil)
+
+	initTxnFuncs := []func() error{
+		func() error {
+			tk.Se.PrepareTSFuture(context.Background())
+			return nil
+		},
+		func() error {
+			return tk.Se.NewTxn(context.Background())
+		},
+		func() error {
+			return tk.Se.NewStaleTxnWithStartTS(context.Background(), 0)
+		},
+		func() error {
+			return tk.Se.InitTxnWithStartTS(0)
+		},
+	}
+
+	for _, initFunc := range initTxnFuncs {
+		err := initFunc()
+		c.Assert(err, IsNil)
+
+		txn, err := tk.Se.Txn(true)
+		c.Assert(err, IsNil)
+
+		val, err := txn.Get(context.Background(), k)
+		c.Assert(err, IsNil)
+		c.Assert(val, BytesEquals, []byte("v1"))
+
+		val, err = txn.GetSnapshot().Get(context.Background(), k)
+		c.Assert(err, IsNil)
+		c.Assert(val, BytesEquals, []byte("v1"))
+
+		tk.Se.RollbackTxn(context.Background())
+	}
+
+	// Also check GetSnapshotWithTS
+	snap := tk.Se.GetSnapshotWithTS(0)
+	val, err := snap.Get(context.Background(), k)
+	c.Assert(err, IsNil)
+	c.Assert(val, BytesEquals, []byte("v1"))
+}
+
 func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
 	initAndCloseTiDB := func() {
 		store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
@@ -5677,21 +5723,23 @@ func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
 	runtime.ReadMemStats(&memStat)
 	oldHeapInUse := memStat.HeapInuse
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
 		initAndCloseTiDB()
 	}
 
 	runtime.GC()
 	runtime.ReadMemStats(&memStat)
-	c.Assert(memStat.HeapInuse-oldHeapInUse, Less, uint64(150*units.MiB))
+	// before the fix, initAndCloseTiDB for 20 times will cost 900 MB memory, so we test for a quite loose upper bound.
+	c.Assert(memStat.HeapInuse-oldHeapInUse, Less, uint64(300*units.MiB))
 }
 
 func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_read_staleness='-5s'")
-	err := tk.ExecToErr("set @@tidb_read_staleness='-5'")
+	tk.MustExec("set @@tidb_read_staleness='-5'")
+	err := tk.ExecToErr("set @@tidb_read_staleness='-5s'")
 	c.Assert(err, NotNil)
 	err = tk.ExecToErr("set @@tidb_read_staleness='foo'")
 	c.Assert(err, NotNil)
 	tk.MustExec("set @@tidb_read_staleness=''")
+	tk.MustExec("set @@tidb_read_staleness='0'")
 }

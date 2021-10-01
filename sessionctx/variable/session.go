@@ -16,7 +16,6 @@ package variable
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -481,6 +480,7 @@ type SessionVars struct {
 
 	// mppTaskIDAllocator is used to allocate mpp task id for a session.
 	mppTaskIDAllocator struct {
+		mu     sync.Mutex
 		lastTS uint64
 		taskID int64
 	}
@@ -761,8 +761,8 @@ type SessionVars struct {
 	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
 	ConnectionInfo *ConnectionInfo
 
-	// use noop funcs or not
-	EnableNoopFuncs bool
+	// NoopFuncsMode allows OFF/ON/WARN values as 0/1/2.
+	NoopFuncsMode int
 
 	// StartTime is the start time of the last query.
 	StartTime time.Time
@@ -967,6 +967,8 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
 // startTs is different.
 func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
+	s.mppTaskIDAllocator.mu.Lock()
+	defer s.mppTaskIDAllocator.mu.Unlock()
 	if s.mppTaskIDAllocator.lastTS == startTS {
 		s.mppTaskIDAllocator.taskID++
 		return s.mppTaskIDAllocator.taskID
@@ -1147,7 +1149,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		enableIndexMerge:            false,
-		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
+		NoopFuncsMode:               TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
@@ -2300,67 +2302,4 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		}
 	}
 	return s.seekFactor
-}
-
-// TemporaryTableSnapshotReader can read the temporary table snapshot data
-type TemporaryTableSnapshotReader struct {
-	temporaryTableData TemporaryTableData
-}
-
-// Get gets the value for key k from snapshot.
-func (s *TemporaryTableSnapshotReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	if s.temporaryTableData == nil {
-		return nil, kv.ErrNotExist
-	}
-
-	v, err := s.temporaryTableData.Get(ctx, k)
-	if err != nil {
-		return v, err
-	}
-
-	if len(v) == 0 {
-		return nil, kv.ErrNotExist
-	}
-
-	return v, nil
-}
-
-// TemporaryTableSnapshotReader can read the temporary table snapshot data
-func (s *SessionVars) TemporaryTableSnapshotReader(tblInfo *model.TableInfo) *TemporaryTableSnapshotReader {
-	if tblInfo.TempTableType == model.TempTableGlobal {
-		return &TemporaryTableSnapshotReader{nil}
-	}
-	return &TemporaryTableSnapshotReader{s.TemporaryTableData}
-}
-
-// TemporaryTableTxnReader can read the temporary table txn data
-type TemporaryTableTxnReader struct {
-	memBuffer kv.MemBuffer
-	snapshot  *TemporaryTableSnapshotReader
-}
-
-// Get gets the value for key k from txn.
-func (s *TemporaryTableTxnReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	v, err := s.memBuffer.Get(ctx, k)
-	if err == nil {
-		if len(v) == 0 {
-			return nil, kv.ErrNotExist
-		}
-
-		return v, nil
-	}
-
-	if !kv.IsErrNotFound(err) {
-		return v, err
-	}
-
-	return s.snapshot.Get(ctx, k)
-}
-
-// TemporaryTableTxnReader can read the temporary table txn data
-func (s *SessionVars) TemporaryTableTxnReader(txn kv.Transaction, tblInfo *model.TableInfo) *TemporaryTableTxnReader {
-	return &TemporaryTableTxnReader{
-		memBuffer: txn.GetMemBuffer(),
-		snapshot:  s.TemporaryTableSnapshotReader(tblInfo),
-	}
 }

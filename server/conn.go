@@ -1,3 +1,17 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Copyright 2013 The Go-MySQL-Driver Authors. All rights reserved.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -18,20 +32,6 @@
 //
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
-
-// Copyright 2015 PingCAP, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
 
 package server
 
@@ -1709,22 +1709,20 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
+			if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
+				break
+			}
 			_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-			if allowTiFlashFallback && errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) && retryable {
-				// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
-				// server and fallback to TiKV.
-				warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
-				func() {
-					delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
-					defer func() {
-						cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
-					}()
-					_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
-				}()
-				if err != nil {
-					break
-				}
-			} else {
+			if !allowTiFlashFallback {
+				break
+			}
+			// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
+			// server and fallback to TiKV.
+			warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
+			delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+			_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
+			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
+			if err != nil {
 				break
 			}
 		}
