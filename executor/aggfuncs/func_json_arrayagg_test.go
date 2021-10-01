@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func (s *testSuite) TestMergePartialResult4JsonArrayagg(t *testing.T) {
+func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 
 	var tests []aggTest
@@ -59,11 +59,11 @@ func (s *testSuite) TestMergePartialResult4JsonArrayagg(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		s.testMergePartialResult(t, test)
+		testMergePartialResult(t, test)
 	}
 }
 
-func (s *testSuite) TestJsonArrayagg(t *testing.T) {
+func TestJsonArrayagg(t *testing.T) {
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 
 	var tests []aggTest
@@ -85,7 +85,7 @@ func (s *testSuite) TestJsonArrayagg(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		s.testAggFuncWithoutDistinct(t, test)
+		testAggFuncWithoutDistinct(t, test)
 	}
 }
 
@@ -126,7 +126,7 @@ func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 	return memDeltas, nil
 }
 
-func (s *testSuite) TestMemJsonArrayagg(t *testing.T) {
+func TestMemJsonArrayagg(t *testing.T) {
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 
 	var tests []aggMemTest
@@ -136,6 +136,6 @@ func (s *testSuite) TestMemJsonArrayagg(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		s.testAggMemFunc(t, test)
+		testAggMemFunc(t, test)
 	}
 }

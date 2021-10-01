@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 )
 
-func (s *testSuite) TestMemCumeDist(t *testing.T) {
+func TestMemCumeDist(t *testing.T) {
 	tests := []windowMemTest{
 		buildWindowMemTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 1, 1,
 			aggfuncs.DefPartialResult4CumeDistSize, rowMemDeltaGens),
@@ -32,6 +32,6 @@ func (s *testSuite) TestMemCumeDist(t *testing.T) {
 			aggfuncs.DefPartialResult4CumeDistSize, rowMemDeltaGens),
 	}
 	for _, test := range tests {
-		s.testWindowAggMemFunc(t, test)
+		testWindowAggMemFunc(t, test)
 	}
 }

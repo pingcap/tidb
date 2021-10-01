@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 )
 
-func (s *testSuite) TestMemNtile(t *testing.T) {
+func TestMemNtile(t *testing.T) {
 	tests := []windowMemTest{
 		buildWindowMemTester(ast.WindowFuncNtile, mysql.TypeLonglong, 1, 1, 1,
 			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens),
@@ -33,6 +33,6 @@ func (s *testSuite) TestMemNtile(t *testing.T) {
 			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens),
 	}
 	for _, test := range tests {
-		s.testWindowAggMemFunc(t, test)
+		testWindowAggMemFunc(t, test)
 	}
 }

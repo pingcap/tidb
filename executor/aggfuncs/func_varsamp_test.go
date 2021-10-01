@@ -21,20 +21,20 @@ import (
 	"github.com/pingcap/parser/mysql"
 )
 
-func (s *testSuite) TestMergePartialResult4Varsamp(t *testing.T) {
+func TestMergePartialResult4Varsamp(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncVarSamp, mysql.TypeDouble, 5, 2.5, 1, 1.9821428571428572),
 	}
 	for _, test := range tests {
-		s.testMergePartialResult(t, test)
+		testMergePartialResult(t, test)
 	}
 }
 
-func (s *testSuite) TestVarsamp(t *testing.T) {
+func TestVarsamp(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncVarSamp, mysql.TypeDouble, 5, nil, 2.5),
 	}
 	for _, test := range tests {
-		s.testAggFunc(t, test)
+		testAggFunc(t, test)
 	}
 }

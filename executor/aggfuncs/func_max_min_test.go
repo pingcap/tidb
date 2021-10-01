@@ -19,14 +19,13 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -95,7 +94,7 @@ func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 	return maxMinUpdateMemDeltaGens(srcChk, dataType, false)
 }
 
-func (s *testSuite) TestMergePartialResult4MaxMin(t *testing.T) {
+func TestMergePartialResult4MaxMin(t *testing.T) {
 	elems := []string{"e", "d", "c", "b", "a"}
 	enumA, _ := types.ParseEnum(elems, "a", mysql.DefaultCollationName)
 	enumC, _ := types.ParseEnum(elems, "c", mysql.DefaultCollationName)
@@ -132,11 +131,11 @@ func (s *testSuite) TestMergePartialResult4MaxMin(t *testing.T) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeSet, 5, setC, setC, setC),
 	}
 	for _, test := range tests {
-		s.testMergePartialResult(t, test)
+		testMergePartialResult(t, test)
 	}
 }
 
-func (s *testSuite) TestMaxMin(t *testing.T) {
+func TestMaxMin(t *testing.T) {
 	unsignedType := types.NewFieldType(mysql.TypeLonglong)
 	unsignedType.Flag |= mysql.UnsignedFlag
 	tests := []aggTest{
@@ -161,11 +160,11 @@ func (s *testSuite) TestMaxMin(t *testing.T) {
 		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, nil, json.CreateBinary(int64(0))),
 	}
 	for _, test := range tests {
-		s.testAggFunc(t, test)
+		testAggFunc(t, test)
 	}
 }
 
-func (s *testSuite) TestMemMaxMin(t *testing.T) {
+func TestMemMaxMin(t *testing.T) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4MaxMinIntSize, defaultUpdateMemDeltaGens, false),
@@ -214,7 +213,7 @@ func (s *testSuite) TestMemMaxMin(t *testing.T) {
 			aggfuncs.DefPartialResult4MaxMinSetSize, minUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {
-		s.testAggMemFunc(t, test)
+		testAggMemFunc(t, test)
 	}
 }
 
@@ -250,8 +249,10 @@ func testMaxSlidingWindow(tk *testkit.TestKit, tc maxSlidingWindowTestCase) {
 	result.Check(testkit.Rows(tc.expect...))
 }
 
-func (s *testSuite) TestMaxSlidingWindow(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestMaxSlidingWindow(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	testCases := []maxSlidingWindowTestCase{
 		{
 			rowType:       "bigint",
@@ -323,7 +324,7 @@ func (s *testSuite) TestMaxSlidingWindow(c *C) {
 	}
 }
 
-func (s *testSuite) TestDequeReset(t *testing.T) {
+func TestDequeReset(t *testing.T) {
 	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})
@@ -333,7 +334,7 @@ func (s *testSuite) TestDequeReset(t *testing.T) {
 	require.True(t, deque.IsMax)
 }
 
-func (s *testSuite) TestDequePushPop(t *testing.T) {
+func TestDequePushPop(t *testing.T) {
 	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 )
 
-func (s *testSuite) TestMemRank(t *testing.T) {
+func TestMemRank(t *testing.T) {
 	tests := []windowMemTest{
 		buildWindowMemTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 1, 1,
 			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
@@ -32,6 +32,6 @@ func (s *testSuite) TestMemRank(t *testing.T) {
 			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
 	}
 	for _, test := range tests {
-		s.testWindowAggMemFunc(t, test)
+		testWindowAggMemFunc(t, test)
 	}
 }

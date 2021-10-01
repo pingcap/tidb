@@ -60,7 +60,7 @@ func nthValueEvaluateRowUpdateMemDeltaGens(nth int) updateMemDeltaGens {
 	}
 }
 
-func (s *testSuite) TestMemValue(t *testing.T) {
+func TestMemValue(t *testing.T) {
 	firstMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(1)
 	secondMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(2)
 	fifthMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(5)
@@ -97,6 +97,6 @@ func (s *testSuite) TestMemValue(t *testing.T) {
 			aggfuncs.DefPartialResult4NthValueSize+aggfuncs.DefValue4StringSize, fifthMemDeltaGens),
 	}
 	for _, test := range tests {
-		s.testWindowAggMemFunc(t, test)
+		testWindowAggMemFunc(t, test)
 	}
 }

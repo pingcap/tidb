@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 )
 
-func (s *testSuite) TestMergePartialResult4JsonObjectagg(t *testing.T) {
+func TestMergePartialResult4JsonObjectagg(t *testing.T) {
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
@@ -65,11 +65,11 @@ func (s *testSuite) TestMergePartialResult4JsonObjectagg(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		s.testMultiArgsMergePartialResult(t, test)
+		testMultiArgsMergePartialResult(t, test)
 	}
 }
 
-func (s *testSuite) TestJsonObjectagg(t *testing.T) {
+func TestJsonObjectagg(t *testing.T) {
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
@@ -102,11 +102,11 @@ func (s *testSuite) TestJsonObjectagg(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		s.testMultiArgsAggFunc(t, test)
+		testMultiArgsAggFunc(t, test)
 	}
 }
 
-func (s *testSuite) TestMemJsonObjectagg(t *testing.T) {
+func TestMemJsonObjectagg(t *testing.T) {
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeDate}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
@@ -147,7 +147,7 @@ func (s *testSuite) TestMemJsonObjectagg(t *testing.T) {
 			buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg+aggfuncs.DefMapStringInterfaceBucketSize, defaultMultiArgsMemDeltaGens, false),
 		}
 		for _, test := range tests {
-			s.testMultiArgsAggMemFunc(t, test)
+			testMultiArgsAggMemFunc(t, test)
 		}
 	}
 }

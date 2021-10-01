@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-func (s *testSuite) TestLeadLag(t *testing.T) {
+func TestLeadLag(t *testing.T) {
 	zero := expression.NewZero()
 	one := expression.NewOne()
 	two := &expression.Constant{
@@ -112,12 +112,12 @@ func (s *testSuite) TestLeadLag(t *testing.T) {
 			[]expression.Expression{million, defaultArg}, 0, numRows, 0, 1, 2),
 	}
 	for _, test := range tests {
-		s.testWindowFunc(t, test)
+		testWindowFunc(t, test)
 	}
 
 }
 
-func (s *testSuite) TestMemLeadLag(t *testing.T) {
+func TestMemLeadLag(t *testing.T) {
 	zero := expression.NewZero()
 	one := expression.NewOne()
 	two := &expression.Constant{
@@ -161,7 +161,7 @@ func (s *testSuite) TestMemLeadLag(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		s.testWindowAggMemFunc(t, test)
+		testWindowAggMemFunc(t, test)
 	}
 
 }

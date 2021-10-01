@@ -22,12 +22,12 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 )
 
-func (s *testSuite) TestMemRowNumber(t *testing.T) {
+func TestMemRowNumber(t *testing.T) {
 	tests := []windowMemTest{
 		buildWindowMemTester(ast.WindowFuncRowNumber, mysql.TypeLonglong, 0, 0, 4,
 			aggfuncs.DefPartialResult4RowNumberSize, defaultUpdateMemDeltaGens),
 	}
 	for _, test := range tests {
-		s.testWindowAggMemFunc(t, test)
+		testWindowAggMemFunc(t, test)
 	}
 }

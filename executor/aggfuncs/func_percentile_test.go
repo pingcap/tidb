@@ -31,7 +31,7 @@ func (a testSlice) Len() int           { return len(a) }
 func (a testSlice) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a testSlice) Less(i, j int) bool { return a[i] < a[j] }
 
-func (s *testSuite) TestPercentile(t *testing.T) {
+func TestPercentile(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeLonglong, 5, nil, 2),
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeFloat, 5, nil, 2.0),
@@ -41,7 +41,7 @@ func (s *testSuite) TestPercentile(t *testing.T) {
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeDuration, 5, nil, types.Duration{Duration: time.Duration(2)}),
 	}
 	for _, test := range tests {
-		s.testAggFunc(t, test)
+		testAggFunc(t, test)
 	}
 
 	data := testSlice{}
