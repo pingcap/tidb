@@ -168,9 +168,6 @@ func (l *ListInDisk) GetChunk(chkIdx int) (*Chunk, error) {
 
 // GetRow gets a Row from the ListInDisk by RowPtr.
 func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
-	if err != nil {
-		return
-	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
 	var underlying io.ReaderAt = l.disk
 	if l.ctrCipher != nil {

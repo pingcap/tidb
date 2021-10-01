@@ -501,7 +501,47 @@ func (c *SortedRowContainer) Sort() {
 
 func (c *SortedRowContainer) sortAndSpillToDisk() {
 	c.Sort()
-	c.RowContainer.SpillToDisk()
+	if c.alreadySpilled() {
+		return
+	}
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	c.m.records.inDisk = NewListInDisk(c.m.records.inMemory.FieldTypes())
+	c.m.records.inDisk.diskTracker.AttachTo(c.diskTracker)
+	// c.actionSpill may be nil when testing SpillToDisk directly.
+	if c.actionSpill != nil {
+		if c.actionSpill.getStatus() == spilledYet {
+			// The rowContainer has been closed.
+			return
+		}
+		c.actionSpill.setStatus(spilling)
+		defer c.actionSpill.cond.Broadcast()
+		defer c.actionSpill.setStatus(spilledYet)
+	}
+
+	var (
+		err    error
+		rowIdx int
+		chunk  *Chunk
+	)
+	rowPtrLen := len(c.ptrM.rowPtrs)
+	rowPtrBatchSize := rowPtrLen / 1024
+	for rowPtrBatchSize >= 0 {
+		for rowIdx == rowPtrLen || (rowIdx+1)%1024 == 0 {
+			chunk.AppendRow(c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[rowIdx]))
+			rowIdx++
+		}
+		err = c.m.records.inDisk.Add(chunk)
+		if err != nil {
+			c.m.records.spillError = err
+			return
+		}
+		chunk = nil
+		rowPtrBatchSize--
+	}
+	c.ptrM.rowPtrs = nil
+	c.m.records.inMemory.Clear()
 }
 
 // Add appends a chunk into the SortedRowContainer.
