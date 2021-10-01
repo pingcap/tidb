@@ -272,7 +272,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	// initiation of default glue should be after RegisterMySQL, which is ready to be called after taskCfg.Adjust
 	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
 	if g == nil {
-		db, err := restore.DBFromConfig(taskCfg.TiDB)
+		db, err := restore.DBFromConfig(ctx, taskCfg.TiDB)
 		if err != nil {
 			return err
 		}
