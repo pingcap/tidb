@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright 2021 PingCAP, Inc.
 #
@@ -22,25 +22,69 @@ LOG_FILE1="$TEST_DIR/lightning-duplicate-detection1.log"
 LOG_FILE2="$TEST_DIR/lightning-duplicate-detection2.log"
 
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_detection.sorted1" \
-  --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "tests/$TEST_NAME/config1.toml" && exit 1 &
+  --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "tests/$TEST_NAME/config1.toml" &
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_detection.sorted2" \
-  --enable-checkpoint=1 --log-file "$LOG_FILE2" --config "tests/$TEST_NAME/config2.toml" && exit 1 &
+  --enable-checkpoint=1 --log-file "$LOG_FILE2" --config "tests/$TEST_NAME/config2.toml" &
 
 wait
+
+verify_detected_rows() {
+  table=$1
+
+  mapfile -t rows < <(grep "insert" tests/"$TEST_NAME"/data/dup_detect."${table}".*.sql |
+    sed 's/^.*(//' | sed 's/).*$//' | sed "s/'//g" | sed 's/, */,/g')
+  set +x
+  n=${#rows[@]}
+  expect_rows=()
+  for ((i = 0; i < n; i++)); do
+    for ((j = i + 1; j < n; j++)); do
+      pk1=$(echo "${rows[i]}" | awk -F',' '{print $1}')
+      pk2=$(echo "${rows[j]}" | awk -F',' '{print $1}')
+      uk1=$(echo "${rows[i]}" | awk -F',' '{print $2}')
+      uk2=$(echo "${rows[j]}" | awk -F',' '{print $2}')
+      if [[ "$pk1" == "$pk2" || "$uk1" == "$uk2" ]]; then
+        expect_rows+=("${rows[i]}" "${rows[j]}")
+      fi
+    done
+  done
+  mapfile -t expect_rows < <(for row in "${expect_rows[@]}"; do echo "$row"; done | sort | uniq)
+  mapfile -t actual_rows < <(run_sql "SELECT row_data FROM lightning_task_info.conflict_error_v1 WHERE table_name = \"${table}\"" |
+    grep "row_data:" | sed 's/^.*(//' | sed 's/).*$//' | sed 's/, */,/g' | sort | uniq)
+  equal=0
+  if [ "${#actual_rows[@]}" = "${#expect_rows[@]}" ]; then
+    equal=1
+    n="${#actual_rows[@]}"
+    for ((i = 0; i < n; i++)); do
+      if [ "${#actual_rows[i]}" != "${#expect_rows[i]}" ]; then
+        equal=0
+        break
+      fi
+    done
+  fi
+  set -x
+  if [ "$equal" = "0" ]; then
+    echo "verify detected rows of ${table} fail, expect: ${expect_rows[@]}, actual: ${actual_rows[@]}"
+    exit 1
+  fi
+}
+
 ## a. Primary key conflict in table `ta`. There are 10 pairs of conflicts in each file and 5 pairs of conflicts in both files.
-#grep -q "restore table \`dup_detect\`.\`ta\` failed: .*duplicate detected" "$LOG_FILE"
-#
+verify_detected_rows "ta"
+
 ## b. Unique key conflict in table `tb`. There are 10 pairs of conflicts in each file and 5 pairs of conflicts in both files.
-#grep -q "restore table \`dup_detect\`.\`tb\` failed: .*duplicate detected" "$LOG_FILE"
-#
+verify_detected_rows "tb"
+
 ## c. Primary key conflict in table `tc`. There are 10 rows with the same key in each file and 10 rows with the same key in both files.
-#grep -q "restore table \`dup_detect\`.\`tc\` failed: .*duplicate detected" "$LOG_FILE"
-#
+verify_detected_rows "tc"
+
 ## d. Unique key conflict in table `td`. There are 10 rows with the same key in each file and 10 rows with the same key in both files.
-#grep -q "restore table \`dup_detect\`.\`td\` failed: .*duplicate detected" "$LOG_FILE"
-#
+verify_detected_rows "td"
+
 ## e. Identical rows in table `te`. There are 10 identical rows in each file and 10 identical rows in both files.
-#grep -q "restore table \`dup_detect\`.\`te\` failed: .*duplicate detected" "$LOG_FILE"
-#
+verify_detected_rows "te"
+
 ## f. No conflicts in table `tf`.
-#grep -Eq "restore table completed.*table=\`dup_detect\`.\`tf\`" "$LOG_FILE"
+verify_detected_rows "tf"
+
+## g. Primary key conflict in partitioned table `tg`.
+verify_detected_rows "tg"

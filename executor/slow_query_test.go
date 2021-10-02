@@ -20,6 +20,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/assert"
 )
 
 func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
@@ -479,6 +481,53 @@ select 7;`
 			c.Assert(file.file.Close(), IsNil)
 		}
 		c.Assert(retriever.close(), IsNil)
+	}
+}
+
+func TestSplitbyColon(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		line   string
+		fields []string
+		values []string
+	}{
+		{
+			"",
+			[]string{},
+			[]string{},
+		},
+		{
+			"123a",
+			[]string{},
+			[]string{"123a"},
+		},
+		{
+			"1a: 2b",
+			[]string{"1a"},
+			[]string{"2b"},
+		},
+		{
+			"1a: [2b 3c] 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"[2b 3c]", "5e"},
+		},
+		{
+			"1a: [2b,3c] 4d: 5e",
+			[]string{"1a", "4d"},
+			[]string{"[2b,3c]", "5e"},
+		},
+		{
+
+			"Time: 2021-09-08T14:39:54.506967433+08:00",
+			[]string{"Time"},
+			[]string{"2021-09-08T14:39:54.506967433+08:00"},
+		},
+	}
+	for _, c := range cases {
+		resFields, resValues := splitByColon(c.line)
+		assert.Equal(t, c.fields, resFields)
+		assert.Equal(t, c.values, resValues)
 	}
 }
 

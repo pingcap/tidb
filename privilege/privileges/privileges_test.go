@@ -2461,7 +2461,7 @@ func TestPlacementPolicyStmt(t *testing.T) {
 	defer clean()
 	se := newSession(t, store, dbName)
 	mustExec(t, se, "drop placement policy if exists x")
-	createStmt := "create placement policy x PRIMARY_REGION=\"cn-east-1\" "
+	createStmt := "create placement policy x PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1\""
 	dropStmt := "drop placement policy if exists x"
 
 	// high privileged user setting password for other user (passes)
