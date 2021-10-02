@@ -6191,6 +6191,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		return errors.Trace(err)
 	}
 
+	// TODO: the old placement rules should be migrated to new format. use the bundle from meta directly.
 	bundle := infoschema.GetBundle(d.infoCache.GetLatest(), []int64{partitionID, meta.ID, schema.ID})
 
 	err = bundle.ApplyPlacementSpec(spec.PlacementSpecs)

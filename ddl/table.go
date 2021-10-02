@@ -78,11 +78,11 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	// build table & partition bundles if any.
-	tableBundle, err := getBundleFromTblInfo(t, job, tbInfo)
+	tableBundle, err := NewBundleFromTblInfo(t, job, tbInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	partitionBundles, err := getBundleFromPartitionDef(t, job, tbInfo)
+	partitionBundles, err := NewBundleFromPartition(t, job, tbInfo.Partition)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -144,39 +144,13 @@ func inheritPlacementRuleFromDB(tbInfo *model.TableInfo, dbInfo *model.DBInfo) e
 	return nil
 }
 
-func getBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) (*placement.Bundle, error) {
-	var (
-		bundle *placement.Bundle
-		err    error
-	)
-	if tbInfo.DirectPlacementOpts != nil {
-		// build bundle from direct placement options.
-		bundle, err = placement.NewBundleFromOptions(tbInfo.DirectPlacementOpts)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return nil, errors.Trace(err)
-		}
-	}
-	if tbInfo.PlacementPolicyRef != nil {
-		// placement policy reference will override the direct placement options.
-		po, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, tbInfo.PlacementPolicyRef.ID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
-		}
-		// build bundle from placement policy.
-		bundle, err = placement.NewBundleFromOptions(po.PlacementSettings)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return nil, errors.Trace(err)
-		}
+func NewBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) (*placement.Bundle, error) {
+	bundle, err := newBundleFromPolicyOrDirectOptions(t, job, tbInfo.PlacementPolicyRef, tbInfo.DirectPlacementOpts)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	if bundle == nil {
 		return nil, nil
-	}
-	err = bundle.Tidy()
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 	ids := []int64{tbInfo.ID}
 	// build the default partition rules in the table-level bundle.
@@ -189,50 +163,50 @@ func getBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo)
 	return bundle, nil
 }
 
-func getBundleFromPartitionDef(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) ([]*placement.Bundle, error) {
-	if tbInfo.Partition == nil {
+func NewBundleFromPartition(t *meta.Meta, job *model.Job, partition *model.PartitionInfo) ([]*placement.Bundle, error) {
+	if partition == nil {
 		return nil, nil
 	}
-	bundles := make([]*placement.Bundle, 0, len(tbInfo.Partition.Definitions))
+	bundles := make([]*placement.Bundle, 0, len(partition.Definitions))
 	// If the partition has the placement rules on their own, build the partition-level bundles additionally.
-	for _, def := range tbInfo.Partition.Definitions {
-		if def.DirectPlacementOpts != nil {
-			// build bundle from direct placement options.
-			bundle, err := placement.NewBundleFromOptions(def.DirectPlacementOpts)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return nil, errors.Trace(err)
-			}
-			err = bundle.Tidy()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			bundle.Reset(placement.RuleIndexPartition, []int64{def.ID})
-			bundles = append(bundles, bundle)
-			continue
+	for _, def := range partition.Definitions {
+		bundle, err := newBundleFromPolicyOrDirectOptions(t, job, def.PlacementPolicyRef, def.DirectPlacementOpts)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		if def.PlacementPolicyRef != nil {
-			// placement policy reference will override the direct placement options.
-			po, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, def.PlacementPolicyRef.ID)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(def.PlacementPolicyRef.Name))
-			}
-			// build bundle from placement policy.
-			bundle, err := placement.NewBundleFromOptions(po.PlacementSettings)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return nil, errors.Trace(err)
-			}
-			err = bundle.Tidy()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			bundle.Reset(placement.RuleIndexPartition, []int64{def.ID})
-			bundles = append(bundles, bundle)
-		}
+		bundle.Reset(placement.RuleIndexPartition, []int64{def.ID})
+		bundles = append(bundles, bundle)
+		continue
 	}
 	return bundles, nil
+}
+
+func newBundleFromPolicyOrDirectOptions(t *meta.Meta, job *model.Job, ref *model.PolicyRefInfo, directOpts *model.PlacementSettings) (*placement.Bundle, error) {
+	if directOpts != nil {
+		// build bundle from direct placement options.
+		bundle, err := placement.NewBundleFromOptions(directOpts)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return nil, errors.Trace(err)
+		}
+		return bundle, nil
+	}
+	if ref != nil {
+		// placement policy reference will override the direct placement options.
+		po, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, ref.ID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(ref.Name))
+		}
+		// build bundle from placement policy.
+		bundle, err := placement.NewBundleFromOptions(po.PlacementSettings)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return nil, errors.Trace(err)
+		}
+		return bundle, nil
+	}
+	return nil, nil
 }
 
 func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
