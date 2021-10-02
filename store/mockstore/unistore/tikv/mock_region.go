@@ -761,7 +761,7 @@ func (pd *MockPD) SplitRegions(ctx context.Context, SplitKeys [][]byte) ([]uint6
 		return nil, err
 	}
 
-	regionsID := make([]uint64, len(newRegions))
+	regionsID := make([]uint64, 0, len(newRegions))
 
 	for _, regCtx := range newRegions {
 		regionsID = append(regionsID, regCtx.meta.Id)
