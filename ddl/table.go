@@ -78,11 +78,11 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	// build table & partition bundles if any.
-	tableBundle, err := NewBundleFromTblInfo(t, job, tbInfo)
+	tableBundle, err := newBundleFromTblInfo(t, job, tbInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	partitionBundles, err := NewBundleFromPartition(t, job, tbInfo.Partition)
+	partitionBundles, err := newBundleFromPartition(t, job, tbInfo.Partition)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -144,7 +144,7 @@ func inheritPlacementRuleFromDB(tbInfo *model.TableInfo, dbInfo *model.DBInfo) e
 	return nil
 }
 
-func NewBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) (*placement.Bundle, error) {
+func newBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) (*placement.Bundle, error) {
 	bundle, err := newBundleFromPolicyOrDirectOptions(t, job, tbInfo.PlacementPolicyRef, tbInfo.DirectPlacementOpts)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -163,7 +163,7 @@ func NewBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo)
 	return bundle, nil
 }
 
-func NewBundleFromPartition(t *meta.Meta, job *model.Job, partition *model.PartitionInfo) ([]*placement.Bundle, error) {
+func newBundleFromPartition(t *meta.Meta, job *model.Job, partition *model.PartitionInfo) ([]*placement.Bundle, error) {
 	if partition == nil {
 		return nil, nil
 	}
