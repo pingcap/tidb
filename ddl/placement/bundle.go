@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -65,9 +66,7 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	leaderConstraints := options.LeaderConstraints
 	learnerConstraints := options.LearnerConstraints
 	followerConstraints := options.FollowerConstraints
-	voterConstraints := options.VoterConstraints
 	followerCount := options.Followers
-	voterCount := options.Voters
 	learnerCount := options.Learners
 
 	CommonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
@@ -88,21 +87,6 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	}
 	if len(LeaderConstraints) > 0 {
 		Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
-	}
-
-	if voterCount > 0 {
-		VoterRules, err := NewRules(Voter, voterCount, voterConstraints)
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid VoterConstraints", err)
-		}
-		for _, rule := range VoterRules {
-			for _, cnst := range CommonConstraints {
-				if err := rule.Constraints.Add(cnst); err != nil {
-					return nil, fmt.Errorf("%w: VoterConstraints conflicts with Constraints", err)
-				}
-			}
-		}
-		Rules = append(Rules, VoterRules...)
 	}
 
 	if followerCount > 0 {
@@ -144,7 +128,7 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		return nil, fmt.Errorf("%w: options can not be nil", ErrInvalidPlacementOptions)
 	}
 
-	if len(options.LeaderConstraints) > 0 || len(options.LearnerConstraints) > 0 || len(options.FollowerConstraints) > 0 || len(options.VoterConstraints) > 0 || options.Learners > 0 || options.Voters > 0 {
+	if len(options.LeaderConstraints) > 0 || len(options.LearnerConstraints) > 0 || len(options.FollowerConstraints) > 0 || len(options.Constraints) > 0 || options.Learners > 0 {
 		return nil, fmt.Errorf("%w: should be PRIMARY_REGION=.. REGIONS=.. FOLLOWERS=.. SCHEDULE=.., mixed other constraints into options %s", ErrInvalidPlacementOptions, options)
 	}
 
@@ -167,58 +151,37 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 	}
 	schedule := options.Schedule
 
-	var constraints Constraints
-	var err error
+	// regions must include the primary
+	sort.Strings(regions)
+	primaryIndex := sort.SearchStrings(regions, primaryRegion)
+	if primaryIndex >= len(regions) || regions[primaryIndex] != primaryRegion {
+		return nil, fmt.Errorf("%w: primary region must be included in regions", ErrInvalidPlacementOptions)
+	}
 
-	Rules := []*Rule{}
+	var Rules []*Rule
+
 	switch strings.ToLower(schedule) {
 	case "", "even":
-		constraints, err = NewConstraints([]string{fmt.Sprintf("+region=%s", primaryRegion)})
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid PrimaryRegion '%s'", err, primaryRegion)
+		primaryCount := uint64(math.Ceil(float64(followers+1) / float64(len(regions))))
+		Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+
+		if len(regions) > 1 {
+			// delete primary from regions
+			regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
+			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
 		}
-		Rules = append(Rules, NewRule(Leader, 1, constraints))
 	case "majority_in_primary":
-		// We already have the leader, so we need to calculate how many additional followers
-		// need to be in the primary region for quorum
-		followersInPrimary := uint64(math.Ceil(float64(followers) / 2))
-		constraints, err = NewConstraints([]string{fmt.Sprintf("+region=%s", primaryRegion)})
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid PrimaryRegion, '%s'", err, primaryRegion)
+		// calculate how many replicas need to be in the primary region for quorum
+		primaryCount := uint64(math.Ceil(float64(followers+1)/2 + 1))
+		Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+
+		if len(regions) > 1 {
+			// delete primary from regions
+			regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
+			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
 		}
-		Rules = append(Rules, NewRule(Leader, 1, constraints))
-		Rules = append(Rules, NewRule(Follower, followersInPrimary, constraints))
-		// even split the remaining followers
-		followers = followers - followersInPrimary
 	default:
 		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacementOptions, schedule)
-	}
-
-	if uint64(len(regions)) > followers {
-		return nil, fmt.Errorf("%w: remain %d region to schedule, only %d follower left", ErrInvalidPlacementOptions, uint64(len(regions)), followers)
-	}
-
-	if len(regions) == 0 {
-		constraints, err := NewConstraints(nil)
-		if err != nil {
-			return nil, err
-		}
-		Rules = append(Rules, NewRule(Follower, followers, constraints))
-	} else {
-		count := followers / uint64(len(regions))
-		rem := followers - count*uint64(len(regions))
-		for _, region := range regions {
-			constraints, err = NewConstraints([]string{fmt.Sprintf("+region=%s", region)})
-			if err != nil {
-				return nil, fmt.Errorf("%w: invalid region of 'Regions', '%s'", err, region)
-			}
-			replica := count
-			if rem > 0 {
-				replica += 1
-				rem--
-			}
-			Rules = append(Rules, NewRule(Follower, replica, constraints))
-		}
 	}
 
 	return &Bundle{Rules: Rules}, nil
