@@ -1913,7 +1913,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 	setTopSQLReceiverAddress(agentServer.Address())
 	agentServer.WaitCollectCnt(1, time.Second*4)
-	checkFn(5)
+	checkFn(6)
 	// Test with wrong agent address, the agent server can't receive any record.
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=8;")
 	setTopSQLReceiverAddress("127.0.0.1:65530")
