@@ -781,27 +781,32 @@ func TestListPartitionAutoIncre(t *testing.T) {
 	tk.MustExec(`insert into tcollist (a) values (1)`)
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionAutoRandom(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionAutoRandom(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_auto_rand")
 	tk.MustExec("use list_partition_auto_rand")
 	tk.MustExec("drop table if exists tlist")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
-	c.Assert(tk.ExecToErr(`create table tlist (a int, b bigint AUTO_RANDOM) partition by list (a) (
+	err := tk.ExecToErr(`create table tlist (a int, b bigint AUTO_RANDOM) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
-    partition p2 values in (10, 11, 12, 13, 14))`), ErrorMatches, ".*Invalid auto random.*")
+    partition p2 values in (10, 11, 12, 13, 14))`)
+	require.Regexp(t, ".*Invalid auto random.*", err)
 
 	tk.MustExec(`create table tlist (a bigint auto_random, primary key(a)) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
     partition p2 values in (10, 11, 12, 13, 14))`)
 
-	c.Assert(tk.ExecToErr(`create table tcollist (a int, b bigint AUTO_RANDOM) partition by list columns (a) (
+	err = tk.ExecToErr(`create table tcollist (a int, b bigint AUTO_RANDOM) partition by list columns (a) (
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
-    partition p2 values in (10, 11, 12, 13, 14))`), ErrorMatches, ".*Invalid auto random.*")
+    partition p2 values in (10, 11, 12, 13, 14))`)
+	require.Regexp(t, ".*Invalid auto random.*", err)
 
 	tk.MustExec(`create table tcollist (a bigint auto_random, primary key(a)) partition by list columns (a) (
     partition p0 values in (0, 1, 2, 3, 4),
