@@ -25,6 +25,8 @@ import (
 )
 
 func TestLeadLag(t *testing.T) {
+	t.Parallel()
+
 	zero := expression.NewZero()
 	one := expression.NewOne()
 	two := &expression.Constant{
@@ -118,6 +120,8 @@ func TestLeadLag(t *testing.T) {
 }
 
 func TestMemLeadLag(t *testing.T) {
+	t.Parallel()
+
 	zero := expression.NewZero()
 	one := expression.NewOne()
 	two := &expression.Constant{

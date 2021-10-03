@@ -23,6 +23,8 @@ import (
 )
 
 func TestMemRank(t *testing.T) {
+	t.Parallel()
+
 	tests := []windowMemTest{
 		buildWindowMemTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 1, 1,
 			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),

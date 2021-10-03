@@ -23,6 +23,8 @@ import (
 )
 
 func TestMemRowNumber(t *testing.T) {
+	t.Parallel()
+
 	tests := []windowMemTest{
 		buildWindowMemTester(ast.WindowFuncRowNumber, mysql.TypeLonglong, 0, 0, 4,
 			aggfuncs.DefPartialResult4RowNumberSize, defaultUpdateMemDeltaGens),

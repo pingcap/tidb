@@ -23,6 +23,8 @@ import (
 )
 
 func TestMemNtile(t *testing.T) {
+	t.Parallel()
+
 	tests := []windowMemTest{
 		buildWindowMemTester(ast.WindowFuncNtile, mysql.TypeLonglong, 1, 1, 1,
 			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens),

@@ -73,7 +73,7 @@ func testWindowFunc(t *testing.T, p windowTest) {
 		require.NoError(t, err)
 	}
 
-	require.Equal(t, len(p.results), p.numRows)
+	require.Len(t, p.results, p.numRows)
 	for i := 0; i < p.numRows; i++ {
 		err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 		require.NoError(t, err)
@@ -104,7 +104,7 @@ func testWindowAggMemFunc(t *testing.T, p windowMemTest) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		memDelta, err = finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr)
 		require.NoError(t, err)
-		require.Equal(t, memDelta, updateMemDeltas[i])
+		require.Equal(t, updateMemDeltas[i], memDelta)
 		i++
 	}
 }
@@ -172,6 +172,8 @@ func buildWindowMemTesterWithArgs(funcName string, tp byte, args []expression.Ex
 }
 
 func TestWindowFunctions(t *testing.T) {
+	t.Parallel()
+
 	tests := []windowTest{
 		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 1, 1, 1),
 		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 0, 2, 1, 1),
