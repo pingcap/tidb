@@ -860,15 +860,20 @@ func TestListPartitionCTE(t *testing.T) {
 	tk.MustQuery(`with tmp as (select a+1 as a from tcollist) select * from tmp`).Sort().Check(testkit.Rows("1", "11", "2", "6", "7"))
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionTempTable(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionTempTable(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_temp_table")
 	tk.MustExec("use list_partition_temp_table")
 	tk.MustExec("drop table if exists tlist")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec("set tidb_enable_global_temporary_table = true")
-	c.Assert(tk.ExecToErr("create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows"), ErrorMatches, ".*Cannot create temporary table with partitions.*")
-	c.Assert(tk.ExecToErr("create global temporary table t(a int, b int) partition by list columns (a) (partition p0 values in (0)) on commit delete rows"), ErrorMatches, ".*Cannot create temporary table with partitions.*")
+	err := tk.ExecToErr("create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows")
+	require.Regexp(t, ".*Cannot create temporary table with partitions.*", err)
+	err = tk.ExecToErr("create global temporary table t(a int, b int) partition by list columns (a) (partition p0 values in (0)) on commit delete rows")
+	require.Regexp(t, ".*Cannot create temporary table with partitions.*", err)
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionAlterPK(c *C) {
