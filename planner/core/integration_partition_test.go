@@ -110,8 +110,11 @@ func TestListPartitionPushDown(t *testing.T) {
 	}
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListColVariousTypes(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListColVariousTypes(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_col_partition_types")
 	tk.MustExec("use list_col_partition_types")
 	tk.MustExec("drop table if exists tlist")
@@ -120,8 +123,12 @@ func (s *testIntegrationPartitionSerialSuite) TestListColVariousTypes(c *C) {
 	tk.MustExec(`create table tint (a int) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`)
 	tk.MustExec(`create table tdate (a date) partition by list columns(a) (partition p0 values in ('2000-01-01', '2000-01-02'), partition p1 values in ('2000-01-03', '2000-01-04'))`)
 	tk.MustExec(`create table tstring (a varchar(32)) partition by list columns(a) (partition p0 values in ('a', 'b'), partition p1 values in ('c', 'd'))`)
-	c.Assert(tk.ExecToErr(`create table tdouble (a double) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`), ErrorMatches, ".*not allowed.*")
-	c.Assert(tk.ExecToErr(`create table tdecimal (a decimal(30, 10)) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`), ErrorMatches, ".*not allowed.*")
+
+	err := tk.ExecToErr(`create table tdouble (a double) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`)
+	require.Regexp(t, ".*not allowed.*", err)
+
+	err = tk.ExecToErr(`create table tdecimal (a decimal(30, 10)) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`)
+	require.Regexp(t, ".*not allowed.*", err)
 
 	tk.MustExec(`insert into tint values (0), (1), (2), (3)`)
 	tk.MustExec(`insert into tdate values ('2000-01-01'), ('2000-01-02'), ('2000-01-03'), ('2000-01-04')`)
@@ -132,11 +139,12 @@ func (s *testIntegrationPartitionSerialSuite) TestListColVariousTypes(c *C) {
 		SQL     string
 		Results []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
+	integrationPartitionSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Results = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Results = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Results...))
 	}
