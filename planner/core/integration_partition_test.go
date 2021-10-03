@@ -630,8 +630,11 @@ func TestListPartitionPrivilege(t *testing.T) {
 	require.Regexp(t, ".*denied.*", err)
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionShardBits(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionShardBits(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_shard_bits")
 	tk.MustExec("use list_partition_shard_bits")
 	tk.MustExec("drop table if exists tlist")
