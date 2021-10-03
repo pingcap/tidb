@@ -191,9 +191,9 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
 
          The following table shows the actual size of data stored in LevelDB per day, per week and per month, again, using 10 minutes as the write interval and using 1000 as the maximum number of hotspot regions :
          
-         | Data Size Per Day(MB) | Data Size Per Week(MB) | Data Size Per Month (MB) |
+         |  Only Write Data Size Per Day(MB) |  Only Write Data Size Per Week(MB) |  Only Write Data Size Per Month (MB) |
          | --------------------- | ---------------------- | ------------------------ |
-         | 43.75                 | 313.66                 | 1351.35                  |
+         | 20                | 264                 | 528                 |
          
          Because of the compression of LevelDB, the actual data sizes of all three time dimensions are close to and slightly smaller than the estimated data sizes. Given the size of the data, we set `HisHotRegionTTL` to 7 days. If the data survival time exceeds the preservation time,it will be delete from LevelDB,but really delete happend in every month data compaction and LevelDB's auto compation. 
 
