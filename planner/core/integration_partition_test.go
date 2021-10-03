@@ -1115,8 +1115,11 @@ PARTITION BY LIST COLUMNS(col1) (
 	tk.MustQuery(`SELECT COL1 FROM NT_LP27390 WHERE COL1 IN (46015556,-4123498,54419751)`).Sort().Check(testkit.Rows("-4123498"))
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestIssue27493(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue27493(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27493")
 	tk.MustExec("use issue_27493")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
