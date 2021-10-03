@@ -483,7 +483,7 @@ func TestListPartitionDDL(t *testing.T) {
 	tk.MustExec(`alter table tlist add primary key (a)`)
 	err = tk.ExecToErr(`alter table tlist add unique key (b)`) // add uk
 	require.Regexp(t, ".*must include all.*", err)
-	tk.MustExec(`alter table tlist add key (b)`)                                                         // add index
+	tk.MustExec(`alter table tlist add key (b)`) // add index
 	tk.MustExec(`alter table tlist rename index b to bb`)
 	tk.MustExec(`alter table tlist drop index bb`)
 
@@ -493,7 +493,7 @@ func TestListPartitionDDL(t *testing.T) {
 	tk.MustExec(`alter table tcollist add primary key (a)`)
 	err = tk.ExecToErr(`alter table tcollist add unique key (b)`) // add uk
 	require.Regexp(t, ".*must include all.*", err)
-	tk.MustExec(`alter table tcollist add key (b)`)                                                         // add index
+	tk.MustExec(`alter table tcollist add key (b)`) // add index
 	tk.MustExec(`alter table tcollist rename index b to bb`)
 	tk.MustExec(`alter table tcollist drop index bb`)
 
@@ -516,8 +516,11 @@ func TestListPartitionDDL(t *testing.T) {
 	tk.MustExec(`drop table tcollistxx`)
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionOperations(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionOperations(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_op")
 	tk.MustExec("use list_partition_op")
 	tk.MustExec("drop table if exists tlist")
@@ -554,34 +557,42 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionOperations(c *C) 
 	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("0", "10", "15", "5"))
 	tk.MustExec("alter table tlist drop partition p0")
 	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("10", "15", "5"))
-	c.Assert(tk.ExecToErr("select * from tlist partition (p0)"), ErrorMatches, ".*Unknown partition.*")
+	err := tk.ExecToErr("select * from tlist partition (p0)")
+	require.Regexp(t, ".*Unknown partition.*", err)
 	tk.MustExec("alter table tlist drop partition p1, p2")
 	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("15"))
-	c.Assert(tk.ExecToErr("select * from tlist partition (p1)"), ErrorMatches, ".*Unknown partition.*")
-	c.Assert(tk.ExecToErr("alter table tlist drop partition p3"), ErrorMatches, ".*Cannot remove all partitions.*")
+	err = tk.ExecToErr("select * from tlist partition (p1)")
+	require.Regexp(t, ".*Unknown partition.*", err)
+	err = tk.ExecToErr("alter table tlist drop partition p3")
+	require.Regexp(t, ".*Cannot remove all partitions.*", err)
 
 	tk.MustExec("insert into tcollist values (0), (5), (10)")
 	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("0", "10", "15", "5"))
 	tk.MustExec("alter table tcollist drop partition p0")
 	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("10", "15", "5"))
-	c.Assert(tk.ExecToErr("select * from tcollist partition (p0)"), ErrorMatches, ".*Unknown partition.*")
+	err = tk.ExecToErr("select * from tcollist partition (p0)")
+	require.Regexp(t, ".*Unknown partition.*", err)
 	tk.MustExec("alter table tcollist drop partition p1, p2")
 	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("15"))
-	c.Assert(tk.ExecToErr("select * from tcollist partition (p1)"), ErrorMatches, ".*Unknown partition.*")
-	c.Assert(tk.ExecToErr("alter table tcollist drop partition p3"), ErrorMatches, ".*Cannot remove all partitions.*")
+	err = tk.ExecToErr("select * from tcollist partition (p1)")
+	require.Regexp(t, ".*Unknown partition.*", err)
+	err = tk.ExecToErr("alter table tcollist drop partition p3")
+	require.Regexp(t, ".*Cannot remove all partitions.*", err)
 
 	// add partition
 	tk.MustExec("alter table tlist add partition (partition p0 values in (0, 1, 2, 3, 4))")
 	tk.MustExec("alter table tlist add partition (partition p1 values in (5, 6, 7, 8, 9), partition p2 values in (10, 11, 12, 13, 14))")
 	tk.MustExec("insert into tlist values (0), (5), (10)")
 	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("0", "10", "15", "5"))
-	c.Assert(tk.ExecToErr("alter table tlist add partition (partition pxxx values in (4))"), ErrorMatches, ".*Multiple definition.*")
+	err = tk.ExecToErr("alter table tlist add partition (partition pxxx values in (4))")
+	require.Regexp(t, ".*Multiple definition.*", err)
 
 	tk.MustExec("alter table tcollist add partition (partition p0 values in (0, 1, 2, 3, 4))")
 	tk.MustExec("alter table tcollist add partition (partition p1 values in (5, 6, 7, 8, 9), partition p2 values in (10, 11, 12, 13, 14))")
 	tk.MustExec("insert into tcollist values (0), (5), (10)")
 	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("0", "10", "15", "5"))
-	c.Assert(tk.ExecToErr("alter table tcollist add partition (partition pxxx values in (4))"), ErrorMatches, ".*Multiple definition.*")
+	err = tk.ExecToErr("alter table tcollist add partition (partition pxxx values in (4))")
+	require.Regexp(t, ".*Multiple definition.*", err)
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionPrivilege(c *C) {
