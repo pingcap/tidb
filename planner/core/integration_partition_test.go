@@ -410,8 +410,11 @@ func TestListPartitionDML(t *testing.T) {
 	tk.MustQuery("select a from tcollist order by a").Check(testkit.Rows())
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionCreation(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionCreation(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_cre")
 	tk.MustExec("use list_partition_cre")
 	tk.MustExec("drop table if exists tlist")
@@ -419,12 +422,20 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionCreation(c *C) {
 
 	// with UK
 	tk.MustExec("create table tuk1 (a int, b int, unique key(a)) partition by list (a) (partition p0 values in (0))")
-	c.Assert(tk.ExecToErr("create table tuk2 (a int, b int, unique key(a)) partition by list (b) (partition p0 values in (0))"), ErrorMatches, ".*UNIQUE INDEX must include all columns.*")
-	c.Assert(tk.ExecToErr("create table tuk2 (a int, b int, unique key(a), unique key(b)) partition by list (a) (partition p0 values in (0))"), ErrorMatches, ".*UNIQUE INDEX must include all columns.*")
+
+	err := tk.ExecToErr("create table tuk2 (a int, b int, unique key(a)) partition by list (b) (partition p0 values in (0))")
+	require.Regexp(t, ".*UNIQUE INDEX must include all columns.*", err)
+
+	err = tk.ExecToErr("create table tuk2 (a int, b int, unique key(a), unique key(b)) partition by list (a) (partition p0 values in (0))")
+	require.Regexp(t, ".*UNIQUE INDEX must include all columns.*", err)
 
 	tk.MustExec("create table tcoluk1 (a int, b int, unique key(a)) partition by list columns(a) (partition p0 values in (0))")
-	c.Assert(tk.ExecToErr("create table tcoluk2 (a int, b int, unique key(a)) partition by list columns(b) (partition p0 values in (0))"), ErrorMatches, ".*UNIQUE INDEX must include all columns.*")
-	c.Assert(tk.ExecToErr("create table tcoluk2 (a int, b int, unique key(a), unique key(b)) partition by list columns(a) (partition p0 values in (0))"), ErrorMatches, ".*UNIQUE INDEX must include all columns.*")
+
+	err = tk.ExecToErr("create table tcoluk2 (a int, b int, unique key(a)) partition by list columns(b) (partition p0 values in (0))")
+	require.Regexp(t,  ".*UNIQUE INDEX must include all columns.*", err)
+
+	err = tk.ExecToErr("create table tcoluk2 (a int, b int, unique key(a), unique key(b)) partition by list columns(a) (partition p0 values in (0))")
+	require.Regexp(t,  ".*UNIQUE INDEX must include all columns.*", err)
 
 	// with PK
 	tk.MustExec("create table tpk1 (a int, b int, primary key(a)) partition by list (a) (partition p0 values in (0))")
@@ -444,9 +455,15 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionCreation(c *C) {
 	tk.MustExec("create table texp1 (a int, b int) partition by list(a-10000) (partition p0 values in (0))")
 	tk.MustExec("create table texp2 (a int, b int) partition by list(a%b) (partition p0 values in (0))")
 	tk.MustExec("create table texp3 (a int, b int) partition by list(a*b) (partition p0 values in (0))")
-	c.Assert(tk.ExecToErr("create table texp4 (a int, b int) partition by list(a|b) (partition p0 values in (0))"), ErrorMatches, ".*This partition function is not allowed.*")
-	c.Assert(tk.ExecToErr("create table texp4 (a int, b int) partition by list(a^b) (partition p0 values in (0))"), ErrorMatches, ".*This partition function is not allowed.*")
-	c.Assert(tk.ExecToErr("create table texp4 (a int, b int) partition by list(a&b) (partition p0 values in (0))"), ErrorMatches, ".*This partition function is not allowed.*")
+
+	err = tk.ExecToErr("create table texp4 (a int, b int) partition by list(a|b) (partition p0 values in (0))")
+	require.Regexp(t, ".*This partition function is not allowed.*", err)
+
+	err = tk.ExecToErr("create table texp4 (a int, b int) partition by list(a^b) (partition p0 values in (0))")
+	require.Regexp(t, ".*This partition function is not allowed.*", err)
+
+	err = tk.ExecToErr("create table texp4 (a int, b int) partition by list(a&b) (partition p0 values in (0))")
+	require.Regexp(t, ".*This partition function is not allowed.*", err)
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionDDL(c *C) {
