@@ -961,8 +961,11 @@ func TestListPartitionRandomTransaction(t *testing.T) {
 	}
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestIssue27018(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue27018(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27018")
 	tk.MustExec("use issue_27018")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
