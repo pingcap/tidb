@@ -904,12 +904,15 @@ func TestListPartitionAlterPK(t *testing.T) {
 	require.Regexp(t, ".*must include all columns.*", err)
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionRandomTransaction(c *C) {
+func TestListPartitionRandomTransaction(t *testing.T) {
 	if israce.RaceEnabled {
-		c.Skip("skip race test")
+		t.Skip("skip race test")
 	}
 
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_random_tran")
 	tk.MustExec("use list_partition_random_tran")
 	tk.MustExec("drop table if exists tlist")
