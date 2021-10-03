@@ -988,8 +988,11 @@ PARTITION BY LIST COLUMNS(col1) (
 	tk.MustQuery(`SELECT COL1 FROM PK_LP9326 WHERE COL1 NOT IN (621579514938,-17333745845828,2777039147338)`).Sort().Check(testkit.Rows("30", "48", "56"))
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestIssue27017(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue27017(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27017")
 	tk.MustExec("use issue_27017")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
