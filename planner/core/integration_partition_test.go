@@ -738,17 +738,21 @@ func TestListPartitionView(t *testing.T) {
 	r1.Check(r2.Rows())
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionAutoIncre(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionAutoIncre(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_auto_incre")
 	tk.MustExec("use list_partition_auto_incre")
 	tk.MustExec("drop table if exists tlist")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
-	c.Assert(tk.ExecToErr(`create table tlist (a int, b int AUTO_INCREMENT) partition by list (a) (
+	err := tk.ExecToErr(`create table tlist (a int, b int AUTO_INCREMENT) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
-    partition p2 values in (10, 11, 12, 13, 14))`), ErrorMatches, ".*it must be defined as a key.*")
+    partition p2 values in (10, 11, 12, 13, 14))`)
+	require.Regexp(t, ".*it must be defined as a key.*", err)
 
 	tk.MustExec(`create table tlist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
@@ -760,10 +764,11 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionAutoIncre(c *C) {
 	tk.MustExec(`insert into tlist (a) values (10)`)
 	tk.MustExec(`insert into tlist (a) values (1)`)
 
-	c.Assert(tk.ExecToErr(`create table tcollist (a int, b int AUTO_INCREMENT) partition by list columns (a) (
+	err = tk.ExecToErr(`create table tcollist (a int, b int AUTO_INCREMENT) partition by list columns (a) (
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
-    partition p2 values in (10, 11, 12, 13, 14))`), ErrorMatches, ".*it must be defined as a key.*")
+    partition p2 values in (10, 11, 12, 13, 14))`)
+	require.Regexp(t, ".*it must be defined as a key.*", err)
 
 	tk.MustExec(`create table tcollist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
     partition p0 values in (0, 1, 2, 3, 4),
