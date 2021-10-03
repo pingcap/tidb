@@ -227,12 +227,15 @@ func TestListPartitionFunctions(t *testing.T) {
 	}
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionOrderLimit(c *C) {
+func TestListPartitionOrderLimit(t *testing.T) {
 	if israce.RaceEnabled {
-		c.Skip("skip race test")
+		t.Skip("skip race test")
 	}
 
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_order_limit")
 	tk.MustExec("use list_partition_order_limit")
 	tk.MustExec("drop table if exists tlist")
