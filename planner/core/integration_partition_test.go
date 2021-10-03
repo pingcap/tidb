@@ -21,7 +21,6 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -31,45 +30,14 @@ import (
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
-
-var _ = SerialSuites(&testIntegrationPartitionSerialSuite{})
-
-type testIntegrationPartitionSerialSuite struct {
-	testData testutil.TestData
-	store    kv.Storage
-	dom      *domain.Domain
-}
-
-func (s *testIntegrationPartitionSerialSuite) SetUpSuite(c *C) {
-	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "integration_partition_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testIntegrationPartitionSerialSuite) TearDownSuite(c *C) {
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-}
-
-func (s *testIntegrationPartitionSerialSuite) SetUpTest(c *C) {
-	var err error
-	s.store, s.dom, err = newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-}
 
 func SetUpTest(t *testing.T) (kv.Storage, *domain.Domain) {
 	var err error
 	store, dom, err := newStoreWithBootstrap()
 	require.NoError(t, err)
 	return store, dom
-}
-
-func (s *testIntegrationPartitionSerialSuite) TearDownTest(c *C) {
-	s.dom.Close()
-	err := s.store.Close()
-	c.Assert(err, IsNil)
 }
 
 func TearDownTest(t *testing.T, store kv.Storage, dom *domain.Domain) {
