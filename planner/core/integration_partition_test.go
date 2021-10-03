@@ -353,8 +353,11 @@ func TestListPartitionAgg(t *testing.T) {
 	}
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionDML(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionDML(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_dml")
 	tk.MustExec("use list_partition_dml")
 	tk.MustExec("drop table if exists tlist")
@@ -366,8 +369,12 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionDML(c *C) {
 
 	tk.MustExec("insert into tlist partition(p0) values (0), (1)")
 	tk.MustExec("insert into tlist partition(p0, p1) values (2), (3), (8), (9)")
-	c.Assert(tk.ExecToErr("insert into tlist partition(p0) values (9)"), ErrorMatches, ".*Found a row not matching the given partition set.*")
-	c.Assert(tk.ExecToErr("insert into tlist partition(p3) values (20)"), ErrorMatches, ".*Unknown partition.*")
+
+	err := tk.ExecToErr("insert into tlist partition(p0) values (9)")
+	require.Regexp(t, ".*Found a row not matching the given partition set.*", err)
+
+	err = tk.ExecToErr("insert into tlist partition(p3) values (20)")
+	require.Regexp(t, ".*Unknown partition.*", err)
 
 	tk.MustExec("update tlist partition(p0) set a=a+1")
 	tk.MustQuery("select a from tlist order by a").Check(testkit.Rows("1", "2", "3", "4", "8", "9"))
@@ -385,8 +392,12 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionDML(c *C) {
     partition p2 values in (10, 11, 12, 13, 14))`)
 	tk.MustExec("insert into tcollist partition(p0) values (0), (1)")
 	tk.MustExec("insert into tcollist partition(p0, p1) values (2), (3), (8), (9)")
-	c.Assert(tk.ExecToErr("insert into tcollist partition(p0) values (9)"), ErrorMatches, ".*Found a row not matching the given partition set.*")
-	c.Assert(tk.ExecToErr("insert into tcollist partition(p3) values (20)"), ErrorMatches, ".*Unknown partition.*")
+
+	err = tk.ExecToErr("insert into tcollist partition(p0) values (9)")
+	require.Regexp(t, ".*Found a row not matching the given partition set.*", err)
+
+	err = tk.ExecToErr("insert into tcollist partition(p3) values (20)")
+	require.Regexp(t, ".*Unknown partition.*", err)
 
 	tk.MustExec("update tcollist partition(p0) set a=a+1")
 	tk.MustQuery("select a from tcollist order by a").Check(testkit.Rows("1", "2", "3", "4", "8", "9"))
