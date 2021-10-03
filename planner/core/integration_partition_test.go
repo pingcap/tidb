@@ -876,8 +876,11 @@ func TestListPartitionTempTable(t *testing.T) {
 	require.Regexp(t, ".*Cannot create temporary table with partitions.*", err)
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionAlterPK(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionAlterPK(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_alter_pk")
 	tk.MustExec("use list_partition_alter_pk")
 	tk.MustExec("drop table if exists tlist")
@@ -888,7 +891,8 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionAlterPK(c *C) {
     partition p2 values in (10, 11, 12, 13, 14))`)
 	tk.MustExec(`alter table tlist add primary key(a)`)
 	tk.MustExec(`alter table tlist drop primary key`)
-	c.Assert(tk.ExecToErr(`alter table tlist add primary key(b)`), ErrorMatches, ".*must include all columns.*")
+	err := tk.ExecToErr(`alter table tlist add primary key(b)`)
+	require.Regexp(t, ".*must include all columns.*", err)
 
 	tk.MustExec(`create table tcollist (a int, b int) partition by list columns (a) (
     partition p0 values in (0, 1, 2, 3, 4),
@@ -896,7 +900,8 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionAlterPK(c *C) {
     partition p2 values in (10, 11, 12, 13, 14))`)
 	tk.MustExec(`alter table tcollist add primary key(a)`)
 	tk.MustExec(`alter table tcollist drop primary key`)
-	c.Assert(tk.ExecToErr(`alter table tcollist add primary key(b)`), ErrorMatches, ".*must include all columns.*")
+	err = tk.ExecToErr(`alter table tcollist add primary key(b)`)
+	require.Regexp(t, ".*must include all columns.*", err)
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionRandomTransaction(c *C) {
