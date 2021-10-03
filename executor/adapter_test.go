@@ -33,7 +33,7 @@ func TestQueryTime(t *testing.T) {
 
 	costTime := time.Since(tk.Session().GetSessionVars().StartTime)
 
-	require.Less(t, costTime , time.Second)
+	require.Less(t, costTime, time.Second)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
