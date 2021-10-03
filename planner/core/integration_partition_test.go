@@ -814,8 +814,11 @@ func TestListPartitionAutoRandom(t *testing.T) {
     partition p2 values in (10, 11, 12, 13, 14))`)
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionInvisibleIdx(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionInvisibleIdx(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_invisible_idx")
 	tk.MustExec("use list_partition_invisible_idx")
 	tk.MustExec("drop table if exists tlist")
