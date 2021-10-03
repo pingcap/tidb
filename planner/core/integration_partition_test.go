@@ -432,10 +432,10 @@ func TestListPartitionCreation(t *testing.T) {
 	tk.MustExec("create table tcoluk1 (a int, b int, unique key(a)) partition by list columns(a) (partition p0 values in (0))")
 
 	err = tk.ExecToErr("create table tcoluk2 (a int, b int, unique key(a)) partition by list columns(b) (partition p0 values in (0))")
-	require.Regexp(t,  ".*UNIQUE INDEX must include all columns.*", err)
+	require.Regexp(t, ".*UNIQUE INDEX must include all columns.*", err)
 
 	err = tk.ExecToErr("create table tcoluk2 (a int, b int, unique key(a), unique key(b)) partition by list columns(a) (partition p0 values in (0))")
-	require.Regexp(t,  ".*UNIQUE INDEX must include all columns.*", err)
+	require.Regexp(t, ".*UNIQUE INDEX must include all columns.*", err)
 
 	// with PK
 	tk.MustExec("create table tpk1 (a int, b int, primary key(a)) partition by list (a) (partition p0 values in (0))")
@@ -466,8 +466,11 @@ func TestListPartitionCreation(t *testing.T) {
 	require.Regexp(t, ".*This partition function is not allowed.*", err)
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionDDL(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionDDL(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_ddl")
 	tk.MustExec("use list_partition_ddl")
 	tk.MustExec("drop table if exists tlist")
@@ -475,17 +478,21 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionDDL(c *C) {
 
 	// index
 	tk.MustExec(`create table tlist (a int, b int) partition by list (a) (partition p0 values in (0))`)
-	c.Assert(tk.ExecToErr(`alter table tlist add primary key (b)`), ErrorMatches, ".*must include all.*") // add pk
+	err := tk.ExecToErr(`alter table tlist add primary key (b)`) // add pk
+	require.Regexp(t, ".*must include all.*", err)
 	tk.MustExec(`alter table tlist add primary key (a)`)
-	c.Assert(tk.ExecToErr(`alter table tlist add unique key (b)`), ErrorMatches, ".*must include all.*") // add uk
+	err = tk.ExecToErr(`alter table tlist add unique key (b)`) // add uk
+	require.Regexp(t, ".*must include all.*", err)
 	tk.MustExec(`alter table tlist add key (b)`)                                                         // add index
 	tk.MustExec(`alter table tlist rename index b to bb`)
 	tk.MustExec(`alter table tlist drop index bb`)
 
 	tk.MustExec(`create table tcollist (a int, b int) partition by list columns (a) (partition p0 values in (0))`)
-	c.Assert(tk.ExecToErr(`alter table tcollist add primary key (b)`), ErrorMatches, ".*must include all.*") // add pk
+	err = tk.ExecToErr(`alter table tcollist add primary key (b)`) // add pk
+	require.Regexp(t, ".*must include all.*", err)
 	tk.MustExec(`alter table tcollist add primary key (a)`)
-	c.Assert(tk.ExecToErr(`alter table tcollist add unique key (b)`), ErrorMatches, ".*must include all.*") // add uk
+	err = tk.ExecToErr(`alter table tcollist add unique key (b)`) // add uk
+	require.Regexp(t, ".*must include all.*", err)
 	tk.MustExec(`alter table tcollist add key (b)`)                                                         // add index
 	tk.MustExec(`alter table tcollist rename index b to bb`)
 	tk.MustExec(`alter table tcollist drop index bb`)
