@@ -1034,8 +1034,11 @@ func TestIssue27544(t *testing.T) {
 	tk.MustExec(`insert into t3 values ('1921-05-10 15:20:30')`)
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestIssue27012(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue27012(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27012")
 	tk.MustExec("use issue_27012")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
