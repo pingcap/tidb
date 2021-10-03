@@ -24,6 +24,7 @@ import (
 
 func TestQueryTime(t *testing.T) {
 
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -32,7 +33,7 @@ func TestQueryTime(t *testing.T) {
 
 	costTime := time.Since(tk.Session().GetSessionVars().StartTime)
 
-	require.Equal(t, true, true, costTime < 1*time.Second)
+	require.Less(t, costTime , time.Second)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -41,5 +42,5 @@ func TestQueryTime(t *testing.T) {
 
 	costTime = time.Since(tk.Session().GetSessionVars().StartTime)
 
-	require.Equal(t, true, costTime < 1*time.Second)
+	require.Less(t, costTime, time.Second)
 }
