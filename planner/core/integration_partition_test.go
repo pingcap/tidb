@@ -1064,8 +1064,11 @@ PARTITION BY LIST COLUMNS(col1) (
 	tk.MustQuery(`select * from IDT_LP24306 where col1 not between 12021 and 99 and col1 <= -128`).Sort().Check(testkit.Rows("-128"))
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestIssue27030(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue27030(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27030")
 	tk.MustExec("use issue_27030")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
