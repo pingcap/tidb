@@ -150,8 +150,11 @@ func TestListColVariousTypes(t *testing.T) {
 	}
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionPruning(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionPruning(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_pruning")
 	tk.MustExec("use list_partition_pruning")
 	tk.MustExec("drop table if exists tlist")
@@ -173,14 +176,15 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionPruning(c *C) {
 		DynamicPlan []string
 		StaticPlan  []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
+	integrationPartitionSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-			output[i].DynamicPlan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].DynamicPlan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-			output[i].StaticPlan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].StaticPlan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
 		tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].DynamicPlan...))
