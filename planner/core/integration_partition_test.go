@@ -833,8 +833,11 @@ func TestListPartitionInvisibleIdx(t *testing.T) {
 	tk.HasPlan(`select a from tcollist where a>=0 and a<=5`, "TableFullScan")
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionCTE(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionCTE(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_cte")
 	tk.MustExec("use list_partition_cte")
 	tk.MustExec("drop table if exists tlist")
