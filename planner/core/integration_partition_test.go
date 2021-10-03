@@ -694,8 +694,11 @@ func TestListPartitionSplitRegion(t *testing.T) {
 	tk.MustQuery("select * from tcollist partition (p1, p2)").Sort().Check(testkit.Rows("10", "12", "5", "6"))
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionView(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionView(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_view")
 	tk.MustExec("use list_partition_view")
 	tk.MustExec("drop table if exists tlist")
