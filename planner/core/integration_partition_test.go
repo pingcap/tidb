@@ -193,8 +193,11 @@ func TestListPartitionPruning(t *testing.T) {
 	}
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionFunctions(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestListPartitionFunctions(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_pruning")
 	tk.MustExec("use list_partition_pruning")
 	tk.MustExec("set tidb_enable_list_partition = 1")
@@ -205,13 +208,14 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionFunctions(c *C) {
 		SQL     string
 		Results []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	integrationPartitionSuiteData := core.GetIntegrationPartitionSuiteData()
+	integrationPartitionSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Results = nil
 			if strings.Contains(tt, "select") {
-				output[i].Results = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+				output[i].Results = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 			}
 		})
 
