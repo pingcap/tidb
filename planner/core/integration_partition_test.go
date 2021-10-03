@@ -595,12 +595,16 @@ func TestListPartitionOperations(t *testing.T) {
 	require.Regexp(t, ".*Multiple definition.*", err)
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionPrivilege(c *C) {
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.Se = se
+func TestListPartitionPrivilege(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.SetSession(se)
 	tk.MustExec("create database list_partition_pri")
 	tk.MustExec("use list_partition_pri")
 	tk.MustExec("drop table if exists tlist")
@@ -610,16 +614,20 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionPrivilege(c *C) {
 	tk.MustExec(`create user 'priv_test'@'%'`)
 	tk.MustExec(`grant select on list_partition_pri.tlist to 'priv_test'`)
 
-	tk1 := testkit.NewTestKit(c, s.store)
-	se, err = session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "priv_test", Hostname: "%"}, nil, nil), IsTrue)
-	tk1.Se = se
+	tk1 := newtestkit.NewTestKit(t, store)
+	se, err = session.CreateSession4Test(store)
+	require.NoError(t, err)
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "priv_test", Hostname: "%"}, nil, nil))
+	tk1.SetSession(se)
 	tk1.MustExec(`use list_partition_pri`)
-	c.Assert(tk1.ExecToErr(`alter table tlist truncate partition p0`), ErrorMatches, ".*denied.*")
-	c.Assert(tk1.ExecToErr(`alter table tlist drop partition p0`), ErrorMatches, ".*denied.*")
-	c.Assert(tk1.ExecToErr(`alter table tlist add partition (partition p2 values in (2))`), ErrorMatches, ".*denied.*")
-	c.Assert(tk1.ExecToErr(`insert into tlist values (1)`), ErrorMatches, ".*denied.*")
+	err = tk1.ExecToErr(`alter table tlist truncate partition p0`)
+	require.Regexp(t, ".*denied.*", err)
+	err = tk1.ExecToErr(`alter table tlist drop partition p0`)
+	require.Regexp(t, ".*denied.*", err)
+	err = tk1.ExecToErr(`alter table tlist add partition (partition p2 values in (2))`)
+	require.Regexp(t, ".*denied.*", err)
+	err = tk1.ExecToErr(`insert into tlist values (1)`)
+	require.Regexp(t, ".*denied.*", err)
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionShardBits(c *C) {
