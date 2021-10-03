@@ -1017,8 +1017,11 @@ PARTITION BY LIST COLUMNS(col1) (
 	tk.MustQuery(`SELECT COL1 FROM PK_LP9465 HAVING COL1>=-12354348921530`).Sort().Check(testkit.Rows("8263677"))
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestIssue27544(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestIssue27544(t *testing.T) {
+	store, dom := SetUpTest(t)
+	defer TearDownTest(t, store, dom)
+
+	tk := newtestkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27544")
 	tk.MustExec("use issue_27544")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
