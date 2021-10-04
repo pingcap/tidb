@@ -56,41 +56,43 @@ var Priv2Str = map[PrivilegeType]string{
 
 // Priv2SetStr is the map for privilege to string.
 var Priv2SetStr = map[PrivilegeType]string{
-	CreatePriv:     "Create",
-	SelectPriv:     "Select",
-	InsertPriv:     "Insert",
-	UpdatePriv:     "Update",
-	DeletePriv:     "Delete",
-	DropPriv:       "Drop",
-	GrantPriv:      "Grant",
-	ReferencesPriv: "References",
-	LockTablesPriv: "Lock Tables",
-	AlterPriv:      "Alter",
-	ExecutePriv:    "Execute",
-	IndexPriv:      "Index",
-	CreateViewPriv: "Create View",
-	ShowViewPriv:   "Show View",
-	CreateRolePriv: "Create Role",
-	DropRolePriv:   "Drop Role",
-	ShutdownPriv:   "Shutdown Role",
+	CreatePriv:         "Create",
+	SelectPriv:         "Select",
+	InsertPriv:         "Insert",
+	UpdatePriv:         "Update",
+	DeletePriv:         "Delete",
+	DropPriv:           "Drop",
+	GrantPriv:          "Grant",
+	ReferencesPriv:     "References",
+	LockTablesPriv:     "Lock Tables",
+	CreateTMPTablePriv: "Create Temporary Tables",
+	AlterPriv:          "Alter",
+	ExecutePriv:        "Execute",
+	IndexPriv:          "Index",
+	CreateViewPriv:     "Create View",
+	ShowViewPriv:       "Show View",
+	CreateRolePriv:     "Create Role",
+	DropRolePriv:       "Drop Role",
+	ShutdownPriv:       "Shutdown Role",
 }
 
 // SetStr2Priv is the map for privilege set string to privilege type.
 var SetStr2Priv = map[string]PrivilegeType{
-	"Create":      CreatePriv,
-	"Select":      SelectPriv,
-	"Insert":      InsertPriv,
-	"Update":      UpdatePriv,
-	"Delete":      DeletePriv,
-	"Drop":        DropPriv,
-	"Grant":       GrantPriv,
-	"References":  ReferencesPriv,
-	"Lock Tables": LockTablesPriv,
-	"Alter":       AlterPriv,
-	"Execute":     ExecutePriv,
-	"Index":       IndexPriv,
-	"Create View": CreateViewPriv,
-	"Show View":   ShowViewPriv,
+	"Create":                  CreatePriv,
+	"Select":                  SelectPriv,
+	"Insert":                  InsertPriv,
+	"Update":                  UpdatePriv,
+	"Delete":                  DeletePriv,
+	"Drop":                    DropPriv,
+	"Grant":                   GrantPriv,
+	"References":              ReferencesPriv,
+	"Lock Tables":             LockTablesPriv,
+	"Create Temporary Tables": CreateTMPTablePriv,
+	"Alter":                   AlterPriv,
+	"Execute":                 ExecutePriv,
+	"Index":                   IndexPriv,
+	"Create View":             CreateViewPriv,
+	"Show View":               ShowViewPriv,
 }
 
 // Priv2UserCol is the privilege to mysql.user table column name.
@@ -301,7 +303,7 @@ func (privs Privileges) Has(p PrivilegeType) bool {
 var AllGlobalPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, ReferencesPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, CreateTablespacePriv, TriggerPriv, CreateViewPriv, ShowViewPriv, CreateRolePriv, DropRolePriv, CreateTMPTablePriv, LockTablesPriv, CreateRoutinePriv, AlterRoutinePriv, EventPriv, ShutdownPriv, ReloadPriv, FilePriv, ConfigPriv, ReplicationClientPriv, ReplicationSlavePriv}
 
 // AllDBPrivs is all the privileges in database scope.
-var AllDBPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ReferencesPriv, LockTablesPriv, AlterPriv, ExecutePriv, IndexPriv, CreateViewPriv, ShowViewPriv}
+var AllDBPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ReferencesPriv, LockTablesPriv, CreateTMPTablePriv, AlterPriv, ExecutePriv, IndexPriv, CreateViewPriv, ShowViewPriv}
 
 // AllTablePrivs is all the privileges in table scope.
 var AllTablePrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, IndexPriv, ReferencesPriv, AlterPriv, CreateViewPriv, ShowViewPriv}
