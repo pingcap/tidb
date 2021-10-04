@@ -132,7 +132,7 @@ const (
 		Grantor		CHAR(77),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
-		Column_priv	SET('Select','Insert','Update'),
+		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
@@ -142,7 +142,7 @@ const (
 		Table_name	CHAR(64),
 		Column_name	CHAR(64),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		Column_priv	SET('Select','Insert','Update'),
+		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
