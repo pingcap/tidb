@@ -513,11 +513,13 @@ const (
 	version74 = 74
 	// version75 update mysql.*.host from char(60) to char(255)
 	version75 = 75
+	// version76 update mysql.columns_priv from SET('Select','Insert','Update') to SET('Select','Insert','Update','References')
+	version76 = 76
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version75
+var currentBootstrapVersion int64 = version76
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -596,6 +598,7 @@ var (
 		upgradeToVer73,
 		upgradeToVer74,
 		upgradeToVer75,
+		upgradeToVer76,
 	}
 )
 
@@ -1569,6 +1572,13 @@ func upgradeToVer75(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.db MODIFY COLUMN Host CHAR(255)")
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Host CHAR(255)")
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Host CHAR(255)")
+}
+
+func upgradeToVer76(s Session, ver int64) {
+	if ver >= version76 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Column_priv SET('Select','Insert','Update','References')")
 }
 
 func writeOOMAction(s Session) {
