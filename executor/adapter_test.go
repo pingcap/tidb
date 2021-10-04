@@ -23,7 +23,6 @@ import (
 )
 
 func TestQueryTime(t *testing.T) {
-
 	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -32,7 +31,6 @@ func TestQueryTime(t *testing.T) {
 	tk.MustExec("use test")
 
 	costTime := time.Since(tk.Session().GetSessionVars().StartTime)
-
 	require.Less(t, costTime, time.Second)
 
 	tk.MustExec("drop table if exists t")
@@ -41,6 +39,5 @@ func TestQueryTime(t *testing.T) {
 	tk.MustExec("select * from t t1 join t t2 on t1.a = t2.a")
 
 	costTime = time.Since(tk.Session().GetSessionVars().StartTime)
-
 	require.Less(t, costTime, time.Second)
 }
