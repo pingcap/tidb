@@ -703,7 +703,7 @@ const (
 	DefTiDBScatterRegion                  = false
 	DefTiDBWaitSplitRegionFinish          = true
 	DefWaitSplitRegionTimeout             = 300 // 300s
-	DefTiDBEnableNoopFuncs                = false
+	DefTiDBEnableNoopFuncs                = Off
 	DefTiDBAllowRemoveAutoInc             = false
 	DefTiDBUsePlanBaselines               = true
 	DefTiDBEvolvePlanBaselines            = false
