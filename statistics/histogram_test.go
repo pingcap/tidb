@@ -101,9 +101,9 @@ num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0 ndv: 0`
 	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
 	for i := 0; i < 5; i++ {
 		low, err1 := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(i*3)))
-		require.Nilf(t, err1, "Test failed: %v", err1)
+		require.NoErrorf(t, err1, "Test failed: %v", err1)
 		high, err2 := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(i*3+2)))
-		require.Nilf(t, err2, "Test failed: %v", err2)
+		require.NoErrorf(t, err2, "Test failed: %v", err2)
 		idx.Bounds.AppendBytes(0, low)
 		idx.Bounds.AppendBytes(0, high)
 		idx.Buckets = append(idx.Buckets, Bucket{Repeat: 10, Count: int64(30*i + 30)})
@@ -130,7 +130,7 @@ func TestTruncateHistogram(t *testing.T) {
 	newHist := hist.TruncateHistogram(1)
 	require.True(t, HistogramEqual(hist, newHist, true))
 	newHist = hist.TruncateHistogram(0)
-	require.Equal(t, 0, newHist.Len())
+	require.Len(t, newHist, 0)
 }
 
 func TestValueToString4InvalidKey(t *testing.T) {
