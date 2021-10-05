@@ -135,7 +135,7 @@ func (helper extractHelper) extractColOrExpr(extractCols map[int64]*types.FieldN
 	}
 	// Define an inner function to avoid populate the outer scope
 	var extract = func(extractCols map[int64]*types.FieldName, fn *expression.ScalarFunction) (string, []types.Datum) {
-		switch fn.FuncName.L {
+		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
 			return helper.extractColBinaryOpConsExpr(extractCols, fn)
 		case ast.LogicOr:
@@ -204,7 +204,7 @@ func (helper extractHelper) extractCol(
 		}
 		var colName string
 		var datums []types.Datum // the memory of datums should not be reused, they will be put into result.
-		switch fn.FuncName.L {
+		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
 			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 		case ast.In:
@@ -360,6 +360,27 @@ func (helper extractHelper) getTimeFunctionName(fn *expression.ScalarFunction) s
 	case tipb.ScalarFuncSig_LETime:
 		return ast.LE
 	case tipb.ScalarFuncSig_EQTime:
+		return ast.EQ
+	default:
+		return fn.FuncName.L
+	}
+}
+
+// getStringFunctionName is used to get the (string) function name.
+// For the expression that push down to the coprocessor, the function name is different with normal compare function,
+// Then getStringFunctionName will do a sample function name convert.
+// Currently, this is used to support query `CLUSTER_STMT_SUMMARY` at any string.
+func (helper extractHelper) getStringFunctionName(fn *expression.ScalarFunction) string {
+	switch fn.Function.PbCode() {
+	case tipb.ScalarFuncSig_GTString:
+		return ast.GT
+	case tipb.ScalarFuncSig_GEString:
+		return ast.GE
+	case tipb.ScalarFuncSig_LTString:
+		return ast.LT
+	case tipb.ScalarFuncSig_LEString:
+		return ast.LE
+	case tipb.ScalarFuncSig_EQString:
 		return ast.EQ
 	default:
 		return fn.FuncName.L
@@ -1315,4 +1336,48 @@ func (e *TiFlashSystemTableExtractor) explainInfo(p *PhysicalMemTable) string {
 		return s[:len(s)-2]
 	}
 	return s
+}
+
+// StatementsSummaryExtractor is used to extract some predicates of statements summary table.
+type StatementsSummaryExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+	// Digests represents digest applied to, and we should apply all digest if there is no digest specified.
+	// e.g: SELECT * FROM STATEMENTS_SUMMARY WHERE digest='8019af26debae8aa7642c501dbc43212417b3fb14e6aec779f709976b7e521be'
+	Digests set.StringSet
+	// Enable is true means the executor should use digest to locate statement summary.
+	// Enable is false, means the executor should keep the behavior compatible with before.
+	Enable bool
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *StatementsSummaryExtractor) Extract(
+	_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// Extract the `digest` column
+	remained, skip, digests := e.extractCol(schema, names, predicates, "digest", false)
+	e.SkipRequest = skip
+	if e.SkipRequest {
+		return nil
+	}
+	if digests.Count() > 0 {
+		e.Enable = true
+		e.Digests = digests
+	}
+	return remained
+}
+
+func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	if !e.Enable {
+		return ""
+	}
+	return fmt.Sprintf("digests: [%s]", extractStringFromStringSet(e.Digests))
 }
