@@ -93,11 +93,8 @@ func SubTestWeightedSampling() func(*testing.T) {
 			require.Nil(t, rs.Close())
 		}
 		expFrequency := float64(sampleNum) * float64(loopCnt) / float64(rowNum)
-		delta := 0.5
 		for _, cnt := range itemCnt {
-			if float64(cnt) < expFrequency/(1+delta) || float64(cnt) > expFrequency*(1+delta) {
-				require.Truef(t, false, "The frequency %v is exceed the Chernoff Bound", cnt)
-			}
+			require.InEpsilonf(t, expFrequency, float64(cnt), 0.5, "The frequency %v is exceed the Chernoff Bound", cnt)
 		}
 	}
 }
@@ -139,11 +136,8 @@ func SubTestDistributedWeightedSampling() func(*testing.T) {
 			}
 		}
 		expFrequency := float64(sampleNum) * float64(loopCnt) / float64(rowNum)
-		delta := 0.5
 		for _, cnt := range itemCnt {
-			if float64(cnt) < expFrequency/(1+delta) || float64(cnt) > expFrequency*(1+delta) {
-				require.Truef(t, false, "the frequency %v is exceed the Chernoff Bound", cnt)
-			}
+			require.InEpsilonf(t, expFrequency, float64(cnt), 0.5, "The frequency %v is exceed the Chernoff Bound", cnt)
 		}
 	}
 }
