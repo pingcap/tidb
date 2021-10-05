@@ -118,7 +118,7 @@ func SubTestMergeSampleCollector(s *testSampleSuite) func(*testing.T) {
 		collectors[0].IsMerger = true
 		collectors[0].MergeSampleCollector(sc, collectors[1])
 		require.Equal(t, int64(9280), collectors[0].FMSketch.NDV())
-		require.Equal(t, 1000, len(collectors[0].Samples))
+		require.Len(t, collectors[0].Samples, 1000)
 		require.Equal(t, int64(1000), collectors[0].NullCount)
 		require.Equal(t, int64(19000), collectors[0].Count)
 		require.Equal(t, uint64(collectors[0].Count), collectors[0].CMSketch.TotalCount())
