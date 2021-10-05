@@ -1214,8 +1214,8 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	}()
 
 	// test for tidb_enable_noop_functions
-	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
-	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 
 	_, err := tk.Exec(`select get_lock('lock1', 2);`)
 	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
@@ -1224,15 +1224,15 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 
 	// change session var to 1
 	tk.MustExec(`set tidb_enable_noop_functions=1;`)
-	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("1"))
-	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 	tk.MustQuery(`select get_lock("lock", 10)`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select release_lock("lock")`).Check(testkit.Rows("1"))
 
 	// restore to 0
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
-	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
-	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
+	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 
 	_, err = tk.Exec(`select get_lock('lock2', 10);`)
 	c.Assert(terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
@@ -1245,11 +1245,11 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	_, err = tk.Exec(`set tidb_enable_noop_functions=11`)
 	c.Assert(err, NotNil)
 	tk.MustExec(`set tidb_enable_noop_functions="off";`)
-	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 	tk.MustExec(`set tidb_enable_noop_functions="on";`)
-	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("ON"))
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
-	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 
 	_, err = tk.Exec("SET SESSION tx_read_only = 1")
 	c.Assert(terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), IsTrue, Commentf("err %v", err))
@@ -1422,13 +1422,6 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	tk.MustExec("set @@global.tidb_enable_top_sql='off';")
 	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("0"))
 	c.Assert(variable.TopSQLVariable.Enable.Load(), IsFalse)
-
-	tk.MustExec("set @@tidb_top_sql_agent_address='127.0.0.1:4001';")
-	tk.MustQuery("select @@tidb_top_sql_agent_address;").Check(testkit.Rows("127.0.0.1:4001"))
-	c.Assert(variable.TopSQLVariable.AgentAddress.Load(), Equals, "127.0.0.1:4001")
-	tk.MustExec("set @@tidb_top_sql_agent_address='';")
-	tk.MustQuery("select @@tidb_top_sql_agent_address;").Check(testkit.Rows(""))
-	c.Assert(variable.TopSQLVariable.AgentAddress.Load(), Equals, "")
 
 	tk.MustExec("set @@global.tidb_top_sql_precision_seconds=2;")
 	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))

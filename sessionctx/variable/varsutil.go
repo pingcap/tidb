@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -130,20 +131,28 @@ func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 
 // checkReadOnly requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.
 func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag, offlineMode bool) (string, error) {
-	feature := "READ ONLY"
+	errMsg := ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
 	if offlineMode {
-		feature = "OFFLINE MODE"
+		errMsg = ErrFunctionsNoopImpl.GenWithStackByArgs("OFFLINE MODE")
 	}
 	if TiDBOptOn(normalizedValue) {
-		if !vars.EnableNoopFuncs && scope == ScopeSession {
-			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+		if scope == ScopeSession && vars.NoopFuncsMode != OnInt {
+			if vars.NoopFuncsMode == OffInt {
+				return Off, errMsg
+			}
+			vars.StmtCtx.AppendWarning(errMsg)
 		}
-		val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
-		if err != nil {
-			return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
-		}
-		if scope == ScopeGlobal && !TiDBOptOn(val) {
-			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+		if scope == ScopeGlobal {
+			val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
+			if err != nil {
+				return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
+			}
+			if val == Off {
+				return Off, errMsg
+			}
+			if val == Warn {
+				vars.StmtCtx.AppendWarning(errMsg)
+			}
 		}
 	}
 	return normalizedValue, nil
@@ -281,23 +290,24 @@ func TiDBOptOn(opt string) bool {
 }
 
 const (
-	// OffInt is used by TiDBMultiStatementMode
+	// OffInt is used by TiDBOptOnOffWarn
 	OffInt = 0
-	// OnInt is used TiDBMultiStatementMode
+	// OnInt is used TiDBOptOnOffWarn
 	OnInt = 1
-	// WarnInt is used by TiDBMultiStatementMode
+	// WarnInt is used by TiDBOptOnOffWarn
 	WarnInt = 2
 )
 
-// TiDBOptMultiStmt converts multi-stmt options to int.
-func TiDBOptMultiStmt(opt string) int {
+// TiDBOptOnOffWarn converts On/Off/Warn to an int.
+// It is used for MultiStmtMode and NoopFunctionsMode
+func TiDBOptOnOffWarn(opt string) int {
 	switch opt {
-	case Off:
-		return OffInt
+	case Warn:
+		return WarnInt
 	case On:
 		return OnInt
 	}
-	return WarnInt
+	return OffInt
 }
 
 // ClusteredIndexDefMode controls the default clustered property for primary key.
@@ -435,6 +445,22 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 	s.SnapshotTS = 0
 	s.SnapshotInfoschema = nil
 	return err
+}
+
+func setReadStaleness(s *SessionVars, sVal string) error {
+	if sVal == "" || sVal == "0" {
+		s.ReadStaleness = 0
+		return nil
+	}
+	sValue, err := strconv.ParseInt(sVal, 10, 32)
+	if err != nil {
+		return err
+	}
+	if sValue > 0 {
+		return fmt.Errorf("%s's value should be less than 0", TiDBReadStaleness)
+	}
+	s.ReadStaleness = time.Duration(sValue) * time.Second
+	return nil
 }
 
 // serverGlobalVariable is used to handle variables that acts in server and global scope.

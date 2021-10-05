@@ -98,7 +98,7 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 			tablesRestored = append(tablesRestored, tableName.L)
 		}
 	}
-	if err := rc.afterSystemTablesReplaced(ctx, tablesRestored); err != nil {
+	if err := rc.afterSystemTablesReplaced(tablesRestored); err != nil {
 		for _, e := range multierr.Errors(err) {
 			log.Warn("error during reconfigurating the system tables", zap.String("database", sysDB), logutil.ShortError(e))
 		}
@@ -133,14 +133,14 @@ func (rc *Client) getDatabaseByName(name string) (*database, bool) {
 
 // afterSystemTablesReplaced do some extra work for special system tables.
 // e.g. after inserting to the table mysql.user, we must execute `FLUSH PRIVILEGES` to allow it take effect.
-func (rc *Client) afterSystemTablesReplaced(ctx context.Context, tables []string) error {
+func (rc *Client) afterSystemTablesReplaced(tables []string) error {
 	var err error
 	for _, table := range tables {
 		switch {
 		case table == "user":
 			// We cannot execute `rc.dom.NotifyUpdatePrivilege` here, because there isn't
 			// sessionctx.Context provided by the glue.
-			// TODO: update the glue type and allow we retrive a session context from it.
+			// TODO: update the glue type and allow we retrieve a session context from it.
 			err = multierr.Append(err, errors.Annotatef(berrors.ErrUnsupportedSystemTable,
 				"restored user info may not take effect, until you should execute `FLUSH PRIVILEGES` manually"))
 		}
