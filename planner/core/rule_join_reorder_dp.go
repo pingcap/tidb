@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -134,14 +135,14 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expressio
 }
 
 // bfsGraph bfs a sub graph starting at startPos. And relabel its label for future use.
-func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents [][]int, nodeID2VistID []int) []int {
+func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents [][]int, nodeID2VisitID []int) []int {
 	queue := []int{startNode}
 	visited[startNode] = true
 	var visitID2NodeID []int
 	for len(queue) > 0 {
 		curNodeID := queue[0]
 		queue = queue[1:]
-		nodeID2VistID[curNodeID] = len(visitID2NodeID)
+		nodeID2VisitID[curNodeID] = len(visitID2NodeID)
 		visitID2NodeID = append(visitID2NodeID, curNodeID)
 		for _, adjNodeID := range adjacents[curNodeID] {
 			if visited[adjNodeID] {

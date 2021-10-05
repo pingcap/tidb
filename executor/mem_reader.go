@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	transaction "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -322,8 +324,22 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 	if err != nil {
 		return err
 	}
+
+	tempTableData := ctx.GetSessionVars().TemporaryTableData
 	for _, rg := range kvRanges {
 		iter := txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
+		if tempTableData != nil {
+			snapIter, err := tempTableData.Iter(rg.StartKey, rg.EndKey)
+			if err != nil {
+				return err
+			}
+
+			iter, err = transaction.NewUnionIter(iter, snapIter, false)
+			if err != nil {
+				return err
+			}
+		}
+
 		for ; iter.Valid(); err = iter.Next() {
 			if err != nil {
 				return err

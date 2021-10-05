@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -86,7 +87,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if len(e.Level.DBName) > 0 {
 			// The database name should also match.
 			db, succ := schema.SchemaByName(dbNameStr)
-			if !succ || db.Name.String() != dbName {
+			if !succ || db.Name.L != dbNameStr.L {
 				return err
 			}
 		}
@@ -121,7 +122,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	// Check which user is not exist.
 	for _, user := range e.Users {
-		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
+		exists, err := userExists(ctx, e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -213,8 +214,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	isCommit = true
-	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return nil
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 func containsNonDynamicPriv(privList []*ast.PrivElem) bool {
@@ -360,7 +360,7 @@ func tlsOption2GlobalPriv(tlsOptions []*ast.TLSOption) (priv []byte, err error) 
 	gp := privileges.GlobalPrivValue{SSLType: privileges.SslTypeNotSpecified}
 	for _, tlsOpt := range tlsOptions {
 		switch tlsOpt.Type {
-		case ast.TslNone:
+		case ast.TlsNone:
 			gp.SSLType = privileges.SslTypeNone
 		case ast.Ssl:
 			gp.SSLType = privileges.SslTypeAny
@@ -486,6 +486,13 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 		dbName = e.ctx.GetSessionVars().CurrentDB
 	}
 
+	// Some privilege can not be granted to performance_schema.* in MySQL.
+	// As TiDB ignores the privilege management part for this system database,
+	// check is performed here
+	if strings.EqualFold(dbName, "performance_schema") && e.checkPerformanceSchemaPriv(priv.Priv) {
+		return e.dbAccessDenied(dbName)
+	}
+
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.DBTable)
 	err := composeDBPrivUpdate(sql, priv.Priv, "Y")
@@ -548,6 +555,28 @@ func (e *GrantExec) grantColumnLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 		}
 	}
 	return nil
+}
+
+func (e *GrantExec) dbAccessDenied(dbName string) error {
+	user := e.ctx.GetSessionVars().User
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	return ErrDBaccessDenied.GenWithStackByArgs(u, h, dbName)
+}
+
+// If the privilege can not be granted, return true
+func (e *GrantExec) checkPerformanceSchemaPriv(privType mysql.PrivilegeType) bool {
+	// Attempts to use GRANT ALL as shorthand for granting privileges
+	// at the database leval fail with an error
+	// See https://dev.mysql.com/doc/refman/8.0/en/performance-schema-table-characteristics.html for more detail
+	// Others are rejected in MySQL 8.0
+	return privType == mysql.AllPriv || privType == mysql.CreatePriv ||
+		privType == mysql.ReferencesPriv || privType == mysql.AlterPriv || privType == mysql.ExecutePriv ||
+		privType == mysql.IndexPriv || privType == mysql.CreateViewPriv || privType == mysql.ShowViewPriv
 }
 
 // composeGlobalPrivUpdate composes update stmt assignment list string for global scope privilege update.

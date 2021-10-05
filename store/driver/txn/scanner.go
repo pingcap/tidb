@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,14 +16,14 @@ package txn
 
 import (
 	"github.com/pingcap/tidb/kv"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 type tikvScanner struct {
-	*tikv.Scanner
+	*txnsnapshot.Scanner
 }
 
-// Next return next element.
+// Next returns the next element.
 func (s *tikvScanner) Next() error {
 	err := s.Scanner.Next()
 	return extractKeyErr(err)

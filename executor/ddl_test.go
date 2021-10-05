@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -31,6 +32,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -290,6 +292,10 @@ func (s *testSuite6) TestCreateView(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrNoSuchTable), IsTrue)
 	tk.MustExec("drop table test_v_nested")
 	tk.MustExec("drop view v_nested, v_nested2")
+
+	// Refer https://github.com/pingcap/tidb/issues/25876
+	err = tk.ExecToErr("create view v_stale as select * from source_table as of timestamp current_timestamp(3)")
+	c.Assert(terror.ErrorEqual(err, executor.ErrViewInvalid), IsTrue, Commentf("err %s", err))
 }
 
 func (s *testSuite6) TestViewRecursion(c *C) {
@@ -312,6 +318,44 @@ func (s *testSuite6) TestIssue16250(c *C) {
 	tk.MustExec("create view view_issue16250 as select * from t")
 	_, err := tk.Exec("truncate table view_issue16250")
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
+}
+
+func (s *testSuite6) TestIssue24771(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists zy_tab;`)
+	tk.MustExec(`create table if not exists zy_tab (
+						zy_code int,
+						zy_name varchar(100)
+					);`)
+	tk.MustExec(`drop table if exists bj_tab;`)
+	tk.MustExec(`create table if not exists bj_tab (
+						bj_code int,
+						bj_name varchar(100),
+						bj_addr varchar(100),
+						bj_person_count int,
+						zy_code int
+					);`)
+	tk.MustExec(`drop table if exists st_tab;`)
+	tk.MustExec(`create table if not exists st_tab (
+						st_code int,
+						st_name varchar(100),
+						bj_code int
+					);`)
+	tk.MustExec(`drop view if exists v_st_2;`)
+	tk.MustExec(`create definer='root'@'localhost' view v_st_2 as
+		select st.st_name,bj.bj_name,zy.zy_name
+		from (
+			select bj_code,
+				bj_name,
+				zy_code
+			from bj_tab as b
+			where b.bj_code = 1
+		) as bj
+		left join zy_tab as zy on zy.zy_code = bj.zy_code
+		left join st_tab as st on bj.bj_code = st.bj_code;`)
+	tk.MustQuery(`show create view v_st_2`)
+	tk.MustQuery(`select * from v_st_2`)
 }
 
 func (s testSuite6) TestTruncateSequence(c *C) {
@@ -341,7 +385,7 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 		"_UTF8MB4'cccccccccc' AS `cccccccccc`,_UTF8MB4'ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' AS `ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd`"
 	tk.MustQuery("select * from v")
 	tk.MustQuery("select name_exp_1, name_exp_2, cccccccccc, name_exp_4 from v")
-	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + " utf8mb4 utf8mb4_bin"))
 	tk.MustExec("drop view v;")
 	tk.MustExec(resultCreateStmt)
 
@@ -356,7 +400,7 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 		"COUNT(DISTINCT _UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', _UTF8MB4'c') AS `count(distinct 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'c')`"
 	tk.MustQuery("select * from v")
 	tk.MustQuery("select a, name_exp_2 from v")
-	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + " utf8mb4 utf8mb4_bin"))
 	tk.MustExec("drop view v;")
 	tk.MustExec(resultCreateStmt)
 
@@ -365,7 +409,7 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 	tk.MustQuery("select * from v")
 	tk.MustQuery("select name_exp_1 from v")
 	resultCreateStmt = "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`) AS SELECT _UTF8MB4'a' AS `" + strings.Repeat("b", 65) + "` FROM `test`.`t`"
-	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
+	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + " utf8mb4 utf8mb4_bin"))
 	tk.MustExec("drop view v;")
 	tk.MustExec(resultCreateStmt)
 
@@ -858,7 +902,8 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	maxID := 1<<(64-15-1) - 1
-	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false, autoid.RowIDAllocType)
+	alloc := tbl.Allocators(tk.Se).Get(autoid.RowIDAllocType)
+	err = alloc.Rebase(int64(maxID)-1, false)
 	c.Assert(err, IsNil)
 	tk.MustExec("insert into t1 values(1)")
 
@@ -1142,21 +1187,21 @@ func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
 func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	err := ddlutil.LoadDDLReorgVars(tk.Se)
+	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(1))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
 	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
 	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
@@ -1179,24 +1224,24 @@ func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 func (s *testSuite6) TestSetDDLReorgBatchSize(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	err := ddlutil.LoadDDLReorgVars(tk.Se)
+	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.DefTiDBDDLReorgBatchSize))
 
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '1'"))
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, variable.MinDDLReorgBatchSize)
 	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", variable.MaxDDLReorgBatchSize+1))
 	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", variable.MaxDDLReorgBatchSize+1)))
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, variable.MaxDDLReorgBatchSize)
 	_, err = tk.Exec("set @@global.tidb_ddl_reorg_batch_size = invalid_val")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = -1")
@@ -1277,6 +1322,10 @@ func (s *testSuite6) TestGeneratedColumnRelatedDDL(c *C) {
 
 	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1);")
 	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	// This mysql compatibility check can be disabled using tidb_enable_auto_increment_in_generated
+	tk.MustExec("set session tidb_enable_auto_increment_in_generated = 1;")
+	tk.MustExec("alter table t1 modify column d bigint generated always as (a + 1);")
 
 	_, err = tk.Exec("alter table t1 add column e bigint as (z + 1);")
 	c.Assert(err.Error(), Equals, ddl.ErrBadField.GenWithStackByArgs("z", "generated column function").Error())
@@ -1478,6 +1527,10 @@ func (s *testSuite6) TestAutoIncrementColumnErrorMessage(c *C) {
 
 	_, err = tk.Exec("CREATE INDEX idx1 ON t1 ((t1_id + t1_id));")
 	c.Assert(err.Error(), Equals, ddl.ErrExpressionIndexCanNotRefer.GenWithStackByArgs("idx1").Error())
+
+	// This mysql compatibility check can be disabled using tidb_enable_auto_increment_in_generated
+	tk.MustExec("SET SESSION tidb_enable_auto_increment_in_generated = 1;")
+	tk.MustExec("CREATE INDEX idx1 ON t1 ((t1_id + t1_id));")
 }
 
 func (s *testRecoverTable) TestRenameMultiTables(c *C) {

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -108,7 +109,8 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 		Columns: columns,
 	}.Init(b.sctx, &property.StatsInfo{}, 0)
 	p.SetSchema(schema)
-	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
+	switch strings.ToUpper(p.Table.Name.O) {
+	case infoschema.ClusterTableSlowLog:
 		extractor := &SlowQueryExtractor{}
 		extractor.Desc = tblScan.Desc
 		if b.ranges != nil {
@@ -118,6 +120,8 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 			}
 		}
 		p.Extractor = extractor
+	case infoschema.ClusterTableStatementsSummary, infoschema.ClusterTableStatementsSummaryHistory:
+		p.Extractor = &StatementsSummaryExtractor{}
 	}
 	return p, nil
 }

@@ -8,13 +8,15 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -58,7 +60,9 @@ func nthValueEvaluateRowUpdateMemDeltaGens(nth int) updateMemDeltaGens {
 	}
 }
 
-func (s *testSuite) TestMemValue(c *C) {
+func TestMemValue(t *testing.T) {
+	t.Parallel()
+
 	firstMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(1)
 	secondMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(2)
 	fifthMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(5)
@@ -95,6 +99,6 @@ func (s *testSuite) TestMemValue(c *C) {
 			aggfuncs.DefPartialResult4NthValueSize+aggfuncs.DefValue4StringSize, fifthMemDeltaGens),
 	}
 	for _, test := range tests {
-		s.testWindowAggMemFunc(c, test)
+		testWindowAggMemFunc(t, test)
 	}
 }

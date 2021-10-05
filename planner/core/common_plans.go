@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -182,16 +183,16 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name          string
-	UsingVars     []expression.Expression
-	PrepareParams []types.Datum
-	ExecID        uint32
-	SnapshotTS    uint64
-	IsStaleness   bool
-	TxnScope      string
-	Stmt          ast.StmtNode
-	StmtType      string
-	Plan          Plan
+	Name             string
+	UsingVars        []expression.Expression
+	PrepareParams    []types.Datum
+	ExecID           uint32
+	SnapshotTS       uint64
+	IsStaleness      bool
+	ReadReplicaScope string
+	Stmt             ast.StmtNode
+	StmtType         string
+	Plan             Plan
 }
 
 // Check if result of GetVar expr is BinaryLiteral
@@ -262,7 +263,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			vars.PreparedParams = append(vars.PreparedParams, val)
 		}
 	}
-	snapshotTS, txnScope, isStaleness, err := e.handleExecuteBuilderOption(sctx, preparedObj)
+	snapshotTS, readReplicaScope, isStaleness, err := e.handleExecuteBuilderOption(sctx, preparedObj)
 	if err != nil {
 		return err
 	}
@@ -282,6 +283,10 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		preparedObj.Executor = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
+		// Example:
+		// When running update in prepared statement's schema version distinguished from the one of execute statement
+		// We should reset the tableRefs in the prepared update statements, otherwise, the ast nodes still hold the old
+		// tableRefs columnInfo which will cause chaos in logic of trying point get plan. (should ban non-public column)
 		ret := &PreprocessorReturn{InfoSchema: is}
 		err := Preprocess(sctx, prepared.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
@@ -294,16 +299,16 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		return err
 	}
 	e.SnapshotTS = snapshotTS
-	e.TxnScope = txnScope
+	e.ReadReplicaScope = readReplicaScope
 	e.IsStaleness = isStaleness
 	e.Stmt = prepared.Stmt
 	return nil
 }
 
 func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
-	preparedObj *CachedPrepareStmt) (snapshotTS uint64, txnScope string, isStaleness bool, err error) {
+	preparedObj *CachedPrepareStmt) (snapshotTS uint64, readReplicaScope string, isStaleness bool, err error) {
 	snapshotTS = 0
-	txnScope = oracle.GlobalTxnScope
+	readReplicaScope = oracle.GlobalTxnScope
 	isStaleness = false
 	err = nil
 	vars := sctx.GetSessionVars()
@@ -320,7 +325,7 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 		}
 		snapshotTS = vars.TxnReadTS.UseTxnReadTS()
 		isStaleness = true
-		txnScope = config.GetTxnScopeFromConfig()
+		readReplicaScope = config.GetTxnScopeFromConfig()
 		return
 	}
 	// It means we meet following case:
@@ -341,7 +346,7 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 			return
 		}
 		isStaleness = true
-		txnScope = config.GetTxnScopeFromConfig()
+		readReplicaScope = config.GetTxnScopeFromConfig()
 		return
 	}
 	// It means we meet following case:
@@ -351,7 +356,7 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 	if vars.InTxn() && vars.TxnCtx.IsStaleness {
 		isStaleness = true
 		snapshotTS = vars.TxnCtx.StartTS
-		txnScope = vars.TxnCtx.TxnScope
+		readReplicaScope = vars.TxnCtx.TxnScope
 		return
 	}
 	return
@@ -475,7 +480,7 @@ REBUILD:
 	e.names = names
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache && !stmtCtx.OptimDependOnMutableConst {
+	if !isTableDual && prepared.UseCache && !stmtCtx.MaybeOverOptimized4PlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
@@ -510,7 +515,7 @@ REBUILD:
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
-	if sctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst {
+	if sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
 		return nil
 	}
 	var (
@@ -933,6 +938,15 @@ type LoadStats struct {
 	Path string
 }
 
+// PlanRecreatorSingle represents a plan recreator plan.
+type PlanRecreatorSingle struct {
+	baseSchemaProducer
+	ExecStmt ast.StmtNode
+	Analyze  bool
+	Load     bool
+	File     string
+}
+
 // IndexAdvise represents a index advise plan.
 type IndexAdvise struct {
 	baseSchemaProducer
@@ -1022,7 +1036,11 @@ func (e *Explain) prepareSchema() error {
 	case (format == types.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == types.ExplainFormatBrief):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose:
-		fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
+		if e.Analyze || e.RuntimeStatsColl != nil {
+			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
+		} else {
+			fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
+		}
 	case format == types.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == types.ExplainFormatDOT:
@@ -1102,6 +1120,11 @@ func (e *Explain) explainPlanInRowFormatCTE() (err error) {
 func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent string, isLastChild bool) (err error) {
 	e.prepareOperatorInfo(p, taskType, driverSide, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
+	if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
+		if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[p.ID()]; ok {
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
+		}
+	}
 
 	// For every child we create a new sub-tree rooted by it.
 	childIndent := texttree.Indent4Child(indent, isLastChild)
@@ -1221,7 +1244,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 	if runtimeStatsColl.ExistsRootStats(explainID) {
 		rootStats := runtimeStatsColl.GetRootStats(explainID)
 		analyzeInfo = rootStats.String()
-		actRows = fmt.Sprint(rootStats.GetActRows())
+		actRows = strconv.FormatInt(rootStats.GetActRows(), 10)
 	} else {
 		actRows = "0"
 	}
@@ -1258,12 +1281,13 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	estRows, estCost, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 
 	var row []string
-	if e.Analyze {
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, nil)
-		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
-	} else if e.RuntimeStatsColl != nil {
+	if e.Analyze || e.RuntimeStatsColl != nil {
+		row = []string{id, estRows}
+		if e.Format == types.ExplainFormatVerbose {
+			row = append(row, estCost)
+		}
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, e.RuntimeStatsColl)
-		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
+		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}
 		if e.Format == types.ExplainFormatVerbose {

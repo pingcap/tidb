@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
@@ -85,8 +86,8 @@ type executorBuilder struct {
 	hasLock          bool
 	Ti               *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
-	isStaleness bool
-	txnScope    string
+	isStaleness      bool
+	readReplicaScope string
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -97,14 +98,14 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, txnScope string) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *executorBuilder {
 	return &executorBuilder{
-		ctx:         ctx,
-		is:          is,
-		Ti:          ti,
-		snapshotTS:  snapshotTS,
-		isStaleness: isStaleness,
-		txnScope:    txnScope,
+		ctx:              ctx,
+		is:               is,
+		Ti:               ti,
+		snapshotTS:       snapshotTS,
+		isStaleness:      isStaleness,
+		readReplicaScope: replicaReadScope,
 	}
 }
 
@@ -161,6 +162,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildLoadStats(v)
 	case *plannercore.IndexAdvise:
 		return b.buildIndexAdvise(v)
+	case *plannercore.PlanRecreatorSingle:
+		return b.buildPlanRecreatorSingle(v)
 	case *plannercore.PhysicalLimit:
 		return b.buildLimit(v)
 	case *plannercore.Prepare:
@@ -389,10 +392,10 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 
 	colNames := make([]string, 0, len(is.IdxCols))
 	for i := range is.IdxCols {
-		colNames = append(colNames, is.Columns[i].Name.O)
+		colNames = append(colNames, is.Columns[i].Name.L)
 	}
-	if cols, missingColName := table.FindCols(e.table.Cols(), colNames, true); missingColName != "" {
-		b.err = plannercore.ErrUnknownColumn.GenWithStack("Unknown column %s", missingColName)
+	if cols, missingColOffset := table.FindColumns(e.table.Cols(), colNames, true); missingColOffset >= 0 {
+		b.err = plannercore.ErrUnknownColumn.GenWithStack("Unknown column %s", is.Columns[missingColOffset].Name.O)
 	} else {
 		e.idxTblCols = cols
 	}
@@ -627,6 +630,20 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		tblID2Handle:     v.TblID2Handle,
 		partitionedTable: v.PartitionedTable,
 	}
+
+	// filter out temporary tables because they do not store any record in tikv and should not write any lock
+	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	for tblID := range e.tblID2Handle {
+		tblInfo, ok := is.TableByID(tblID)
+		if !ok {
+			b.err = errors.Errorf("Can not get table %d", tblID)
+		}
+
+		if tblInfo.Meta().TempTableType != model.TempTableNone {
+			delete(e.tblID2Handle, tblID)
+		}
+	}
+
 	if len(e.partitionedTable) > 0 {
 		schema := v.Schema()
 		e.tblID2PIDColumnIndex = make(map[int64]int)
@@ -680,7 +697,7 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 	b.snapshotTS = v.SnapshotTS
 	b.isStaleness = v.IsStaleness
-	b.txnScope = v.TxnScope
+	b.readReplicaScope = v.ReadReplicaScope
 	if b.snapshotTS != 0 {
 		b.is, b.err = domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
 	}
@@ -698,7 +715,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		vs := strings.Split(val.(string), "_")
 		assertTS, assertTxnScope := vs[0], vs[1]
 		if strconv.FormatUint(b.snapshotTS, 10) != assertTS ||
-			assertTxnScope != b.txnScope {
+			assertTxnScope != b.readReplicaScope {
 			panic("execute prepare statement have wrong staleness option")
 		}
 	})
@@ -722,14 +739,6 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		IfNotExists:  v.IfNotExists,
 		GlobalScope:  v.GlobalScope,
 		Extended:     v.Extended,
-	}
-	if e.Tp == ast.ShowGrants && e.User == nil {
-		// The input is a "show grants" statement, fulfill the user and roles field.
-		// Note: "show grants" result are different from "show grants for current_user",
-		// The former determine privileges with roles, while the later doesn't.
-		vars := e.ctx.GetSessionVars()
-		e.User = &auth.UserIdentity{Username: vars.User.AuthUsername, Hostname: vars.User.AuthHostname}
-		e.Roles = vars.ActiveRoles
 	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
@@ -895,6 +904,14 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 	return e
 }
 
+func (b *executorBuilder) buildPlanRecreatorSingle(v *plannercore.PlanRecreatorSingle) Executor {
+	e := &PlanRecreatorSingleExec{
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+		info:         &PlanRecreatorSingleInfo{v.ExecStmt, v.Analyze, v.Load, v.File, b.ctx},
+	}
+	return e
+}
+
 func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 	replaceExec := &ReplaceExec{
 		InsertValues: vals,
@@ -934,6 +951,7 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmt:         v.Statement,
 		is:           b.is,
+		tempTableDDL: temptable.GetTemporaryTableDDL(b.ctx),
 	}
 	return e
 }
@@ -970,7 +988,7 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 	}
 	if v.Analyze {
 		if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
-			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 		}
 		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}
@@ -1550,6 +1568,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableTiDBIndexes),
 			strings.ToLower(infoschema.TableViews),
 			strings.ToLower(infoschema.TableTables),
+			strings.ToLower(infoschema.TableReferConst),
 			strings.ToLower(infoschema.TableSequences),
 			strings.ToLower(infoschema.TablePartitions),
 			strings.ToLower(infoschema.TableEngines),
@@ -1578,15 +1597,40 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
-			strings.ToLower(infoschema.TableTiDBTrx),
-			strings.ToLower(infoschema.ClusterTableTiDBTrx),
-			strings.ToLower(infoschema.TableDeadlocks),
-			strings.ToLower(infoschema.ClusterTableDeadlocks),
-			strings.ToLower(infoschema.TableDataLockWaits):
+			strings.ToLower(infoschema.TableRegionLabel):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
+					table:   v.Table,
+					columns: v.Columns,
+				},
+			}
+		case strings.ToLower(infoschema.TableTiDBTrx),
+			strings.ToLower(infoschema.ClusterTableTiDBTrx):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &tidbTrxTableRetriever{
+					table:   v.Table,
+					columns: v.Columns,
+				},
+			}
+		case strings.ToLower(infoschema.TableDataLockWaits):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &dataLockWaitsTableRetriever{
+					table:   v.Table,
+					columns: v.Columns,
+				},
+			}
+		case strings.ToLower(infoschema.TableDeadlocks),
+			strings.ToLower(infoschema.ClusterTableDeadlocks):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &deadlocksTableRetriever{
 					table:   v.Table,
 					columns: v.Columns,
 				},
@@ -1599,8 +1643,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &stmtSummaryTableRetriever{
-					table:   v.Table,
-					columns: v.Columns,
+					table:     v.Table,
+					columns:   v.Columns,
+					extractor: v.Extractor.(*plannercore.StatementsSummaryExtractor),
 				},
 			}
 		case strings.ToLower(infoschema.TableColumns):
@@ -1902,7 +1947,8 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	if b.err != nil {
 		return nil
 	}
-	b.err = plannercore.CheckUpdateList(assignFlag, v)
+	// should use the new tblID2table, since the update's schema may have been changed in Execstmt.
+	b.err = plannercore.CheckUpdateList(assignFlag, v, tblID2table)
 	if b.err != nil {
 		return nil
 	}
@@ -2563,6 +2609,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	for i, col := range v.OuterHashKeys {
 		outerTypes[col.Index] = outerTypes[col.Index].Clone()
 		outerTypes[col.Index].Collate = innerTypes[v.InnerHashKeys[i].Index].Collate
+		outerTypes[col.Index].Flag = col.RetType.Flag
 	}
 
 	var (
@@ -2780,22 +2827,22 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	e := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPB:          dagReq,
-		startTS:        startTS,
-		txnScope:       b.txnScope,
-		isStaleness:    b.isStaleness,
-		table:          tbl,
-		keepOrder:      ts.KeepOrder,
-		desc:           ts.Desc,
-		columns:        ts.Columns,
-		streaming:      streaming,
-		corColInFilter: b.corColInDistPlan(v.TablePlans),
-		corColInAccess: b.corColInAccess(v.TablePlans[0]),
-		plans:          v.TablePlans,
-		tablePlan:      v.GetTablePlan(),
-		storeType:      v.StoreType,
-		batchCop:       v.BatchCop,
+		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		dagPB:            dagReq,
+		startTS:          startTS,
+		readReplicaScope: b.readReplicaScope,
+		isStaleness:      b.isStaleness,
+		table:            tbl,
+		keepOrder:        ts.KeepOrder,
+		desc:             ts.Desc,
+		columns:          ts.Columns,
+		streaming:        streaming,
+		corColInFilter:   b.corColInDistPlan(v.TablePlans),
+		corColInAccess:   b.corColInAccess(v.TablePlans[0]),
+		plans:            v.TablePlans,
+		tablePlan:        v.GetTablePlan(),
+		storeType:        v.StoreType,
+		batchCop:         v.BatchCop,
 	}
 	if tbl.Meta().Partition != nil {
 		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
@@ -3057,24 +3104,24 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		return nil, err
 	}
 	e := &IndexReaderExecutor{
-		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPB:           dagReq,
-		startTS:         startTS,
-		txnScope:        b.txnScope,
-		isStaleness:     b.isStaleness,
-		physicalTableID: physicalTableID,
-		table:           tbl,
-		index:           is.Index,
-		keepOrder:       is.KeepOrder,
-		desc:            is.Desc,
-		columns:         is.Columns,
-		streaming:       streaming,
-		corColInFilter:  b.corColInDistPlan(v.IndexPlans),
-		corColInAccess:  b.corColInAccess(v.IndexPlans[0]),
-		idxCols:         is.IdxCols,
-		colLens:         is.IdxColLens,
-		plans:           v.IndexPlans,
-		outputColumns:   v.OutputColumns,
+		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		dagPB:            dagReq,
+		startTS:          startTS,
+		readReplicaScope: b.readReplicaScope,
+		isStaleness:      b.isStaleness,
+		physicalTableID:  physicalTableID,
+		table:            tbl,
+		index:            is.Index,
+		keepOrder:        is.KeepOrder,
+		desc:             is.Desc,
+		columns:          is.Columns,
+		streaming:        streaming,
+		corColInFilter:   b.corColInDistPlan(v.IndexPlans),
+		corColInAccess:   b.corColInAccess(v.IndexPlans[0]),
+		idxCols:          is.IdxCols,
+		colLens:          is.IdxColLens,
+		plans:            v.IndexPlans,
+		outputColumns:    v.OutputColumns,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -3678,7 +3725,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
-		SetTxnScope(e.txnScope).
+		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
@@ -3815,13 +3862,21 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 
 func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Context, v *plannercore.PhysicalProjection,
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
-	physicalIndexLookUp, isDoubleRead := v.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
-	if !isDoubleRead {
-		return nil, errors.Errorf("inner child of Projection should be IndexLookupReader, but got %T", v)
-	}
-	childExec, err := builder.buildIndexLookUpReaderForIndexJoin(ctx, physicalIndexLookUp, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
-	if err != nil {
-		return nil, err
+	var (
+		childExec Executor
+		err       error
+	)
+	switch op := v.Children()[0].(type) {
+	case *plannercore.PhysicalIndexLookUpReader:
+		if childExec, err = builder.buildIndexLookUpReaderForIndexJoin(ctx, op, lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
+			return nil, err
+		}
+	case *plannercore.PhysicalTableReader:
+		if childExec, err = builder.buildTableReaderForIndexJoin(ctx, op, lookUpContents, indexRanges, keyOff2IdxOff, cwc, true); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, errors.Errorf("inner child of Projection should be IndexLookupReader/TableReader, but got %T", v.Children()[0])
 	}
 
 	e := &ProjectionExec{
@@ -4187,23 +4242,30 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	}
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
-		baseExecutor: newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
-		tblInfo:      plan.TblInfo,
-		idxInfo:      plan.IndexInfo,
-		rowDecoder:   decoder,
-		startTS:      startTS,
-		txnScope:     b.txnScope,
-		isStaleness:  b.isStaleness,
-		keepOrder:    plan.KeepOrder,
-		desc:         plan.Desc,
-		lock:         plan.Lock,
-		waitTime:     plan.LockWaitTime,
-		partExpr:     plan.PartitionExpr,
-		partPos:      plan.PartitionColPos,
-		singlePart:   plan.SinglePart,
-		partTblID:    plan.PartTblID,
-		columns:      plan.Columns,
+		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
+		tblInfo:          plan.TblInfo,
+		idxInfo:          plan.IndexInfo,
+		rowDecoder:       decoder,
+		startTS:          startTS,
+		readReplicaScope: b.readReplicaScope,
+		isStaleness:      b.isStaleness,
+		keepOrder:        plan.KeepOrder,
+		desc:             plan.Desc,
+		lock:             plan.Lock,
+		waitTime:         plan.LockWaitTime,
+		partExpr:         plan.PartitionExpr,
+		partPos:          plan.PartitionColPos,
+		singlePart:       plan.SinglePart,
+		partTblID:        plan.PartTblID,
+		columns:          plan.Columns,
 	}
+
+	if plan.TblInfo.TempTableType != model.TempTableNone {
+		// Temporary table should not do any lock operations
+		e.lock = false
+		e.waitTime = 0
+	}
+
 	if e.lock {
 		b.hasLock = true
 	}
@@ -4356,17 +4418,23 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		return nil
 	}
 
-	// 2. Build iterInTbl.
+	// 2. Build tables to store intermediate results.
 	chkSize := b.ctx.GetSessionVars().MaxChunkSize
 	tps := seedExec.base().retFieldTypes
-	iterOutTbl := cteutil.NewStorageRowContainer(tps, chkSize)
-	if err := iterOutTbl.OpenAndRef(); err != nil {
-		b.err = err
-		return nil
-	}
-
 	var resTbl cteutil.Storage
 	var iterInTbl cteutil.Storage
+	var iterOutTbl cteutil.Storage
+
+	if v.RecurPlan != nil {
+		// For non-recursive CTE, the result will be put into resTbl directly.
+		// So no need to build iterOutTbl.
+		iterOutTbl := cteutil.NewStorageRowContainer(tps, chkSize)
+		if err := iterOutTbl.OpenAndRef(); err != nil {
+			b.err = err
+			return nil
+		}
+	}
+
 	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
 	if !ok {
 		b.err = errors.New("type assertion for CTEStorageMap failed")
@@ -4451,6 +4519,10 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 	// So we do not check SnapshotTS here
 
 	sessionVars := b.ctx.GetSessionVars()
+
+	if tbl.TempTableType == model.TempTableLocal && sessionVars.SnapshotTS != 0 {
+		return errors.New("can not read local temporary table when 'tidb_snapshot' is set")
+	}
 
 	if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
 		return errors.New("can not stale read temporary table")

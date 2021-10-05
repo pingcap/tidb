@@ -1572,15 +1572,15 @@
         "Warning": null
       },
       {
-        "SQL": "select /*+ LIMIT_TO_COP() */ a from tn where mod(a, 2) order by a limit 1",
+        "SQL": "select /*+ LIMIT_TO_COP() */ a from tn where a div 2 order by a limit 1",
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─Selection 1.00 root  mod(test.tn.a, 2)",
+          "└─Selection 1.00 root  intdiv(test.tn.a, 2)",
           "  └─IndexReader 1.00 root  index:IndexFullScan",
           "    └─IndexFullScan 1.00 cop[tikv] table:tn, index:a(a, b, c, d) keep order:true, stats:pseudo"
         ],
         "Warning": [
-          "Scalar function 'mod'(signature: ModIntSignedSigned) can not be pushed to storage layer",
+          "Scalar function 'intdiv'(signature: IntDivideInt) can not be pushed to storage layer",
           "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
         ]
       },
@@ -2304,6 +2304,67 @@
     ]
   },
   {
+    "Name": "TestINMJHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexMergeJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_hash_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexHashJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestEliminateMaxOneRow",
     "Cases": [
       {
@@ -2556,6 +2617,52 @@
           "a",
           "b",
           "c"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue27233",
+    "Cases": [
+      {
+        "SQL": "SELECT col2 FROM PK_S_MULTI_31 AS T1 WHERE (SELECT count(DISTINCT COL1, COL2) FROM PK_S_MULTI_31 AS T2 WHERE T2.COL1>T1.COL1)>2 order by col2;",
+        "Plan": [
+          "Sort 0.80 root  test.pk_s_multi_31.col2",
+          "└─Projection 0.80 root  test.pk_s_multi_31.col2",
+          "  └─Selection 0.80 root  gt(Column#7, 2)",
+          "    └─HashAgg 1.00 root  group by:test.pk_s_multi_31.col1, test.pk_s_multi_31.col2, funcs:firstrow(test.pk_s_multi_31.col2)->test.pk_s_multi_31.col2, funcs:count(distinct test.pk_s_multi_31.col1, test.pk_s_multi_31.col2)->Column#7",
+          "      └─HashJoin 100000000.00 root  CARTESIAN left outer join, other cond:gt(test.pk_s_multi_31.col1, test.pk_s_multi_31.col1)",
+          "        ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "        │ └─IndexFullScan 10000.00 cop[tikv] table:T2, index:PRIMARY(COL1, COL2) keep order:false, stats:pseudo",
+          "        └─IndexReader(Probe) 10000.00 root  index:IndexFullScan",
+          "          └─IndexFullScan 10000.00 cop[tikv] table:T1, index:PRIMARY(COL1, COL2) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "100"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestSelectionPartialPushDown",
+    "Cases": [
+      {
+        "SQL": "select * from t1 where a > 1 and b > 1",
+        "Plan": [
+          "Selection 1111.11 root  gt(test.t1.b, 1)",
+          "└─TableReader 3333.33 root  data:Selection",
+          "  └─Selection 3333.33 cop[tikv]  gt(test.t1.a, 1)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 use index(idx_a) where a > 1 and b > 1 and c > 1",
+        "Plan": [
+          "Selection 370.37 root  gt(test.t2.b, 1)",
+          "└─IndexLookUp 1111.11 root  ",
+          "  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t2, index:idx_a(a) range:(1,+inf], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 1111.11 cop[tikv]  gt(test.t2.c, 1)",
+          "    └─TableRowIDScan 3333.33 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       }
     ]

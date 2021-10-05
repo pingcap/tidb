@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,12 +16,16 @@ package copr
 
 import (
 	"bytes"
+	"strconv"
 
-	"github.com/pingcap/errors"
+	"github.com/cznic/mathutil"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
 
 // RegionCache wraps tikv.RegionCache.
@@ -39,7 +44,7 @@ func (c *RegionCache) SplitRegionRanges(bo *Backoffer, keyRanges []kv.KeyRange) 
 
 	locations, err := c.SplitKeyRangesByLocations(bo, ranges)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, derr.ToTiDBErr(err)
 	}
 	var ret []kv.KeyRange
 	for _, loc := range locations {
@@ -64,7 +69,7 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 	for ranges.Len() > 0 {
 		loc, err := c.LocateKey(bo.TiKVBackoffer(), ranges.At(0).StartKey)
 		if err != nil {
-			return res, errors.Trace(err)
+			return res, derr.ToTiDBErr(err)
 		}
 
 		// Iterate to the first range that is not complete in the region.
@@ -114,10 +119,11 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *tikv.Store
 		logutil.Logger(bo.GetCtx()).Info("Should not reach here, OnSendFailForBatchRegions only support TiFlash")
 		return
 	}
-	for _, ri := range regionInfos {
+	logutil.Logger(bo.GetCtx()).Info("Send fail for " + strconv.Itoa(len(regionInfos)) + " regions, will switch region peer for these regions. Only first " + strconv.Itoa(mathutil.Min(10, len(regionInfos))) + " regions will be logged if the log level is higher than Debug")
+	for index, ri := range regionInfos {
 		if ri.Meta == nil {
 			continue
 		}
-		c.OnSendFailForTiFlash(bo.TiKVBackoffer(), store, ri.Region, ri.Meta, scheduleReload, err)
+		c.OnSendFailForTiFlash(bo.TiKVBackoffer(), store, ri.Region, ri.Meta, scheduleReload, err, !(index < 10 || log.GetLevel() <= zap.DebugLevel))
 	}
 }

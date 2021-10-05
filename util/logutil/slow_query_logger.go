@@ -1,3 +1,17 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package logutil
 
 import (
@@ -13,11 +27,11 @@ import (
 
 var _pool = buffer.NewPool()
 
-func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, error) {
+func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
 
-	// reuse global config and override slow query log file
+	// copy global config and override slow query log file
 	// if slow query log filename is empty, slow query log will behave the same as global log
-	sqConfig := &cfg.Config
+	sqConfig := cfg.Config
 	if len(cfg.SlowQueryFile) != 0 {
 		sqConfig.File = log.FileLogConfig{
 			MaxSize:  cfg.File.MaxSize,
@@ -26,17 +40,19 @@ func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, error) {
 	}
 
 	// create the slow query logger
-	sqLogger, prop, err := log.InitLogger(sqConfig)
+	sqLogger, prop, err := log.InitLogger(&sqConfig)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	// replace 2018-12-19-unified-log-format text encoder with slow log encoder
+	newCore := log.NewTextCore(&slowLogEncoder{}, prop.Syncer, prop.Level)
 	sqLogger = sqLogger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-		return log.NewTextCore(&slowLogEncoder{}, prop.Syncer, prop.Level)
+		return newCore
 	}))
+	prop.Core = newCore
 
-	return sqLogger, nil
+	return sqLogger, prop, nil
 }
 
 type slowLogEncoder struct{}

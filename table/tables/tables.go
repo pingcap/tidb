@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,8 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package tables
 
@@ -285,6 +286,11 @@ func (t *TableCommon) WritableCols() []*table.Column {
 	return writableColumns
 }
 
+// DeletableCols implements table DeletableCols interface.
+func (t *TableCommon) DeletableCols() []*table.Column {
+	return t.Columns
+}
+
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
 	if len(t.FullHiddenColsAndVisibleColumns) > 0 {
@@ -325,8 +331,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
-				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
+				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
@@ -611,6 +617,19 @@ func handleTempTableSize(t tableutil.TempTable, txnSizeBefore int, txn kv.Transa
 	t.SetSize(newSize)
 }
 
+func checkTempTableSize(ctx sessionctx.Context, tmpTable tableutil.TempTable, tblInfo *model.TableInfo) error {
+	tmpTableSize := tmpTable.GetSize()
+	if tempTableData := ctx.GetSessionVars().TemporaryTableData; tempTableData != nil {
+		tmpTableSize += tempTableData.GetTableSize(tblInfo.ID)
+	}
+
+	if tmpTableSize > ctx.GetSessionVars().TMPTableSize {
+		return table.ErrTempTableFull.GenWithStackByArgs(tblInfo.Name.O)
+	}
+
+	return nil
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	txn, err := sctx.Txn(true)
@@ -625,8 +644,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
-				return nil, table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
+				return nil, err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
@@ -768,11 +787,10 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	value := writeBufs.RowValBuf
 
 	var setPresume bool
-	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
-	if (t.meta.IsCommonHandle || t.meta.PKIsHandle) && !skipCheck && !opt.SkipHandleCheck {
+	if !sctx.GetSessionVars().StmtCtx.BatchCheck {
 		if t.meta.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
-			_, err = sctx.GetSessionVars().GetTemporaryTableTxnValue(ctx, txn, key)
+			_, err = txn.Get(ctx, key)
 		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
 			var v []byte
 			v, err = txn.GetMemBuffer().Get(ctx, key)
@@ -1039,8 +1057,8 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > ctx.GetSessionVars().TMPTableSize {
-				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			if err := checkTempTableSize(ctx, tmpTable, m); err != nil {
+				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
@@ -1189,6 +1207,9 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 		return err
 	}
 	for _, v := range t.deletableIndices() {
+		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
+			continue
+		}
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
@@ -1375,7 +1396,7 @@ func AllocHandle(ctx context.Context, sctx sessionctx.Context, t table.Table) (k
 
 func allocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table, n uint64) (int64, int64, error) {
 	meta := t.Meta()
-	base, maxID, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, meta.ID, n, 1, 1)
+	base, maxID, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1442,12 +1463,6 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 		retAllocs = append(retAllocs, sessAlloc)
 	}
 	return retAllocs
-}
-
-// RebaseAutoID implements table.Table RebaseAutoID interface.
-// Both auto-increment and auto-random can use this function to do rebase on explicit newBase value (without shadow bits).
-func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
-	return t.Allocators(ctx).Get(tp).Rebase(t.tableID, newBase, isSetStep)
 }
 
 // Type implements table.Table Type interface.
@@ -1621,7 +1636,7 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 			return err1
 		}
 		var base, end, round int64
-		base, end, round, err1 = sequenceAlloc.AllocSeqCache(t.tableID)
+		base, end, round, err1 = sequenceAlloc.AllocSeqCache()
 		if err1 != nil {
 			return err1
 		}
@@ -1697,7 +1712,7 @@ func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqN
 	if err != nil {
 		return 0, false, err
 	}
-	res, alreadySatisfied, err := sequenceAlloc.RebaseSeq(t.tableID, newVal)
+	res, alreadySatisfied, err := sequenceAlloc.RebaseSeq(newVal)
 	if err != nil {
 		return 0, false, err
 	}

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -53,7 +54,7 @@ func Close() {
 }
 
 // AttachSQLInfo attach the sql information info top sql.
-func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, normalizedPlan string, planDigest *parser.Digest) context.Context {
+func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, normalizedPlan string, planDigest *parser.Digest, isInternal bool) context.Context {
 	if len(normalizedSQL) == 0 || sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
 		return ctx
 	}
@@ -67,7 +68,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 
 	if len(normalizedPlan) == 0 || len(planDigestBytes) == 0 {
 		// If plan digest is '', indicate it is the first time to attach the SQL info, since it only know the sql digest.
-		linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL)
+		linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
 	} else {
 		linkPlanTextWithDigest(planDigestBytes, normalizedPlan)
 	}
@@ -105,7 +106,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 	return ctx
 }
 
-func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string) {
+func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bool) {
 	if len(normalizedSQL) > MaxSQLTextSize {
 		normalizedSQL = normalizedSQL[:MaxSQLTextSize]
 	}
@@ -116,7 +117,7 @@ func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string) {
 	}
 	topc, ok := c.(reporter.TopSQLReporter)
 	if ok {
-		topc.RegisterSQL(sqlDigest, normalizedSQL)
+		topc.RegisterSQL(sqlDigest, normalizedSQL, isInternal)
 	}
 }
 

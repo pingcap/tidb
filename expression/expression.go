@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -45,6 +46,7 @@ const (
 	constantFlag       byte = 0
 	columnFlag         byte = 1
 	scalarFunctionFlag byte = 3
+	parameterFlag      byte = 4
 )
 
 // EvalAstExpr evaluates ast expression directly.
@@ -155,6 +157,12 @@ type Expression interface {
 
 	// resolveIndices is called inside the `ResolveIndices` It will perform on the expression itself.
 	resolveIndices(schema *Schema) error
+
+	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virual expression. It will copy the original expression and return the copied one.
+	ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool)
+
+	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
+	resolveIndicesByVirtualExpr(schema *Schema) bool
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
@@ -340,7 +348,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 		if CanImplicitEvalReal(expr) {
 			eType = types.ETReal
 		}
-		buf, err := globalColumnAllocator.get(eType, n)
+		buf, err := globalColumnAllocator.get()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -782,8 +790,8 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
-	if ContainMutableConst(ctx, []Expression{expr}) {
-		ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
+	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+		ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 	}
 	return evaluateExprWithNull(ctx, schema, expr)
 }
@@ -975,7 +983,9 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.Cast,
 
 		// misc functions.
-		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6, ast.UUID:
+		// TODO(#26942): enable functions below after them are fully tested in TiKV.
+		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/
+		ast.UUID:
 
 		return true
 
@@ -1006,27 +1016,35 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case
 		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or,
 		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like,
-		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, /*ast.Mod,*/
+		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
 		ast.If, ast.Ifnull, ast.Case,
 		ast.Concat, ast.ConcatWS,
-		ast.Year, ast.Month, ast.Day,
+		ast.Date, ast.Year, ast.Month, ast.Day,
 		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
-		ast.Sqrt,
-		ast.JSONLength:
+
+		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
+		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
+		ast.JSONLength,
+		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
+		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position:
 		return true
-	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength:
+	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength, ast.SubstringIndex:
 		switch function.Function.PbCode() {
 		case
 			tipb.ScalarFuncSig_LeftUTF8,
 			tipb.ScalarFuncSig_RightUTF8,
 			tipb.ScalarFuncSig_CharLengthUTF8,
 			tipb.ScalarFuncSig_Substring2ArgsUTF8,
-			tipb.ScalarFuncSig_Substring3ArgsUTF8:
+			tipb.ScalarFuncSig_Substring3ArgsUTF8,
+			tipb.ScalarFuncSig_SubstringIndex:
 			return true
 		}
 	case ast.Cast:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastIntAsTime,
+		case tipb.ScalarFuncSig_CastIntAsTime:
+			// ban the function of casting year type as time type pushing down to tiflash because of https://github.com/pingcap/tidb/issues/26215
+			return function.GetArgs()[0].GetType().Tp != mysql.TypeYear
+		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString,
 			tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastRealAsTime,
 			tipb.ScalarFuncSig_CastStringAsInt, tipb.ScalarFuncSig_CastStringAsReal, tipb.ScalarFuncSig_CastStringAsDecimal, tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastStringAsTime,
 			tipb.ScalarFuncSig_CastDecimalAsInt /*, tipb.ScalarFuncSig_CastDecimalAsReal*/, tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastDecimalAsTime,
@@ -1035,7 +1053,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
+		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt, tipb.ScalarFuncSig_AddDateStringReal:
 			return true
 		}
 	case ast.DateSub, ast.SubDate:
@@ -1050,7 +1068,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.Round:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal:
+		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundDec,
+			tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracDec:
 			return true
 		}
 	case ast.Extract:
@@ -1151,15 +1170,14 @@ func init() {
 
 func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
 	pbCode := scalarFunc.Function.PbCode()
-	if pbCode <= tipb.ScalarFuncSig_Unspecified {
-		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
-			panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
-		})
-		return false
-	}
 
 	// Check whether this function can be pushed.
-	if !canFuncBePushed(scalarFunc, storeType) {
+	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(scalarFunc, storeType) {
+		if unspecified {
+			failpoint.Inject("PanicIfPbCodeUnspecified", func() {
+				panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
+			})
+		}
 		if pc.sc.InExplainStmt {
 			storageName := storeType.Name()
 			if storeType == kv.UnSpecified {
@@ -1273,4 +1291,52 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(sf), nil
+}
+
+// PropagateType propagates the type information to the `expr`.
+// Note: For now, we only propagate type for the function CastDecimalAsDouble.
+//
+// e.g.
+// > create table t(a decimal(9, 8));
+// > insert into t values(5.04600000)
+// > select a/36000 from t;
+// Type:       NEWDECIMAL
+// Length:     15
+// Decimals:   12
+// +------------------+
+// | 5.04600000/36000 |
+// +------------------+
+// |   0.000140166667 |
+// +------------------+
+//
+// > select cast(a/36000 as double) as result from t;
+// Type:       DOUBLE
+// Length:     23
+// Decimals:   31
+// +----------------------+
+// | result               |
+// +----------------------+
+// | 0.000140166666666666 |
+// +----------------------+
+// The expected `decimal` and `length` of the outer cast_as_double need to be
+// propagated to the inner div.
+func PropagateType(evalType types.EvalType, args ...Expression) {
+	switch evalType {
+	case types.ETReal:
+		expr := args[0]
+		oldFlen, oldDecimal := expr.GetType().Flen, expr.GetType().Decimal
+		newFlen, newDecimal := setDataTypeDouble(expr.GetType().Decimal)
+		// For float(M,D), double(M,D) or decimal(M,D), M must be >= D.
+		if newFlen < newDecimal {
+			newFlen = oldFlen - oldDecimal + newDecimal
+		}
+		if oldFlen != newFlen || oldDecimal != newDecimal {
+			if col, ok := args[0].(*Column); ok {
+				newCol := col.Clone()
+				newCol.(*Column).RetType = col.RetType.Clone()
+				args[0] = newCol
+			}
+			args[0].GetType().Flen, args[0].GetType().Decimal = newFlen, newDecimal
+		}
+	}
 }

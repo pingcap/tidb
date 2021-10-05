@@ -1,3 +1,17 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // The MIT License (MIT)
 //
 // Copyright (c) 2014 wandoulabs
@@ -13,19 +27,6 @@
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
 
-// Copyright 2015 PingCAP, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package server
 
 import (
@@ -38,7 +39,7 @@ import (
 	"net/http"
 
 	// For pprof
-	_ "net/http/pprof"
+	_ "net/http/pprof" // #nosec G108
 	"os"
 	"os/user"
 	"sync"
@@ -192,8 +193,31 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
 	}
+	s.capability = defaultCapability
 	setTxnScope()
-	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+	setSystemTimeZoneVariable()
+
+	tlsConfig, autoReload, err := util.LoadTLSCertificates(
+		s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
+		s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
+
+	// Automatically reload auto-generated certificates.
+	// The certificates are re-created every 30 days and are valid for 90 days.
+	if autoReload {
+		go func() {
+			for range time.Tick(time.Hour * 24 * 30) { // 30 days
+				logutil.BgLogger().Info("Rotating automatically created TLS Certificates")
+				tlsConfig, _, err = util.LoadTLSCertificates(
+					s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
+					s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
+				if err != nil {
+					logutil.BgLogger().Warn("TLS Certificate rotation failed", zap.Error(err))
+				}
+				atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+			}
+		}()
+	}
+
 	if err != nil {
 		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
 	}
@@ -205,9 +229,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		return nil, errSecureTransportRequired.FastGenByArgs()
 	}
 
-	setSystemTimeZoneVariable()
-
-	s.capability = defaultCapability
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
@@ -228,6 +249,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	if s.cfg.Socket != "" {
+
+		err := cleanupStaleSocket(s.cfg.Socket)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		if s.socket, err = net.Listen("unix", s.cfg.Socket); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -268,7 +295,34 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
+
+	variable.RegisterStatistics(s)
+
 	return s, nil
+}
+
+func cleanupStaleSocket(socket string) error {
+	sockStat, err := os.Stat(socket)
+	if err == nil {
+		if sockStat.Mode().Type() != os.ModeSocket {
+			return fmt.Errorf(
+				"the specified socket file %s is a %s instead of a socket file",
+				socket, sockStat.Mode().String())
+		}
+
+		_, err = net.Dial("unix", socket)
+		if err != nil {
+			logutil.BgLogger().Warn("Unix socket exists and is nonfunctional, removing it",
+				zap.String("socket", socket), zap.Error(err))
+			err = os.Remove(socket)
+			if err != nil {
+				return fmt.Errorf("failed to remove socket file %s", socket)
+			}
+		} else {
+			return fmt.Errorf("unix socket %s exists and is functional, not removing it", socket)
+		}
+	}
+	return nil
 }
 
 func setSSLVariable(ca, key, cert string) {
@@ -447,8 +501,8 @@ func (s *Server) onConn(conn *clientConn) {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
-		err = conn.Close()
 		terror.Log(errors.Trace(err))
+		terror.Log(errors.Trace(conn.Close()))
 		return
 	}
 

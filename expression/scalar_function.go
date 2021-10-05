@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -194,12 +196,17 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		if db == "" {
 			return nil, errors.Trace(ErrNoDB)
 		}
-
 		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
-	if !ctx.GetSessionVars().EnableNoopFuncs {
+	noopFuncsMode := ctx.GetSessionVars().NoopFuncsMode
+	if noopFuncsMode != variable.OnInt {
 		if _, ok := noopFuncs[funcName]; ok {
-			return nil, ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
+			err := ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
+			if noopFuncsMode == variable.OffInt {
+				return nil, err
+			}
+			// NoopFuncsMode is Warn, append an error
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}
 	funcArgs := make([]Expression, len(args))
@@ -362,7 +369,7 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		var str string
 		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
 		if !isNull && err == nil && tp.Tp == mysql.TypeEnum {
-			res, err = types.ParseEnumName(tp.Elems, str, tp.Collate)
+			res, err = types.ParseEnum(tp.Elems, str, tp.Collate)
 		} else {
 			res = str
 		}
@@ -448,6 +455,23 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 		}
 	}
 	return nil
+}
+
+// ResolveIndicesByVirtualExpr implements Expression interface.
+func (sf *ScalarFunction) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) {
+	newSf := sf.Clone()
+	isOK := newSf.resolveIndicesByVirtualExpr(schema)
+	return newSf, isOK
+}
+
+func (sf *ScalarFunction) resolveIndicesByVirtualExpr(schema *Schema) bool {
+	for _, arg := range sf.GetArgs() {
+		isOk := arg.resolveIndicesByVirtualExpr(schema)
+		if !isOk {
+			return false
+		}
+	}
+	return true
 }
 
 // GetSingleColumn returns (Col, Desc) when the ScalarFunction is equivalent to (Col, Desc)

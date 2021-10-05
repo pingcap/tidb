@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -63,30 +64,30 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue           bool
-	InInsertStmt              bool
-	InUpdateStmt              bool
-	InDeleteStmt              bool
-	InSelectStmt              bool
-	InLoadDataStmt            bool
-	InExplainStmt             bool
-	InCreateOrAlterStmt       bool
-	IgnoreTruncate            bool
-	IgnoreZeroInDate          bool
-	DupKeyAsWarning           bool
-	BadNullAsWarning          bool
-	DividedByZeroAsWarning    bool
-	TruncateAsWarning         bool
-	OverflowAsWarning         bool
-	InShowWarning             bool
-	UseCache                  bool
-	BatchCheck                bool
-	InNullRejectCheck         bool
-	AllowInvalidDate          bool
-	IgnoreNoPartition         bool
-	OptimDependOnMutableConst bool
-	IgnoreExplainIDSuffix     bool
-	IsStaleness               bool
+	IsDDLJobInQueue              bool
+	InInsertStmt                 bool
+	InUpdateStmt                 bool
+	InDeleteStmt                 bool
+	InSelectStmt                 bool
+	InLoadDataStmt               bool
+	InExplainStmt                bool
+	InCreateOrAlterStmt          bool
+	IgnoreTruncate               bool
+	IgnoreZeroInDate             bool
+	DupKeyAsWarning              bool
+	BadNullAsWarning             bool
+	DividedByZeroAsWarning       bool
+	TruncateAsWarning            bool
+	OverflowAsWarning            bool
+	InShowWarning                bool
+	UseCache                     bool
+	BatchCheck                   bool
+	InNullRejectCheck            bool
+	AllowInvalidDate             bool
+	IgnoreNoPartition            bool
+	MaybeOverOptimized4PlanCache bool
+	IgnoreExplainIDSuffix        bool
+	IsStaleness                  bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -113,12 +114,11 @@ type StatementContext struct {
 		copied  uint64
 		touched uint64
 
-		message           string
-		warnings          []SQLWarn
-		errorCount        uint16
-		histogramsNotLoad bool
-		execDetails       execdetails.ExecDetails
-		allExecDetails    []*execdetails.ExecDetails
+		message        string
+		warnings       []SQLWarn
+		errorCount     uint16
+		execDetails    execdetails.ExecDetails
+		allExecDetails []*execdetails.ExecDetails
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
@@ -172,6 +172,19 @@ type StatementContext struct {
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
+
+	// cache is used to reduce object allocation.
+	cache struct {
+		execdetails.RuntimeStatsColl
+		MemTracker  memory.Tracker
+		DiskTracker disk.Tracker
+		LogOnExceed [2]memory.LogOnExceed
+	}
+
+	// OptimInfo maps Plan.ID() to optimization information when generating Plan.
+	OptimInfo map[int]string
+	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
+	InVerboseExplain bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -290,6 +303,18 @@ func (sc *StatementContext) SetEncodedPlan(encodedPlan string) {
 // GetPlanHint gets the hint string generated from the plan.
 func (sc *StatementContext) GetPlanHint() (string, bool) {
 	return sc.planHint, sc.planHintSet
+}
+
+// InitDiskTracker initializes the sc.DiskTracker, use cache to avoid allocation.
+func (sc *StatementContext) InitDiskTracker(label int, bytesLimit int64) {
+	memory.InitTracker(&sc.cache.DiskTracker, label, bytesLimit, &sc.cache.LogOnExceed[0])
+	sc.DiskTracker = &sc.cache.DiskTracker
+}
+
+// InitMemTracker initializes the sc.MemTracker, use cache to avoid allocation.
+func (sc *StatementContext) InitMemTracker(label int, bytesLimit int64) {
+	memory.InitTracker(&sc.cache.MemTracker, label, bytesLimit, &sc.cache.LogOnExceed[1])
+	sc.MemTracker = &sc.cache.MemTracker
 }
 
 // SetPlanHint sets the hint for the plan.
@@ -498,13 +523,6 @@ func (sc *StatementContext) AppendError(warn error) {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelError, warn})
 		sc.mu.errorCount++
 	}
-	sc.mu.Unlock()
-}
-
-// SetHistogramsNotLoad sets histogramsNotLoad.
-func (sc *StatementContext) SetHistogramsNotLoad() {
-	sc.mu.Lock()
-	sc.mu.histogramsNotLoad = true
 	sc.mu.Unlock()
 }
 
