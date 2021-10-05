@@ -114,7 +114,7 @@ func SubTestMergeSampleCollector(s *testSampleSuite) func(*testing.T) {
 		collectors, pkBuilder, err := builder.CollectColumnStats()
 		require.NoError(t, err)
 		require.Nil(t, pkBuilder)
-		require.Equal(t, 2, len(collectors))
+		require.Len(t, collectors, 2)
 		collectors[0].IsMerger = true
 		collectors[0].MergeSampleCollector(sc, collectors[1])
 		require.Equal(t, int64(9280), collectors[0].FMSketch.NDV())
