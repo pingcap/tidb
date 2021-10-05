@@ -132,7 +132,7 @@ func TestTruncateHistogram(t *testing.T) {
 	newHist := hist.TruncateHistogram(1)
 	require.True(t, HistogramEqual(hist, newHist, true))
 	newHist = hist.TruncateHistogram(0)
-	require.Len(t, newHist, 0)
+	require.Equal(t, 0, newHist.Len())
 }
 
 func TestValueToString4InvalidKey(t *testing.T) {
