@@ -535,7 +535,7 @@ func (s *testBundleSuite) TestString(c *C) {
 	c.Assert(err, IsNil)
 	bundle.Rules = append(rules1, rules2...)
 
-	c.Assert(bundle.String(), Equals, `{"group_id":"TiDB_DDL_1","group_index":0,"group_override":false,"rules":[{"group_id":"","id":"","start_key":"","end_key":"","role":"voter","count":3,"label_constraints":[{"key":"zone","op":"in","values":["sh"]}]},{"group_id":"","id":"","start_key":"","end_key":"","role":"voter","count":4,"label_constraints":[{"key":"zone","op":"notIn","values":["sh"]},{"key":"zone","op":"in","values":["bj"]}]}]}`)
+	c.Assert(bundle.String(), Equals, `{"group_id":"TiDB_DDL_1","group_index":0,"group_override":false,"rules":[{"group_id":"","id":"","start_key":"","end_key":"","role":"voter","count":3,"label_constraints":[{"key":"zone","op":"in","values":["sh"]}],"location_labels":["region","zone","rack","host"],"isolation_level":"region"},{"group_id":"","id":"","start_key":"","end_key":"","role":"voter","count":4,"label_constraints":[{"key":"zone","op":"notIn","values":["sh"]},{"key":"zone","op":"in","values":["bj"]}],"location_labels":["region","zone","rack","host"],"isolation_level":"region"}]}`)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/placement/MockMarshalFailure", `return(true)`), IsNil)
 	defer func() {
@@ -580,40 +580,36 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 		name: "sugar syntax: normal case 1",
 		input: &model.PlacementSettings{
 			PrimaryRegion: "us",
+			Regions:       "us",
 		},
 		output: []*Rule{
-			{
-				Role: Leader,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"us"},
-					},
-				},
-				Count: 1,
-			},
-			{
-				Role:        Follower,
-				Constraints: Constraints{},
-				Count:       2,
-			},
+			NewRule(Voter, 3, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
 		},
 	})
 
 	tests = append(tests, TestCase{
-		name: "sugar syntax: invalid followers",
+		name: "sugar syntax: few followers",
 		input: &model.PlacementSettings{
 			PrimaryRegion: "us",
-			Regions:       "us,sh,bj",
+			Regions:       "bj,sh,us",
 		},
-		err: ErrInvalidPlacementOptions,
+		output: []*Rule{
+			NewRule(Voter, 1, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Follower, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "bj", "sh"),
+			)),
+		},
 	})
 
 	tests = append(tests, TestCase{
 		name: "sugar syntax: wrong schedule prop",
 		input: &model.PlacementSettings{
 			PrimaryRegion: "us",
+			Regions:       "us",
 			Schedule:      "wrong",
 		},
 		err: ErrInvalidPlacementOptions,
@@ -623,8 +619,9 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 		name: "sugar syntax: invalid region name 1",
 		input: &model.PlacementSettings{
 			PrimaryRegion: ",=,",
+			Regions:       ",=,",
 		},
-		err: ErrInvalidConstraintFormat,
+		err: ErrInvalidPlacementOptions,
 	})
 
 	tests = append(tests, TestCase{
@@ -633,68 +630,32 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			PrimaryRegion: "f",
 			Regions:       ",=",
 		},
-		err: ErrInvalidConstraintFormat,
-	})
-
-	tests = append(tests, TestCase{
-		name: "sugar syntax: invalid region name 3",
-		input: &model.PlacementSettings{
-			PrimaryRegion: ",=",
-			Followers:     5,
-			Schedule:      "majority_in_primary",
-		},
-		err: ErrInvalidConstraintFormat,
+		err: ErrInvalidPlacementOptions,
 	})
 
 	tests = append(tests, TestCase{
 		name: "sugar syntax: invalid region name 4",
 		input: &model.PlacementSettings{
 			PrimaryRegion: "",
+			Regions:       "g",
 		},
-		output: []*Rule{},
+		err: ErrInvalidPlacementOptions,
 	})
 
 	tests = append(tests, TestCase{
 		name: "sugar syntax: normal case 2",
 		input: &model.PlacementSettings{
 			PrimaryRegion: "us",
-			Regions:       "us,sh",
+			Regions:       "sh,us",
 			Followers:     5,
 		},
 		output: []*Rule{
-			{
-				Role: Leader,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"us"},
-					},
-				},
-				Count: 1,
-			},
-			{
-				Role: Follower,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"us"},
-					},
-				},
-				Count: 3,
-			},
-			{
-				Role: Follower,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"sh"},
-					},
-				},
-				Count: 2,
-			},
+			NewRule(Voter, 3, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Follower, 3, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "sh"),
+			)),
 		},
 	})
 	tests = append(tests, tests[len(tests)-1])
@@ -704,56 +665,18 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	tests = append(tests, TestCase{
 		name: "sugar syntax: majority schedule",
 		input: &model.PlacementSettings{
-			PrimaryRegion: "us",
+			PrimaryRegion: "sh",
 			Regions:       "bj,sh",
 			Followers:     5,
 			Schedule:      "majority_in_primary",
 		},
 		output: []*Rule{
-			{
-				Role: Leader,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"us"},
-					},
-				},
-				Count: 1,
-			},
-			{
-				Role: Follower,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"us"},
-					},
-				},
-				Count: 3,
-			},
-			{
-				Role: Follower,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"bj"},
-					},
-				},
-				Count: 1,
-			},
-			{
-				Role: Follower,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"sh"},
-					},
-				},
-				Count: 1,
-			},
+			NewRule(Voter, 4, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "sh"),
+			)),
+			NewRule(Follower, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "bj"),
+			)),
 		},
 	})
 
@@ -764,60 +687,12 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			Followers:   2,
 		},
 		output: []*Rule{
-			{
-				Role: Leader,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"us"},
-					},
-				},
-				Count: 1,
-			},
-			{
-				Role: Follower,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"us"},
-					},
-				},
-				Count: 2,
-			},
-		},
-	})
-
-	tests = append(tests, TestCase{
-		name: "direct syntax: normal case 2",
-		input: &model.PlacementSettings{
-			Constraints: "[+region=us]",
-			Voters:      2,
-		},
-		output: []*Rule{
-			{
-				Role: Leader,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"us"},
-					},
-				},
-				Count: 1,
-			},
-			{
-				Role: Voter,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"us"},
-					},
-				},
-				Count: 2,
-			},
+			NewRule(Leader, 1, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Follower, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
 		},
 	})
 
@@ -829,39 +704,15 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			Learners:    2,
 		},
 		output: []*Rule{
-			{
-				Role: Leader,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"us"},
-					},
-				},
-				Count: 1,
-			},
-			{
-				Role: Follower,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"us"},
-					},
-				},
-				Count: 2,
-			},
-			{
-				Role: Learner,
-				Constraints: Constraints{
-					{
-						Key:    "region",
-						Op:     In,
-						Values: []string{"us"},
-					},
-				},
-				Count: 2,
-			},
+			NewRule(Leader, 1, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Follower, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
+			NewRule(Learner, 2, NewConstraintsDirect(
+				NewConstraintDirect("region", In, "us"),
+			)),
 		},
 	})
 
@@ -871,16 +722,6 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			Constraints:       "[+region=us]",
 			LeaderConstraints: "[-region=us]",
 			Followers:         2,
-		},
-		err: ErrConflictingConstraints,
-	})
-
-	tests = append(tests, TestCase{
-		name: "direct syntax: conflicts 2",
-		input: &model.PlacementSettings{
-			Constraints:      "[+region=us]",
-			VoterConstraints: "[-region=us]",
-			Voters:           2,
 		},
 		err: ErrConflictingConstraints,
 	})
@@ -922,16 +763,6 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			Constraints:       "+region=us]",
 			LeaderConstraints: "[-region=us]",
 			Followers:         2,
-		},
-		err: ErrInvalidConstraintsFormat,
-	})
-
-	tests = append(tests, TestCase{
-		name: "direct syntax: invalid format 3",
-		input: &model.PlacementSettings{
-			Constraints:      "[+region=us]",
-			VoterConstraints: "-region=us]",
-			Voters:           2,
 		},
 		err: ErrInvalidConstraintsFormat,
 	})
