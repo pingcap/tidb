@@ -266,7 +266,7 @@ func TestFeedbackEncoding(t *testing.T) {
 	val, err := EncodeFeedback(q)
 	require.NoError(t, err)
 	rq := &QueryFeedback{}
-	require.Nil(t, DecodeFeedback(val, rq, nil, nil, hist.Tp))
+	require.NoError(t, DecodeFeedback(val, rq, nil, nil, hist.Tp))
 	for _, fb := range rq.Feedback {
 		fb.Lower.SetBytes(codec.EncodeInt(nil, fb.Lower.GetInt64()))
 		fb.Upper.SetBytes(codec.EncodeInt(nil, fb.Upper.GetInt64()))
