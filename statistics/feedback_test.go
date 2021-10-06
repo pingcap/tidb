@@ -281,7 +281,7 @@ func TestFeedbackEncoding(t *testing.T) {
 	require.NoError(t, err)
 	rq = &QueryFeedback{}
 	cms := NewCMSketch(4, 4)
-	require.Nil(t, DecodeFeedback(val, rq, cms, nil, hist.Tp))
+	require.NoError(t, DecodeFeedback(val, rq, cms, nil, hist.Tp))
 	require.Equal(t, uint64(1), cms.QueryBytes(codec.EncodeInt(nil, 0)))
 	q.Feedback = q.Feedback[:1]
 	require.True(t, q.Equal(rq))
