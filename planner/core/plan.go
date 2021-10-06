@@ -597,6 +597,10 @@ type basePlan struct {
 	blockOffset int
 }
 
+func (p *basePlan) BlockOffset() int {
+	return p.blockOffset
+}
+
 // OutputNames returns the outputting names of each column.
 func (p *basePlan) OutputNames() types.NameSlice {
 	return nil

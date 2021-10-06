@@ -239,6 +239,27 @@ func TestEliminateMaxMin(t *testing.T) {
 	testGroupToString(t, input, output, optimizer)
 }
 
+func TestEliminateAgg(t *testing.T) {
+	t.Parallel()
+
+	optimizer := NewOptimizer()
+	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandAggregation: {
+			NewRuleEliminateAgg(),
+		},
+	})
+	defer func() {
+		optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	testGroupToString(t, input, output, optimizer)
+}
+
 func TestMergeAggregationProjection(t *testing.T) {
 	t.Parallel()
 

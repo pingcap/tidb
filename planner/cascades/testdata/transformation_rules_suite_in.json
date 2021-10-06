@@ -78,6 +78,14 @@
     ]
   },
   {
+    "name": "TestEliminateAgg",
+    "cases": [
+      "select count(distinct a), sum(distinct a) from t;",
+      "select min(distinct a) from t group by a;",
+      "select max(a) from t group by a;"
+    ]
+  },
+  {
     "name": "TestMergeAggregationProjection",
     "cases": [
       "select b, max(a) from (select a, c+d as b from t as t1) as t2 group by b",

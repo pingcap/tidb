@@ -112,7 +112,7 @@ func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool,
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.Init(agg.ctx, agg.blockOffset)
 	for _, fun := range agg.AggFuncs {
-		ok, expr := rewriteExpr(agg.ctx, fun)
+		ok, expr := RewriteExpr(agg.ctx, fun)
 		if !ok {
 			return false, nil
 		}
@@ -122,8 +122,8 @@ func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool,
 	return true, proj
 }
 
-// rewriteExpr will rewrite the aggregate function to expression doesn't contain aggregate function.
-func rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) (bool, expression.Expression) {
+// RewriteExpr will rewrite the aggregate function to expression doesn't contain aggregate function.
+func RewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) (bool, expression.Expression) {
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
 		if aggFunc.Mode == aggregation.FinalMode {
