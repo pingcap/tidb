@@ -236,9 +236,7 @@ func TestMergeBuckets(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		if len(tt.counts) != len(tt.ndvs) {
-			require.True(t, false)
-		}
+		require.Equal(t, len(tt.ndvs), len(tt.counts))
 		bkts := make([]bucket, 0, len(tt.counts))
 		totalCount := int64(0)
 		for i := 0; i < len(tt.counts); i++ {
