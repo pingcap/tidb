@@ -57,7 +57,8 @@ In order to add the `--initialize-secure` bootstrap option, the following suppor
 
 1. Support for Socket Authentication (`auth_socket`) [PR in Review](https://github.com/pingcap/tidb/pull/27561)
 2. Stale socket files are automatically cleaned up on server start [PR Merged](https://github.com/pingcap/tidb/pull/27886)
-3. TiDB listens on both TCP **and** unix socket by default (No PR)
+3. TiDB listens on both TCP **and** unix socket by default [PR in Review](https://github.com/pingcap/tidb/pull/28486)
+4. Auth plugin can be changed with ALTER/CREATE [PR Draft](https://github.com/pingcap/tidb/pull/28468)
 
 ## Test Design
 
@@ -79,4 +80,7 @@ The alternative implementation is to generate a random password with `--initiali
 
 ## Unresolved Questions
 
-- None
+- Should the `auth_socket` user on the MySQL-side be the OS-user, or `root`. It is possible to do either. We need to discuss what is the less of 2 evils:
+  - Having 2 "roots" (localhost, and %)
+  - Having a default user that is different for everyone, with instructions to create a root account.
+
