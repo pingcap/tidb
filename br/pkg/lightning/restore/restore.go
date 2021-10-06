@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
@@ -94,6 +95,7 @@ const (
 		total_bytes 		BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
 		checksum 			BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
 		status 				VARCHAR(32) NOT NULL,
+		has_duplicates		BOOL NOT NULL DEFAULT 0,
 		PRIMARY KEY (table_id, task_id)
 	);`
 	// CreateTaskMetaTable stores the pre-lightning metadata used by TiDB Lightning
@@ -252,6 +254,7 @@ type Controller struct {
 	closedEngineLimit *worker.Pool
 	store             storage.ExternalStorage
 	metaMgrBuilder    metaMgrBuilder
+	errorMgr          *errormanager.ErrorManager
 	taskMgr           taskMetaMgr
 
 	diskQuotaLock  *diskQuotaLock
@@ -307,6 +310,16 @@ func NewRestoreControllerWithPauser(
 		cfg.TaskID = taskCp.TaskID
 	}
 
+	// TODO: support Lightning via SQL
+	db, err := g.GetDB()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	errorMgr := errormanager.New(db, cfg)
+	if err := errorMgr.Init(ctx); err != nil {
+		return nil, errors.Annotate(err, "failed to init error manager")
+	}
+
 	var backend backend.Backend
 	switch cfg.TikvImporter.Backend {
 	case config.BackendImporter:
@@ -316,11 +329,11 @@ func NewRestoreControllerWithPauser(
 			return nil, errors.Annotate(err, "open importer backend failed")
 		}
 	case config.BackendTiDB:
-		db, err := DBFromConfig(cfg.TiDB)
+		db, err := g.GetDB()
 		if err != nil {
 			return nil, errors.Annotate(err, "open tidb backend failed")
 		}
-		backend = tidb.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate)
+		backend = tidb.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate, errorMgr)
 	case config.BackendLocal:
 		var rLimit local.Rlim_t
 		rLimit, err = local.GetSystemRLimit()
@@ -334,7 +347,7 @@ func NewRestoreControllerWithPauser(
 		}
 
 		backend, err = local.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, &cfg.TikvImporter,
-			cfg.Checkpoint.Enable, g, maxOpenFiles)
+			cfg.Checkpoint.Enable, g, maxOpenFiles, errorMgr)
 		if err != nil {
 			return nil, errors.Annotate(err, "build local backend failed")
 		}
@@ -349,11 +362,6 @@ func NewRestoreControllerWithPauser(
 	var metaBuilder metaMgrBuilder
 	switch cfg.TikvImporter.Backend {
 	case config.BackendLocal, config.BackendImporter:
-		// TODO: support Lightning via SQL
-		db, err := g.GetDB()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		metaBuilder = &dbMetaMgrBuilder{
 			db:           db,
 			taskID:       cfg.TaskID,
@@ -386,6 +394,7 @@ func NewRestoreControllerWithPauser(
 
 		store:          s,
 		metaMgrBuilder: metaBuilder,
+		errorMgr:       errorMgr,
 		diskQuotaLock:  newDiskQuotaLock(),
 		status:         status,
 		taskMgr:        nil,
@@ -762,7 +771,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 
 	go rc.listenCheckpointUpdates()
 
-	rc.sysVars = ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor())
+	rc.sysVars = ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
 
 	// Estimate the number of chunks for progress reporting
 	err = rc.estimateChunkCountIntoMetrics(ctx)
@@ -1103,8 +1112,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					f()
 				}
 			}()
-			// tidb backend don't need to switch tikv to import mode
-			if rc.cfg.TikvImporter.Backend != config.BackendTiDB && rc.cfg.Cron.SwitchMode.Duration > 0 {
+			if rc.cfg.Cron.SwitchMode.Duration > 0 {
 				rc.switchToImportMode(ctx)
 			}
 			start := time.Now()
@@ -1438,17 +1446,6 @@ func (tr *TableRestore) restoreTable(
 			zap.Int("filesCnt", cp.CountChunks()),
 		)
 	} else if cp.Status < checkpoints.CheckpointStatusAllWritten {
-		versionStr, err := rc.tidbGlue.GetSQLExecutor().ObtainStringWithLog(
-			ctx, "SELECT version()", "fetch tidb version", log.L())
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-
-		tidbVersion, err := version.ExtractTiDBVersion(versionStr)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-
 		if err := tr.populateChunks(ctx, rc, cp); err != nil {
 			return false, errors.Trace(err)
 		}
@@ -1460,9 +1457,17 @@ func (tr *TableRestore) restoreTable(
 				rowIDMax = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
 			}
 		}
+		db, _ := rc.tidbGlue.GetDB()
+		versionStr, err := version.FetchVersion(ctx, db)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 
-		// "show table next_row_id" is only available after v4.0.0
-		if tidbVersion.Major >= 4 && (rc.cfg.TikvImporter.Backend == config.BackendLocal || rc.cfg.TikvImporter.Backend == config.BackendImporter) {
+		versionInfo := version.ParseServerInfo(versionStr)
+
+		// "show table next_row_id" is only available after tidb v4.0.0
+		if versionInfo.ServerVersion.Major >= 4 &&
+			(rc.cfg.TikvImporter.Backend == config.BackendLocal || rc.cfg.TikvImporter.Backend == config.BackendImporter) {
 			// first, insert a new-line into meta table
 			if err = metaMgr.InitTableMeta(ctx); err != nil {
 				return false, err
@@ -1566,6 +1571,11 @@ func (rc *Controller) switchToNormalMode(ctx context.Context) error {
 }
 
 func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
+	// // tidb backend don't need to switch tikv to import mode
+	if rc.isTiDBBackend() {
+		return
+	}
+
 	// It is fine if we miss some stores which did not switch to Import mode,
 	// since we're running it periodically, so we exclude disconnected stores.
 	// But it is essential all stores be switched back to Normal mode to allow
@@ -1676,6 +1686,10 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 }
 
 func (rc *Controller) setGlobalVariables(ctx context.Context) error {
+	// skip for tidb backend to be compatible with MySQL
+	if rc.isTiDBBackend() {
+		return nil
+	}
 	// set new collation flag base on tidb config
 	enabled := ObtainNewCollationEnabled(ctx, rc.tidbGlue.GetSQLExecutor())
 	// we should enable/disable new collation here since in server mode, tidb config
@@ -1699,15 +1713,16 @@ func (rc *Controller) cleanCheckpoints(ctx context.Context) error {
 	}
 
 	logger := log.With(
-		zap.Bool("keepAfterSuccess", rc.cfg.Checkpoint.KeepAfterSuccess),
+		zap.Stringer("keepAfterSuccess", rc.cfg.Checkpoint.KeepAfterSuccess),
 		zap.Int64("taskID", rc.cfg.TaskID),
 	)
 
 	task := logger.Begin(zap.InfoLevel, "clean checkpoints")
 	var err error
-	if rc.cfg.Checkpoint.KeepAfterSuccess {
+	switch rc.cfg.Checkpoint.KeepAfterSuccess {
+	case config.CheckpointRename:
 		err = rc.checkpointsDB.MoveCheckpoints(ctx, rc.cfg.TaskID)
-	} else {
+	case config.CheckpointRemove:
 		err = rc.checkpointsDB.RemoveCheckpoint(ctx, "all")
 	}
 	task.End(zap.ErrorLevel, err)
@@ -1716,6 +1731,10 @@ func (rc *Controller) cleanCheckpoints(ctx context.Context) error {
 
 func (rc *Controller) isLocalBackend() bool {
 	return rc.cfg.TikvImporter.Backend == config.BackendLocal
+}
+
+func (rc *Controller) isTiDBBackend() bool {
+	return rc.cfg.TikvImporter.Backend == config.BackendTiDB
 }
 
 // preCheckRequirements checks
@@ -2204,13 +2223,26 @@ func (cr *chunkRestore) encodeLoop(
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
 			// sql -> kv
-			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
+			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
 			encodeDur += time.Since(encodeDurStart)
-			cr.parser.RecycleRow(lastRow)
+
+			hasIgnoredEncodeErr := false
 			if encodeErr != nil {
+				rowText := tidb.EncodeRowForRecord(t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row)
+				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
 				err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
+				hasIgnoredEncodeErr = true
+			}
+			cr.parser.RecycleRow(lastRow)
+			curOffset = newOffset
+
+			if err != nil {
 				return
 			}
+			if hasIgnoredEncodeErr {
+				continue
+			}
+
 			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: columnNames, offset: newOffset, rowID: rowID})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
@@ -2223,7 +2255,6 @@ func (cr *chunkRestore) encodeLoop(
 				canDeliver = true
 				kvSize = 0
 			}
-			curOffset = newOffset
 		}
 		encodeTotalDur += encodeDur
 		metric.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
