@@ -668,6 +668,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		mustHaveInternalConnections = false
 		cfg.PostRestore.Checksum = OpLevelOff
 		cfg.PostRestore.Analyze = OpLevelOff
+		cfg.PostRestore.Compact = false
 		cfg.TikvImporter.DuplicateDetection = false
 	case BackendImporter, BackendLocal:
 		// RegionConcurrency > NumCPU is meaningless.
