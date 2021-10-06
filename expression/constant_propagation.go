@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -85,7 +86,7 @@ func validEqualCondHelper(ctx sessionctx.Context, eq *ScalarFunction, colIsLeft 
 	if !conOk {
 		return nil, nil
 	}
-	if ContainMutableConst(ctx, []Expression{con}) {
+	if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
 		return nil, nil
 	}
 	if col.GetType().Collate != con.GetType().Collate {
@@ -147,7 +148,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 			sf.FuncName.L == ast.If ||
 			sf.FuncName.L == ast.Case ||
 			sf.FuncName.L == ast.NullEQ) {
-		return false, false, cond
+		return false, true, cond
 	}
 	for idx, expr := range sf.GetArgs() {
 		if src.Equal(nil, expr) {
@@ -298,7 +299,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 				continue
 			}
 			visited[i] = true
-			if ContainMutableConst(s.ctx, []Expression{con}) {
+			if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
 				continue
 			}
 			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
@@ -404,7 +405,7 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 				continue
 			}
 			visited[i+condsOffset] = true
-			if ContainMutableConst(s.ctx, []Expression{con}) {
+			if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
 				continue
 			}
 			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})

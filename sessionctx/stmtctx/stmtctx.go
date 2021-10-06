@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -63,30 +64,30 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue           bool
-	InInsertStmt              bool
-	InUpdateStmt              bool
-	InDeleteStmt              bool
-	InSelectStmt              bool
-	InLoadDataStmt            bool
-	InExplainStmt             bool
-	InCreateOrAlterStmt       bool
-	IgnoreTruncate            bool
-	IgnoreZeroInDate          bool
-	DupKeyAsWarning           bool
-	BadNullAsWarning          bool
-	DividedByZeroAsWarning    bool
-	TruncateAsWarning         bool
-	OverflowAsWarning         bool
-	InShowWarning             bool
-	UseCache                  bool
-	BatchCheck                bool
-	InNullRejectCheck         bool
-	AllowInvalidDate          bool
-	IgnoreNoPartition         bool
-	OptimDependOnMutableConst bool
-	IgnoreExplainIDSuffix     bool
-	IsStaleness               bool
+	IsDDLJobInQueue              bool
+	InInsertStmt                 bool
+	InUpdateStmt                 bool
+	InDeleteStmt                 bool
+	InSelectStmt                 bool
+	InLoadDataStmt               bool
+	InExplainStmt                bool
+	InCreateOrAlterStmt          bool
+	IgnoreTruncate               bool
+	IgnoreZeroInDate             bool
+	DupKeyAsWarning              bool
+	BadNullAsWarning             bool
+	DividedByZeroAsWarning       bool
+	TruncateAsWarning            bool
+	OverflowAsWarning            bool
+	InShowWarning                bool
+	UseCache                     bool
+	BatchCheck                   bool
+	InNullRejectCheck            bool
+	AllowInvalidDate             bool
+	IgnoreNoPartition            bool
+	MaybeOverOptimized4PlanCache bool
+	IgnoreExplainIDSuffix        bool
+	IsStaleness                  bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -113,12 +114,11 @@ type StatementContext struct {
 		copied  uint64
 		touched uint64
 
-		message           string
-		warnings          []SQLWarn
-		errorCount        uint16
-		histogramsNotLoad bool
-		execDetails       execdetails.ExecDetails
-		allExecDetails    []*execdetails.ExecDetails
+		message        string
+		warnings       []SQLWarn
+		errorCount     uint16
+		execDetails    execdetails.ExecDetails
+		allExecDetails []*execdetails.ExecDetails
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
@@ -180,6 +180,11 @@ type StatementContext struct {
 		DiskTracker disk.Tracker
 		LogOnExceed [2]memory.LogOnExceed
 	}
+
+	// OptimInfo maps Plan.ID() to optimization information when generating Plan.
+	OptimInfo map[int]string
+	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
+	InVerboseExplain bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -438,7 +443,7 @@ func (sc *StatementContext) GetWarnings() []SQLWarn {
 	return warns
 }
 
-// TruncateWarnings truncates wanrings begin from start and returns the truncated warnings.
+// TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
 func (sc *StatementContext) TruncateWarnings(start int) []SQLWarn {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
@@ -518,13 +523,6 @@ func (sc *StatementContext) AppendError(warn error) {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelError, warn})
 		sc.mu.errorCount++
 	}
-	sc.mu.Unlock()
-}
-
-// SetHistogramsNotLoad sets histogramsNotLoad.
-func (sc *StatementContext) SetHistogramsNotLoad() {
-	sc.mu.Lock()
-	sc.mu.histogramsNotLoad = true
 	sc.mu.Unlock()
 }
 

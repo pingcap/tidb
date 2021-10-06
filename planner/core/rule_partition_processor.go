@@ -5,8 +5,10 @@
 // You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
-// // Unless required by applicable law or agreed to in writing, software
+//
+// Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -184,7 +186,13 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				if r.HighExclude {
 					posHigh--
 				}
-				rangeScalar := float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
+
+				var rangeScalar float64
+				if mysql.HasUnsignedFlag(col.RetType.Flag) {
+					rangeScalar = float64(uint64(posHigh)) - float64(uint64(posLow)) // use float64 to avoid integer overflow
+				} else {
+					rangeScalar = float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
+				}
 
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
 				if rangeScalar < float64(numPartitions) && !highIsNull && !lowIsNull {
@@ -306,7 +314,6 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 				ColName:     colInfo.Name,
 				OrigTblName: ds.tableInfo.Name,
 				OrigColName: colInfo.Name,
-				Hidden:      colInfo.Hidden,
 			})
 			continue
 		}
@@ -322,7 +329,8 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	}
 	used, err := s.pruneHashPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, names)
 	if err != nil {
-		return nil, err
+		// Just report warning and generate the tableDual
+		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(err)
 	}
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi))
@@ -466,14 +474,20 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 		var locations []tables.ListPartitionLocation
 		if r.IsPointNullable(sc) {
 			location, err := colPrune.LocatePartition(sc, r.HighVal[0])
+			if types.ErrOverflow.Equal(err) {
+				return nil, true, nil // return full-scan if over-flow
+			}
 			if err != nil {
 				return nil, false, err
 			}
 			locations = []tables.ListPartitionLocation{location}
 		} else {
 			locations, err = colPrune.LocateRanges(sc, r)
+			if types.ErrOverflow.Equal(err) {
+				return nil, true, nil // return full-scan if over-flow
+			}
 			if err != nil {
-				return nil, false, nil
+				return nil, false, err
 			}
 		}
 		for _, location := range locations {
@@ -541,9 +555,7 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 	used := make(map[int]struct{}, len(ranges))
 	for _, r := range ranges {
 		if r.IsPointNullable(l.ctx.GetSessionVars().StmtCtx) {
-			if len(r.HighVal) != len(exprCols) && !r.HighVal[0].IsNull() {
-				// For the list partition, if the first argument is null,
-				// then the list partition expression should also be null.
+			if len(r.HighVal) != len(exprCols) {
 				return l.fullRange, nil
 			}
 			value, isNull, err := pruneExpr.EvalInt(l.ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())

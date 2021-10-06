@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -118,8 +119,7 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	isCommit = true
-	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return nil
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 // Checks that dynamic privileges are only of global scope.
@@ -297,12 +297,21 @@ func privUpdateForRevoke(cur []string, priv mysql.PrivilegeType) ([]string, erro
 func composeTablePrivUpdateForRevoke(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string) error {
 	var newTablePriv, newColumnPriv []string
 
-	if priv != mysql.AllPriv {
-		currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
-		if err != nil {
-			return err
-		}
+	currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
+	if err != nil {
+		return err
+	}
 
+	if priv == mysql.AllPriv {
+		// Revoke ALL does not revoke the Grant option,
+		// so we only need to check if the user previously had this.
+		tmp := SetFromString(currTablePriv)
+		for _, p := range tmp {
+			if p == mysql.Priv2SetStr[mysql.GrantPriv] {
+				newTablePriv = []string{mysql.Priv2SetStr[mysql.GrantPriv]}
+			}
+		}
+	} else {
 		newTablePriv = SetFromString(currTablePriv)
 		newTablePriv, err = privUpdateForRevoke(newTablePriv, priv)
 		if err != nil {

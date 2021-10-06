@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -117,7 +118,7 @@ func (s *testSerialSuite) TestExplainFor(c *C) {
 			}
 		}
 		c.Assert(buf.String(), Matches, ""+
-			"TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task: {num:.*, max:.*, proc_keys: 0, rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
+			"TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task: {num:.*, max:.*, proc_keys:.* rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
 			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A")
 	}
 	tkRoot.MustQuery("select * from t1;")
@@ -133,6 +134,48 @@ func (s *testSerialSuite) TestExplainFor(c *C) {
 	ps = []*util.ProcessInfo{tkRootProcess}
 	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tkRoot.MustExec(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
+}
+
+func (s *testSerialSuite) TestExplainForVerbose(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int);")
+	tk.MustQuery("select * from t1;")
+	tkRootProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkRootProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk2.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+
+	rs := tk.MustQuery("explain format = 'verbose' select * from t1").Rows()
+	rs2 := tk2.MustQuery(fmt.Sprintf("explain format = 'verbose' for connection %d", tkRootProcess.ID)).Rows()
+	c.Assert(len(rs), Equals, len(rs2))
+	for i := range rs {
+		c.Assert(rs[i], DeepEquals, rs2[i])
+	}
+
+	tk.MustExec("set @@tidb_enable_collect_execution_info=1;")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(id int);")
+	tk.MustQuery("select * from t2;")
+	tkRootProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkRootProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk2.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	rs = tk.MustQuery("explain format = 'verbose' select * from t2").Rows()
+	rs2 = tk2.MustQuery(fmt.Sprintf("explain format = 'verbose' for connection %d", tkRootProcess.ID)).Rows()
+	c.Assert(len(rs), Equals, len(rs2))
+	for i := range rs {
+		// "id", "estRows", "estCost", "task", "access object", "operator info"
+		c.Assert(len(rs[i]), Equals, 6)
+		// "id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"
+		c.Assert(len(rs2[i]), Equals, 10)
+		for j := 0; j < 3; j++ {
+			c.Assert(rs[i][j], Equals, rs2[i][j])
+		}
+	}
 }
 
 func (s *testSerialSuite) TestIssue11124(c *C) {
@@ -485,4 +528,248 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
+}
+
+func (s *testPrepareSerialSuite) TestExpressionIndexPreparePlanCache(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key ((a+b)));")
+	tk.MustExec("prepare stmt from 'select * from t where a+b = ?'")
+	tk.MustExec("set @a = 123")
+	tk.MustExec("execute stmt using @a")
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 5)
+	c.Assert(res.Rows()[3][3], Matches, ".*expression_index.*")
+	c.Assert(res.Rows()[3][4], Matches, ".*[123,123].*")
+
+	tk.MustExec("set @a = 1234")
+	tk.MustExec("execute stmt using @a")
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 5)
+	c.Assert(res.Rows()[3][3], Matches, ".*expression_index.*")
+	c.Assert(res.Rows()[3][4], Matches, ".*[1234,1234].*")
+}
+
+func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	// test for indexRange
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists UK_GCOL_VIRTUAL_18588;")
+	tk.MustExec("CREATE TABLE `UK_GCOL_VIRTUAL_18588` (`COL1` bigint(20), UNIQUE KEY `UK_COL1` (`COL1`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into UK_GCOL_VIRTUAL_18588 values('8502658334322817163');")
+	tk.MustExec(`prepare stmt from 'select col1 from UK_GCOL_VIRTUAL_18588 where col1 between ? and ? or col1 < ?';`)
+	tk.MustExec("set @a=5516958330762833919, @b=8551969118506051323, @c=2887622822023883594;")
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("8502658334322817163"))
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
+
+	tk.MustExec("set @a=-1696020282760139948, @b=-2619168038882941276, @c=-4004648990067362699;")
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexFullScan.*")
+
+	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
+		"where col1 between -1696020282760139948 and -2619168038882941276 or col1 < -4004648990067362699;")
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexFullScan.*")
+	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
+		"where col1 between 5516958330762833919 and 8551969118506051323 or col1 < 2887622822023883594;")
+	c.Assert(len(res.Rows()), Equals, 2)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexRangeScan.*")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a int, b int, index idx(a, b));")
+	tk.MustExec("insert into t values(1, 0);")
+	tk.MustExec(`prepare stmt from 'select a from t where (a between ? and ? or a < ?) and b < 1;'`)
+	tk.MustExec("set @a=0, @b=2, @c=2;")
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("1"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexReader.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1), or(and(ge(test.t.a, 0), le(test.t.a, 2)), lt(test.t.a, 2))")
+	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
+
+	tk.MustExec("set @a=2, @b=1, @c=1;")
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexReader.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1), or(and(ge(test.t.a, 2), le(test.t.a, 1)), lt(test.t.a, 1))")
+	c.Assert(res.Rows()[3][0], Matches, ".*IndexFullScan.*")
+
+	res = tk.MustQuery("explain format = 'brief' select a from t use index(idx) " +
+		"where (a between 0 and 2 or a < 2) and b < 1;")
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexReader.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1)")
+	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
+	res = tk.MustQuery("explain format = 'brief' select a from t use index(idx) " +
+		"where (a between 2 and 1 or a < 1) and b < 1;")
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexReader.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1)")
+	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
+
+	// test for indexLookUp
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a int, b int, index idx(a));")
+	tk.MustExec("insert into t values(1, 0);")
+	tk.MustExec(`prepare stmt from 'select a from t where (a between ? and ? or a < ?) and b < 1;'`)
+	tk.MustExec("set @a=0, @b=2, @c=2;")
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("1"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 6)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
+
+	tk.MustExec("set @a=2, @b=1, @c=1;")
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 6)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[3][0], Matches, ".*IndexFullScan.*")
+
+	res = tk.MustQuery("explain format = 'brief' select a from t use index(idx) " +
+		"where (a between 0 and 2 or a < 2) and b < 1;")
+	c.Assert(len(res.Rows()), Equals, 5)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
+	res = tk.MustQuery("explain format = 'brief' select a from t use index(idx) " +
+		"where (a between 2 and 1 or a < 1) and b < 1;")
+	c.Assert(len(res.Rows()), Equals, 5)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
+
+	// test for tableReader
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a int PRIMARY KEY CLUSTERED, b int);")
+	tk.MustExec("insert into t values(1, 0);")
+	tk.MustExec(`prepare stmt from 'select a from t where (a between ? and ? or a < ?) and b < 1;'`)
+	tk.MustExec("set @a=0, @b=2, @c=2;")
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("1"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[1][0], Matches, ".*TableReader.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1), or(and(ge(test.t.a, 0), le(test.t.a, 2)), lt(test.t.a, 2))")
+	c.Assert(res.Rows()[3][0], Matches, ".*TableRangeScan.*")
+
+	tk.MustExec("set @a=2, @b=1, @c=1;")
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[1][0], Matches, ".*TableReader.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1), or(and(ge(test.t.a, 2), le(test.t.a, 1)), lt(test.t.a, 1))")
+	c.Assert(res.Rows()[3][0], Matches, ".*TableRangeScan.*")
+
+	res = tk.MustQuery("explain format = 'brief' select a from t " +
+		"where (a between 0 and 2 or a < 2) and b < 1;")
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[1][0], Matches, ".*TableReader.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1)")
+	c.Assert(res.Rows()[3][0], Matches, ".*TableRangeScan.*")
+	res = tk.MustQuery("explain format = 'brief' select a from t " +
+		"where (a between 2 and 1 or a < 1) and b < 1;")
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[1][0], Matches, ".*TableReader.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1)")
+	c.Assert(res.Rows()[3][0], Matches, ".*TableRangeScan.*")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a int primary key, b int, c int, d int);")
+	tk.MustExec(`prepare stmt from 'select * from t where ((a > ? and a < 5 and b > 2) or (a > ? and a < 10 and c > 3)) and d = 5;';`)
+	tk.MustExec("set @a=1, @b=8;")
+	tk.MustQuery("execute stmt using @a,@b;").Check(testkit.Rows())
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[0][0], Matches, ".*TableReader.*")
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	// The duplicate expressions can not be eliminated because the conditions are not the same.
+	// So this may be a bad case in some situations.
+	c.Assert(res.Rows()[1][4], Equals, "eq(test.t.d, 5), or(and(gt(test.t.a, 1), and(lt(test.t.a, 5), gt(test.t.b, 2))), and(gt(test.t.a, 8), and(lt(test.t.a, 10), gt(test.t.c, 3)))), or(and(gt(test.t.a, 1), lt(test.t.a, 5)), and(gt(test.t.a, 8), lt(test.t.a, 10)))")
+	c.Assert(res.Rows()[2][0], Matches, ".*TableRangeScan.*")
 }

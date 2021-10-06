@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -90,31 +91,6 @@ func (s *testEvaluatorSuite) TestSetFlenDecimal4RealOrDecimal(c *C) {
 	c.Assert(ret.Flen, Equals, types.UnspecifiedLength)
 }
 
-func (s *testEvaluatorSuite) TestSetFlenDecimal4Int(c *C) {
-	ret := &types.FieldType{}
-	a := &types.FieldType{
-		Decimal: 1,
-		Flen:    3,
-	}
-	b := &types.FieldType{
-		Decimal: 0,
-		Flen:    2,
-	}
-	setFlenDecimal4Int(ret, a, b)
-	c.Assert(ret.Decimal, Equals, 0)
-	c.Assert(ret.Flen, Equals, mysql.MaxIntWidth)
-
-	b.Flen = mysql.MaxIntWidth + 1
-	setFlenDecimal4Int(ret, a, b)
-	c.Assert(ret.Decimal, Equals, 0)
-	c.Assert(ret.Flen, Equals, mysql.MaxIntWidth)
-
-	b.Flen = types.UnspecifiedLength
-	setFlenDecimal4Int(ret, a, b)
-	c.Assert(ret.Decimal, Equals, 0)
-	c.Assert(ret.Flen, Equals, mysql.MaxIntWidth)
-}
-
 func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	// case: 1
 	args := []interface{}{int64(12), int64(1)}
@@ -191,6 +167,23 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	intResult, _, err = intSig.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(intResult, Equals, int64(9007199254740993))
+
+	bitStr, err := types.NewBitLiteral("0b00011")
+	c.Assert(err, IsNil)
+	args = []interface{}{bitStr, int64(1)}
+
+	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+
+	//check the result type is int
+	intSig, ok = bf.(*builtinArithmeticPlusIntSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(intSig, NotNil)
+
+	intResult, _, err = intSig.evalInt(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(intResult, Equals, int64(4))
 }
 
 func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
@@ -652,5 +645,49 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 		}
 		c.Assert(err, IsNil)
 		c.Assert(val, testutil.DatumEquals, types.NewDatum(tc.expect))
+	}
+}
+
+func (s *testEvaluatorSuite) TestDecimalErrOverflow(c *C) {
+	testCases := []struct {
+		args   []float64
+		opd    string
+		sig    tipb.ScalarFuncSig
+		errStr string
+	}{
+		{
+			args:   []float64{8.1e80, 8.1e80},
+			opd:    ast.Plus,
+			sig:    tipb.ScalarFuncSig_PlusDecimal,
+			errStr: "[types:1690]DECIMAL value is out of range in '(810000000000000000000000000000000000000000000000000000000000000000000000000000000 + 810000000000000000000000000000000000000000000000000000000000000000000000000000000)'",
+		},
+		{
+			args:   []float64{8.1e80, -8.1e80},
+			opd:    ast.Minus,
+			sig:    tipb.ScalarFuncSig_MinusDecimal,
+			errStr: "[types:1690]DECIMAL value is out of range in '(810000000000000000000000000000000000000000000000000000000000000000000000000000000 - -810000000000000000000000000000000000000000000000000000000000000000000000000000000)'",
+		},
+		{
+			args:   []float64{8.1e80, 8.1e80},
+			opd:    ast.Mul,
+			sig:    tipb.ScalarFuncSig_MultiplyDecimal,
+			errStr: "[types:1690]DECIMAL value is out of range in '(810000000000000000000000000000000000000000000000000000000000000000000000000000000 * 810000000000000000000000000000000000000000000000000000000000000000000000000000000)'",
+		},
+		{
+			args:   []float64{8.1e80, 0.1},
+			opd:    ast.Div,
+			sig:    tipb.ScalarFuncSig_DivideDecimal,
+			errStr: "[types:1690]DECIMAL value is out of range in '(810000000000000000000000000000000000000000000000000000000000000000000000000000000 / 0.1)'",
+		},
+	}
+	for _, tc := range testCases {
+		dec1, dec2 := types.NewDecFromFloatForTest(tc.args[0]), types.NewDecFromFloatForTest(tc.args[1])
+		bf, err := funcs[tc.opd].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(dec1, dec2)))
+		c.Assert(err, IsNil)
+		c.Assert(bf, NotNil)
+		c.Assert(bf.PbCode(), Equals, tc.sig)
+		_, err = evalBuiltinFunc(bf, chunk.Row{})
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, tc.errStr)
 	}
 }

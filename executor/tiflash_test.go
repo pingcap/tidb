@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -73,6 +74,11 @@ func (s *tiflashTestSuite) SetUpSuite(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
+}
+
+func (s *tiflashTestSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	c.Assert(s.store.Close(), IsNil)
 }
 
 func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
@@ -141,6 +147,35 @@ func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
 
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("5"))
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a and ((t1.a < 9223372036854775800 and t1.a > 2) or (t1.a <= 1 and t1.a > -1))").Check(testkit.Rows("3"))
+}
+
+// to fix https://github.com/pingcap/tidb/issues/27952
+func (s *tiflashTestSuite) TestJoinRace(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(1,1)")
+	tk.MustExec("insert into t values(2,1)")
+	tk.MustExec("insert into t values(3,1)")
+	tk.MustExec("insert into t values(1,2)")
+	tk.MustExec("insert into t values(2,2)")
+	tk.MustExec("insert into t values(3,2)")
+	tk.MustExec("insert into t values(1,2)")
+	tk.MustExec("insert into t values(2,2)")
+	tk.MustExec("insert into t values(3,2)")
+	tk.MustExec("insert into t values(1,3)")
+	tk.MustExec("insert into t values(2,3)")
+	tk.MustExec("insert into t values(3,4)")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustExec("set @@tidb_opt_broadcast_cartesian_join=0")
+	tk.MustQuery("select count(*) from (select count(a) x from t group by b) t1 join (select count(a) x from t group by b) t2 on t1.x > t2.x").Check(testkit.Rows("6"))
+
 }
 
 func (s *tiflashTestSuite) TestMppExecution(c *C) {
@@ -509,6 +544,25 @@ func (s *tiflashTestSuite) TestMppEnum(c *C) {
 	tk.MustQuery("select t1.b from t t1 join t t2 on t1.a = t2.a order by t1.b").Check(testkit.Rows("aca", "bca", "zca"))
 }
 
+func (s *tiflashTestSuite) TestDispatchTaskRetry(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+	tk.MustExec("insert into t values(3,0)")
+	tk.MustExec("insert into t values(4,0)")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "3*return(true)"), IsNil)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout"), IsNil)
+}
+
 func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {
 	testleak.BeforeTest()
 	defer testleak.AfterTest(c)()
@@ -641,6 +695,28 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 	tk.MustExec("insert into x4 values (2, 2), (2, 3)")
 	tk.MustQuery("(select * from x1 union all select * from x4) order by a, b").Check(testkit.Rows("1 1", "2 2", "2 2", "2 3", "3 3", "4 4"))
 
+}
+
+func (s *tiflashTestSuite) TestUnionWithEmptyDualTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t (a int not null, b int, c varchar(20))")
+	tk.MustExec("create table t1 (a int, b int not null, c double)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tb = testGetTableByName(c, tk.Se, "test", "t1")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(1,2,3)")
+	tk.MustExec("insert into t1 values(1,2,3)")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustQuery("select count(*) from (select a , b from t union all select a , c from t1 where false) tt").Check(testkit.Rows("1"))
 }
 
 func (s *tiflashTestSuite) TestMppApply(c *C) {

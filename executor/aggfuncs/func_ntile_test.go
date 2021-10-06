@@ -8,20 +8,23 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-
 	"github.com/pingcap/tidb/executor/aggfuncs"
 )
 
-func (s *testSuite) TestMemNtile(c *C) {
+func TestMemNtile(t *testing.T) {
+	t.Parallel()
+
 	tests := []windowMemTest{
 		buildWindowMemTester(ast.WindowFuncNtile, mysql.TypeLonglong, 1, 1, 1,
 			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens),
@@ -31,6 +34,6 @@ func (s *testSuite) TestMemNtile(c *C) {
 			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens),
 	}
 	for _, test := range tests {
-		s.testWindowAggMemFunc(c, test)
+		testWindowAggMemFunc(t, test)
 	}
 }

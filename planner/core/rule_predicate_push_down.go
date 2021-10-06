@@ -5,8 +5,10 @@
 // You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
-// // Unless required by applicable law or agreed to in writing, software
+//
+// Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -81,9 +83,16 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	predicates = DeleteTrueExprs(p, predicates)
 	p.Conditions = DeleteTrueExprs(p, p.Conditions)
-	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
-	retConditions, child := p.children[0].PredicatePushDown(append(canBePushDown, predicates...))
-	retConditions = append(retConditions, canNotBePushDown...)
+	var child LogicalPlan
+	var retConditions []expression.Expression
+	if p.buildByHaving {
+		retConditions, child = p.children[0].PredicatePushDown(predicates)
+		retConditions = append(retConditions, p.Conditions...)
+	} else {
+		canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
+		retConditions, child = p.children[0].PredicatePushDown(append(canBePushDown, predicates...))
+		retConditions = append(retConditions, canNotBePushDown...)
+	}
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		// Return table dual when filter is constant false or null.
@@ -529,7 +538,7 @@ func Conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 		return nil
 	}
 	sc := p.SCtx().GetSessionVars().StmtCtx
-	if expression.ContainMutableConst(p.SCtx(), []expression.Expression{con}) {
+	if expression.MaybeOverOptimized4PlanCache(p.SCtx(), []expression.Expression{con}) {
 		return nil
 	}
 	if isTrue, err := con.Value.ToBool(sc); (err == nil && isTrue == 0) || con.Value.IsNull() {
@@ -549,7 +558,7 @@ func DeleteTrueExprs(p LogicalPlan, conds []expression.Expression) []expression.
 			newConds = append(newConds, cond)
 			continue
 		}
-		if expression.ContainMutableConst(p.SCtx(), []expression.Expression{con}) {
+		if expression.MaybeOverOptimized4PlanCache(p.SCtx(), []expression.Expression{con}) {
 			newConds = append(newConds, cond)
 			continue
 		}

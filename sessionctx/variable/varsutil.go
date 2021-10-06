@@ -8,12 +8,14 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package variable
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -120,29 +122,37 @@ func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 	if normalizedValue == "" {
 		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
 	}
-	cht, _, err := charset.GetCharsetInfo(normalizedValue)
+	cs, err := charset.GetCharsetInfo(normalizedValue)
 	if err != nil {
 		return normalizedValue, errors.Trace(err)
 	}
-	return cht, nil
+	return cs.Name, nil
 }
 
 // checkReadOnly requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.
 func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag, offlineMode bool) (string, error) {
-	feature := "READ ONLY"
+	errMsg := ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
 	if offlineMode {
-		feature = "OFFLINE MODE"
+		errMsg = ErrFunctionsNoopImpl.GenWithStackByArgs("OFFLINE MODE")
 	}
 	if TiDBOptOn(normalizedValue) {
-		if !vars.EnableNoopFuncs && scope == ScopeSession {
-			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+		if scope == ScopeSession && vars.NoopFuncsMode != OnInt {
+			if vars.NoopFuncsMode == OffInt {
+				return Off, errMsg
+			}
+			vars.StmtCtx.AppendWarning(errMsg)
 		}
-		val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
-		if err != nil {
-			return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
-		}
-		if scope == ScopeGlobal && !TiDBOptOn(val) {
-			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+		if scope == ScopeGlobal {
+			val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
+			if err != nil {
+				return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
+			}
+			if val == Off {
+				return Off, errMsg
+			}
+			if val == Warn {
+				vars.StmtCtx.AppendWarning(errMsg)
+			}
 		}
 	}
 	return normalizedValue, nil
@@ -218,13 +228,48 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	name = strings.ToLower(name)
 	sysVar := GetSysVar(name)
 	if sysVar == nil {
-		return ErrUnknownSystemVar
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	sVal, err := sysVar.Validate(vars, value, ScopeSession)
 	if err != nil {
 		return err
 	}
 	return vars.SetStmtVar(name, sVal)
+}
+
+func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, error) {
+	val, err := vars.GlobalVarsAccessor.GetTiDBTableValue(name)
+	if err != nil { // handle empty result or other errors
+		return defaultVal, nil
+	}
+	return trueFalseToOnOff(val), nil
+}
+
+func setTiDBTableValue(vars *SessionVars, name, value, comment string) error {
+	value = onOffToTrueFalse(value)
+	return vars.GlobalVarsAccessor.SetTiDBTableValue(name, value, comment)
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func trueFalseToOnOff(str string) string {
+	if strings.EqualFold("true", str) {
+		return On
+	} else if strings.EqualFold("false", str) {
+		return Off
+	}
+	return str
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func onOffToTrueFalse(str string) string {
+	if strings.EqualFold("ON", str) {
+		return "true"
+	} else if strings.EqualFold("OFF", str) {
+		return "false"
+	}
+	return str
 }
 
 const (
@@ -245,23 +290,24 @@ func TiDBOptOn(opt string) bool {
 }
 
 const (
-	// OffInt is used by TiDBMultiStatementMode
+	// OffInt is used by TiDBOptOnOffWarn
 	OffInt = 0
-	// OnInt is used TiDBMultiStatementMode
+	// OnInt is used TiDBOptOnOffWarn
 	OnInt = 1
-	// WarnInt is used by TiDBMultiStatementMode
+	// WarnInt is used by TiDBOptOnOffWarn
 	WarnInt = 2
 )
 
-// TiDBOptMultiStmt converts multi-stmt options to int.
-func TiDBOptMultiStmt(opt string) int {
+// TiDBOptOnOffWarn converts On/Off/Warn to an int.
+// It is used for MultiStmtMode and NoopFunctionsMode
+func TiDBOptOnOffWarn(opt string) int {
 	switch opt {
-	case Off:
-		return OffInt
+	case Warn:
+		return WarnInt
 	case On:
 		return OnInt
 	}
-	return WarnInt
+	return OffInt
 }
 
 // ClusteredIndexDefMode controls the default clustered property for primary key.
@@ -399,6 +445,22 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 	s.SnapshotTS = 0
 	s.SnapshotInfoschema = nil
 	return err
+}
+
+func setReadStaleness(s *SessionVars, sVal string) error {
+	if sVal == "" || sVal == "0" {
+		s.ReadStaleness = 0
+		return nil
+	}
+	sValue, err := strconv.ParseInt(sVal, 10, 32)
+	if err != nil {
+		return err
+	}
+	if sValue > 0 {
+		return fmt.Errorf("%s's value should be less than 0", TiDBReadStaleness)
+	}
+	s.ReadStaleness = time.Duration(sValue) * time.Second
+	return nil
 }
 
 // serverGlobalVariable is used to handle variables that acts in server and global scope.

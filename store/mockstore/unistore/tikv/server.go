@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -788,7 +789,7 @@ func (svr *Server) EstablishMPPConnectionWithStoreID(req *mpp.EstablishMPPConnec
 		}
 	}
 	if mppHandler == nil {
-		return errors.New("tatsk not found")
+		return errors.New("task not found")
 	}
 	ctx1, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -978,6 +979,11 @@ func (svr *Server) GetStoreSafeTS(context.Context, *kvrpcpb.StoreSafeTSRequest) 
 
 // GetLockWaitInfo implements the tikvpb.TikvServer interface.
 func (svr *Server) GetLockWaitInfo(context.Context, *kvrpcpb.GetLockWaitInfoRequest) (*kvrpcpb.GetLockWaitInfoResponse, error) {
+	panic("unimplemented")
+}
+
+// RawChecksum implements implements the tikvpb.TikvServer interface.
+func (svr *Server) RawChecksum(context.Context, *kvrpcpb.RawChecksumRequest) (*kvrpcpb.RawChecksumResponse, error) {
 	panic("unimplemented")
 }
 

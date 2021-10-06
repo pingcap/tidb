@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -567,8 +568,7 @@ func (s *testSuite1) TestIssue15752(c *C) {
 	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
 }
 
-func (s *testSuite1) TestAnalyzeIndex(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210622")
+func (s *testSerialSuite2) TestAnalyzeIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -591,8 +591,7 @@ func (s *testSuite1) TestAnalyzeIndex(c *C) {
 	}()
 }
 
-func (s *testSuite1) TestAnalyzeIncremental(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210622")
+func (s *testSerialSuite2) TestAnalyzeIncremental(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 1")
@@ -600,7 +599,7 @@ func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 	s.testAnalyzeIncremental(tk, c)
 }
 
-func (s *testSuite1) TestAnalyzeIncrementalStreaming(c *C) {
+func (s *testSerialSuite2) TestAnalyzeIncrementalStreaming(c *C) {
 	c.Skip("unistore hasn't support streaming yet.")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -609,7 +608,7 @@ func (s *testSuite1) TestAnalyzeIncrementalStreaming(c *C) {
 }
 
 // nolint:unused
-func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
+func (s *testSerialSuite2) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b))")
@@ -628,13 +627,13 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	// Test analyze incremental with feedback.
 	tk.MustExec("insert into t values (3,3)")
 	oriProbability := statistics.FeedbackProbability.Load()
-	oriMinLogCount := handle.MinLogScanCount
+	oriMinLogCount := handle.MinLogScanCount.Load()
 	defer func() {
 		statistics.FeedbackProbability.Store(oriProbability)
-		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogScanCount.Store(oriMinLogCount)
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
+	handle.MinLogScanCount.Store(0)
 	is := s.dom.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -646,6 +645,7 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
 	c.Assert(h.HandleUpdateStats(is), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 3 0 2 2147483647 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
 	tblStats := h.GetTableStats(tblInfo)
 	val, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(3))
@@ -655,13 +655,15 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	c.Assert(statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag), IsFalse)
 
 	tk.MustExec("analyze incremental table t index")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  a 0 2 3 1 3 3 0",
 		"test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0", "test t  idx 1 2 3 1 3 3 0"))
 	tblStats = h.GetTableStats(tblInfo)
 	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(val), Equals, uint64(1))
 
 	// test analyzeIndexIncremental for global-level stats;
-	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("set @@session.tidb_analyze_version = 1;")
+	tk.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t (a int, b int, primary key(a), index idx(b)) partition by range (a) (
@@ -670,12 +672,16 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 		partition p2 values less than (30)
 	);`)
 	tk.MustExec("analyze incremental table t index")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows())
 	tk.MustExec("insert into t values (1,1)")
 	tk.MustExec("analyze incremental table t index")
+	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warning
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0"))
 	tk.MustExec("insert into t values (2,2)")
 	tk.MustExec("analyze incremental table t index")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 a 0 1 2 1 2 2 0", "test t p0 idx 1 0 1 1 1 1 0", "test t p0 idx 1 1 2 1 2 2 0"))
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("insert into t values (11,11)")
@@ -943,12 +949,26 @@ func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
 		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
 }
 
+func (s *testSerialSuite2) TestIssue27429(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table test.t(id int, value varchar(20) charset utf8mb4 collate utf8mb4_general_ci, value1 varchar(20) charset utf8mb4 collate utf8mb4_bin)")
+	tk.MustExec("insert into test.t values (1, 'abc', 'abc '),(4, 'Abc', 'abc'),(3,'def', 'def ');")
+
+	tk.MustQuery("select upper(group_concat(distinct value order by 1)) from test.t;").Check(testkit.Rows("ABC,DEF"))
+	tk.MustQuery("select upper(group_concat(distinct value)) from test.t;").Check(testkit.Rows("ABC,DEF"))
+}
+
 func (s *testSerialSuite2) TestIssue20874(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci not null, b char(20) collate utf8mb4_general_ci not null, key idxa(a), key idxb(b))")
 	tk.MustExec("insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')")
 	tk.MustExec("set @@tidb_analyze_version=1")
@@ -993,7 +1013,7 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 	))
 }
 
-func (s *testSuite1) TestAnalyzeClusteredIndexPrimary(c *C) {
+func (s *testSerialSuite2) TestAnalyzeClusteredIndexPrimary(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")

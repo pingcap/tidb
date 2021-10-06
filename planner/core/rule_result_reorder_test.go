@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +17,6 @@ package core_test
 import (
 	"fmt"
 	"math"
-	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -41,6 +41,11 @@ func (s *testRuleReorderResultsSerial) SetUpTest(c *C) {
 	var err error
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
+}
+
+func (s *testRuleReorderResultsSerial) TearDownTest(c *C) {
+	s.dom.Close()
+	c.Assert(s.store.Close(), IsNil)
 }
 
 func (s *testRuleReorderResultsSerial) TestPlanCache(c *C) {
@@ -72,6 +77,7 @@ func (s *testRuleReorderResultsSerial) TestSQLBinding(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
+	tk.MustExec("set tidb_opt_limit_push_down_threshold=0")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
 	tk.MustQuery("explain select * from t where a > 0 limit 1").Check(testkit.Rows(
@@ -97,11 +103,11 @@ func (s *testRuleReorderResultsSerial) TestClusteredIndex(c *C) {
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b))")
-	tk.MustQuery("explain select * from t limit 10").Check(testkit.Rows(
-		"TopN_7 10.00 root  test.t.a, test.t.b, test.t.c, offset:0, count:10",
-		"└─TableReader_16 10.00 root  data:TopN_15",
-		"  └─TopN_15 10.00 cop[tikv]  test.t.a, test.t.b, test.t.c, offset:0, count:10",
-		"    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format=brief select * from t limit 10").Check(testkit.Rows(
+		"TopN 10.00 root  test.t.a, test.t.b, test.t.c, offset:0, count:10",
+		"└─TableReader 10.00 root  data:TopN",
+		"  └─TopN 10.00 cop[tikv]  test.t.a, test.t.b, test.t.c, offset:0, count:10",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
 }
 
@@ -122,6 +128,8 @@ func (s *testRuleReorderResults) SetUpSuite(c *C) {
 }
 
 func (s *testRuleReorderResults) TearDownSuite(c *C) {
+	s.dom.Close()
+	c.Assert(s.store.Close(), IsNil)
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
@@ -143,6 +151,7 @@ func (s *testRuleReorderResults) runTestData(c *C, tk *testkit.TestKit, name str
 func (s *testRuleReorderResults) TestOrderedResultMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
@@ -208,11 +217,7 @@ func (s *testRuleReorderResults) TestOrderedResultModeOnPartitionTable(c *C) {
 	s.runTestData(c, tk, "TestOrderedResultModeOnPartitionTable")
 }
 
-func (s *testRuleReorderResults) TestHideStableResultSwitch(c *C) {
+func (s *testRuleReorderResults) TestStableResultSwitch(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		c.Assert(strings.ToLower(r[0].(string)), Not(Equals), "tidb_enable_ordered_result_mode")
-	}
-	c.Assert(len(tk.MustQuery("show variables where variable_name like '%tidb_enable_ordered_result_mode%'").Rows()), Equals, 0)
+	c.Assert(len(tk.MustQuery("show variables where variable_name like 'tidb_enable_ordered_result_mode'").Rows()), Equals, 1)
 }
