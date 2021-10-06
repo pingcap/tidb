@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,24 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package aggfuncs_test
+package pdutil
 
 import (
 	"testing"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestMemRowNumber(t *testing.T) {
-	t.Parallel()
-
-	tests := []windowMemTest{
-		buildWindowMemTester(ast.WindowFuncRowNumber, mysql.TypeLonglong, 0, 0, 4,
-			aggfuncs.DefPartialResult4RowNumberSize, defaultUpdateMemDeltaGens),
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	for _, test := range tests {
-		testWindowAggMemFunc(t, test)
-	}
+	goleak.VerifyTestMain(m, opts...)
 }
