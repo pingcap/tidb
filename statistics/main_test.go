@@ -41,9 +41,18 @@ func TestStatistics(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 	s := createTestStatisticsSuite(t)
-	t.Run("TestSketch", SubTestSketch(s))
-	t.Run("TestSketchProtoConversion", SubTestSketchProtoConversion(s))
-	t.Run("TestFMSketchCoding", SubTestFMSketchCoding(s))
+
+	// fmsketch_test.go
+	t.Run("SubTestSketch", SubTestSketch(s))
+	t.Run("SubTestSketchProtoConversion", SubTestSketchProtoConversion(s))
+	t.Run("SubTestFMSketchCoding", SubTestFMSketchCoding(s))
+
+	// statistics_test.go
+	t.Run("SubTestBuild", SubTestBuild(s))
+	t.Run("SubTestHistogramProtoConversion", SubTestHistogramProtoConversion(s))
+	t.Run("SubTestColumnRange", SubTestColumnRange(s))
+	t.Run("SubTestIntColumnRanges", SubTestIntColumnRanges(s))
+	t.Run("SubTestIndexRanges", SubTestIndexRanges(s))
 }
 
 func createTestStatisticsSuite(t *testing.T) *testStatisticsSuite {
