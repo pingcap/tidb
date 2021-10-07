@@ -3759,14 +3759,12 @@ func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
 
 var (
 	pseudoEstimationNotAvailable = metrics.PseudoEstimation.WithLabelValues("nodata")
-	pseudoEstimationOutdate      = metrics.PseudoEstimation.WithLabelValues("outdate")
 )
 
 // getStatsTable gets statistics information for a table specified by "tableID".
 // A pseudo statistics table is returned in any of the following scenario:
 // 1. tidb-server started and statistics handle has not been initialized.
 // 2. table row count from statistics is zero.
-// 3. statistics is outdated.
 func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 
@@ -3788,13 +3786,6 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 		return statistics.PseudoTable(tblInfo)
 	}
 
-	// 3. statistics is outdated.
-	if statsTbl.IsOutdated() {
-		tbl := *statsTbl
-		tbl.Pseudo = true
-		statsTbl = &tbl
-		pseudoEstimationOutdate.Inc()
-	}
 	return statsTbl
 }
 

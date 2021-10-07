@@ -263,18 +263,6 @@ func (n *neededColumnMap) Delete(col tableColumnID) {
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
 
-// IsOutdated returns true if the table stats is outdated.
-func (t *Table) IsOutdated() bool {
-	rowcount := t.GetColRowCount()
-	if rowcount < 0 {
-		rowcount = float64(t.Count)
-	}
-	if rowcount > 0 && float64(t.ModifyCount)/rowcount > RatioOfPseudoEstimate.Load() {
-		return true
-	}
-	return false
-}
-
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
 func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.Datum, colID int64) float64 {
 	c, ok := t.Columns[colID]
