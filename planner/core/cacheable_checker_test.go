@@ -32,12 +32,8 @@ func TestCacheable(t *testing.T) {
 
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
+
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int, b int) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
 	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
