@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testbridge"
@@ -46,7 +47,12 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	goleak.VerifyTestMain(m, opts...)
+	callback := func(i int) int {
+		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
+		time.Sleep(time.Second)
+		return i
+	}
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
 // TODO: remove once `session` tests migrated to testify
