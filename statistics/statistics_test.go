@@ -493,6 +493,7 @@ func SubTestColumnRange(s *testStatisticsSuite) func(*testing.T) {
 
 func SubTestIntColumnRanges(s *testStatisticsSuite) func(*testing.T) {
 	return func(t *testing.T) {
+		t.Parallel()
 		bucketCount := int64(256)
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx
