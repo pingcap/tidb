@@ -3811,11 +3811,11 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@div_precision_increment;").Check(testkit.Rows("4"))
 
-	tk.Se.GetSessionVars().SetSystemVar("sql_auto_is_null", "0")
-	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "1")
+	tk.Se.GetSessionVars().SetSystemVar("sql_auto_is_null", "OFF")
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "ON")
 	tk.MustQuery("SELECT /*+ SET_VAR(sql_auto_is_null=1) */ @@sql_auto_is_null;").Check(testkit.Rows("1"))
-	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "0")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
+	tk.Se.GetSessionVars().SetSystemVar("tidb_enable_noop_functions", "OFF")
 	tk.MustQuery("SELECT @@sql_auto_is_null;").Check(testkit.Rows("0"))
 
 	tk.Se.GetSessionVars().SetSystemVar("sort_buffer_size", "262144")
@@ -4818,9 +4818,9 @@ func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	// variable 'tidb_enable_global_temporary_table' should not be seen when show variables
-	tk.MustQuery("show variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
-	tk.MustQuery("show global variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
+	// variable 'tidb_enable_global_temporary_table' should be seen when show variables
+	tk.MustQuery("show variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows("tidb_enable_global_temporary_table OFF"))
+	tk.MustQuery("show global variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows("tidb_enable_global_temporary_table OFF"))
 
 	// variable 'tidb_enable_global_temporary_table' is turned off by default
 	tk.MustQuery("select @@global.tidb_enable_global_temporary_table").Check(testkit.Rows("0"))

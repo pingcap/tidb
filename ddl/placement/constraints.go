@@ -26,6 +26,10 @@ type Constraints []Constraint
 
 // NewConstraints will check each labels, and build the Constraints.
 func NewConstraints(labels []string) (Constraints, error) {
+	if len(labels) == 0 {
+		return nil, nil
+	}
+
 	constraints := make(Constraints, 0, len(labels))
 	for _, str := range labels {
 		label, err := NewConstraint(strings.TrimSpace(str))
@@ -50,6 +54,11 @@ func NewConstraintsFromYaml(c []byte) (Constraints, error) {
 		return nil, ErrInvalidConstraintsFormat
 	}
 	return NewConstraints(constraints)
+}
+
+// NewConstraintsDirect is a helper for creating new constraints from individual constraint.
+func NewConstraintsDirect(c ...Constraint) Constraints {
+	return c
 }
 
 // Restore converts label constraints to a string.
