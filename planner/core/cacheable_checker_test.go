@@ -28,7 +28,10 @@ import (
 )
 
 func TestCacheable(t *testing.T) {
-	store, dom, err := newStoreWithBootstrap()
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	defer func() {
