@@ -144,6 +144,7 @@ func TestBootstrapWithError(t *testing.T) {
 		domain.BindDomain(se, dom)
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
+		require.NoError(t, err)
 
 		doDDLWorks(se)
 	}
@@ -857,4 +858,22 @@ func TestForIssue23387(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "GRANT USAGE ON *.* TO 'quatest'@'%'", rows[0][0])
+}
+
+func TestReferencesPrivilegeOnColumn(t *testing.T) {
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se := createSessionAndSetID(t, store)
+
+	defer func() {
+		mustExec(t, se, "drop user if exists issue28531")
+		mustExec(t, se, "drop table if exists t1")
+	}()
+
+	mustExec(t, se, "create user if not exists issue28531")
+	mustExec(t, se, "use test")
+	mustExec(t, se, "drop table if exists t1")
+	mustExec(t, se, "create table t1 (a int)")
+	mustExec(t, se, "GRANT select (a), update (a),insert(a), references(a) on t1 to issue28531")
 }
