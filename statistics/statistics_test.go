@@ -245,7 +245,7 @@ func SubTestBuild(s *testStatisticsSuite) func(*testing.T) {
 			Collators:       make([]collate.Collator, 1),
 			ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
 		}
-		require.Nil(t, s.pk.Close())
+		require.NoError(t, s.pk.Close())
 		collectors, _, err := builder.CollectColumnStats()
 		require.NoError(t, err)
 		require.Equal(t, 1, len(collectors))
@@ -306,7 +306,7 @@ func SubTestBuild(s *testStatisticsSuite) func(*testing.T) {
 func SubTestHistogramProtoConversion(s *testStatisticsSuite) func(*testing.T) {
 	return func(t *testing.T) {
 		ctx := mock.NewContext()
-		require.Nil(t, s.rc.Close())
+		require.NoError(t, s.rc.Close())
 		tblCount, col, _, err := buildIndex(ctx, 256, 1, s.rc)
 		assert.NoError(t, err)
 		assert.Equal(t, 100000, int(tblCount))
