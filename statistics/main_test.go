@@ -48,11 +48,14 @@ func TestStatistics(t *testing.T) {
 	t.Run("SubTestFMSketchCoding", SubTestFMSketchCoding(s))
 
 	// statistics_test.go
-	t.Run("SubTestBuild", SubTestBuild(s))
-	t.Run("SubTestHistogramProtoConversion", SubTestHistogramProtoConversion(s))
 	t.Run("SubTestColumnRange", SubTestColumnRange(s))
 	t.Run("SubTestIntColumnRanges", SubTestIntColumnRanges(s))
+
+	// statistics_serial_test.go
+	t.Run("SubTestBuild", SubTestBuild(s))
+	t.Run("SubTestHistogramProtoConversion", SubTestHistogramProtoConversion(s))
 	t.Run("SubTestIndexRanges", SubTestIndexRanges(s))
+
 }
 
 func createTestStatisticsSuite(t *testing.T) *testStatisticsSuite {
