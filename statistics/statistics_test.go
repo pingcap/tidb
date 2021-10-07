@@ -259,12 +259,12 @@ func TestBuild(t *testing.T) {
 	require.Equal(t, 1, len(collectors))
 	col, err = BuildColumn(mock.NewContext(), 256, 2, collectors[0], types.NewFieldType(mysql.TypeLonglong))
 	require.NoError(t, err)
-	checkRepeats(c, col)
+	checkRepeats(t, col)
 	require.Equal(t, 250, col.Len())
 
 	tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, s.rc)
 	assert.NoError(t, err)
-	checkRepeats(c, col)
+	checkRepeats(t, col)
 	col.PreCalculateScalar()
 	assert.Equal(t, 100000, int(tblCount))
 	count, _ = col.equalRowCount(encodeKey(types.NewIntDatum(10000)), false)
@@ -281,7 +281,7 @@ func TestBuild(t *testing.T) {
 	s.pk.(*recordSet).cursor = 0
 	tblCount, col, err = buildPK(ctx, bucketCount, 4, s.pk)
 	assert.NoError(t, err)
-	checkRepeats(c, col)
+	checkRepeats(t, col)
 	col.PreCalculateScalar()
 	assert.Equal(t, 100000, int(tblCount))
 	count, _ = col.equalRowCount(types.NewIntDatum(10000), false)
@@ -367,19 +367,19 @@ func TestMergeHistogram(t *testing.T) {
 	}
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	bucketCount := 256
-	for _, t := range tests {
-		lh := mockHistogram(t.leftLower, t.leftNum)
-		rh := mockHistogram(t.rightLower, t.rightNum)
+	for _, tt := range tests {
+		lh := mockHistogram(tt.leftLower, tt.leftNum)
+		rh := mockHistogram(tt.rightLower, tt.rightNum)
 		h, err := MergeHistograms(sc, lh, rh, bucketCount, Version1)
 	require.NoError(t, err)
-	require.Equal(t, t.ndv, h.NDV)
-	require.Equal(t, t.bucketNum, h.Len())
-	require.Equal(t, t.leftNum+t.rightNum, int64(h.TotalRowCount()))
-		expectLower := types.NewIntDatum(t.leftLower)
+	require.Equal(t, tt.ndv, h.NDV)
+	require.Equal(t, tt.bucketNum, h.Len())
+	require.Equal(t, tt.leftNum+tt.rightNum, int64(h.TotalRowCount()))
+		expectLower := types.NewIntDatum(tt.leftLower)
 		cmp, err := h.GetLower(0).CompareDatum(sc, &expectLower)
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
-		expectUpper := types.NewIntDatum(t.rightLower + t.rightNum - 1)
+		expectUpper := types.NewIntDatum(tt.rightLower + tt.rightNum - 1)
 		cmp, err = h.GetUpper(h.Len()-1).CompareDatum(sc, &expectUpper)
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
