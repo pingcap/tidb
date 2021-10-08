@@ -2283,7 +2283,7 @@ func checkCharsetAndCollation(cs string, co string) error {
 func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd int64, tp autoid.AllocatorType) error {
 	allocs := autoid.NewAllocatorsFromTblInfo(d.store, schemaID, tbInfo)
 	if alloc := allocs.Get(tp); alloc != nil {
-		err := alloc.Rebase(newEnd, false)
+		err := alloc.Rebase(context.Background(), newEnd, false)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -756,7 +756,7 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.Al
 		if force {
 			err = alloc.ForceRebase(newEnd)
 		} else {
-			err = alloc.Rebase(newEnd, false)
+			err = alloc.Rebase(context.Background(), newEnd, false)
 		}
 		if err != nil {
 			job.State = model.JobStateCancelled
