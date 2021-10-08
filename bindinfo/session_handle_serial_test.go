@@ -16,6 +16,7 @@ package bindinfo_test
 
 import (
 	"context"
+	"crypto/tls"
 	"strconv"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/stmtsummary"
@@ -362,6 +364,44 @@ func TestDefaultDB(t *testing.T) {
 	require.Equal(t, "t:idx", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	tk.MustExec("drop session binding for select * from test.t")
 	tk.MustQuery("show session bindings").Check(testkit.Rows())
+}
+
+type mockSessionManager struct {
+	PS []*util.ProcessInfo
+}
+
+func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
+}
+
+func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
+	ret := make(map[uint64]*util.ProcessInfo)
+	for _, item := range msm.PS {
+		ret[item.ID] = item
+	}
+	return ret
+}
+
+func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	for _, item := range msm.PS {
+		if item.ID == id {
+			return item, true
+		}
+	}
+	return &util.ProcessInfo{}, false
+}
+
+func (msm *mockSessionManager) Kill(cid uint64, query bool) {
+}
+
+func (msm *mockSessionManager) KillAllConnections() {
+}
+
+func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
+}
+
+func (msm *mockSessionManager) ServerID() uint64 {
+	return 1
 }
 
 func TestIssue19836(t *testing.T) {

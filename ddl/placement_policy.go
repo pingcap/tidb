@@ -67,30 +67,8 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 }
 
 func checkPolicyValidation(info *model.PlacementSettings) error {
-	checkMergeConstraint := func(replica uint64, constr1, constr2 string) error {
-		// Constr2 only make sense when replica is set (whether it is in the replica field or included in the constr1)
-		if replica == 0 && constr1 == "" {
-			return nil
-		}
-		if _, err := placement.NewMergeRules(replica, constr1, constr2); err != nil {
-			return err
-		}
-		return nil
-	}
-	if err := checkMergeConstraint(1, info.LeaderConstraints, info.Constraints); err != nil {
-		return err
-	}
-	if err := checkMergeConstraint(info.Followers, info.FollowerConstraints, info.Constraints); err != nil {
-		return err
-	}
-	if err := checkMergeConstraint(info.Voters, info.VoterConstraints, info.Constraints); err != nil {
-		return err
-	}
-	if err := checkMergeConstraint(info.Learners, info.LearnerConstraints, info.Constraints); err != nil {
-		return err
-	}
-	// For constraint labels and default region label, they should be checked by `SHOW LABELS` if necessary when it is applied.
-	return nil
+	_, err := placement.NewBundleFromOptions(info)
+	return err
 }
 
 func getPolicyInfo(t *meta.Meta, policyID int64) (*model.PolicyInfo, error) {

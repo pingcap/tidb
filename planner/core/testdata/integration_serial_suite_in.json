@@ -3,7 +3,7 @@
     "name": "TestSelPushDownTiFlash",
     "cases": [
       "explain format = 'brief' select * from t where t.a > 1 and t.b = \"flash\" or t.a + 3 * t.a = 5",
-      "explain format = 'brief' select * from t where cast(t.a as float) + 3 = 5.1",
+      "explain format = 'brief' select * from t where cast(t.a as double) + 3 = 5.1",
       "explain format = 'brief' select * from t where b > 'a' order by convert(b, unsigned) limit 2",
       "explain format = 'brief' select * from t where b > 'a' order by b limit 2"
     ]
@@ -219,7 +219,8 @@
       "desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id",
       "desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
       "desc format = 'brief' select A.id from t as A where exists (select 1 from t where t.id=A.id)",
-      "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)"
+      "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)",
+      "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;"
     ]
   },
   {
@@ -238,7 +239,8 @@
       "desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
       "desc format = 'brief' select id from t as A where exists (select 1 from t where t.id=A.id)",
       "desc format = 'brief' select id from t as A where not exists (select 1 from t where t.id=A.id)",
-      "desc format = 'brief' select b*2, id from (select avg(value+2) as b, id from t group by id) C order by id"
+      "desc format = 'brief' select b*2, id from (select avg(value+2) as b, id from t group by id) C order by id",
+      "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;"
     ]
   },
   {

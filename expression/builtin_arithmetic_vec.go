@@ -104,6 +104,8 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 					return err
 				}
 			}
+		} else if err == types.ErrOverflow {
+			return types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s / %s)", b.args[0].String(), b.args[1].String()))
 		} else {
 			return err
 		}
@@ -356,6 +358,9 @@ func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, re
 			continue
 		}
 		if err = types.DecimalSub(&x[i], &y[i], &to); err != nil {
+			if err == types.ErrOverflow {
+				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
+			}
 			return err
 		}
 		x[i] = to
@@ -555,6 +560,9 @@ func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(input *chunk.Chunk,
 		}
 		err = types.DecimalMul(&x[i], &y[i], &to)
 		if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
+			if err == types.ErrOverflow {
+				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
+			}
 			return err
 		}
 		x[i] = to
@@ -997,6 +1005,9 @@ func (b *builtinArithmeticPlusDecimalSig) vecEvalDecimal(input *chunk.Chunk, res
 			continue
 		}
 		if err = types.DecimalAdd(&x[i], &y[i], to); err != nil {
+			if err == types.ErrOverflow {
+				err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
+			}
 			return err
 		}
 		x[i] = *to
