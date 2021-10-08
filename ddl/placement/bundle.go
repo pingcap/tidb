@@ -201,14 +201,11 @@ func NewBundleFromOptions(options *model.PlacementSettings) (bundle *Bundle, err
 
 	if isSyntaxSugar {
 		bundle, err = NewBundleFromSugarOptions(options)
-		if err != nil {
-			return nil, err
-		}
 	} else {
 		bundle, err = NewBundleFromConstraintsOptions(options)
-		if err != nil {
-			return nil, err
-		}
+	}
+	if err != nil {
+		return nil, err
 	}
 	if bundle == nil {
 		return nil, nil
