@@ -569,12 +569,21 @@ func (s *tiflashTestSuite) TestTiFlashPlanCacheable(c *C) {
 	tb := testGetTableByName(c, tk.Se, "test", "t")
 	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 	c.Assert(err, IsNil)
-	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv, tiflash'")
 	tk.MustExec("insert into t values(1);")
 	tk.MustExec("prepare stmt from 'select /*+ read_from_storage(tiflash[t]) */ * from t;';")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
 	// The TiFlash plan can not be cached.
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec("prepare stmt from 'select /*+ read_from_storage(tikv[t]) */ * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	// The TiKV plan can be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// test the mpp plan
 	tk.MustExec("set @@session.tidb_allow_mpp = 1;")
