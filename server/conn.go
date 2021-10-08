@@ -1709,22 +1709,20 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
+			if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
+				break
+			}
 			_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-			if allowTiFlashFallback && errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) && retryable {
-				// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
-				// server and fallback to TiKV.
-				warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
-				func() {
-					delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
-					defer func() {
-						cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
-					}()
-					_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
-				}()
-				if err != nil {
-					break
-				}
-			} else {
+			if !allowTiFlashFallback {
+				break
+			}
+			// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
+			// server and fallback to TiKV.
+			warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
+			delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+			_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
+			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
+			if err != nil {
 				break
 			}
 		}

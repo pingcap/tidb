@@ -3428,7 +3428,6 @@ func (s *testSerialDBSuite1) TestAddTableWithPartition(c *C) {
 	tk.MustExec("drop table if exists partition_list_table;")
 
 	// for local temporary table
-	tk.MustExec("set tidb_enable_noop_functions=1")
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists local_partition_table;")
 	tk.MustGetErrCode("create temporary table local_partition_table (a int, b int) partition by hash(a) partitions 3;", errno.ErrPartitionNoTemporary)

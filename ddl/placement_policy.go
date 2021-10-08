@@ -67,30 +67,8 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 }
 
 func checkPolicyValidation(info *model.PlacementSettings) error {
-	checkMergeConstraint := func(replica uint64, constr1, constr2 string) error {
-		// Constr2 only make sense when replica is set (whether it is in the replica field or included in the constr1)
-		if replica == 0 && constr1 == "" {
-			return nil
-		}
-		if _, err := placement.NewMergeRules(replica, constr1, constr2); err != nil {
-			return err
-		}
-		return nil
-	}
-	if err := checkMergeConstraint(1, info.LeaderConstraints, info.Constraints); err != nil {
-		return err
-	}
-	if err := checkMergeConstraint(info.Followers, info.FollowerConstraints, info.Constraints); err != nil {
-		return err
-	}
-	if err := checkMergeConstraint(info.Voters, info.VoterConstraints, info.Constraints); err != nil {
-		return err
-	}
-	if err := checkMergeConstraint(info.Learners, info.LearnerConstraints, info.Constraints); err != nil {
-		return err
-	}
-	// For constraint labels and default region label, they should be checked by `SHOW LABELS` if necessary when it is applied.
-	return nil
+	_, err := placement.NewBundleFromOptions(info)
+	return err
 }
 
 func getPolicyInfo(t *meta.Meta, policyID int64) (*model.PolicyInfo, error) {
@@ -302,13 +280,15 @@ func checkPlacementPolicyNotInUse(d *ddlCtx, t *meta.Meta, policy *model.PolicyI
 
 func checkPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy *model.PolicyInfo) error {
 	for _, dbInfo := range is.AllSchemas() {
-		// TODO: check policy is not in use for databases
+		if ref := dbInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
+			return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+		}
+
 		for _, tbl := range is.SchemaTables(dbInfo.Name) {
 			tblInfo := tbl.Meta()
-			if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
-				return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+			if err := checkPlacementPolicyNotUsedByTable(tblInfo, policy); err != nil {
+				return err
 			}
-			// TODO: check policy is not in use for partitions
 		}
 	}
 	return nil
@@ -354,18 +334,36 @@ func checkPlacementPolicyNotInUseFromMeta(t *meta.Meta, policy *model.PolicyInfo
 	}
 
 	for _, dbInfo := range schemas {
-		// TODO: check policy is not in use for databases
+		if ref := dbInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
+			return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+		}
+
 		tables, err := t.ListTables(dbInfo.ID)
 		if err != nil {
 			return err
 		}
 
 		for _, tblInfo := range tables {
-			if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
-				return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+			if err := checkPlacementPolicyNotUsedByTable(tblInfo, policy); err != nil {
+				return err
 			}
-			// TODO: check policy is not in use for partitions
 		}
 	}
+	return nil
+}
+
+func checkPlacementPolicyNotUsedByTable(tblInfo *model.TableInfo, policy *model.PolicyInfo) error {
+	if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
+		return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+	}
+
+	if tblInfo.Partition != nil {
+		for _, partition := range tblInfo.Partition.Definitions {
+			if ref := partition.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
+				return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+			}
+		}
+	}
+
 	return nil
 }

@@ -566,7 +566,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 				// Maybe we can improve it later.
 				columnValues[i] = &valueInfo{mutable: true}
 			}
-			sctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
+			sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 		}
 	}
 	for i, offset := range offsets {
