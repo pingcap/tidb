@@ -26,7 +26,7 @@ func assertTrimEqual(t *testing.T, f zapcore.Field, expect string) {
 	encoder := zapcore.NewConsoleEncoder(zapcore.EncoderConfig{})
 	out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{f})
 	require.NoError(t, err)
-	require.Equal(t, expect, strings.TrimRight(out.String(), "\n"))
+	require.JSONEq(t, expect, strings.TrimRight(out.String(), "\n"))
 }
 
 func newFile(j int) *backuppb.File {
@@ -100,7 +100,7 @@ func TestKey(t *testing.T) {
 	encoder := zapcore.NewConsoleEncoder(zapcore.EncoderConfig{})
 	out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{logutil.Key("test", []byte{0, 1, 2, 3})})
 	require.NoError(t, err)
-	require.Equal(t, `{"test": "00010203"}`, strings.Trim(out.String(), "\n"))
+	require.JSONEq(t, `{"test": "00010203"}`, strings.Trim(out.String(), "\n"))
 }
 
 func TestKeys(t *testing.T) {
@@ -139,7 +139,7 @@ func TestRewriteRule(t *testing.T) {
 	encoder := zapcore.NewConsoleEncoder(zapcore.EncoderConfig{})
 	out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{logutil.RewriteRule(rule)})
 	require.NoError(t, err)
-	require.Equal(t, `{"rewriteRule": {"oldKeyPrefix": "6f6c64", "newKeyPrefix": "6e6577", "newTimestamp": 5592405}}`, strings.Trim(out.String(), "\n"))
+	require.JSONEq(t, `{"rewriteRule": {"oldKeyPrefix": "6f6c64", "newKeyPrefix": "6e6577", "newTimestamp": 5592405}}`, strings.Trim(out.String(), "\n"))
 }
 
 func TestRegion(t *testing.T) {
