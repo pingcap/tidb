@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -1081,6 +1082,68 @@ type LogicalWindow struct {
 	PartitionBy     []property.SortItem
 	OrderBy         []property.SortItem
 	Frame           *WindowFrame
+}
+
+// EqualPartitionBy checks whether two LogicalWindow.Partitions are equal.
+func (p *LogicalWindow) EqualPartitionBy(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+	if len(p.PartitionBy) != len(newWindow.PartitionBy) {
+		return false
+	}
+	partitionByColsMap := make(map[int64]struct{})
+	for _, item := range p.PartitionBy {
+		partitionByColsMap[item.Col.UniqueID] = struct{}{}
+	}
+	for _, item := range newWindow.PartitionBy {
+		if _, ok := partitionByColsMap[item.Col.UniqueID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// EqualOrderBy checks whether two LogicalWindow.OrderBys are equal.
+func (p *LogicalWindow) EqualOrderBy(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+	if len(p.OrderBy) != len(newWindow.OrderBy) {
+		return false
+	}
+	for i, item := range p.OrderBy {
+		if !item.Col.Equal(ctx, newWindow.OrderBy[i].Col) ||
+			item.Desc != newWindow.OrderBy[i].Desc {
+			return false
+		}
+	}
+	return true
+}
+
+// EqualFrame checks whether two LogicalWindow.Frames are equal.
+func (p *LogicalWindow) EqualFrame(ctx sessionctx.Context, newWindow *LogicalWindow) bool {
+	if (p.Frame == nil && newWindow.Frame != nil) ||
+		(p.Frame != nil && newWindow.Frame == nil) {
+		return false
+	}
+	if p.Frame == nil && newWindow.Frame == nil {
+		return true
+	}
+	if p.Frame.Type != newWindow.Frame.Type ||
+		p.Frame.Start.Type != newWindow.Frame.Start.Type ||
+		p.Frame.Start.UnBounded != newWindow.Frame.Start.UnBounded ||
+		p.Frame.Start.Num != newWindow.Frame.Start.Num ||
+		p.Frame.End.Type != newWindow.Frame.End.Type ||
+		p.Frame.End.UnBounded != newWindow.Frame.End.UnBounded ||
+		p.Frame.End.Num != newWindow.Frame.End.Num {
+		return false
+	}
+	for i, expr := range p.Frame.Start.CalcFuncs {
+		if !expr.Equal(ctx, newWindow.Frame.Start.CalcFuncs[i]) {
+			return false
+		}
+	}
+	for i, expr := range p.Frame.End.CalcFuncs {
+		if !expr.Equal(ctx, newWindow.Frame.End.CalcFuncs[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

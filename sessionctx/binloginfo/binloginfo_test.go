@@ -747,7 +747,6 @@ func TestTempTableBinlog(t *testing.T) {
 
 	// for local temporary table
 	latestNonLocalTemporaryTableDDL := ddlQuery
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	tk.MustExec("create temporary table l_temp_table(id int)")
 	// create temporary table do not write to bin log, so the latest ddl binlog is the previous one
 	ok = mustGetDDLBinlog(s, latestNonLocalTemporaryTableDDL, t)

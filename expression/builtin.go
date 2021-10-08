@@ -927,7 +927,7 @@ func (b *baseBuiltinFunc) setDecimalAndFlenForDatetime(fsp int) {
 	b.tp.Decimal = fsp
 	b.tp.Flen = mysql.MaxDatetimeWidthNoFsp + fsp
 	if fsp > 0 {
-		// For `.`
+		// Add the length for `.`.
 		b.tp.Flen++
 	}
 }
@@ -936,4 +936,13 @@ func (b *baseBuiltinFunc) setDecimalAndFlenForDate() {
 	b.tp.Decimal = 0
 	b.tp.Flen = mysql.MaxDateWidth
 	b.tp.Tp = mysql.TypeDate
+}
+
+func (b *baseBuiltinFunc) setDecimalAndFlenForTime(fsp int) {
+	b.tp.Decimal = fsp
+	b.tp.Flen = mysql.MaxDurationWidthNoFsp + fsp
+	if fsp > 0 {
+		// Add the length for `.`.
+		b.tp.Flen++
+	}
 }

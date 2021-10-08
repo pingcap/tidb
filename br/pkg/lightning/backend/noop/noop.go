@@ -142,11 +142,11 @@ func (b noopBackend) LocalWriter(context.Context, *backend.LocalWriterConfig, uu
 	return noopWriter{}, nil
 }
 
-func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
 	panic("Unsupported Operation")
 }
 
@@ -156,7 +156,7 @@ type noopEncoder struct{}
 func (e noopEncoder) Close() {}
 
 // Encode encodes a row of SQL values into a backend-friendly format.
-func (e noopEncoder) Encode(log.Logger, []types.Datum, int64, []int, int64) (kv.Row, error) {
+func (e noopEncoder) Encode(log.Logger, []types.Datum, int64, []int, string, int64) (kv.Row, error) {
 	return noopRow{}, nil
 }
 

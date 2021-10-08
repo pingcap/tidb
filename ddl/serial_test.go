@@ -648,7 +648,6 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	defer tk.MustExec("drop table if exists tb7, tb8")
 
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	// Test from->normal, to->local temporary
 	tk.MustExec("drop table if exists tb11, tb12")
 	tk.MustExec("create table tb11 (i int primary key, j int)")
@@ -1112,7 +1111,6 @@ func (s *testSerialDBSuite) TestAutoRandomOnTemporaryTable(c *C) {
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	_, err := tk.Exec("create global temporary table auto_random_temporary (a bigint primary key auto_random(3), b varchar(255)) on commit delete rows;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error())
-	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 	_, err = tk.Exec("create temporary table t(a bigint key auto_random);")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error())
 }
@@ -1809,7 +1807,6 @@ func (s *testSerialSuite) TestGetReverseKey(c *C) {
 
 func (s *testSerialDBSuite) TestLocalTemporaryTableBlockedDDL(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int)")
 	tk.MustExec("create temporary table tmp1 (id int primary key, a int unique, b int)")
