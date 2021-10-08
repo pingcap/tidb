@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"golang.org/x/term"
 )
 
 type GlobalLightning struct {
@@ -130,6 +131,27 @@ func timestampLogFileName() string {
 	return filepath.Join(os.TempDir(), time.Now().Format("lightning.log.2006-01-02T15.04.05Z0700"))
 }
 
+// readPassword reads password from the terminal without echoing.
+// It will use /dev/tty if possible; otherwise stdin and stderr.
+func readPassword(prompt string) (string, error) {
+	var (
+		stdin  = os.Stdin
+		stderr = os.Stderr
+	)
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0644)
+	if err == nil {
+		defer tty.Close()
+		stdin = tty
+		stderr = tty
+	}
+	fmt.Fprint(stderr, prompt)
+	psw, err := term.ReadPassword(int(stdin.Fd()))
+	if err != nil {
+		return "", err
+	}
+	return string(psw), nil
+}
+
 // LoadGlobalConfig reads the arguments and fills in the GlobalConfig.
 func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalConfig, error) {
 	cfg := NewGlobalConfig()
@@ -167,6 +189,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 
 	statusAddr := fs.String("status-addr", "", "the Lightning server address")
 	serverMode := fs.Bool("server-mode", false, "start Lightning in server mode, wait for multiple tasks instead of starting immediately")
+	readPsw := fs.Bool("p", false, "read TiDB password from the terminal, the password will be hidden")
 
 	var filter []string
 	flagext.StringsVar(fs, &filter, "f", "select tables to import")
@@ -178,6 +201,22 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 	if err := fs.Parse(args); err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	if *readPsw {
+		psw, err := readPassword("Enter password: ")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		*tidbPsw = psw
+	} else {
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "tidb-password" {
+				fmt.Fprintln(os.Stderr, "Warning: The direct use of plaintext password on the command line"+
+					" is insecure and will be removed in subsequent releases! Use \"-p\" instead.")
+			}
+		})
+	}
+
 	if *printVersion {
 		fmt.Println(build.Info())
 		return nil, flag.ErrHelp
