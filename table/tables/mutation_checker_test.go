@@ -266,14 +266,20 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 				}
 				table := MockTableFromMeta(&tableInfo).(*TableCommon)
 				//
-				var handle kv.Handle
+				var handle, corruptedHandle kv.Handle
 				if isCommonHandle {
 					encoded, err := codec.EncodeKey(sessVars.StmtCtx, nil, rowToInsert[0])
 					require.Nil(t, err)
+					corrupted := make([]byte, len(encoded))
+					copy(corrupted, encoded)
+					corrupted[len(corrupted)-1] = corrupted[len(corrupted)-1] ^ 1
 					handle, err = kv.NewCommonHandle(encoded)
+					require.Nil(t, err)
+					corruptedHandle, err = kv.NewCommonHandle(corrupted)
 					require.Nil(t, err)
 				} else {
 					handle = kv.IntHandle(1)
+					corruptedHandle = kv.IntHandle(2)
 				}
 
 				for i, indexInfo := range indexInfos {
@@ -287,22 +293,28 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 					deletionKey, _, err := buildIndexKeyValue(index, rowToRemove, sessVars, tableInfo, indexInfo, table,
 						handle)
 					require.Nil(t, err)
-					indexMutations := []mutation{{key: insertionKey, value: insertionValue}, {key: deletionKey}}
-					richIndexMutations, err := buildRichIndexMutations(indexMutations)
+					indexMutations := []mutation{
+						{key: insertionKey, value: insertionValue, indexID: indexInfo.ID},
+						{key: deletionKey, indexID: indexInfo.ID},
+					}
 					require.Nil(t, err)
 					err = checkIndexKeys(
-						sessVars, table, rowToInsert, rowToRemove, richIndexMutations, maps.IndexIDToInfo,
+						sessVars, table, rowToInsert, rowToRemove, indexMutations, maps.IndexIDToInfo,
 						maps.IndexIDToRowColInfos,
 					)
 					require.Nil(t, err)
 
 					// test checkHandleConsistency
 					rowKey := tablecodec.EncodeRowKeyWithHandle(table.tableID, handle)
+					corruptedRowKey := tablecodec.EncodeRowKeyWithHandle(table.tableID, corruptedHandle)
 					rowValue, err := tablecodec.EncodeRow(sessVars.StmtCtx, rowToInsert, []int64{1, 2}, nil, nil, &rd)
 					require.Nil(t, err)
 					rowMutation := mutation{key: rowKey, value: rowValue}
-					err = checkHandleConsistency(rowMutation, richIndexMutations, maps.IndexIDToInfo)
+					corruptedRowMutation := mutation{key: corruptedRowKey, value: rowValue}
+					err = checkHandleConsistency(rowMutation, indexMutations, maps.IndexIDToInfo)
 					require.Nil(t, err)
+					err = checkHandleConsistency(corruptedRowMutation, indexMutations, maps.IndexIDToInfo)
+					require.NotNil(t, err)
 				}
 			}
 		}

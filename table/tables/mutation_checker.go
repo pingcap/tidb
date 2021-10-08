@@ -31,14 +31,10 @@ import (
 )
 
 type mutation struct {
-	key   kv.Key
-	flags kv.KeyFlags
-	value []byte
-}
-
-type richIndexMutation struct {
-	mutation
-	indexID int64
+	key     kv.Key
+	flags   kv.KeyFlags
+	value   []byte
+	indexID int64 // only for index mutations
 }
 
 type columnMaps struct {
@@ -60,6 +56,12 @@ type columnMaps struct {
 // The check doesn't work and just returns nil when:
 // (1) the table is partitioned
 // (2) new collation is enabled and restored data is needed
+//
+// The check is performed on almost every write. Its performance matters.
+// Let M = the number of mutations, C = the number of columns in the table,
+// I = the sum of the number of columns in all indices,
+// The time complexity is O(M * C + I)
+// The space complexity is O(M + C + I)
 func CheckIndexConsistency(
 	txn kv.Transaction, sessVars *variable.SessionVars, t *TableCommon,
 	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle,
@@ -86,43 +88,29 @@ func CheckIndexConsistency(
 		}
 	}
 
-	richIndexMutations, err := buildRichIndexMutations(indexMutations)
 	if err != nil {
 		return err
 	}
 
 	if rowInsertion.key != nil {
-		if err = checkHandleConsistency(rowInsertion, richIndexMutations, columnMaps.IndexIDToInfo); err != nil {
+		if err = checkHandleConsistency(rowInsertion, indexMutations, columnMaps.IndexIDToInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
 	if err := checkIndexKeys(
-		sessVars, t, rowToInsert, rowToRemove, richIndexMutations, columnMaps.IndexIDToInfo, columnMaps.IndexIDToRowColInfos,
+		sessVars, t, rowToInsert, rowToRemove, indexMutations, columnMaps.IndexIDToInfo, columnMaps.IndexIDToRowColInfos,
 	); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-// buildRichIndexMutations attaches some reusable info to index mutations
-func buildRichIndexMutations(indexMutations []mutation) ([]richIndexMutation, error) {
-	richIndexMutations := make([]richIndexMutation, 0, len(indexMutations))
-	for _, m := range indexMutations {
-		_, indexID, _, err := tablecodec.DecodeIndexKey(m.key)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		richIndexMutations = append(richIndexMutations, richIndexMutation{m, indexID})
-	}
-	return richIndexMutations, nil
-}
-
 // checkHandleConsistency checks whether the handles, with regard to a single-row change,
 // in row insertions and index insertions are consistent.
 // A PUT_index implies a PUT_row with the same handle.
 // Deletions are not checked since the values of deletions are unknown
-func checkHandleConsistency(rowInsertion mutation, indexMutations []richIndexMutation, indexIDToInfo map[int64]*model.IndexInfo) error {
+func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo) error {
 	var insertionHandle kv.Handle
 	var err error
 
@@ -173,7 +161,7 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []richIndexMut
 // 		the mutations, thus ignored.
 func checkIndexKeys(
 	sessVars *variable.SessionVars, t *TableCommon, rowToInsert, rowToRemove []types.Datum,
-	indexMutations []richIndexMutation, indexIDToInfo map[int64]*model.IndexInfo,
+	indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo,
 	indexIDToRowColInfos map[int64][]rowcodec.ColInfo,
 ) error {
 	var indexData []types.Datum
@@ -279,7 +267,7 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 	inspector := func(key kv.Key, flags kv.KeyFlags, data []byte) {
 		// only check the current table
 		if tablecodec.DecodeTableID(key) == t.physicalTableID {
-			m := mutation{key, flags, data}
+			m := mutation{key, flags, data, 0}
 			if rowcodec.IsRowKey(key) {
 				if len(data) > 0 {
 					if rowInsertion.key == nil {
@@ -291,6 +279,10 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 					}
 				}
 			} else {
+				_, m.indexID, _, err = tablecodec.DecodeIndexKey(m.key)
+				if err != nil {
+					err = errors.Trace(err)
+				}
 				indexMutations = append(indexMutations, m)
 			}
 		}
