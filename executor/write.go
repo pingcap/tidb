@@ -111,7 +111,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				if err != nil {
 					return false, err
 				}
-				if err = t.RebaseAutoID(sctx, recordID, true, autoid.RowIDAllocType); err != nil {
+				if err = t.Allocators(sctx).Get(autoid.RowIDAllocType).Rebase(recordID, true); err != nil {
 					return false, err
 				}
 			}

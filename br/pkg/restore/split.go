@@ -91,14 +91,6 @@ func (rs *RegionSplitter) Split(
 	}
 	minKey := codec.EncodeBytes(sortedRanges[0].StartKey)
 	maxKey := codec.EncodeBytes(sortedRanges[len(sortedRanges)-1].EndKey)
-	for _, rule := range rewriteRules.Data {
-		if bytes.Compare(minKey, rule.GetNewKeyPrefix()) > 0 {
-			minKey = rule.GetNewKeyPrefix()
-		}
-		if bytes.Compare(maxKey, rule.GetNewKeyPrefix()) < 0 {
-			maxKey = rule.GetNewKeyPrefix()
-		}
-	}
 	interval := SplitRetryInterval
 	scatterRegions := make([]*RegionInfo, 0)
 SplitRegions:
@@ -262,9 +254,26 @@ func (rs *RegionSplitter) waitForScatterRegion(ctx context.Context, regionInfo *
 func (rs *RegionSplitter) splitAndScatterRegions(
 	ctx context.Context, regionInfo *RegionInfo, keys [][]byte,
 ) ([]*RegionInfo, error) {
+	if len(keys) == 0 {
+		return []*RegionInfo{regionInfo}, nil
+	}
+
 	newRegions, err := rs.client.BatchSplitRegions(ctx, regionInfo, keys)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	// There would be some regions be scattered twice, e.g.:
+	// |--1-|--2-+----|-3--|
+	//      |    +(t1)|
+	//      +(t1_r4)  |
+	//                +(t2_r42)
+	// When spliting at `t1_r4`, we would scatter region 1, 2.
+	// When spliting at `t2_r42`, we would scatter region 2, 3.
+	// Because we don't split at t1 anymore.
+	// The trick here is a pinky promise: never scatter regions you haven't imported any data.
+	// In this scenario, it is the last region after spliting (applying to >= 5.0).
+	if bytes.Equal(newRegions[len(newRegions)-1].Region.StartKey, keys[len(keys)-1]) {
+		newRegions = newRegions[:len(newRegions)-1]
 	}
 	rs.ScatterRegions(ctx, newRegions)
 	return newRegions, nil
@@ -383,14 +392,11 @@ func (b *scanRegionBackoffer) Attempt() int {
 	return b.attempt
 }
 
-// getSplitKeys checks if the regions should be split by the new prefix of the rewrites rule and the end key of
+// getSplitKeys checks if the regions should be split by the end key of
 // the ranges, groups the split keys by region id.
 func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*RegionInfo) map[uint64][][]byte {
 	splitKeyMap := make(map[uint64][][]byte)
 	checkKeys := make([][]byte, 0)
-	for _, rule := range rewriteRules.Data {
-		checkKeys = append(checkKeys, rule.GetNewKeyPrefix())
-	}
 	for _, rg := range ranges {
 		checkKeys = append(checkKeys, rg.EndKey)
 	}

@@ -337,6 +337,9 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&constStrGener{"case"}, &constStrGener{"test,case"}}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETString}, geners: []dataGenerator{&constStrGener{""}, &constStrGener{"test,case"}}},
 	},
+}
+
+var vecBuiltinStringCases2 = map[string][]vecExprBenchCase{
 	ast.MakeSet: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETInt, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString, types.ETString}},
 	},
@@ -540,4 +543,20 @@ func BenchmarkVectorizedBuiltinStringEvalOneVec(b *testing.B) {
 
 func BenchmarkVectorizedBuiltinStringFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinStringCases)
+}
+
+func (s *testVectorizeSuite1) TestVectorizedBuiltinStringEvalOneVec2(c *C) {
+	testVectorizedEvalOneVec(c, vecBuiltinStringCases2)
+}
+
+func (s *testVectorizeSuite1) TestVectorizedBuiltinStringFunc2(c *C) {
+	testVectorizedBuiltinFunc(c, vecBuiltinStringCases2)
+}
+
+func BenchmarkVectorizedBuiltinStringEvalOneVec2(b *testing.B) {
+	benchmarkVectorizedEvalOneVec(b, vecBuiltinStringCases2)
+}
+
+func BenchmarkVectorizedBuiltinStringFunc2(b *testing.B) {
+	benchmarkVectorizedBuiltinFunc(b, vecBuiltinStringCases2)
 }

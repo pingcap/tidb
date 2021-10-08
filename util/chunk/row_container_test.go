@@ -74,7 +74,7 @@ func TestSel(t *testing.T) {
 	}
 	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))
 	rc.SpillToDisk()
-	err := rc.m.spillError
+	err := rc.m.records.spillError
 	require.NoError(t, err)
 	require.True(t, rc.AlreadySpilledSafeForTest())
 	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))

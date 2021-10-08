@@ -201,7 +201,7 @@ func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C)
 			atomic.AddInt32(&errCount, -1)
 			genAutoRandErr = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
-				_, err1 := t.GenAutoRandomID(s.dbInfo.ID, tableID, 1)
+				_, err1 := t.GetAutoIDAccessors(s.dbInfo.ID, tableID).RandomID().Inc(1)
 				return err1
 			})
 		}

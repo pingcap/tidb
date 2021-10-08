@@ -167,11 +167,11 @@ type IndexReaderExecutor struct {
 	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
 
 	// kvRanges are only used for union scan.
-	kvRanges    []kv.KeyRange
-	dagPB       *tipb.DAGRequest
-	startTS     uint64
-	txnScope    string
-	isStaleness bool
+	kvRanges         []kv.KeyRange
+	dagPB            *tipb.DAGRequest
+	startTS          uint64
+	readReplicaScope string
+	isStaleness      bool
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result distsql.SelectResult
 	// columns are only required by union scan.
@@ -292,7 +292,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
-		SetTxnScope(e.txnScope).
+		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
@@ -552,7 +552,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
-			SetTxnScope(e.txnScope).
+			SetReadReplicaScope(e.readReplicaScope).
 			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
@@ -630,11 +630,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
 			defer trace.StartRegion(ctx1, "IndexLookUpTableWorker").End()
-			startTime := time.Now()
 			worker.pickAndExecTask(ctx1)
-			if e.stats != nil {
-				atomic.AddInt64(&e.stats.TableRowScan, int64(time.Since(startTime)))
-			}
 			cancel()
 			e.tblWorkerWg.Done()
 		}()
@@ -651,7 +647,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table:               table,
 		dagPB:               e.tableRequest,
 		startTS:             e.startTS,
-		txnScope:            e.txnScope,
+		readReplicaScope:    e.readReplicaScope,
 		isStaleness:         e.isStaleness,
 		columns:             e.columns,
 		streaming:           e.tableStreaming,
@@ -1002,8 +998,10 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 		case <-w.finished:
 			return
 		}
+		startTime := time.Now()
 		err := w.executeTask(ctx, task)
 		if w.idxLookup.stats != nil {
+			atomic.AddInt64(&w.idxLookup.stats.TableRowScan, int64(time.Since(startTime)))
 			atomic.AddInt64(&w.idxLookup.stats.TableTaskNum, 1)
 		}
 		task.doneCh <- err

@@ -351,6 +351,19 @@
     ]
   },
   {
+    "name": "TestPreferRangeScanForUnsignedIntHandle",
+    "cases": [
+      "set tidb_opt_prefer_range_scan = 0",
+      "explain format = 'verbose' select * from t where b > 5",
+      "explain format = 'verbose' select * from t where b = 6 order by a limit 1",
+      "explain format = 'verbose' select * from t where b = 6 limit 1",
+      "set tidb_opt_prefer_range_scan = 1",
+      "explain format = 'verbose' select * from t where b > 5",
+      "explain format = 'verbose' select * from t where b = 6 order by a limit 1",
+      "explain format = 'verbose' select * from t where b = 6 limit 1"
+    ]
+  },
+  {
     "name": "TestIssue27083",
     "cases": [
       "select * from t use index (idx_b) where b = 2 limit 1"

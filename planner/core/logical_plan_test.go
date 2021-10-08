@@ -1072,6 +1072,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.GrantPriv, "test", "", "", nil, false, "", false},
 				{mysql.ReferencesPriv, "test", "", "", nil, false, "", false},
 				{mysql.LockTablesPriv, "test", "", "", nil, false, "", false},
+				{mysql.CreateTMPTablePriv, "test", "", "", nil, false, "", false},
 				{mysql.AlterPriv, "test", "", "", nil, false, "", false},
 				{mysql.ExecutePriv, "test", "", "", nil, false, "", false},
 				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
@@ -1142,6 +1143,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.GrantPriv, "test", "", "", nil, false, "", false},
 				{mysql.ReferencesPriv, "test", "", "", nil, false, "", false},
 				{mysql.LockTablesPriv, "test", "", "", nil, false, "", false},
+				{mysql.CreateTMPTablePriv, "test", "", "", nil, false, "", false},
 				{mysql.AlterPriv, "test", "", "", nil, false, "", false},
 				{mysql.ExecutePriv, "test", "", "", nil, false, "", false},
 				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
@@ -1251,6 +1253,18 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			sql: "SET GLOBAL wait_timeout=12345",
 			ans: []visitInfo{
 				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "SYSTEM_VARIABLES_ADMIN", false},
+			},
+		},
+		{
+			sql: "create placement policy x LEARNERS=1",
+			ans: []visitInfo{
+				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "PLACEMENT_ADMIN", false},
+			},
+		},
+		{
+			sql: "drop placement policy if exists x",
+			ans: []visitInfo{
+				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "PLACEMENT_ADMIN", false},
 			},
 		},
 		{

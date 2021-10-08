@@ -133,11 +133,12 @@ func testCreateColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInf
 
 func buildDropColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
 	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionDropColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{model.NewCIStr(colName)},
+		SchemaID:        dbInfo.ID,
+		TableID:         tblInfo.ID,
+		Type:            model.ActionDropColumn,
+		BinlogInfo:      &model.HistoryInfo{},
+		MultiSchemaInfo: &model.MultiSchemaInfo{},
+		Args:            []interface{}{model.NewCIStr(colName)},
 	}
 }
 
@@ -183,7 +184,7 @@ func testDropColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 	return job
 }
 
-func (s *testColumnSuite) TestColumn(c *C) {
+func (s *testColumnSuite) TestColumnAAA(c *C) {
 	d := testNewDDLAndStart(
 		context.Background(),
 		c,

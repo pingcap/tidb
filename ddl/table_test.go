@@ -204,13 +204,13 @@ func testCreateView(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 	return job
 }
 
-func testRenameTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID, oldSchemaID int64, tblInfo *model.TableInfo) *model.Job {
+func testRenameTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID, oldSchemaID int64, oldSchemaName model.CIStr, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   newSchemaID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{oldSchemaID, tblInfo.Name},
+		Args:       []interface{}{oldSchemaID, tblInfo.Name, oldSchemaName},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -404,7 +404,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	// for rename table
 	dbInfo1 := testSchemaInfo(c, s.d, "test_rename_table")
 	testCreateSchema(c, testNewContext(s.d), s.d, dbInfo1)
-	job = testRenameTable(c, ctx, d, dbInfo1.ID, s.dbInfo.ID, tblInfo)
+	job = testRenameTable(c, ctx, d, dbInfo1.ID, s.dbInfo.ID, s.dbInfo.Name, tblInfo)
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
@@ -412,4 +412,22 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 	checkTableLockedTest(c, d, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, model.TableLockWrite)
+}
+
+// for drop indexes
+func createTestTableForDropIndexes(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, name string, num int) *model.TableInfo {
+	tableInfo := testTableInfo(c, d, name, num)
+	var idxs []*model.IndexInfo
+	for i := 0; i < num; i++ {
+		idxName := model.NewCIStr(fmt.Sprintf("i%d", i+1))
+		idx := &model.IndexInfo{
+			Name:    idxName,
+			State:   model.StatePublic,
+			Columns: []*model.IndexColumn{{Name: model.NewCIStr(fmt.Sprintf("c%d", i+1))}},
+		}
+		idxs = append(idxs, idx)
+	}
+	tableInfo.Indices = idxs
+	testCreateTable(c, ctx, d, dbInfo, tableInfo)
+	return tableInfo
 }

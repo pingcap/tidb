@@ -656,6 +656,11 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 67}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
 		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 68}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization},
 		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 69}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
+
+		// for drop indexes
+		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 72}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 72)}, cancelState: model.StateWriteOnly},
+		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 73}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 73)}, cancelState: model.StateDeleteOnly},
+		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 74}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 74)}, cancelState: model.StateWriteReorganization},
 	}
 
 	return tests
@@ -991,7 +996,7 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 
 	// test rename table failed caused by canceled.
 	test = &tests[21]
-	renameTableArgs := []interface{}{dbInfo.ID, model.NewCIStr("t2")}
+	renameTableArgs := []interface{}{dbInfo.ID, model.NewCIStr("t2"), dbInfo.Name}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, renameTableArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
@@ -1286,6 +1291,27 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	c.Assert(baseTable.Meta().Columns[0].FieldType.Tp, Equals, mysql.TypeTiny)
 	c.Assert(baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, Equals, uint(1))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/skipMockContextDoExec"), IsNil)
+
+	// for drop indexes
+	updateTest(&tests[54])
+	ifExists := make([]bool, 2)
+	idxNames := []model.CIStr{model.NewCIStr("i1"), model.NewCIStr("i2")}
+	dropIndexesArgs := []interface{}{idxNames, ifExists}
+	tableInfo := createTestTableForDropIndexes(c, ctx, d, dbInfo, "test-drop-indexes", 6)
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tableInfo.ID, test.act, dropIndexesArgs)
+	s.checkDropIndexes(c, d, dbInfo.ID, tableInfo.ID, idxNames, true)
+
+	updateTest(&tests[55])
+	idxNames = []model.CIStr{model.NewCIStr("i3"), model.NewCIStr("i4")}
+	dropIndexesArgs = []interface{}{idxNames, ifExists}
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tableInfo.ID, test.act, dropIndexesArgs)
+	s.checkDropIndexes(c, d, dbInfo.ID, tableInfo.ID, idxNames, true)
+
+	updateTest(&tests[56])
+	idxNames = []model.CIStr{model.NewCIStr("i5"), model.NewCIStr("i6")}
+	dropIndexesArgs = []interface{}{idxNames, ifExists}
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tableInfo.ID, test.act, dropIndexesArgs)
+	s.checkDropIndexes(c, d, dbInfo.ID, tableInfo.ID, idxNames, true)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
@@ -1475,7 +1501,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	c.Assert(err, IsNil)
 
 	// set hook to execute jobs after all jobs are in queue.
-	jobCnt := int64(11)
+	jobCnt := int64(12)
 	tc := &TestDDLCallback{}
 	once := sync.Once{}
 	var checkErr error
@@ -1501,8 +1527,8 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 					break
 				}
 				if qLen1+qLen2 == jobCnt {
-					if qLen2 != 5 {
-						checkErr = errors.Errorf("add index jobs cnt %v != 5", qLen2)
+					if qLen2 != 6 {
+						checkErr = errors.Errorf("add index jobs cnt %v != 6", qLen2)
 					}
 					break
 				}
@@ -1511,7 +1537,6 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 		})
 	}
 	d.SetHook(tc)
-	c.Assert(checkErr, IsNil)
 
 	/*
 		prepare jobs:
@@ -1526,7 +1551,8 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 		/     8		/	 	2			/		3		/	rebase autoID/
 		/     9		/	 	1			/		1		/	add index	 /
 		/     10	/	 	2			/		null   	/	drop schema  /
-		/     11	/	 	2			/		2		/	add index	 /
+		/     11    /       1           /       1       /   modify column/
+		/     12	/	 	2			/		2		/	add index	 /
 	*/
 	job1 := buildCreateIdxJob(dbInfo1, tblInfo1, false, "db1_idx1", "c1")
 	addDDLJob(c, d, job1)
@@ -1548,8 +1574,10 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	addDDLJob(c, d, job9)
 	job10 := buildDropSchemaJob(dbInfo2)
 	addDDLJob(c, d, job10)
-	job11 := buildCreateIdxJob(dbInfo2, tblInfo3, false, "db3_idx1", "c2")
+	job11 := buildModifyColJob(dbInfo1, tblInfo1)
 	addDDLJob(c, d, job11)
+	job12 := buildCreateIdxJob(dbInfo2, tblInfo3, false, "db3_idx1", "c2")
+	addDDLJob(c, d, job12)
 	// TODO: add rename table job
 
 	// check results.
@@ -1557,28 +1585,28 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	for !isChecked {
 		err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
-			lastJob, err := m.GetHistoryDDLJob(job11.ID)
+			lastJob, err := m.GetHistoryDDLJob(job12.ID)
 			c.Assert(err, IsNil)
 			// all jobs are finished.
 			if lastJob != nil {
 				finishedJobs, err := m.GetAllHistoryDDLJobs()
 				c.Assert(err, IsNil)
-				// get the last 11 jobs completed.
-				finishedJobs = finishedJobs[len(finishedJobs)-11:]
+				// get the last 12 jobs completed.
+				finishedJobs = finishedJobs[len(finishedJobs)-12:]
 				// check some jobs are ordered because of the dependence.
 				c.Assert(finishedJobs[0].ID, Equals, job1.ID)
 				c.Assert(finishedJobs[1].ID, Equals, job2.ID)
 				c.Assert(finishedJobs[2].ID, Equals, job3.ID)
 				c.Assert(finishedJobs[4].ID, Equals, job5.ID)
-				c.Assert(finishedJobs[10].ID, Equals, job11.ID)
-				// check the jobs are ordered in the adding-index-job queue or general-job queue.
-				addIdxJobID := int64(0)
+				c.Assert(finishedJobs[11].ID, Equals, job12.ID)
+				// check the jobs are ordered in the backfill-job queue or general-job queue.
+				backfillJobID := int64(0)
 				generalJobID := int64(0)
 				for _, job := range finishedJobs {
 					// check jobs' order.
-					if job.Type == model.ActionAddIndex {
-						c.Assert(job.ID, Greater, addIdxJobID)
-						addIdxJobID = job.ID
+					if admin.MayNeedBackfill(job.Type) {
+						c.Assert(job.ID, Greater, backfillJobID)
+						backfillJobID = job.ID
 					} else {
 						c.Assert(job.ID, Greater, generalJobID)
 						generalJobID = job.ID
@@ -1599,6 +1627,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
+	c.Assert(checkErr, IsNil)
 	tc = &TestDDLCallback{}
 	d.SetHook(tc)
 }
@@ -1631,4 +1660,10 @@ func (s *testDDLSuite) TestDDLPackageExecuteSQL(c *C) {
 	defer worker.sessPool.put(sess)
 	se := sess.(sqlexec.SQLExecutor)
 	_, _ = se.Execute(context.Background(), "create table t(a int);")
+}
+
+func (s *testDDLSerialSuite) checkDropIndexes(c *C, d *ddl, schemaID int64, tableID int64, idxNames []model.CIStr, success bool) {
+	for _, idxName := range idxNames {
+		checkIdxExist(c, d, schemaID, tableID, idxName.O, !success)
+	}
 }

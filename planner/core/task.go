@@ -782,7 +782,25 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 	lCost := lTask.cost()
 	rCost := rTask.cost()
 
-	outerTask := tasks[1-p.InnerChildIdx].(*mppTask)
+	// outer task is the task that will pass its MPPPartitionType to the join result
+	// for broadcast inner join, it should be the non-broadcast side, since broadcast side is always the build side, so
+	// just use the probe side is ok.
+	// for hash inner join, both side is ok, by default, we use the probe side
+	// for outer join, it should always be the outer side of the join
+	// for semi join, it should be the left side(the same as left out join)
+	outerTaskIndex := 1 - p.InnerChildIdx
+	if p.JoinType != InnerJoin {
+		if p.JoinType == RightOuterJoin {
+			outerTaskIndex = 1
+		} else {
+			outerTaskIndex = 0
+		}
+	}
+	// can not use the task from tasks because it maybe updated.
+	outerTask := lTask
+	if outerTaskIndex == 1 {
+		outerTask = rTask
+	}
 	task := &mppTask{
 		cst:      lCost + rCost + p.GetCost(lTask.count(), rTask.count()),
 		p:        p,
@@ -1997,10 +2015,9 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 				if !ok {
 					return invalidTask
 				}
-				_, coll := expression.DeriveCollationFromExprs(p.ctx, col)
 				partitionCols = append(partitionCols, &property.MPPPartitionColumn{
 					Col:       col,
-					CollateID: property.GetCollateIDByNameForPartition(coll),
+					CollateID: property.GetCollateIDByNameForPartition(col.GetType().Collate),
 				})
 			}
 		}

@@ -113,6 +113,7 @@ var _ = Suite(&lightningServerSuite{})
 type lightningServerSuite struct {
 	lightning *Lightning
 	taskCfgCh chan *config.Config
+	taskRunCh chan struct{}
 }
 
 func (s *lightningServerSuite) SetUpTest(c *C) {
@@ -127,8 +128,10 @@ func (s *lightningServerSuite) SetUpTest(c *C) {
 	cfg.TikvImporter.SortedKVDir = c.MkDir()
 
 	s.lightning = New(cfg)
+	s.taskRunCh = make(chan struct{}, 1)
 	s.taskCfgCh = make(chan *config.Config)
-	s.lightning.ctx = context.WithValue(s.lightning.ctx, &taskCfgRecorderKey, s.taskCfgCh)
+	s.lightning.ctx = context.WithValue(s.lightning.ctx, taskRunNotifyKey, s.taskRunCh)
+	s.lightning.ctx = context.WithValue(s.lightning.ctx, taskCfgRecorderKey, s.taskCfgCh)
 	_ = s.lightning.GoServe()
 
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/SkipRunTask", "return")
@@ -263,7 +266,7 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 
 	// Check `GET /tasks` returns all tasks currently running
 
-	time.Sleep(100 * time.Millisecond)
+	<-s.taskRunCh
 	c.Assert(getAllTasks(), DeepEquals, getAllResultType{
 		Current: first,
 		Queue:   []int64{second, third},
@@ -357,7 +360,7 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	resp.Body.Close()
 
-	time.Sleep(100 * time.Millisecond)
+	<-s.taskRunCh
 	c.Assert(getAllTasks(), DeepEquals, getAllResultType{
 		Current: third,
 		Queue:   []int64{},
@@ -444,6 +447,7 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 	}
 
 	cfg := config.NewConfig()
+	cfg.App.RegionConcurrency = 16
 	cfg.App.CheckRequirements = true
 	cfg.App.TableConcurrency = 4
 	cfg.TikvImporter.Backend = config.BackendLocal
@@ -486,22 +490,22 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 		},
 	}
 
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(139439)")
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(139415)")
 	c.Assert(err, IsNil)
 	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/SetRlimitError", "return(true)")
 	c.Assert(err, IsNil)
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/SetRlimitError")
 	}()
-	// with this dbMetas, the estimated fds will be 139440, so should return error
+	// with this dbMetas, the estimated fds will be 139416, so should return error
 	err = checkSystemRequirement(cfg, dbMetas)
 	c.Assert(err, NotNil)
 
 	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue")
 	c.Assert(err, IsNil)
 
-	// the min rlimit should be bigger than the default min value (16384)
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(139440)")
+	// the min rlimit should be not smaller than the default min value (139416)
+	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(139416)")
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue")
 	}()

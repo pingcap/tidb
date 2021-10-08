@@ -17,7 +17,6 @@ package testutil
 import (
 	"context"
 
-	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
@@ -29,12 +28,12 @@ import (
 )
 
 // SessionExecInGoroutine export for testing.
-func SessionExecInGoroutine(c *check.C, s kv.Storage, sql string, done chan error) {
-	ExecMultiSQLInGoroutine(c, s, "test_db", []string{sql}, done)
+func SessionExecInGoroutine(s kv.Storage, sql string, done chan error) {
+	ExecMultiSQLInGoroutine(s, "test_db", []string{sql}, done)
 }
 
 // ExecMultiSQLInGoroutine exports for testing.
-func ExecMultiSQLInGoroutine(c *check.C, s kv.Storage, dbName string, multiSQL []string, done chan error) {
+func ExecMultiSQLInGoroutine(s kv.Storage, dbName string, multiSQL []string, done chan error) {
 	go func() {
 		se, err := session.CreateSession4Test(s)
 		if err != nil {

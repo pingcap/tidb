@@ -903,14 +903,14 @@ func (s *testSerialStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.T
 
 // nolint:unused
 func (s *testSerialStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, t string, p string, topn, buckets int) {
-	delta := buckets/2 + 1
+	delta := buckets/2 + 10
 	for _, isIdx := range []int{0, 1} {
 		c.Assert(len(tk.MustQuery(fmt.Sprintf("show stats_topn where table_name='%v' and partition_name='%v' and is_index=%v", t, p, isIdx)).Rows()), Equals, topn)
 		numBuckets := len(tk.MustQuery(fmt.Sprintf("show stats_buckets where table_name='%v' and partition_name='%v' and is_index=%v", t, p, isIdx)).Rows())
 		// since the hist-building algorithm doesn't stipulate the final bucket number to be equal to the expected number exactly,
 		// we have to check the results by a range here.
-		c.Assert(numBuckets >= buckets-delta, IsTrue)
-		c.Assert(numBuckets <= buckets+delta, IsTrue)
+		c.Assert(numBuckets, GreaterEqual, buckets-delta)
+		c.Assert(numBuckets, LessEqual, buckets+delta)
 	}
 }
 

@@ -1,7 +1,7 @@
 # Defining placement rules in SQL
 
 - Author(s):     [djshow832](https://github.com/djshow832) (Ming Zhang), [morgo](https://github.com/morgo) (Morgan Tocker)
-- Last updated:  2021-07-26
+- Last updated:  2021-09-13
 - Discussion PR: https://github.com/pingcap/tidb/pull/26221
 - Tracking Issue: https://github.com/pingcap/tidb/issues/18030
 - Original Document (Chinese): https://docs.google.com/document/d/18Kdhi90dv33muF9k_VAIccNLeGf-DdQyUc8JlWF9Gok
@@ -130,7 +130,7 @@ Behavior notes:
 - It is possible to update the definition of a placement policy with `ALTER PLACEMENT POLICY x LEADER_CONSTRAINTS="[+region=us-east-1]" FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,+region=us-east-2:1}";` This is modeled on the statement `ALTER VIEW` (where the view needs to be redefined). When `ALTER PLACEMENT POLICY x` is executed, all tables that use this placement policy will need to be updated in PD.
 - The statement `DROP PLACEMENT POLICY` should execute without error. If any partitions currently use this policy, they will be converted to the policy used by the table they belong to. If any tables use this policy, they will be converted to the policy used by the database they belong to. If any databases use this policy, they will be converted to the default placement policy. This is modeled on the behavior of dropping a `ROLE` that might be assigned to users.
 - The statement `RENAME PLACEMENT POLICY x TO y` renames a placement policy. The `SHOW CREATE TABLE` output of all databases, tables and partitions that used this placement policy should be updated to the new name.
-- You can not use **both** a placement policy and direct assignment. If you alter specify both in a `CREATE TABLE` or `ALTER TABLE` an error will be returned. If you specify a `PLACEMENT POLICY` in an `ALTER TABLE` statement, it will unset other placement options ({FOLLOWERS,VOTERS,LEARNERS}=N, {FOLLOWER,VOTER,LEARNER}_CONSTRAINTS, CONSTRAINTS, PRIMARY_REGION, REGIONS, SCHEDULE).
+- You can not use **both** a placement policy and direct assignment. If you alter specify both in a `CREATE TABLE` or `ALTER TABLE` an error will be returned. If you specify a `PLACEMENT POLICY` in an `ALTER TABLE` statement, it will unset other placement options ({FOLLOWERS,LEARNERS}=N, {FOLLOWER,LEARNER}_CONSTRAINTS, CONSTRAINTS, PRIMARY_REGION, REGIONS, SCHEDULE).
 
 #### Advanced Placement
 
@@ -161,7 +161,7 @@ The placement policy above has 4 followers:
 Behavior notes:
 
 * Advanced placement is available in the context of `CREATE|ALTER PLACEMENT POLICY`, `CREATE|ALTER DATABASE` and `CREATE|ALTER TABLE`. i.e. the usage of all placement syntax is expected to be the same in all contexts.
-* It is possible to set `CONSTRAINTS`, `LEADER_CONSTRAINTS`, `FOLLOWER_CONSTRAINTS`, `LEARNER_CONSTRAINTS` and `VOTER_CONSTRAINTS`. Assuming that both `CONSTRAINTS` and `FOLLOWER_CONSTRAINTS` are specified, the conditions are "AND"ed together.
+* It is possible to set `CONSTRAINTS`, `LEADER_CONSTRAINTS`, `FOLLOWER_CONSTRAINTS` and `LEARNER_CONSTRAINTS`. Assuming that both `CONSTRAINTS` and `FOLLOWER_CONSTRAINTS` are specified, the conditions are "AND"ed together.
 * See "Constraints configuration" below for a full set of rules and syntax for constraints.
 
 #### Metadata commands
@@ -177,7 +177,6 @@ The table contains columns such as:
 * `rule_definition`: the placement policy definition (could be `PLACEMENT POLICY=x`, syntactic sugar variant or full list of constraints)
 * `followers`: the number of followers
 * `learners`: the number of learners
-* `voters`: the number of voters
 * `schema_name`: the schema this applies to.
 * `table_name`: the table this applies to.
 * `partition_name`: the partition this applies to (NULL if not applicable)
@@ -370,7 +369,7 @@ The only way to judge whether it’s adding a TiFlash replica is to check the la
 
 #### Specifying role count
 
-The roles `FOLLOWERS`, `LEARNERS` and `VOTERS` also support an optional count in *list* format. For example:
+The roles `FOLLOWERS` and `LEARNERS` also support an optional count in *list* format. For example:
 
 ```sql
 CREATE PLACEMENT POLICY `standardplacement1` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4;
@@ -408,7 +407,7 @@ Some common applications might be to increase the replica count on system or def
 
 #### Schedule Property
 
-When using either the syntactic sugar or list format for placement rules, PD is free to schedule followers/leaders/voters wherever it decides. For example:
+When using either the syntactic sugar or list format for placement rules, PD is free to schedule followers/leaders wherever it decides. For example:
 
 ```sql
 CREATE PLACEMENT POLICY `standardplacement1` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4;
@@ -444,7 +443,7 @@ When placement policies are specified, they should be validated for correctness:
 1. The `FOLLOWERS` count should respect raft quorum expectations. The default is `2` (which creates raft groups of 3). If the number is odd, it could lead to split brain scenarios, so a warning should be issued. Warnings should also be issued for a count less than 2 (this might be useful for development environments, so an error is not returned)
 2. A policy that is impossible based on the current topology (region=us-east-1 and followers=2, but there is only 1 store in us-east-1) should be a warning. This allows for some transitional topologies.
 3. If the constraints are specified as a dictionary, specifying the count (i.e. `FOLLOWERS=n`) is prohibited.
-4. Specifying both direct placement rules (`{FOLLOWERS,VOTERS,LEARNERS}=N, {FOLLOWER,VOTER,LEARNER}_CONSTRAINTS, CONSTRAINTS, PRIMARY_REGION, REGIONS, SCHEDULE`) and a `PLACEMENT POLICY` is prohibited.
+4. Specifying both direct placement rules (`{FOLLOWERS,LEARNERS}=N, {FOLLOWER,LEARNER}_CONSTRAINTS, CONSTRAINTS, PRIMARY_REGION, REGIONS, SCHEDULE`) and a `PLACEMENT POLICY` is prohibited.
 
 #### Skipping Policy Validation
 
@@ -486,7 +485,6 @@ Defining placement rules of partitions is expected to be a common use case and i
 
 In Geo-Partitioning, the table must be splitted into partitions, and each partition is placed in specific zones. There are some kinds of partition placement:
 
-* Place all voters on one zone
 * Place only leaders on one zone
 * Place leaders and half of the followers on one zone
 
@@ -536,14 +534,12 @@ ALTER TABLE t1 PARTITION partition_name PLACEMENT POLICY=default;
 
 In this case the default rules will apply to placement, and the output from `SHOW CREATE TABLE t1` should show no placement information. Thus, setting `PLACEMENT POLICY=default` must reset the following `table_options`:
 - `FOLLOWERS=n`
-- `VOTERS=n`
 - `LEARNERS=n`
 - `PRIMARY REGION`
 - `REGIONS`
 - `SCHEDULE`
 - `CONSTRAINTS`
 - `FOLLOWER_CONSTRAINTS`
-- `VOTER_CONSTRAINTS`
 - `LEARNER_CONSTRAINTS`
 - `PLACEMENT POLICY`
 
@@ -676,10 +672,10 @@ However, an object (database, table, partition) may have multiple rules for a si
 
 ```sql
 ALTER TABLE t
-	VOTER_CONSTRAINTS="{+region=us-east-1:2,+region=us-east-2:1}" VOTERS=3;
+	FOLLOWER_CONSTRAINTS="{+region=us-east-1:2,+region=us-east-2:1}";
 ```
 
-It needs 2 placement rules for `voter` in the PD placement rule configuration, because each rule can only specify one `count`. To make `id` unique, a unique identifier must be appended to `id`. DDL job ID plus an index in the job is a good choice.
+It needs 2 placement rules for `follower` in the PD placement rule configuration, because each rule can only specify one `count`. To make `id` unique, a unique identifier must be appended to `id`. DDL job ID plus an index in the job is a good choice.
 
 Take the case above for example, assuming the table ID of `t` is 100, the ID of the DDL job executing this statement is 200, then `id` of the placement rules are `100-200-1` and `100-200-2`.
 
@@ -965,7 +961,7 @@ Assuming that global indexes can be added to the TiDB server, this use-case can 
 
 For investigation, we looked at the implementation of placement rules in various databases (CockroachDB, Yugabyte, OceanBase).
 
-The idea of using a `PLACEMENT POLICY` was inspired by how OceanBase has Placement Groups, which are then applied to tables. But the usage as proposed here is optional, which allows for more flexibility for casual cases. The idea of using a Placement Group can also be seen as similar to using a "tablespace" in a traditional database, but it's not completely the same since the choice is less binary (constraints allow the placement of roles for leaders, followers, voters, learners).
+The idea of using a `PLACEMENT POLICY` was inspired by how OceanBase has Placement Groups, which are then applied to tables. But the usage as proposed here is optional, which allows for more flexibility for casual cases. The idea of using a Placement Group can also be seen as similar to using a "tablespace" in a traditional database, but it's not completely the same since the choice is less binary (constraints allow the placement of roles for leaders, followers, learners).
 
 CockroachDB does not look to have something directly comparable to `PLACEMENT POLICY`, but it does have the ability to specify "replication zones" for "system ranges" such as default, meta, liveness, system, timeseries. Before dropping `ALTER TABLE t1 ADD PLACEMENT` from this proposal, it was investigated the CockroachDB does not support this syntax, presumably for simplification and minimising similar risks of misconfiguration.
 
@@ -1021,6 +1017,9 @@ CREATE PLACEMENT POLICY europe CONSTRAINTS="+region=eu-west-1" RESTRICTED;
 This specific semantic will be the hardest to implement because of the other dependencies in the server.
 
 ## Changelog
+
+* 2021-09-13:
+  - Removed support for `VOTER_CONSTRAINTS` and `VOTERS`. The motivation for this change is that dictionary syntax is ambiguous cases when both `VOTER_CONSTRAINTS` and `FOLLOWER_CONSTAINTS` are set. We can re-add this syntax if there is a clear use-case requirement in future.
 
 * 2021-07-26:
   - Converted proposal to use the new template for technical designs.

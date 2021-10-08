@@ -548,10 +548,7 @@ func GetFsp(s string) int8 {
 	} else {
 		fsp = len(s) - index - 1
 	}
-
-	if fsp == len(s) {
-		fsp = 0
-	} else if fsp > 6 {
+	if fsp > 6 {
 		fsp = 6
 	}
 	return int8(fsp)

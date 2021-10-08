@@ -82,7 +82,7 @@ func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
 }
 
 func (c *SimpleTemplate) Success() bool {
-	return c.warnFailedCount+c.criticalFailedCount == 0
+	return c.criticalFailedCount == 0
 }
 
 func (c *SimpleTemplate) FailedCount(t CheckType) int {

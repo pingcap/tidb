@@ -349,11 +349,12 @@ func (kvcodec *tableKVEncoder) AddRecord(
 			if hasSignBit {
 				incrementalBits--
 			}
-			_ = kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64()&((1<<incrementalBits)-1), false, autoid.AutoRandomType)
+			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoRandomType)
+			_ = alloc.Rebase(value.GetInt64()&((1<<incrementalBits)-1), false)
 		}
 		if isAutoIncCol {
-			// TODO use auto incremental type
-			_ = kvcodec.tbl.RebaseAutoID(kvcodec.se, getAutoRecordID(value, &col.FieldType), false, autoid.RowIDAllocType)
+			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.RowIDAllocType)
+			_ = alloc.Rebase(getAutoRecordID(value, &col.FieldType), false)
 		}
 	}
 
@@ -368,7 +369,8 @@ func (kvcodec *tableKVEncoder) AddRecord(
 			return nil, 0, errors.Trace(err)
 		}
 		record = append(record, value)
-		_ = kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.RowIDAllocType)
+		alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.RowIDAllocType)
+		_ = alloc.Rebase(value.GetInt64(), false)
 	}
 	_, err = kvcodec.tbl.AddRecord(kvcodec.se, record)
 	if err != nil {
