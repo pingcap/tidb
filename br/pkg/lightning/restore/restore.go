@@ -1713,15 +1713,16 @@ func (rc *Controller) cleanCheckpoints(ctx context.Context) error {
 	}
 
 	logger := log.With(
-		zap.Bool("keepAfterSuccess", rc.cfg.Checkpoint.KeepAfterSuccess),
+		zap.Stringer("keepAfterSuccess", rc.cfg.Checkpoint.KeepAfterSuccess),
 		zap.Int64("taskID", rc.cfg.TaskID),
 	)
 
 	task := logger.Begin(zap.InfoLevel, "clean checkpoints")
 	var err error
-	if rc.cfg.Checkpoint.KeepAfterSuccess {
+	switch rc.cfg.Checkpoint.KeepAfterSuccess {
+	case config.CheckpointRename:
 		err = rc.checkpointsDB.MoveCheckpoints(ctx, rc.cfg.TaskID)
-	} else {
+	case config.CheckpointRemove:
 		err = rc.checkpointsDB.RemoveCheckpoint(ctx, "all")
 	}
 	task.End(zap.ErrorLevel, err)
