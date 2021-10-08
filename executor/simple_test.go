@@ -889,3 +889,18 @@ func (s *testSuite3) TestIssue23649(c *C) {
 	_, err = tk.Exec("GRANT bogusrole to nonexisting;")
 	c.Assert(err.Error(), Equals, "[executor:3523]Unknown authorization ID `bogusrole`@`%`")
 }
+
+func (s *testSuite3) TestSetCurrentUserPwd(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER issue28534;")
+	defer func() {
+		tk.MustExec("DROP USER IF EXISTS issue28534;")
+	}()
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "issue28534", Hostname: "localhost", CurrentUser: true, AuthUsername: "issue28534", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec(`SET PASSWORD FOR CURRENT_USER() = "43582eussi"`)
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="issue28534"`)
+	result.Check(testkit.Rows(auth.EncodePassword("43582eussi")))
+}
