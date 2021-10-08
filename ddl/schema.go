@@ -142,7 +142,7 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 
 func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var (
-		placementPolicyRef *model.PolicyRefInfo
+		placementPolicyRef  *model.PolicyRefInfo
 		directPlacementOpts *model.PlacementSettings
 	)
 	if err := job.DecodeArgs(&placementPolicyRef, &directPlacementOpts); err != nil {
