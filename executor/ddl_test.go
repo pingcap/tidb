@@ -903,7 +903,7 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	c.Assert(err, IsNil)
 	maxID := 1<<(64-15-1) - 1
 	alloc := tbl.Allocators(tk.Se).Get(autoid.RowIDAllocType)
-	err = alloc.Rebase(int64(maxID)-1, false)
+	err = alloc.Rebase(context.Background(), int64(maxID)-1, false)
 	c.Assert(err, IsNil)
 	tk.MustExec("insert into t1 values(1)")
 
