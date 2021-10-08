@@ -217,7 +217,8 @@
       "desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id",
       "desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
       "desc format = 'brief' select A.id from t as A where exists (select 1 from t where t.id=A.id)",
-      "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)"
+      "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)",
+      "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;"
     ]
   },
   {
@@ -236,7 +237,8 @@
       "desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
       "desc format = 'brief' select id from t as A where exists (select 1 from t where t.id=A.id)",
       "desc format = 'brief' select id from t as A where not exists (select 1 from t where t.id=A.id)",
-      "desc format = 'brief' select b*2, id from (select avg(value+2) as b, id from t group by id) C order by id"
+      "desc format = 'brief' select b*2, id from (select avg(value+2) as b, id from t group by id) C order by id",
+      "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;"
     ]
   },
   {
