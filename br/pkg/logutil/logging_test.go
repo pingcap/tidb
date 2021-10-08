@@ -211,6 +211,6 @@ func TestContextual(t *testing.T) {
 func checkLog(t *testing.T, actual observer.LoggedEntry, message string, fields ...zap.Field) {
 	require.Equal(t, message, actual.Message)
 	for i, f := range fields {
-		require.Equal(t, f, actual.Context[i])
+		require.True(t, f.Equals(actual.Context[i]))
 	}
 }
