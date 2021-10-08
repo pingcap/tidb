@@ -804,6 +804,9 @@ func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 	tk.MustExec("create placement policy y PRIMARY_REGION=\"cn-east-2\", REGIONS=\"cn-east-2\";")
 
 	// Policy Test
+	// Test for Non-Exist policy
+	tk.MustGetErrCode("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`z`;", mysql.ErrPlacementPolicyNotExists)
+
 	tk.MustExec("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`x`;")
 	// Test for Show Create Database
 	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
