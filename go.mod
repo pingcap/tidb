@@ -97,4 +97,5 @@ require (
 // cloud.google.com/go/storage will upgrade grpc to v1.40.0
 // we need keep the replacement until go.etcd.io supports the higher version of grpc.
 replace google.golang.org/grpc => google.golang.org/grpc v1.29.1
-replace github.com/tikv/client-go/v2 => ../client/client-go
+
+replace github.com/tikv/client-go/v2 => github.com/hzh0425/client-go/v2 v2.0.0-alpha.0.20211008064245-6250481b1c38
