@@ -24,7 +24,6 @@ import (
 	"github.com/tikv/pd/pkg/codec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 // Constants for split retry machinery.
