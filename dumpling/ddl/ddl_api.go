@@ -2732,6 +2732,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			err = d.AlterTableAttributes(sctx, ident, spec)
 		case ast.AlterTablePartitionAttributes:
 			err = d.AlterTablePartitionAttributes(sctx, ident, spec)
+		case ast.AlterTablePartitionOptions:
+			err = d.AlterTablePartitionOptions(sctx, ident, spec)
 		default:
 			// Nothing to do now.
 		}
@@ -6320,6 +6322,81 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 		return errors.Trace(err)
 	}
 
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	meta := tb.Meta()
+	if meta.Partition == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	partitionID, err := tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	var policyRefInfo *model.PolicyRefInfo
+	var placementSettings *model.PlacementSettings
+	if spec.Options != nil {
+		for _, op := range spec.Options {
+			switch op.Tp {
+			case ast.TableOptionPlacementPolicy:
+				policyRefInfo = &model.PolicyRefInfo{
+					Name: model.NewCIStr(op.StrValue),
+				}
+			case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
+				ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
+				ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
+				ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
+				ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
+				ast.TableOptionPlacementVoterConstraints:
+				if placementSettings == nil {
+					placementSettings = &model.PlacementSettings{}
+				}
+				err = SetDirectPlacementOpt(placementSettings, ast.PlacementOptionType(op.Tp), op.StrValue, op.UintValue)
+				if err != nil {
+					return err
+				}
+			default:
+				return errors.Trace(errors.New("unknown partition option"))
+			}
+		}
+	}
+
+	// Can not use both a placement policy and direct assignment. If you specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
+	if placementSettings != nil && policyRefInfo != nil {
+		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(policyRefInfo.Name))
+	}
+	if placementSettings != nil {
+		// check the direct placement option compatibility.
+		if err := checkPolicyValidation(placementSettings); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if policyRefInfo != nil {
+		policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(policyRefInfo.Name)
+		if !ok {
+			return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(policyRefInfo.Name))
+		}
+		policyRefInfo.ID = policy.ID
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterTablePartitionPolicy,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partitionID, policyRefInfo, placementSettings},
+	}
+
+	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
