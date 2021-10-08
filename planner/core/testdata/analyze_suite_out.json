@@ -8,10 +8,10 @@
           "HashJoin 7.49 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "├─TableReader(Build) 5.99 root  data:Selection",
           "│ └─Selection 5.99 cop[tikv]  not(isnull(test.t2.a))",
-          "│   └─TableFullScan 6.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   └─TableFullScan 6.00 cop[tikv] table:t2 keep order:false",
           "└─TableReader(Probe) 5.99 root  data:Selection",
           "  └─Selection 5.99 cop[tikv]  not(isnull(test.t1.a))",
-          "    └─TableFullScan 6.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "    └─TableFullScan 6.00 cop[tikv] table:t1 keep order:false"
         ]
       },
       {
@@ -69,9 +69,9 @@
         "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
         "RatioOfPseudoEstimate": 0.7,
         "Plan": [
-          "TableReader 8.84 root  data:Selection",
-          "└─Selection 8.84 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
-          "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 28.80 root  data:Selection",
+          "└─Selection 28.80 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false"
         ]
       }
     ]

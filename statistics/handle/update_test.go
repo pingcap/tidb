@@ -782,7 +782,7 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	h.UpdateErrorRate(is)
 	c.Assert(h.Update(is), IsNil)
 	tbl = h.GetTableStats(tblInfo)
-	c.Assert(tbl.Indices[bID].NotAccurate(), IsFalse)
+	c.Assert(tbl.Indices[bID].NotAccurate(), IsTrue)
 	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(1))
 
 	testKit.MustExec("analyze table t")

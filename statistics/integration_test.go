@@ -467,7 +467,7 @@ func (s *testSerialIntegrationSuite) TestOutdatedStatsCheck(c *C) {
 	tk.MustExec("insert into t values (1)") // 35 rows
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
-	c.Assert(tk.HasPseudoStats("select * from t where a = 1"), IsTrue)
+	c.Assert(tk.HasPseudoStats("select * from t where a = 1"), IsFalse)
 
 	tk.MustExec("analyze table t")
 
@@ -479,5 +479,5 @@ func (s *testSerialIntegrationSuite) TestOutdatedStatsCheck(c *C) {
 	tk.MustExec("delete from t limit 1") // 10 rows
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
-	c.Assert(tk.HasPseudoStats("select * from t where a = 1"), IsTrue)
+	c.Assert(tk.HasPseudoStats("select * from t where a = 1"), IsFalse)
 }
