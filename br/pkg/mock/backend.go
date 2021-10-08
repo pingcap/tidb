@@ -97,11 +97,12 @@ func (mr *MockBackendMockRecorder) CloseEngine(arg0, arg1, arg2 interface{}) *go
 }
 
 // CollectLocalDuplicateRows mocks base method
-func (m *MockBackend) CollectLocalDuplicateRows(arg0 context.Context, arg1 table.Table) error {
+func (m *MockBackend) CollectLocalDuplicateRows(arg0 context.Context, arg1 table.Table) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CollectLocalDuplicateRows", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // CollectLocalDuplicateRows indicates an expected call of CollectLocalDuplicateRows
@@ -111,11 +112,12 @@ func (mr *MockBackendMockRecorder) CollectLocalDuplicateRows(arg0, arg1 interfac
 }
 
 // CollectRemoteDuplicateRows mocks base method
-func (m *MockBackend) CollectRemoteDuplicateRows(arg0 context.Context, arg1 table.Table) error {
+func (m *MockBackend) CollectRemoteDuplicateRows(arg0 context.Context, arg1 table.Table) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CollectRemoteDuplicateRows", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // CollectRemoteDuplicateRows indicates an expected call of CollectRemoteDuplicateRows

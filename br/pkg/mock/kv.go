@@ -52,18 +52,18 @@ func (mr *MockEncoderMockRecorder) Close() *gomock.Call {
 }
 
 // Encode mocks base method.
-func (m *MockEncoder) Encode(arg0 log.Logger, arg1 []types.Datum, arg2 int64, arg3 []int, arg4 int64) (kv.Row, error) {
+func (m *MockEncoder) Encode(arg0 log.Logger, arg1 []types.Datum, arg2 int64, arg3 []int, arg4 string, arg5 int64) (kv.Row, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Encode", arg0, arg1, arg2, arg3, arg4)
+	ret := m.ctrl.Call(m, "Encode", arg0, arg1, arg2, arg3, arg4, arg5)
 	ret0, _ := ret[0].(kv.Row)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Encode indicates an expected call of Encode.
-func (mr *MockEncoderMockRecorder) Encode(arg0, arg1, arg2, arg3, arg4 interface{}) *gomock.Call {
+func (mr *MockEncoderMockRecorder) Encode(arg0, arg1, arg2, arg3, arg4, arg5 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Encode", reflect.TypeOf((*MockEncoder)(nil).Encode), arg0, arg1, arg2, arg3, arg4)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Encode", reflect.TypeOf((*MockEncoder)(nil).Encode), arg0, arg1, arg2, arg3, arg4, arg5)
 }
 
 // MockRows is a mock of Rows interface.
@@ -150,4 +150,18 @@ func (m *MockRow) ClassifyAndAppend(arg0 *kv.Rows, arg1 *verification.KVChecksum
 func (mr *MockRowMockRecorder) ClassifyAndAppend(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClassifyAndAppend", reflect.TypeOf((*MockRow)(nil).ClassifyAndAppend), arg0, arg1, arg2, arg3)
+}
+
+// Size mocks base method.
+func (m *MockRow) Size() uint64 {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Size")
+	ret0, _ := ret[0].(uint64)
+	return ret0
+}
+
+// Size indicates an expected call of Size.
+func (mr *MockRowMockRecorder) Size() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Size", reflect.TypeOf((*MockRow)(nil).Size))
 }

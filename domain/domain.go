@@ -151,7 +151,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store()).InitWithDBInfos(schemas, bundles, neededSchemaVersion)
+	policies, err := do.fetchPolicies(m)
+	if err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
+
+	newISBuilder, err := infoschema.NewBuilder(do.Store()).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -163,6 +168,14 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	is := newISBuilder.Build()
 	do.infoCache.Insert(is, startTS)
 	return is, false, currentSchemaVersion, nil, nil
+}
+
+func (do *Domain) fetchPolicies(m *meta.Meta) ([]*model.PolicyInfo, error) {
+	allPolicies, err := m.ListPolicies()
+	if err != nil {
+		return nil, err
+	}
+	return allPolicies, nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
@@ -1374,7 +1387,7 @@ const (
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
-func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
+func (do *Domain) NotifyUpdatePrivilege() error {
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), privilegeKey, "")
@@ -1383,13 +1396,13 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 		}
 	}
 	// update locally
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	if stmt, err := exec.ParseWithParams(context.Background(), `FLUSH PRIVILEGES`); err == nil {
-		_, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
-		if err != nil {
-			logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
-		}
+	sysSessionPool := do.SysSessionPool()
+	ctx, err := sysSessionPool.Get()
+	if err != nil {
+		return err
 	}
+	defer sysSessionPool.Put(ctx)
+	return do.PrivilegeHandle().Update(ctx.(sessionctx.Context))
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
