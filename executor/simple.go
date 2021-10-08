@@ -1342,7 +1342,7 @@ func (e *SimpleExec) userAuthPlugin(name string, host string) (string, error) {
 
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
 	var u, h string
-	if s.User == nil {
+	if s.User == nil || s.User.CurrentUser {
 		if e.ctx.GetSessionVars().User == nil {
 			return errors.New("Session error is empty")
 		}

@@ -62,7 +62,7 @@ For support, please contact [PingCAP](http://bit.ly/contact_us_via_github).
 
 ### To start using TiDB
 
-See [Quick Start Guide](https://pingcap.com/docs/stable/quick-start-with-tidb/).
+See [Quick Start Guide](https://docs.pingcap.com/tidb/stable/quick-start-with-tidb).
 
 ### To start developing TiDB
 
