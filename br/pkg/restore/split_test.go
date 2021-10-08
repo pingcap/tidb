@@ -207,14 +207,6 @@ func (c *TestClient) SetStoresLabel(ctx context.Context, stores []uint64, labelK
 	return nil
 }
 
-func checkScatter(check *C, regions map[uint64]*restore.RegionInfo, scattered map[uint64]bool) {
-	for key := range regions {
-		if !scattered[key] {
-			check.Fatalf("region %d has not been scattered: %#v", key, regions[key])
-		}
-	}
-}
-
 type assertRetryNotThanBackoffer struct {
 	max     int
 	already int
@@ -245,6 +237,7 @@ func (b *assertRetryNotThanBackoffer) Attempt() int {
 }
 
 func TestScatterFinishInTime(t *testing.T) {
+	t.Parallel()
 	client := initTestClient()
 	ranges := initRanges()
 	rewriteRules := initRewriteRules()
@@ -252,9 +245,7 @@ func TestScatterFinishInTime(t *testing.T) {
 
 	ctx := context.Background()
 	err := regionSplitter.Split(ctx, ranges, rewriteRules, func(key [][]byte) {})
-	if err != nil {
-		require.Nil(t, err)
-	}
+	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
 		for _, region := range regions {
@@ -291,7 +282,8 @@ func TestScatterFinishInTime(t *testing.T) {
 // expected regions after split:
 //   [, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
 //   [bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
-func (s *testRangeSuite) TestSplitAndScatter(c *C) {
+func TestSplitAndScatter(t *testing.T) {
+	t.Parallel()
 	client := initTestClient()
 	ranges := initRanges()
 	rewriteRules := initRewriteRules()
@@ -299,24 +291,23 @@ func (s *testRangeSuite) TestSplitAndScatter(c *C) {
 
 	ctx := context.Background()
 	err := regionSplitter.Split(ctx, ranges, rewriteRules, func(key [][]byte) {})
-	if err != nil {
-		c.Assert(err, IsNil, Commentf("split regions failed: %v", err))
-	}
+	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
 		for _, region := range regions {
-			c.Logf("region: %v\n", region.Region)
+			t.Logf("region: %v\n", region.Region)
 		}
-		c.Log("get wrong result")
-		c.Fail()
+		t.Log("get wrong result")
+		t.Fail()
 	}
 	regionInfos := make([]*restore.RegionInfo, 0, len(regions))
 	for _, info := range regions {
 		regionInfos = append(regionInfos, info)
 	}
 	scattered := map[uint64]bool{}
+	const alwaysFailedRegionID = 1
 	client.injectInScatter = func(regionInfo *restore.RegionInfo) error {
-		if _, ok := scattered[regionInfo.Region.Id]; !ok {
+		if _, ok := scattered[regionInfo.Region.Id]; !ok || regionInfo.Region.Id == alwaysFailedRegionID {
 			scattered[regionInfo.Region.Id] = false
 			return status.Errorf(codes.Unknown, "region %d is not fully replicated", regionInfo.Region.Id)
 		}
@@ -324,7 +315,14 @@ func (s *testRangeSuite) TestSplitAndScatter(c *C) {
 		return nil
 	}
 	regionSplitter.ScatterRegions(ctx, regionInfos)
-	checkScatter(c, client.GetAllRegions(), scattered)
+	for key := range regions {
+		if key == alwaysFailedRegionID {
+			require.Falsef(t, scattered[key], "always failed region %d was scattered successfully", key)
+		} else if !scattered[key] {
+			t.Fatalf("region %d has not been scattered: %#v", key, regions[key])
+		}
+	}
+
 }
 
 // region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
