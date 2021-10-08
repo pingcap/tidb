@@ -207,14 +207,14 @@ func (c *TestClient) SetStoresLabel(ctx context.Context, stores []uint64, labelK
 	return nil
 }
 
-type assertRetryNotThanBackoffer struct {
+type assertRetryLessThanBackoffer struct {
 	max     int
 	already int
 	t       *testing.T
 }
 
-func assertRetryNotThan(t *testing.T, times int) utils.Backoffer {
-	return &assertRetryNotThanBackoffer{
+func assertRetryLessThan(t *testing.T, times int) utils.Backoffer {
+	return &assertRetryLessThanBackoffer{
 		max:     times,
 		already: 0,
 		t:       t,
@@ -222,7 +222,7 @@ func assertRetryNotThan(t *testing.T, times int) utils.Backoffer {
 }
 
 // NextBackoff returns a duration to wait before retrying again
-func (b *assertRetryNotThanBackoffer) NextBackoff(err error) time.Duration {
+func (b *assertRetryLessThanBackoffer) NextBackoff(err error) time.Duration {
 	b.already++
 	if b.already >= b.max {
 		b.t.Logf("retry more than %d time: test failed", b.max)
@@ -232,7 +232,7 @@ func (b *assertRetryNotThanBackoffer) NextBackoff(err error) time.Duration {
 }
 
 // Attempt returns the remain attempt times
-func (b *assertRetryNotThanBackoffer) Attempt() int {
+func (b *assertRetryLessThanBackoffer) Attempt() int {
 	return b.max - b.already
 }
 
@@ -261,7 +261,7 @@ func TestScatterFinishInTime(t *testing.T) {
 	}
 	failed := map[uint64]int{}
 	client.injectInScatter = func(r *restore.RegionInfo) error {
-		failed[r.Region.Id] = failed[r.Region.Id] + 1
+		failed[r.Region.Id]++
 		if failed[r.Region.Id] > 7 {
 			return nil
 		}
@@ -272,7 +272,7 @@ func TestScatterFinishInTime(t *testing.T) {
 	// it would cost time unacceptable.
 	regionSplitter.ScatterRegionsWithBackoffer(ctx,
 		regionInfos,
-		assertRetryNotThan(t, 40))
+		assertRetryLessThan(t, 40))
 
 }
 

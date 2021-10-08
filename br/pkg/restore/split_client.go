@@ -601,13 +601,8 @@ func pdErrorCanRetry(err error) bool {
 	if grpcErr == nil {
 		return false
 	}
-	if strings.Contains(grpcErr.Message(), "is not fully replicated") {
-		return true
-	}
-	if strings.Contains(grpcErr.Message(), "has no leader") {
-		return true
-	}
-	return false
+	return strings.Contains(grpcErr.Message(), "is not fully replicated") ||
+		strings.Contains(grpcErr.Message(), "has no leader")
 }
 
 // NextBackoff returns a duration to wait before retrying again.
