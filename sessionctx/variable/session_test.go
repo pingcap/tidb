@@ -15,6 +15,7 @@
 package variable_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -32,8 +33,9 @@ import (
 
 func TestSetSystemVariable(t *testing.T) {
 	v := variable.NewSessionVars()
-	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
+	mtx := new(sync.Mutex)
 
 	testCases := []struct {
 		key   string
@@ -56,8 +58,13 @@ func TestSetSystemVariable(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
+		// copy iterator variable into a new variable, see issue #27779
+		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
+			t.Parallel()
+			mtx.Lock()
 			err := variable.SetSessionSystemVar(v, tc.key, tc.value)
+			mtx.Unlock()
 			if tc.err {
 				require.Error(t, err)
 			} else {

@@ -831,7 +831,7 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 // To use the PointGetPlan the following rules must be satisfied:
 // 1. For the limit clause, the count should at least 1 and the offset is 0.
 // 2. It must be a single table select.
-// 3. All the columns must be public and generated.
+// 3. All the columns must be public and not generated.
 // 4. The condition is an access path that the range is a unique key.
 func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool) *PointGetPlan {
 	if selStmt.Having != nil {

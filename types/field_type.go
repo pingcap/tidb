@@ -293,6 +293,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.Tp = mysql.TypeNewDecimal
 		tp.Flen = len(x.ToString())
 		tp.Decimal = int(x.digitsFrac)
+		// Add the length for `.`.
+		tp.Flen++
 		SetBinChsClnFlag(tp)
 	case Enum:
 		tp.Tp = mysql.TypeEnum

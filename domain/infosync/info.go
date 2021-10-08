@@ -24,7 +24,6 @@ import (
 	"os"
 	"path"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -325,13 +324,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 	var req *http.Request
 	var res *http.Response
 	for _, addr := range addrs {
-		var url string
-		if strings.HasPrefix(addr, "http") {
-			url = fmt.Sprintf("%s%s", addr, route)
-		} else {
-			url = fmt.Sprintf("%s://%s%s", util2.InternalHTTPSchema(), addr, route)
-		}
-
+		url := util2.ComposeURL(addr, route)
 		req, err = http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
 			return nil, err
@@ -697,15 +690,9 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	if !clientAvailable || len(pdAddrs) == 0 {
 		return "", errors.Errorf("pd unavailable")
 	}
-
 	// Get prometheus address from pdApi.
-	var url, res string
-	if strings.HasPrefix(pdAddrs[0], "http://") {
-		url = fmt.Sprintf("%s%s", pdAddrs[0], pdapi.Config)
-	} else {
-		url = fmt.Sprintf("http://%s%s", pdAddrs[0], pdapi.Config)
-	}
-	resp, err := http.Get(url) // #nosec G107
+	url := util2.ComposeURL(pdAddrs[0], pdapi.Config)
+	resp, err := util2.InternalHTTPClient().Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -715,7 +702,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	res = metricStorage.PDServer.MetricStorage
+	res := metricStorage.PDServer.MetricStorage
 
 	// Get prometheus address from etcdApi.
 	if res == "" {
