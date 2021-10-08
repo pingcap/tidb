@@ -88,4 +88,5 @@ func init() {
 	)
 	e, _ := charset.Lookup(charset.CharsetGBK)
 	experimentalCollation[charset.CollationGBKBin] = &gbkBinCollator{e.NewEncoder()}
+	experimentalCollation["gbk_chinese_ci"] = &gbkChineseCICollator{}
 }
