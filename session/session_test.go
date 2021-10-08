@@ -4818,9 +4818,9 @@ func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	// variable 'tidb_enable_global_temporary_table' should not be seen when show variables
-	tk.MustQuery("show variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
-	tk.MustQuery("show global variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows())
+	// variable 'tidb_enable_global_temporary_table' should be seen when show variables
+	tk.MustQuery("show variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows("tidb_enable_global_temporary_table OFF"))
+	tk.MustQuery("show global variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows("tidb_enable_global_temporary_table OFF"))
 
 	// variable 'tidb_enable_global_temporary_table' is turned off by default
 	tk.MustQuery("select @@global.tidb_enable_global_temporary_table").Check(testkit.Rows("0"))

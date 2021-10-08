@@ -734,3 +734,15 @@ func TestLastInsertID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, val, "21")
 }
+
+func TestIdentity(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := GetSessionOrGlobalSystemVar(vars, Identity)
+	require.NoError(t, err)
+	require.Equal(t, val, "0")
+
+	vars.StmtCtx.PrevLastInsertID = 21
+	val, err = GetSessionOrGlobalSystemVar(vars, Identity)
+	require.NoError(t, err)
+	require.Equal(t, val, "21")
+}
