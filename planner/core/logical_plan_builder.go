@@ -3464,11 +3464,15 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
 		}
 	}
-	enableNoopFuncs := b.ctx.GetSessionVars().EnableNoopFuncs
+	noopFuncsMode := b.ctx.GetSessionVars().NoopFuncsMode
 	if sel.SelectStmtOpts != nil {
-		if sel.SelectStmtOpts.CalcFoundRows && !enableNoopFuncs {
+		if sel.SelectStmtOpts.CalcFoundRows && noopFuncsMode != variable.OnInt {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
-			return nil, err
+			if noopFuncsMode == variable.OffInt {
+				return nil, err
+			}
+			// NoopFuncsMode is Warn, append an error
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
@@ -3583,9 +3587,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
-		if sel.LockInfo.LockType == ast.SelectLockForShare && !enableNoopFuncs {
+		if sel.LockInfo.LockType == ast.SelectLockForShare && noopFuncsMode != variable.OnInt {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
-			return nil, err
+			if noopFuncsMode == variable.OffInt {
+				return nil, err
+			}
+			// NoopFuncsMode is Warn, append an error
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		p, err = b.buildSelectLock(p, sel.LockInfo)
 		if err != nil {
@@ -4261,6 +4269,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &TableStorageStatsExtractor{}
 		case infoschema.TableTiFlashTables, infoschema.TableTiFlashSegments:
 			p.Extractor = &TiFlashSystemTableExtractor{}
+		case infoschema.TableStatementsSummary, infoschema.TableStatementsSummaryHistory:
+			p.Extractor = &StatementsSummaryExtractor{}
 		}
 	}
 	return p, nil
