@@ -24,7 +24,7 @@ This proposal aims to support Stale Read and describe what Stale Read looks like
 
 Currently, TiDB supports Follower Read to read data from follower replicas in order to increase the query throughput. TiDB also supports Snapshot Read to read old data with a given snapshot timestamp. 
 
-However, Follower Read still requires an RPC calling between follower replica and leader replica during querying which also increased query latency. 
+However, Follower Read still requires an RPC calling between follower replica and leader replica during querying which will be the key bottleneck to scale up the read throughput when there is a hotspot reading in this range. Moreover, in cross region scenario, an extra rpc calling will also increased the latency.
 
 For Snapshot Read, it only reads data from leader replica which might be a bottleneck, especially in hot spot cases.
 
@@ -148,6 +148,3 @@ select * from t as of timestamp now(10) where id = 1;
 set transaction read only as of timestamp now(10);
 select * from t where id = 1;
 ```
-
- 
-
