@@ -742,11 +742,11 @@ func (h *hotRegionsResponseHeap) Pop() interface{} {
 }
 
 type hotRegionsHistoryRetriver struct {
+	dummyCloser
 	isDrained  bool
 	retrieving bool
 	heap       *hotRegionsResponseHeap
 	extractor  *plannercore.HotRegionsHistoryTableExtractor
-	cancel     context.CancelFunc
 }
 
 // HistoryHotRegionsRequest wrap conditions push down to PD.
@@ -830,18 +830,10 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 	// Change uint to ture false slice,
 	var isLearners, isLeaders []bool
 	for _, l := range e.extractor.IsLearners {
-		if l == 1 {
-			isLearners = append(isLearners, true)
-		} else if l == 0 {
-			isLearners = append(isLearners, false)
-		}
+		isLearners = append(isLearners, l == 1)
 	}
 	for _, l := range e.extractor.IsLeaders {
-		if l == 1 {
-			isLeaders = append(isLeaders, true)
-		} else if l == 0 {
-			isLeaders = append(isLeaders, false)
-		}
+		isLeaders = append(isLeaders, l == 1)
 	}
 
 	// set hotType before request
@@ -861,14 +853,12 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 func (e *hotRegionsHistoryRetriver) startRetrieving(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	serversInfo []infoschema.ServerInfo,
+	pdServers []infoschema.ServerInfo,
 	req *HistoryHotRegionsRequest,
 ) ([]chan hotRegionsResult, error) {
-	// The retrieve progress may be abort
-	ctx, e.cancel = context.WithCancel(ctx)
 
 	var results []chan hotRegionsResult
-	for _, srv := range serversInfo {
+	for _, srv := range pdServers {
 		for typ := range e.extractor.HotRegionTypes {
 			req.HotRegionTypes = []string{typ}
 			jsonBody, err := json.Marshal(req)
@@ -880,8 +870,6 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 			results = append(results, ch)
 			go func(ch chan hotRegionsResult, address string, body *bytes.Buffer) {
 				util.WithRecovery(func() {
-					defer close(ch)
-
 					url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), address, pdapi.HotHistory)
 					req, err := http.NewRequest(http.MethodGet, url, body)
 					if err != nil {
@@ -929,6 +917,7 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		// Initialize the heap
 		e.heap = &hotRegionsResponseHeap{}
 		for _, ch := range results {
+			defer close(ch)
 			result := <-ch
 			if result.err != nil || len(result.messages.HistoryHotRegion) == 0 {
 				if result.err != nil {
@@ -1045,15 +1034,4 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 		row[15].SetNull()
 	}
 	return row, nil
-}
-
-func (e *hotRegionsHistoryRetriver) close() error {
-	if e.cancel != nil {
-		e.cancel()
-	}
-	return nil
-}
-
-func (e *hotRegionsHistoryRetriver) getRuntimeStats() execdetails.RuntimeStats {
-	return nil
 }
