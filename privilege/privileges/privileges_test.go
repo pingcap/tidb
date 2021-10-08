@@ -561,6 +561,73 @@ func TestSelectViewSecurity(t *testing.T) {
 	require.EqualError(t, err, core.ErrViewInvalid.GenWithStackByArgs("test", "selectviewsecurity").Error())
 }
 
+func TestShowViewPriv(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`DROP VIEW IF EXISTS test.v`)
+	tk.MustExec(`CREATE VIEW test.v AS SELECT 1`)
+	tk.MustExec("CREATE USER vnobody, vshowview, vselect, vshowandselect")
+	tk.MustExec("GRANT SHOW VIEW ON test.v TO vshowview")
+	tk.MustExec("GRANT SELECT ON test.v TO vselect")
+	tk.MustExec("GRANT SHOW VIEW, SELECT ON test.v TO vshowandselect")
+
+	tests := []struct {
+		userName     string
+		showViewErr  string
+		showTableErr string
+		tablesNum    string
+		columnsNum   string
+	}{
+		{"vnobody",
+			"[planner:1227]Access denied; you need (at least one of) the SELECT privilege(s) for this operation",
+			"[planner:1227]Access denied; you need (at least one of) the SHOW VIEW privilege(s) for this operation",
+			"0",
+			"0",
+		},
+		{"vshowview",
+			"[planner:1227]Access denied; you need (at least one of) the SELECT privilege(s) for this operation",
+			"",
+			"1",
+			"0",
+		},
+		{"vselect",
+			"[planner:1227]Access denied; you need (at least one of) the SHOW VIEW privilege(s) for this operation",
+			"[planner:1227]Access denied; you need (at least one of) the SHOW VIEW privilege(s) for this operation",
+			"1",
+			"1",
+		},
+		{"vshowandselect",
+			"",
+			"",
+			"1",
+			"1",
+		},
+	}
+
+	for _, test := range tests {
+		tk.Session().Auth(&auth.UserIdentity{Username: test.userName, Hostname: "localhost"}, nil, nil)
+		err := tk.ExecToErr("SHOW CREATE VIEW test.v")
+		if test.showViewErr != "" {
+			// The error message is different from MySQL.
+			require.EqualError(t, err, test.showViewErr, test)
+		} else {
+			require.NoError(t, err, test)
+		}
+		err = tk.ExecToErr("SHOW CREATE TABLE test.v")
+		if test.showTableErr != "" {
+			require.EqualError(t, err, test.showTableErr, test)
+		} else {
+			require.NoError(t, err, test)
+		}
+		tk.MustQuery("select count(*) from information_schema.tables where table_schema='test' and table_name='v'").Check(testkit.Rows(test.tablesNum))
+		// TODO: expected 0 but got 1 for vshowview.
+		// tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows(test.columnsNum))
+	}
+}
+
 func TestRoleAdminSecurity(t *testing.T) {
 	t.Parallel()
 	store, clean := newStore(t)
