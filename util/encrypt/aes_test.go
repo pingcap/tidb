@@ -201,7 +201,7 @@ func TestAESEncryptWithECB(t *testing.T) {
 		{"pingcap123", "1234567890123456", "CEC348F4EF5F84D3AA6C4FA184C65766", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "E435438AC6798B4718533096436EC342", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "", true},
 		{"pingcap", "123456789012345", "", true},
 	}
@@ -234,10 +234,10 @@ func TestAESDecryptWithECB(t *testing.T) {
 		{"pingcap123", "1234567890123456", "CEC348F4EF5F84D3AA6C4FA184C65766", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "E435438AC6798B4718533096436EC342", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "", true},
 		{"pingcap", "123456789012345", "", true},
-		// negtive cases: invalid padding / padding size
+		// negative cases: invalid padding / padding size
 		{"", "1234567890123456", "11223344556677112233", true},
 		{"", "1234567890123456", "11223344556677112233112233445566", true},
 		{"", "1234567890123456", "1122334455667711223311223344556611", true},
@@ -271,7 +271,7 @@ func TestAESEncryptWithCBC(t *testing.T) {
 		{"pingcap123", "1234567890123456", "1234567890123456", "042962D340F2F95BCC07B56EAC378D3A", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "1234567890123456", "EDECE05D9FE662E381130F7F19BA67F7", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
@@ -306,7 +306,7 @@ func TestAESEncryptWithOFB(t *testing.T) {
 		{"pingcap123", "1234567890123456", "1234567890123456", "0515A36BBF3DE0DBE9DD", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "1234567890123456", "45A57592449893", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
@@ -341,7 +341,7 @@ func TestAESDecryptWithOFB(t *testing.T) {
 		{"0515A36BBF3DE0DBE9DD", "1234567890123456", "1234567890123456", "pingcap123", false},
 		// 192 bits key
 		{"45A57592449893", "123456789012345678901234", "1234567890123456", "pingcap", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
@@ -375,7 +375,7 @@ func TestAESEncryptWithCTR(t *testing.T) {
 		{"pingcap123", "1234567890123456", "1234567890123456", "0515A36BBF3DE0DBE9DD", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "1234567890123456", "45A57592449893", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
@@ -410,7 +410,7 @@ func TestAESDecryptWithCTR(t *testing.T) {
 		{"0515A36BBF3DE0DBE9DD", "1234567890123456", "1234567890123456", "pingcap123", false},
 		// 192 bits key
 		{"45A57592449893", "123456789012345678901234", "1234567890123456", "pingcap", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
@@ -444,10 +444,10 @@ func TestAESDecryptWithCBC(t *testing.T) {
 		{"pingcap123", "1234567890123456", "1234567890123456", "042962D340F2F95BCC07B56EAC378D3A", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "1234567890123456", "EDECE05D9FE662E381130F7F19BA67F7", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
-		// negtive cases: invalid padding / padding size
+		// negative cases: invalid padding / padding size
 		{"", "1234567890123456", "1234567890123456", "11223344556677112233", true},
 		{"", "1234567890123456", "1234567890123456", "11223344556677112233112233445566", true},
 		{"", "1234567890123456", "1234567890123456", "1122334455667711223311223344556611", true},
@@ -482,7 +482,7 @@ func TestAESEncryptWithCFB(t *testing.T) {
 		{"pingcap123", "1234567890123456", "1234567890123456", "0515A36BBF3DE0DBE9DD", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "1234567890123456", "45A57592449893", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
@@ -517,7 +517,7 @@ func TestAESDecryptWithCFB(t *testing.T) {
 		{"0515A36BBF3DE0DBE9DD", "1234567890123456", "1234567890123456", "pingcap123", false},
 		// 192 bits key
 		{"45A57592449893", "123456789012345678901234", "1234567890123456", "pingcap", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}

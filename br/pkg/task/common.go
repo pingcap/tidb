@@ -76,7 +76,7 @@ const (
 	defaultGRPCKeepaliveTime    = 10 * time.Second
 	defaultGRPCKeepaliveTimeout = 3 * time.Second
 
-	flagCrypterType       = "crypter.method"
+	flagCipherType        = "crypter.method"
 	flagCipherKey         = "crypter.key"
 	flagCipherKeyFilePath = "crypter.key-filepath"
 
@@ -215,7 +215,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.BoolP(flagSkipCheckPath, "", false, "Skip path verification")
 	_ = flags.MarkHidden(flagSkipCheckPath)
 
-	flags.String(flagCrypterType, "NONE",
+	flags.String(flagCipherType, "NONE",
 		"Encrypt/decrypt algorithm, can be one of ‘NONE|AES128|AES192|AES256’, \"NONE\" represent no encrypt/decrypt")
 	flags.String(flagCipherKey, "",
 		"Encrypt/decrypt key, used to encrypt/decrypt the data from backup/restore"+
@@ -281,10 +281,9 @@ func parseCipherType(t string) (encryptionpb.EncryptionMethod, error) {
 }
 
 func checkCipherKey(cipherKey, cipherFilePath string) error {
-	if (len(cipherKey) == 0 && len(cipherFilePath) == 0) ||
-		(len(cipherKey) > 0 && len(cipherFilePath) > 0) {
+	if (len(cipherKey) == 0) == (len(cipherFilePath) == 0) {
 		return errors.Annotate(berrors.ErrInvalidArgument,
-			"one of cipher key and filepath should be fill")
+			"exactly one of --crypter.key or --crypter.key-filepath should be provided")
 	}
 	return nil
 }
@@ -324,7 +323,7 @@ func checkCipherKeyMatch(cipher *backuppb.CipherInfo) bool {
 }
 
 func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
-	crypterStr, err := flags.GetString(flagCrypterType)
+	crypterStr, err := flags.GetString(flagCipherType)
 	if err != nil {
 		return errors.Trace(err)
 	}
