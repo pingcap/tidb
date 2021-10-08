@@ -495,3 +495,108 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
 	c.Assert(dependencies, NotNil)
 	c.Assert(len(dependencies), Equals, 0)
 }
+
+func (s *testDBSuite6) TestAlterTablePartitionWithPlacementPolicy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop placement policy if exists x")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	// Direct placement option: special constraints may be incompatible with common constraint.
+	tk.MustExec("create table t1 (c int) PARTITION BY RANGE (c) " +
+		"(PARTITION p0 VALUES LESS THAN (6)," +
+		"PARTITION p1 VALUES LESS THAN (11)," +
+		"PARTITION p2 VALUES LESS THAN (16)," +
+		"PARTITION p3 VALUES LESS THAN (21));")
+
+	tk.MustExec("alter table t1 partition p0 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 ")
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t1")
+	c.Assert(tbl, NotNil)
+	ptDef := testGetPartitionDefinitionsByName(c, tk.Se, "test", "t1", "p0")
+	c.Assert(ptDef.PlacementPolicyRef.Name.L, Equals, "")
+	c.Assert(ptDef.DirectPlacementOpts, NotNil)
+
+	checkFunc := func(policySetting *model.PlacementSettings) {
+		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
+		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
+		c.Assert(policySetting.Followers, Equals, uint64(2))
+		c.Assert(policySetting.FollowerConstraints, Equals, "")
+		c.Assert(policySetting.Voters, Equals, uint64(0))
+		c.Assert(policySetting.VoterConstraints, Equals, "")
+		c.Assert(policySetting.Learners, Equals, uint64(0))
+		c.Assert(policySetting.LearnerConstraints, Equals, "")
+		c.Assert(policySetting.Constraints, Equals, "")
+		c.Assert(policySetting.Schedule, Equals, "")
+	}
+	checkFunc(ptDef.DirectPlacementOpts)
+
+	//Direct placement option and placement policy can't co-exist.
+	_, err := tk.Exec("alter table t1 partition p0 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"PLACEMENT POLICY=\"x\"")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8240]Placement policy 'x' can't co-exist with direct placement options")
+
+	// Only placement policy should check the policy existence.
+	tk.MustGetErrCode("alter table t1 partition p0 "+
+		"PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
+	tk.MustExec("create placement policy x " +
+		"FOLLOWERS=2 ")
+	tk.MustExec("alter table t1 partition p0 " +
+		"PLACEMENT POLICY=\"x\"")
+
+	ptDef = testGetPartitionDefinitionsByName(c, tk.Se, "test", "t1", "p0")
+	c.Assert(ptDef, NotNil)
+	c.Assert(ptDef.PlacementPolicyRef, NotNil)
+	c.Assert(ptDef.PlacementPolicyRef.Name.L, Equals, "x")
+	c.Assert(ptDef.PlacementPolicyRef.ID != 0, Equals, true)
+
+	tk.MustExec("alter table t1 partition p0 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 ")
+
+	ptDef = testGetPartitionDefinitionsByName(c, tk.Se, "test", "t1", "p0")
+	c.Assert(ptDef, NotNil)
+	c.Assert(ptDef.DirectPlacementOpts, NotNil)
+
+	checkFunc = func(policySetting *model.PlacementSettings) {
+		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
+		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
+		c.Assert(policySetting.Followers, Equals, uint64(2))
+		c.Assert(policySetting.FollowerConstraints, Equals, "")
+		c.Assert(policySetting.Voters, Equals, uint64(0))
+		c.Assert(policySetting.VoterConstraints, Equals, "")
+		c.Assert(policySetting.Learners, Equals, uint64(0))
+		c.Assert(policySetting.LearnerConstraints, Equals, "")
+		c.Assert(policySetting.Constraints, Equals, "")
+		c.Assert(policySetting.Schedule, Equals, "")
+	}
+	checkFunc(ptDef.DirectPlacementOpts)
+}
+
+func testGetPartitionDefinitionsByName(c *C, ctx sessionctx.Context, db string, table string, ptName string) model.PartitionDefinition {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(err, IsNil)
+	c.Assert(tbl, NotNil)
+	var ptDef model.PartitionDefinition
+	for _, def := range tbl.Meta().Partition.Definitions {
+		if ptName == def.Name.L {
+			ptDef = def
+			break
+		}
+	}
+	return ptDef
+}
