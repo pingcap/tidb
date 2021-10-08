@@ -845,3 +845,21 @@ func (s *testBootstrapSuite) TestForIssue23387(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "GRANT USAGE ON *.* TO 'quatest'@'%'")
 }
+
+func (s *testBootstrapSuite) TestReferencesPrivOnCol(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
+	defer dom.Close()
+	se := newSession(c, store, s.dbName)
+
+	defer func() {
+		mustExecSQL(c, se, "drop user if exists issue28531")
+		mustExecSQL(c, se, "drop table if exists t1")
+	}()
+
+	mustExecSQL(c, se, "create user if not exists issue28531")
+	mustExecSQL(c, se, "drop table if exists t1")
+	mustExecSQL(c, se, "create table t1 (a int)")
+	mustExecSQL(c, se, "GRANT select (a), update (a),insert(a), references(a) on t1 to issue28531")
+}

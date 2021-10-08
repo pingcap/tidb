@@ -75,7 +75,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -89,25 +88,8 @@ import (
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
-	logLevel := os.Getenv("log_level")
-	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	autoid.SetStep(5000)
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Log.SlowThreshold = 30000 // 30s
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
-	tikv.EnableFailpoints()
-	tmpDir := config.GetGlobalConfig().TempStoragePath
-	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
-	_ = os.MkdirAll(tmpDir, 0755)
-	testleak.BeforeTest()
 	TestingT(t)
-	testleak.AfterTestT(t)()
 }
 
 var _ = Suite(&testSuite{&baseTestSuite{}})
