@@ -154,6 +154,11 @@ func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ 
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	//Double Check if policy exits while ddl executing
+	_, err = checkPlacementPolicyExistAndCancelNonExistJob(t, job, placementPolicyRef.ID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 
 	// Notice: dbInfo.DirectPlacementOpts and dbInfo.PlacementPolicyRef can not be both not nil, which checked before constructing ddl job.
 	// So that we can just check the two situation that do not need ddl: 1. DB.DP == DDL.DP && nil == nil 2. nil == nil && DB.PP == DDL.PP
