@@ -33,6 +33,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// var _ = Suite(&testStatisticsSuite{})
+
 type testStatisticsSuite struct {
 	count   int
 	samples []*SampleItem
