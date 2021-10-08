@@ -931,6 +931,15 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					// The partition ID is returned as an extra column from the table reader.
 					if offset, ok := e.tblID2PIDColumnIndex[id]; ok {
 						physicalID = row.GetInt64(offset)
+
+						if physicalID == 0 {
+							// Left join will fill null for the rows that don't match.
+							// In that case, physicalID is 0, the partition doesn't need to be locked.
+							// For example:
+							// select * from t1 left join t2 on t1.col = t2.col for update
+							// t2 is a empty partition table, t1 is not empty.
+							continue
+						}
 					}
 				}
 

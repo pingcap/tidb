@@ -56,6 +56,11 @@ type UnionScanExec struct {
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
 	// to make sure we can compute the virtual column in right order.
 	virtualColumnIndex []int
+
+	extraPIDColumn struct {
+		colIdx      offsetOptional
+		partitionID int64
+	}
 }
 
 // Open implements the Executor Open interface.
@@ -121,7 +126,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		// no more data.
 		if row == nil {
-			return nil
+			break
 		}
 		mutableRow.SetDatums(row...)
 
@@ -150,6 +155,14 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if matched {
 			req.AppendRow(mutableRow.ToRow())
 		}
+	}
+
+	// Fill the extra partition ID column.
+	// The row may come from the membuffer instead of the transaction snapshot.
+	// For example: begin; insert into pt values (...); select * from pt for update;
+	// In that case, the extra partition ID column isn't filled by the TableReader executor, so the UnionScan executor should do it here.
+	if idx := us.extraPIDColumn.colIdx; idx.valid() {
+		fillExtraPIDColumn(req, idx.value(), us.extraPIDColumn.partitionID)
 	}
 	return nil
 }

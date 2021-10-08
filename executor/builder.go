@@ -1047,6 +1047,8 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.columns = x.columns
 		us.table = x.table
 		us.virtualColumnIndex = x.virtualColumnIndex
+		us.extraPIDColumn.colIdx = x.extraPIDColumnIndex
+		us.extraPIDColumn.partitionID = getPhysicalTableID(x.table)
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {

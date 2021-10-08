@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -402,4 +403,39 @@ func (s *testSuite7) TestForApplyAndUnionScan(c *C) {
 	tk.MustExec("insert into t1 values (60, 'practical thompson', '2020-03-25 04:33:10')")
 	tk.MustQuery("select c_int, c_str from t where (select count(*) from t1 where t1.c_int in (t.c_int, t.c_int + 2, t.c_int + 10)) > 2").Check(testkit.Rows())
 	tk.MustExec("rollback")
+}
+
+func (s *testSuite7) TestIssue28073(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40), primary key (c_int, c_str) , key(c_int)) partition by hash (c_int) partitions 4")
+	tk.MustExec("create table t2 like t1")
+	tk.MustExec("insert into t1 values (1, 'flamboyant mcclintock')")
+	tk.MustExec("insert into t2 select * from t1")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t2 (c_int, c_str) values (2, 'romantic grothendieck')")
+	tk.MustQuery("select * from t2 left join t1 on t1.c_int = t2.c_int for update").Sort().Check(
+		testkit.Rows(
+			"1 flamboyant mcclintock 1 flamboyant mcclintock",
+			"2 romantic grothendieck <nil> <nil>",
+		))
+	tk.MustExec("commit")
+
+	// Check no key is written to table ID 0
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	start := tablecodec.EncodeTablePrefix(0)
+	end := tablecodec.EncodeTablePrefix(1)
+	iter, err := txn.Iter(start, end)
+	c.Assert(err, IsNil)
+
+	exist := false
+	for iter.Valid() {
+		c.Assert(iter.Next(), IsNil)
+		exist = true
+		break
+	}
+	c.Assert(exist, IsFalse)
 }
