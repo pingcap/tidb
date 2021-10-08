@@ -16,7 +16,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -27,7 +26,7 @@ func assertTrimEqual(t *testing.T, f zapcore.Field, expect string) {
 	encoder := zapcore.NewConsoleEncoder(zapcore.EncoderConfig{})
 	out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{f})
 	require.NoError(t, err)
-	assert.Equal(t, strings.TrimRight(out.String(), "\n"), expect)
+	require.Equal(t, expect, strings.TrimRight(out.String(), "\n"))
 }
 
 func newFile(j int) *backuppb.File {
@@ -47,6 +46,7 @@ func newFile(j int) *backuppb.File {
 }
 
 func TestRater(t *testing.T) {
+	t.Parallel()
 	m := prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "testing",
 		Name:      "rater",
@@ -57,19 +57,21 @@ func TestRater(t *testing.T) {
 	rater := logutil.TraceRateOver(m)
 	timePass := time.Now()
 	rater.Inc()
-	assert.InEpsilon(t, rater.RateAt(timePass.Add(100*time.Millisecond)), 10.0, 0.1)
+	require.InEpsilon(t, 10.0, rater.RateAt(timePass.Add(100*time.Millisecond)), 0.1)
 	rater.Inc()
-	assert.InEpsilon(t, rater.RateAt(timePass.Add(150*time.Millisecond)), 13.0, 0.1)
+	require.InEpsilon(t, 13.0, rater.RateAt(timePass.Add(150*time.Millisecond)), 0.1)
 	rater.Add(18)
-	assert.InEpsilon(t, rater.RateAt(timePass.Add(200*time.Millisecond)), 100.0, 0.1)
+	require.InEpsilon(t, 100.0, rater.RateAt(timePass.Add(200*time.Millisecond)), 0.1)
 }
 
 func TestFile(t *testing.T) {
+	t.Parallel()
 	assertTrimEqual(t, logutil.File(newFile(1)),
 		`{"file": {"name": "1", "CF": "write", "sha256": "31", "startKey": "31", "endKey": "32", "startVersion": 1, "endVersion": 2, "totalKvs": 1, "totalBytes": 1, "CRC64Xor": 1}}`)
 }
 
 func TestFiles(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		count  int
 		expect string
@@ -94,13 +96,15 @@ func TestFiles(t *testing.T) {
 }
 
 func TestKey(t *testing.T) {
+	t.Parallel()
 	encoder := zapcore.NewConsoleEncoder(zapcore.EncoderConfig{})
 	out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{logutil.Key("test", []byte{0, 1, 2, 3})})
 	require.NoError(t, err)
-	assert.Equal(t, strings.Trim(out.String(), "\n"), `{"test": "00010203"}`)
+	require.Equal(t, `{"test": "00010203"}`, strings.Trim(out.String(), "\n"))
 }
 
 func TestKeys(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		count  int
 		expect string
@@ -125,6 +129,7 @@ func TestKeys(t *testing.T) {
 }
 
 func TestRewriteRule(t *testing.T) {
+	t.Parallel()
 	rule := &import_sstpb.RewriteRule{
 		OldKeyPrefix: []byte("old"),
 		NewKeyPrefix: []byte("new"),
@@ -134,10 +139,11 @@ func TestRewriteRule(t *testing.T) {
 	encoder := zapcore.NewConsoleEncoder(zapcore.EncoderConfig{})
 	out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{logutil.RewriteRule(rule)})
 	require.NoError(t, err)
-	assert.Equal(t, strings.Trim(out.String(), "\n"), `{"rewriteRule": {"oldKeyPrefix": "6f6c64", "newKeyPrefix": "6e6577", "newTimestamp": 5592405}}`)
+	require.Equal(t, `{"rewriteRule": {"oldKeyPrefix": "6f6c64", "newKeyPrefix": "6e6577", "newTimestamp": 5592405}}`, strings.Trim(out.String(), "\n"))
 }
 
 func TestRegion(t *testing.T) {
+	t.Parallel()
 	region := &metapb.Region{
 		Id:          1,
 		StartKey:    []byte{0x00, 0x01},
@@ -151,12 +157,14 @@ func TestRegion(t *testing.T) {
 }
 
 func TestLeader(t *testing.T) {
+	t.Parallel()
 	leader := &metapb.Peer{Id: 2, StoreId: 3}
 
 	assertTrimEqual(t, logutil.Leader(leader), `{"leader": "id:2 store_id:3 "}`)
 }
 
 func TestSSTMeta(t *testing.T) {
+	t.Parallel()
 	meta := &import_sstpb.SSTMeta{
 		Uuid: []byte("mock uuid"),
 		Range: &import_sstpb.Range{
@@ -175,12 +183,14 @@ func TestSSTMeta(t *testing.T) {
 }
 
 func TestShortError(t *testing.T) {
+	t.Parallel()
 	err := errors.Annotate(berrors.ErrInvalidArgument, "test")
 
 	assertTrimEqual(t, logutil.ShortError(err), `{"error": "test: [BR:Common:ErrInvalidArgument]invalid argument"}`)
 }
 
 func TestContextual(t *testing.T) {
+	t.Parallel()
 	testCore, logs := observer.New(zap.InfoLevel)
 	logutil.ResetGlobalLogger(zap.New(testCore))
 
@@ -199,8 +209,8 @@ func TestContextual(t *testing.T) {
 }
 
 func checkLog(t *testing.T, actual observer.LoggedEntry, message string, fields ...zap.Field) {
-	assert.Equal(t, message, actual.Message)
+	require.Equal(t, message, actual.Message)
 	for i, f := range fields {
-		assert.Equal(t, f, actual.Context[i])
+		require.Equal(t, f, actual.Context[i])
 	}
 }
