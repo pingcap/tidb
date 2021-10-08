@@ -217,12 +217,13 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 
 func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
-	var toCharset, toCollate string
-	var policyName model.CIStr
-	var placementPolicyRef *model.PolicyRefInfo
-	var directPlacementOpts *model.PlacementSettings
-	var isAlterCharsetAndCollate bool
-	var isAlterPlacement bool
+	var (
+		toCharset, toCollate string
+		isAlterCharsetAndCollate, isAlterPlacement bool
+		policyName model.CIStr
+		placementPolicyRef *model.PolicyRefInfo
+		directPlacementOpts *model.PlacementSettings
+	)
 
 	for _, val := range stmt.Options {
 		switch val.Tp {
