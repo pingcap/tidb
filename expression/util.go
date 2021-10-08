@@ -913,13 +913,12 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // For example, `pk>=$a and pk<=$b` can be optimized to a PointGet when
 // `$a==$b`, but it will cause wrong results when `$a!=$b`.
 // So we need to do the check here. The check includes the following aspects:
-// 1. Whether the plan cache can work for the statement.
+// 1. Whether the plan cache switch is enable.
 // 2. Whether the expressions contain a lazy constant.
 // TODO: Do more careful check here.
 func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bool {
-	stmtCtx := ctx.GetSessionVars().StmtCtx
-	// If the plan cache can not work for the statement, all the optimization can work correctly.
-	if !stmtCtx.UseCache || !stmtCtx.MaybeOverOptimized4PlanCache {
+	// If we do not enable plan cache, all the optimization can work correctly.
+	if !ctx.GetSessionVars().StmtCtx.UseCache {
 		return false
 	}
 	return containMutableConst(ctx, exprs)
