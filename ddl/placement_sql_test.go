@@ -733,8 +733,8 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 		tk.Se.GetSessionVars().EnableAlterPlacement = false
 	}()
 
-	tk.MustExec(`CREATE SCHEMA SchemaDirectPlacementTest PRIMARY_REGION='nl' REGIONS = "se,nz" FOLLOWERS=3`)
-	tk.MustQuery("SHOW CREATE SCHEMA schemadirectplacementtest").Check(testkit.Rows("SchemaDirectPlacementTest CREATE DATABASE `SchemaDirectPlacementTest` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PRIMARY_REGION=\"nl\" REGIONS=\"se,nz\" FOLLOWERS=3 */"))
+	tk.MustExec(`CREATE SCHEMA SchemaDirectPlacementTest PRIMARY_REGION='nl' REGIONS = "se,nz,nl" FOLLOWERS=3`)
+	tk.MustQuery("SHOW CREATE SCHEMA schemadirectplacementtest").Check(testkit.Rows("SchemaDirectPlacementTest CREATE DATABASE `SchemaDirectPlacementTest` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PRIMARY_REGION=\"nl\" REGIONS=\"se,nz,nl\" FOLLOWERS=3 */"))
 
 	tk.MustExec(`CREATE PLACEMENT POLICY PolicySchemaTest LEADER_CONSTRAINTS = "[+region=nl]" FOLLOWER_CONSTRAINTS="[+region=se]" FOLLOWERS=4 LEARNER_CONSTRAINTS="[+region=be]" LEARNERS=4`)
 	tk.MustExec(`CREATE PLACEMENT POLICY PolicyTableTest LEADER_CONSTRAINTS = "[+region=tl]" FOLLOWER_CONSTRAINTS="[+region=tf]" FOLLOWERS=2 LEARNER_CONSTRAINTS="[+region=tle]" LEARNERS=1`)
@@ -749,7 +749,7 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 			"  `a` int(10) unsigned NOT NULL,\n" +
 			"  `b` varchar(255) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"nl\" REGIONS=\"se,nz\" FOLLOWERS=3 */"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"nl\" REGIONS=\"se,nz,nl\" FOLLOWERS=3 */"))
 	tk.MustExec(`CREATE TABLE SchemaDirectPlacementTest.UseDirectPlacement (a int unsigned primary key, b varchar(255)) PRIMARY_REGION="se"`)
 	tk.MustQuery(`SHOW CREATE TABLE SchemaDirectPlacementTest.UseDirectPlacement`).Check(testkit.Rows(
 		"UseDirectPlacement CREATE TABLE `UseDirectPlacement` (\n" +
@@ -794,7 +794,7 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 	c.Assert(db.PlacementPolicyRef, IsNil)
 	c.Assert(db.DirectPlacementOpts, NotNil)
 	c.Assert(db.DirectPlacementOpts.PrimaryRegion, Matches, "nl")
-	c.Assert(db.DirectPlacementOpts.Regions, Matches, "se,nz")
+	c.Assert(db.DirectPlacementOpts.Regions, Matches, "se,nz,nl")
 	c.Assert(db.DirectPlacementOpts.Followers, Equals, uint64(3))
 	c.Assert(db.DirectPlacementOpts.Learners, Equals, uint64(0))
 
