@@ -1,0 +1,4 @@
+*.md
+.git
+LICENSE*
+Jenkinsfile
