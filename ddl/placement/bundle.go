@@ -330,20 +330,16 @@ func (b *Bundle) Reset(ruleIndex int, newIDs []int64) *Bundle {
 	// eliminate the redundant rules.
 	var basicRules []*Rule
 	if len(b.Rules) != 0 {
-		type key struct {
-			start string
-			end   string
-		}
-		rulesMap := make(map[key][]*Rule, len(b.Rules))
+		// Make priority for rules with RuleIndexTable cause of duplication rules existence with RuleIndexPartition.
+		// If RuleIndexTable doesn't exist, bundle itself is a independent series of rules for a partition.
 		for _, rule := range b.Rules {
-			if rules, ok := rulesMap[key{start: rule.StartKeyHex, end: rule.EndKeyHex}]; ok {
-				rules = append(rules, rule)
-				rulesMap[key{start: rule.StartKeyHex, end: rule.EndKeyHex}] = rules
-			} else {
-				rulesMap[key{start: rule.StartKeyHex, end: rule.EndKeyHex}] = []*Rule{rule}
+			if rule.Index == RuleIndexTable {
+				basicRules = append(basicRules, rule)
 			}
 		}
-		basicRules = rulesMap[key{start: b.Rules[0].StartKeyHex, end: b.Rules[0].EndKeyHex}]
+		if len(basicRules) == 0 {
+			basicRules = b.Rules
+		}
 	}
 
 	// extend and reset basic rules for all new ids, the first id should be the group id.
@@ -372,6 +368,11 @@ func (b *Bundle) Reset(ruleIndex int, newIDs []int64) *Bundle {
 			clone.GroupID = b.ID
 			clone.StartKeyHex = startKey
 			clone.EndKeyHex = endKey
+			if i == 0 {
+				clone.Index = RuleIndexTable
+			} else {
+				clone.Index = RuleIndexPartition
+			}
 			newRules = append(newRules, clone)
 		}
 	}
