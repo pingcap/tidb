@@ -789,7 +789,7 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	})
 
 	for _, t := range tests {
-		bundle, err := NewBundleFromOptions(t.input)
+		bundle, err := newBundleFromOptions(t.input)
 		comment := Commentf("[%s]\nerr1 %s\nerr2 %s", t.name, err, t.err)
 		if t.err != nil {
 			c.Assert(errors.Is(err, t.err), IsTrue, comment)
