@@ -174,6 +174,9 @@ func newBundleFromPartition(t *meta.Meta, job *model.Job, partition *model.Parti
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if bundle == nil {
+			continue
+		}
 		bundle.Reset(placement.RuleIndexPartition, []int64{def.ID})
 		bundles = append(bundles, bundle)
 		continue
