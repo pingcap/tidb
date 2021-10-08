@@ -149,7 +149,7 @@ func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 		c.Assert(err, NotNil)
 		return nil
 	}
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
@@ -178,7 +178,7 @@ func testDropColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 		c.Assert(err, NotNil)
 		return nil
 	}
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
