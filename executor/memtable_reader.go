@@ -809,7 +809,7 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 		return nil, errors.New("denied to scan hot regions, please specified the end time, such as `update_time < '2020-01-01 00:00:00'`")
 	}
 
-	// Divide read write into two request because of time range ovelap,
+	// Divide read-write into two requests because of time range overlap,
 	// because PD use [type,time] as key of hot regions.
 	if e.extractor.HotRegionTypes.Count() == 0 {
 		e.extractor.HotRegionTypes.Insert(HotRegionTypeRead)
