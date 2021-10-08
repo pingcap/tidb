@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"time"
 
@@ -311,17 +312,19 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 		}
 		return errs
 	}, backoffer); err != nil {
-		log.Warn("Some regions haven't been scattered because errors. Use DEBUG level too see full region info",
+		log.Warn("Some regions haven't been scattered because errors.",
 			zap.Int("count", len(newRegionSet)),
 			// if all region are failed to scatter, the short error might also be verbose...
 			logutil.ShortError(err),
+			logutil.AbbreviatedArray("failed-regions", newRegionSet, func(i interface{}) []string {
+				m := i.(map[uint64]*RegionInfo)
+				result := make([]string, len(m))
+				for id := range m {
+					result = append(result, strconv.Itoa(int(id)))
+				}
+				return result
+			}),
 		)
-		// DebugLevel is the smallest (== -1) when writting this comment.
-		if log.GetLevel() <= zapcore.DebugLevel {
-			for _, r := range newRegionSet {
-				log.Debug("failed region", logutil.Region(r.Region))
-			}
-		}
 	}
 
 }
