@@ -15,13 +15,16 @@
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 )
 
-func (s *testSuite) TestMemRank(c *C) {
+func TestMemRank(t *testing.T) {
+	t.Parallel()
+
 	tests := []windowMemTest{
 		buildWindowMemTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 1, 1,
 			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
@@ -31,6 +34,6 @@ func (s *testSuite) TestMemRank(c *C) {
 			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
 	}
 	for _, test := range tests {
-		s.testWindowAggMemFunc(c, test)
+		testWindowAggMemFunc(t, test)
 	}
 }

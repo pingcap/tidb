@@ -81,8 +81,17 @@ func NewConstraint(label string) (Constraint, error) {
 
 	r.Key = key
 	r.Op = op
-	r.Values = []string{val}
+	r.Values = strings.Split(val, ",")
 	return r, nil
+}
+
+// NewConstraintDirect will create a Constraint from argument directly.
+func NewConstraintDirect(key string, op ConstraintOp, val ...string) Constraint {
+	return Constraint{
+		Key:    key,
+		Op:     op,
+		Values: val,
+	}
 }
 
 // Restore converts a Constraint to a string.
