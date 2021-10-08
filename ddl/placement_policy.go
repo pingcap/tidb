@@ -218,10 +218,6 @@ func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = bundle.Tidy()
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 		// Do the http request only when the rules is existed.
 		bundles := make([]*placement.Bundle, 0, len(tblInfos)+len(partIDs))
 		// Reset bundle for tables (including the default rule for partition).

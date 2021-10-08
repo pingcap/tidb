@@ -188,7 +188,7 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 }
 
 // NewBundleFromOptions will transform options into the bundle.
-func NewBundleFromOptions(options *model.PlacementSettings) (*Bundle, error) {
+func NewBundleFromOptions(options *model.PlacementSettings) (bundle *Bundle, err error) {
 	var isSyntaxSugar bool
 
 	if options == nil {
@@ -200,9 +200,24 @@ func NewBundleFromOptions(options *model.PlacementSettings) (*Bundle, error) {
 	}
 
 	if isSyntaxSugar {
-		return NewBundleFromSugarOptions(options)
+		bundle, err = NewBundleFromSugarOptions(options)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		bundle, err = NewBundleFromConstraintsOptions(options)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return NewBundleFromConstraintsOptions(options)
+	if bundle == nil {
+		return nil, nil
+	}
+	err = bundle.Tidy()
+	if err != nil {
+		return nil, err
+	}
+	return bundle, err
 }
 
 // ApplyPlacementSpec will apply actions defined in PlacementSpec to the bundle.
