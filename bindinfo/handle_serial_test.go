@@ -224,6 +224,125 @@ func TestEvolveInvalidBindings(t *testing.T) {
 	require.True(t, status == "using" || status == "rejected")
 }
 
+var testSQLs = []struct {
+	createSQL   string
+	overlaySQL  string
+	querySQL    string
+	originSQL   string
+	bindSQL     string
+	dropSQL     string
+	memoryUsage float64
+}{
+	{
+		createSQL:   "binding for select * from t where i>100 using select * from t use index(index_t) where i>100",
+		overlaySQL:  "binding for select * from t where i>99 using select * from t use index(index_t) where i>99",
+		querySQL:    "select * from t where i          >      30.0",
+		originSQL:   "select * from `test` . `t` where `i` > ?",
+		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 99",
+		dropSQL:     "binding for select * from t where i>100",
+		memoryUsage: float64(144),
+	},
+	{
+		createSQL:   "binding for select * from t union all select * from t using select * from t use index(index_t) union all select * from t use index()",
+		overlaySQL:  "",
+		querySQL:    "select * from t union all         select * from t",
+		originSQL:   "select * from `test` . `t` union all select * from `test` . `t`",
+		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) UNION ALL SELECT * FROM `test`.`t` USE INDEX ()",
+		dropSQL:     "binding for select * from t union all select * from t",
+		memoryUsage: float64(200),
+	},
+	{
+		createSQL:   "binding for (select * from t) union all (select * from t) using (select * from t use index(index_t)) union all (select * from t use index())",
+		overlaySQL:  "",
+		querySQL:    "(select * from t) union all         (select * from t)",
+		originSQL:   "( select * from `test` . `t` ) union all ( select * from `test` . `t` )",
+		bindSQL:     "(SELECT * FROM `test`.`t` USE INDEX (`index_t`)) UNION ALL (SELECT * FROM `test`.`t` USE INDEX ())",
+		dropSQL:     "binding for (select * from t) union all (select * from t)",
+		memoryUsage: float64(212),
+	},
+	{
+		createSQL:   "binding for select * from t intersect select * from t using select * from t use index(index_t) intersect select * from t use index()",
+		overlaySQL:  "",
+		querySQL:    "select * from t intersect         select * from t",
+		originSQL:   "select * from `test` . `t` intersect select * from `test` . `t`",
+		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) INTERSECT SELECT * FROM `test`.`t` USE INDEX ()",
+		dropSQL:     "binding for select * from t intersect select * from t",
+		memoryUsage: float64(200),
+	},
+	{
+		createSQL:   "binding for select * from t except select * from t using select * from t use index(index_t) except select * from t use index()",
+		overlaySQL:  "",
+		querySQL:    "select * from t except         select * from t",
+		originSQL:   "select * from `test` . `t` except select * from `test` . `t`",
+		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) EXCEPT SELECT * FROM `test`.`t` USE INDEX ()",
+		dropSQL:     "binding for select * from t except select * from t",
+		memoryUsage: float64(194),
+	},
+	{
+		createSQL:   "binding for select * from t using select /*+ use_index(t,index_t)*/ * from t",
+		overlaySQL:  "",
+		querySQL:    "select * from t ",
+		originSQL:   "select * from `test` . `t`",
+		bindSQL:     "SELECT /*+ use_index(`t` `index_t`)*/ * FROM `test`.`t`",
+		dropSQL:     "binding for select * from t",
+		memoryUsage: float64(124),
+	},
+	{
+		createSQL:   "binding for delete from t where i = 1 using delete /*+ use_index(t,index_t) */ from t where i = 1",
+		overlaySQL:  "",
+		querySQL:    "delete    from t where   i = 2",
+		originSQL:   "delete from `test` . `t` where `i` = ?",
+		bindSQL:     "DELETE /*+ use_index(`t` `index_t`)*/ FROM `test`.`t` WHERE `i` = 1",
+		dropSQL:     "binding for delete from t where i = 1",
+		memoryUsage: float64(148),
+	},
+	{
+		createSQL:   "binding for delete t, t1 from t inner join t1 on t.s = t1.s where t.i = 1 using delete /*+ use_index(t,index_t), hash_join(t,t1) */ t, t1 from t inner join t1 on t.s = t1.s where t.i = 1",
+		overlaySQL:  "",
+		querySQL:    "delete t,   t1 from t inner join t1 on t.s = t1.s  where   t.i = 2",
+		originSQL:   "delete `test` . `t` , `test` . `t1` from `test` . `t` join `test` . `t1` on `t` . `s` = `t1` . `s` where `t` . `i` = ?",
+		bindSQL:     "DELETE /*+ use_index(`t` `index_t`) hash_join(`t`, `t1`)*/ `test`.`t`,`test`.`t1` FROM `test`.`t` JOIN `test`.`t1` ON `t`.`s` = `t1`.`s` WHERE `t`.`i` = 1",
+		dropSQL:     "binding for delete t, t1 from t inner join t1 on t.s = t1.s where t.i = 1",
+		memoryUsage: float64(315),
+	},
+	{
+		createSQL:   "binding for update t set s = 'a' where i = 1 using update /*+ use_index(t,index_t) */ t set s = 'a' where i = 1",
+		overlaySQL:  "",
+		querySQL:    "update   t  set s='b' where i=2",
+		originSQL:   "update `test` . `t` set `s` = ? where `i` = ?",
+		bindSQL:     "UPDATE /*+ use_index(`t` `index_t`)*/ `test`.`t` SET `s`='a' WHERE `i` = 1",
+		dropSQL:     "binding for update t set s = 'a' where i = 1",
+		memoryUsage: float64(162),
+	},
+	{
+		createSQL:   "binding for update t, t1 set t.s = 'a' where t.i = t1.i using update /*+ inl_join(t1) */ t, t1 set t.s = 'a' where t.i = t1.i",
+		overlaySQL:  "",
+		querySQL:    "update   t  , t1 set t.s='b' where t.i=t1.i",
+		originSQL:   "update ( `test` . `t` ) join `test` . `t1` set `t` . `s` = ? where `t` . `i` = `t1` . `i`",
+		bindSQL:     "UPDATE /*+ inl_join(`t1`)*/ (`test`.`t`) JOIN `test`.`t1` SET `t`.`s`='a' WHERE `t`.`i` = `t1`.`i`",
+		dropSQL:     "binding for update t, t1 set t.s = 'a' where t.i = t1.i",
+		memoryUsage: float64(230),
+	},
+	{
+		createSQL:   "binding for insert into t1 select * from t where t.i = 1 using insert into t1 select /*+ use_index(t,index_t) */ * from t where t.i = 1",
+		overlaySQL:  "",
+		querySQL:    "insert  into   t1 select * from t where t.i  = 2",
+		originSQL:   "insert into `test` . `t1` select * from `test` . `t` where `t` . `i` = ?",
+		bindSQL:     "INSERT INTO `test`.`t1` SELECT /*+ use_index(`t` `index_t`)*/ * FROM `test`.`t` WHERE `t`.`i` = 1",
+		dropSQL:     "binding for insert into t1 select * from t where t.i = 1",
+		memoryUsage: float64(212),
+	},
+	{
+		createSQL:   "binding for replace into t1 select * from t where t.i = 1 using replace into t1 select /*+ use_index(t,index_t) */ * from t where t.i = 1",
+		overlaySQL:  "",
+		querySQL:    "replace  into   t1 select * from t where t.i  = 2",
+		originSQL:   "replace into `test` . `t1` select * from `test` . `t` where `t` . `i` = ?",
+		bindSQL:     "REPLACE INTO `test`.`t1` SELECT /*+ use_index(`t` `index_t`)*/ * FROM `test`.`t` WHERE `t`.`i` = 1",
+		dropSQL:     "binding for replace into t1 select * from t where t.i = 1",
+		memoryUsage: float64(214),
+	},
+}
+
 func TestGlobalBinding(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()

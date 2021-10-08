@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	tmysql "github.com/pingcap/tidb/errno"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -98,21 +99,10 @@ func IsEmptyDir(name string) bool {
 	return len(entries) == 0
 }
 
-type QueryExecutor interface {
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
-}
-
-type DBExecutor interface {
-	QueryExecutor
-	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-}
-
 // SQLWithRetry constructs a retryable transaction.
 type SQLWithRetry struct {
 	// either *sql.DB or *sql.Conn
-	DB           DBExecutor
+	DB           utils.DBExecutor
 	Logger       log.Logger
 	HideQueryLog bool
 }

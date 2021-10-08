@@ -77,6 +77,7 @@ func TestClusterTables(t *testing.T) {
 	t.Run("SelectClusterTablePrivilege", SubTestSelectClusterTablePrivilege(s))
 	t.Run("StmtSummaryEvictedCountTable", SubTestStmtSummaryEvictedCountTable(s))
 	t.Run("StmtSummaryHistoryTable", SubTestStmtSummaryHistoryTable(s))
+	t.Run("Issue26379", SubTestIssue26379(s))
 }
 
 func SubTestForClusterServerInfo(s *clusterTablesSuite) func(*testing.T) {
@@ -217,13 +218,13 @@ func SubTestSelectClusterTable(s *clusterTablesSuite) func(*testing.T) {
 			tk.MustExec(fmt.Sprintf("set @@tidb_enable_streaming=%d", i))
 			tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
 			tk.MustExec("set time_zone = '+08:00';")
-			tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
+			tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("2"))
 			tk.MustQuery("select time from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953"))
 			tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
 			tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0 ", "")))
 			tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
-			tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
-			tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
+			tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1", "1"))
+			tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest order by digest").Check(testkit.Rows("124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc 1", "42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
 			tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953"))
 			tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
 			re := tk.MustQuery("select * from `CLUSTER_statements_summary`")
@@ -302,10 +303,11 @@ func SubTestStmtSummaryEvictedCountTable(s *clusterTablesSuite) func(*testing.T)
 		tk := s.newTestKitWithRoot(t)
 		// disable refreshing
 		tk.MustExec("set global tidb_stmt_summary_refresh_interval=9999")
-		// set information_schema.statements_summary's size to 1
-		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+		// set information_schema.statements_summary's size to 2
+		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 2")
 		// no evict happened, no record in cluster evicted table.
 		tk.MustQuery("select count(*) from information_schema.cluster_statements_summary_evicted;").Check(testkit.Rows("0"))
+		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
 		// cleanup side effects
 		defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
 		defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
@@ -400,6 +402,58 @@ func SubTestStmtSummaryHistoryTable(s *clusterTablesSuite) func(*testing.T) {
 			"create table `table` ( `insert` int )",
 			"set global `tidb_enable_stmt_summary` = ?",
 		))
+	}
+}
+
+func SubTestIssue26379(s *clusterTablesSuite) func(*testing.T) {
+	return func(t *testing.T) {
+		tk := s.newTestKitWithRoot(t)
+
+		// Clear all statements.
+		tk.MustExec("set session tidb_enable_stmt_summary = 0")
+		tk.MustExec("set session tidb_enable_stmt_summary = ''")
+		tk.MustExec("set @@global.tidb_stmt_summary_max_stmt_count=10")
+
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b varchar(10), c int, d int, key k(a))")
+
+		_, digest1 := parser.NormalizeDigest("select * from t where a = 3")
+		_, digest2 := parser.NormalizeDigest("select * from t where b = 'b'")
+		_, digest3 := parser.NormalizeDigest("select * from t where c = 6")
+		_, digest4 := parser.NormalizeDigest("select * from t where d = 5")
+		fillStatementCache := func() {
+			tk.MustQuery("select * from t where a = 3")
+			tk.MustQuery("select * from t where b = 'b'")
+			tk.MustQuery("select * from t where c = 6")
+			tk.MustQuery("select * from t where d = 5")
+		}
+		fillStatementCache()
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s'", digest1.String())).Check(testkit.Rows(digest1.String()))
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s'", digest1.String())).Check(testkit.Rows(digest1.String()))
+		fillStatementCache()
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s'", digest2.String())).Check(testkit.Rows(digest2.String()))
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s'", digest2.String())).Check(testkit.Rows(digest2.String()))
+		fillStatementCache()
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s'", digest3.String())).Check(testkit.Rows(digest3.String()))
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s'", digest3.String())).Check(testkit.Rows(digest3.String()))
+		fillStatementCache()
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s'", digest4.String())).Check(testkit.Rows(digest4.String()))
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s'", digest4.String())).Check(testkit.Rows(digest4.String()))
+		fillStatementCache()
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s' or digest = '%s'", digest1.String(), digest2.String())).Sort().Check(testkit.Rows(digest1.String(), digest2.String()))
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s' or digest = '%s'", digest1.String(), digest2.String())).Sort().Check(testkit.Rows(digest1.String(), digest2.String()))
+		re := tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s' and digest = '%s'", digest1.String(), digest2.String()))
+		require.Equal(t, 0, len(re.Rows()))
+		re = tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest = '%s' and digest = '%s'", digest1.String(), digest2.String()))
+		require.Equal(t, 0, len(re.Rows()))
+		fillStatementCache()
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest in ('%s', '%s', '%s', '%s')", digest1.String(), digest2.String(), digest3.String(), digest4.String())).Sort().Check(testkit.Rows(digest1.String(), digest4.String(), digest2.String(), digest3.String()))
+		tk.MustQuery(fmt.Sprintf("select digest from information_schema.cluster_statements_summary where digest in ('%s', '%s', '%s', '%s')", digest1.String(), digest2.String(), digest3.String(), digest4.String())).Sort().Check(testkit.Rows(digest1.String(), digest4.String(), digest2.String(), digest3.String()))
+		fillStatementCache()
+		tk.MustQuery("select count(*) from information_schema.statements_summary where digest=''").Check(testkit.Rows("0"))
+		tk.MustQuery("select count(*) from information_schema.statements_summary where digest is null").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from information_schema.cluster_statements_summary where digest=''").Check(testkit.Rows("0"))
+		tk.MustQuery("select count(*) from information_schema.cluster_statements_summary where digest is null").Check(testkit.Rows("1"))
 	}
 }
 
