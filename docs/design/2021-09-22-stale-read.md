@@ -61,7 +61,7 @@ SELECT * FROM t WHERE id = 1;
 COMMIT;
 ```
 
-3. Use Stale Read with given exact seconds ago staleness in single statement:
+3. Use Stale Read with given exact seconds ago staleness in a single statement:
 
 ```sql
 // query data with exact 20 seconds ago timestamp
