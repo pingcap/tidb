@@ -905,7 +905,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	c.Assert(errors.ErrorStack(hErr), Equals, "")
+	c.Assert(hErr, IsNil)
 	c.Assert(ok, IsTrue)
 
 	err = ctx.NewTxn(context.Background())
@@ -999,7 +999,7 @@ func (s *testColumnSuite) TestAddColumns(c *C) {
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	c.Assert(errors.ErrorStack(hErr), Equals, "")
+	c.Assert(hErr, IsNil)
 	c.Assert(ok, IsTrue)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
