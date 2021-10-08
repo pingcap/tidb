@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -95,54 +94,54 @@ func SubTestBuild(s *testStatisticsSuite) func(*testing.T) {
 			FMSketch:  sketch,
 		}
 		col, err := BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeLonglong))
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		checkRepeats(t, col)
 		col.PreCalculateScalar()
-		assert.Equal(t, 226, col.Len())
+		require.Equal(t, 226, col.Len())
 		count, _ := col.equalRowCount(types.NewIntDatum(1000), false)
-		assert.Equal(t, 0, int(count))
+		require.Equal(t, 0, int(count))
 		count = col.lessRowCount(types.NewIntDatum(1000))
-		assert.Equal(t, 10000, int(count))
+		require.Equal(t, 10000, int(count))
 		count = col.lessRowCount(types.NewIntDatum(2000))
-		assert.Equal(t, 19999, int(count))
+		require.Equal(t, 19999, int(count))
 		count = col.greaterRowCount(types.NewIntDatum(2000))
-		assert.Equal(t, 80000, int(count))
+		require.Equal(t, 80000, int(count))
 		count = col.lessRowCount(types.NewIntDatum(200000000))
-		assert.Equal(t, 100000, int(count))
+		require.Equal(t, 100000, int(count))
 		count = col.greaterRowCount(types.NewIntDatum(200000000))
-		assert.Equal(t, 0.0, count)
+		require.Equal(t, 0.0, count)
 		count, _ = col.equalRowCount(types.NewIntDatum(200000000), false)
-		assert.Equal(t, 0.0, count)
+		require.Equal(t, 0.0, count)
 		count = col.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
-		assert.Equal(t, 4994, int(count))
+		require.Equal(t, 4994, int(count))
 		count = col.lessRowCount(types.NewIntDatum(1))
-		assert.Equal(t, 5, int(count))
+		require.Equal(t, 5, int(count))
 
 		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true)
-		assert.NoError(t, err)
-		assert.NotNil(t, topnv2.TopN)
+		require.NoError(t, err)
+		require.NotNil(t, topnv2.TopN)
 		// The most common one's occurrence is 9990, the second most common one's occurrence is 30.
 		// The ndv of the histogram is 73344, the total count of it is 90010. 90010/73344 vs 30, it's not a bad estimate.
 		expectedTopNCount := []uint64{9990}
 		require.Equal(t, len(expectedTopNCount), len(topnv2.TopN))
 		for i, meta := range topnv2.TopN {
-			assert.Equal(t, expectedTopNCount[i], meta.Count)
+			require.Equal(t, expectedTopNCount[i], meta.Count)
 		}
-		assert.Equal(t, 251, colv2.Len())
+		require.Equal(t, 251, colv2.Len())
 		count = colv2.lessRowCount(types.NewIntDatum(1000))
-		assert.Equal(t, 328, int(count))
+		require.Equal(t, 328, int(count))
 		count = colv2.lessRowCount(types.NewIntDatum(2000))
-		assert.Equal(t, 10007, int(count))
+		require.Equal(t, 10007, int(count))
 		count = colv2.greaterRowCount(types.NewIntDatum(2000))
-		assert.Equal(t, 80001, int(count))
+		require.Equal(t, 80001, int(count))
 		count = colv2.lessRowCount(types.NewIntDatum(200000000))
-		assert.Equal(t, 90010, int(count))
+		require.Equal(t, 90010, int(count))
 		count = colv2.greaterRowCount(types.NewIntDatum(200000000))
-		assert.Equal(t, 0.0, count)
+		require.Equal(t, 0.0, count)
 		count = colv2.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
-		assert.Equal(t, 5001, int(count))
+		require.Equal(t, 5001, int(count))
 		count = colv2.lessRowCount(types.NewIntDatum(1))
-		assert.Equal(t, 0, int(count))
+		require.Equal(t, 0, int(count))
 
 		builder := SampleBuilder{
 			Sc:              mock.NewContext().GetSessionVars().StmtCtx,
@@ -163,37 +162,37 @@ func SubTestBuild(s *testStatisticsSuite) func(*testing.T) {
 		require.Equal(t, 250, col.Len())
 
 		tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, s.rc)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		checkRepeats(t, col)
 		col.PreCalculateScalar()
-		assert.Equal(t, 100000, int(tblCount))
+		require.Equal(t, 100000, int(tblCount))
 		count, _ = col.equalRowCount(encodeKey(types.NewIntDatum(10000)), false)
-		assert.Equal(t, 1, int(count))
+		require.Equal(t, 1, int(count))
 		count = col.lessRowCount(encodeKey(types.NewIntDatum(20000)))
-		assert.Equal(t, 19999, int(count))
+		require.Equal(t, 19999, int(count))
 		count = col.BetweenRowCount(encodeKey(types.NewIntDatum(30000)), encodeKey(types.NewIntDatum(35000)))
-		assert.Equal(t, 4999, int(count))
+		require.Equal(t, 4999, int(count))
 		count = col.BetweenRowCount(encodeKey(types.MinNotNullDatum()), encodeKey(types.NewIntDatum(0)))
-		assert.Equal(t, 0, int(count))
+		require.Equal(t, 0, int(count))
 		count = col.lessRowCount(encodeKey(types.NewIntDatum(0)))
-		assert.Equal(t, 0, int(count))
+		require.Equal(t, 0, int(count))
 
 		s.pk.(*recordSet).cursor = 0
 		tblCount, col, err = buildPK(ctx, bucketCount, 4, s.pk)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		checkRepeats(t, col)
 		col.PreCalculateScalar()
-		assert.Equal(t, 100000, int(tblCount))
+		require.Equal(t, 100000, int(tblCount))
 		count, _ = col.equalRowCount(types.NewIntDatum(10000), false)
-		assert.Equal(t, 1, int(count))
+		require.Equal(t, 1, int(count))
 		count = col.lessRowCount(types.NewIntDatum(20000))
-		assert.Equal(t, 20000, int(count))
+		require.Equal(t, 20000, int(count))
 		count = col.BetweenRowCount(types.NewIntDatum(30000), types.NewIntDatum(35000))
-		assert.Equal(t, 5000, int(count))
+		require.Equal(t, 5000, int(count))
 		count = col.greaterRowCount(types.NewIntDatum(1001))
-		assert.Equal(t, 98998, int(count))
+		require.Equal(t, 98998, int(count))
 		count = col.lessRowCount(types.NewIntDatum(99999))
-		assert.Equal(t, 99999, int(count))
+		require.Equal(t, 99999, int(count))
 
 		datum := types.Datum{}
 		datum.SetMysqlJSON(json.BinaryJSON{TypeCode: json.TypeCodeLiteral})
@@ -216,8 +215,8 @@ func SubTestHistogramProtoConversion(s *testStatisticsSuite) func(*testing.T) {
 		ctx := mock.NewContext()
 		require.NoError(t, s.rc.Close())
 		tblCount, col, _, err := buildIndex(ctx, 256, 1, s.rc)
-		assert.NoError(t, err)
-		assert.Equal(t, 100000, int(tblCount))
+		require.NoError(t, err)
+		require.Equal(t, 100000, int(tblCount))
 
 		p := HistogramToProto(col)
 		h := HistogramFromProto(p)
@@ -234,8 +233,8 @@ func SubTestIndexRanges(s *testStatisticsSuite) func(*testing.T) {
 		s.rc.(*recordSet).cursor = 0
 		rowCount, hg, cms, err := buildIndex(ctx, bucketCount, 0, s.rc)
 		hg.PreCalculateScalar()
-		assert.NoError(t, err)
-		assert.Equal(t, int64(100000), rowCount)
+		require.NoError(t, err)
+		require.Equal(t, int64(100000), rowCount)
 		idxInfo := &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}}
 		idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 		tbl := &Table{

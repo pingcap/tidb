@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -237,7 +236,7 @@ func SubTestColumnRange(s *testStatisticsSuite) func(*testing.T) {
 		}
 		hg, err := BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeLonglong))
 		hg.PreCalculateScalar()
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data), Info: &model.ColumnInfo{}}
 		tbl := &Table{
 			HistColl: HistColl{
@@ -308,8 +307,8 @@ func SubTestIntColumnRanges(s *testStatisticsSuite) func(*testing.T) {
 		s.pk.(*recordSet).cursor = 0
 		rowCount, hg, err := buildPK(ctx, bucketCount, 0, s.pk)
 		hg.PreCalculateScalar()
-		assert.NoError(t, err)
-		assert.Equal(t, int64(100000), rowCount)
+		require.NoError(t, err)
+		require.Equal(t, int64(100000), rowCount)
 		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}}
 		tbl := &Table{
 			HistColl: HistColl{
