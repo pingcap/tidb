@@ -952,6 +952,9 @@ type SessionVars struct {
 		curr int8
 		data [2]stmtctx.StatementContext
 	}
+
+	// EnableMutationChecker indicates whether to check data consistency for mutations
+	EnableMutationChecker bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
