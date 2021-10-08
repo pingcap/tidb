@@ -86,7 +86,7 @@ func (alloc *inMemoryAllocator) Alloc(ctx context.Context, n uint64, increment, 
 // Rebase implements autoid.Allocator Rebase interface.
 // The requiredBase is the minimum base value after Rebase.
 // The real base may be greater than the required base.
-func (alloc *inMemoryAllocator) Rebase(requiredBase int64, allocIDs bool) error {
+func (alloc *inMemoryAllocator) Rebase(ctx context.Context, requiredBase int64, allocIDs bool) error {
 	if alloc.isUnsigned {
 		if uint64(requiredBase) > uint64(alloc.base) {
 			alloc.base = requiredBase
