@@ -39,7 +39,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.Update(is))
 	statsTblT := h.GetTableStats(tblT.Meta())
 	// Analyze table with version 1 success, all statistics are version 1.
 	for _, col := range statsTblT.Columns {
@@ -51,20 +51,20 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
 		require.Equal(t, int64(1), idx.StatsVer)
 	}
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
 		require.Equal(t, int64(1), idx.StatsVer)
 	}
 	tk.MustExec("analyze table t ")
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
 		require.Equal(t, int64(2), col.StatsVer)
@@ -76,7 +76,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes"))
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
 		require.Equal(t, int64(2), idx.StatsVer)
@@ -84,13 +84,13 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes"))
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
 		require.Equal(t, int64(2), idx.StatsVer)
 	}
 	tk.MustExec("analyze table t ")
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
 		require.Equal(t, int64(1), col.StatsVer)
@@ -119,7 +119,7 @@ func TestFastAnalyzeOnVer2(t *testing.T) {
 	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.Update(is))
 	statsTblT := h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
 		require.Equal(t, int64(2), col.StatsVer)
@@ -139,7 +139,7 @@ func TestFastAnalyzeOnVer2(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.", err.Error())
 	tk.MustExec("analyze table t")
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, col := range statsTblT.Columns {
 		require.Equal(t, int64(1), col.StatsVer)
@@ -161,9 +161,9 @@ func TestIncAnalyzeOnVer2(t *testing.T) {
 	tk.MustExec("analyze table t with 2 topn")
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.Update(is))
 	tk.MustExec("insert into t values(2, 1), (2, 2), (2, 3), (3, 3), (4, 4), (4, 3), (4, 2), (4, 1)")
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.Update(is))
 	tk.MustExec("analyze incremental table t index idx with 2 topn")
 	// After analyze, there's two val in hist.
 	tk.MustQuery("show stats_buckets where table_name = 't' and column_name = 'idx'").Check(testkit.Rows(
@@ -209,12 +209,12 @@ func TestExpBackoffEstimation(t *testing.T) {
 	}
 
 	// The last case is that no column is loaded and we get no stats at all.
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/statistics/cleanEstResults", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/cleanEstResults", `return(true)`))
 	testdata.OnRecord(func() {
 		output[inputLen-1] = testdata.ConvertRowsToStrings(tk.MustQuery(input[inputLen-1]).Rows())
 	})
 	tk.MustQuery(input[inputLen-1]).Check(testkit.Rows(output[inputLen-1]...))
-	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/statistics/cleanEstResults"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/cleanEstResults"))
 }
 
 func TestGlobalStats(t *testing.T) {
@@ -333,7 +333,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.Update(is))
 	statsTblT := h.GetTableStats(tblT.Meta())
 	// Check the null count is 3.
 	for _, col := range statsTblT.Columns {

@@ -44,35 +44,35 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
-	require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19)) // 20 rows
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	is := dom.InfoSchema()
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.Update(is))
 	// To pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 1")
-	require.Nil(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms())
 
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 13)) // 34 rows
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
 	require.False(t, tk.HasPseudoStats("select * from t where a = 1"))
 
 	tk.MustExec("insert into t values (1)") // 35 rows
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
 	require.True(t, tk.HasPseudoStats("select * from t where a = 1"))
 
 	tk.MustExec("analyze table t")
 
 	tk.MustExec("delete from t limit 24") // 11 rows
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
 	require.False(t, tk.HasPseudoStats("select * from t where a = 1"))
 
 	tk.MustExec("delete from t limit 1") // 10 rows
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.Nil(t, h.Update(is))
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
 	require.True(t, tk.HasPseudoStats("select * from t where a = 1"))
 }
