@@ -1144,10 +1144,9 @@ func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
 	tk.MustExec("insert into t0 values('0000','7777',1)")
 	tk.MustExec("prepare s0 from 'select * from t0 where c1=? and c2>=? and c2<=?'")
 	tk.MustExec("set @a0='0000', @b0='9999'")
-	// TableDual plan would be built, we should not cache it.
+	// TableDual is forbidden for plan-cache, a TableReader be built and cached.
 	tk.MustQuery("execute s0 using @a0, @b0, @a0").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous TableDual plan.
 	tk.MustQuery("execute s0 using @a0, @a0, @b0").Check(testkit.Rows("0000 7777 1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -1155,10 +1154,9 @@ func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
 	tk.MustExec("insert into t1 values('0000','7777',1)")
 	tk.MustExec("prepare s1 from 'select * from t1 where c1=? and c2>=? and c2<=?'")
 	tk.MustExec("set @a1='0000', @b1='9999'")
-	// PointGet plan would be built, we should not cache it.
+	// IndexLookup plan would be built, we should cache it.
 	tk.MustQuery("execute s1 using @a1, @b1, @b1").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous PointGet plan.
 	tk.MustQuery("execute s1 using @a1, @a1, @b1").Check(testkit.Rows("0000 7777 1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -1166,10 +1164,9 @@ func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
 	tk.MustExec("insert into t2 values(1,'7777')")
 	tk.MustExec("prepare s2 from 'select * from t2 where c1>=? and c1<=?'")
 	tk.MustExec("set @a2=0, @b2=9")
-	// PointGet plan would be built, we should not cache it.
+	// TableReader plan would be built, we should cache it.
 	tk.MustQuery("execute s2 using @a2, @a2").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous PointGet plan.
 	tk.MustQuery("execute s2 using @a2, @b2").Check(testkit.Rows("1 7777"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -1177,19 +1174,17 @@ func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
 	tk.MustExec("insert into t3 values(2,1,1)")
 	tk.MustExec("prepare s3 from 'select /*+ use_index_merge(t3) */ * from t3 where (c1 >= ? and c1 <= ?) or c2 > 1'")
 	tk.MustExec("set @a3=1,@b3=3")
-	// PointGet partial plan would be built, we should not cache it.
+	// TableReader plan would be built, we should cache it.
 	tk.MustQuery("execute s3 using @a3,@a3").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous IndexMerge with partial PointGet plan.
 	tk.MustQuery("execute s3 using @a3,@b3").Check(testkit.Rows("2 1 1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec("prepare s3 from 'select /*+ use_index_merge(t3) */ * from t3 where (c1 >= ? and c1 <= ?) or c2 > 1'")
 	tk.MustExec("set @a3=1,@b3=3")
-	// TableDual partial plan would be built, we should not cache it.
+	// TableReader plan would be built, we should cache it.
 	tk.MustQuery("execute s3 using @b3,@a3").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous IndexMerge with partial TableDual plan.
 	tk.MustQuery("execute s3 using @a3,@b3").Check(testkit.Rows("2 1 1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
@@ -1197,19 +1192,17 @@ func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
 	tk.MustExec("insert into t4 values(2,1,1)")
 	tk.MustExec("prepare s4 from 'select /*+ use_index_merge(t4) */ * from t4 where (c1 >= ? and c1 <= ?) or c2 > 1'")
 	tk.MustExec("set @a4=1,@b4=3")
-	// PointGet partial plan would be built, we should not cache it.
+	// IndexMerge plan would be built, we should not cache it.
 	tk.MustQuery("execute s4 using @a4,@a4").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous IndexMerge with partial PointGet plan.
 	tk.MustQuery("execute s4 using @a4,@b4").Check(testkit.Rows("2 1 1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	tk.MustExec("prepare s4 from 'select /*+ use_index_merge(t4) */ * from t4 where (c1 >= ? and c1 <= ?) or c2 > 1'")
 	tk.MustExec("set @a4=1,@b4=3")
-	// TableDual partial plan would be built, we should not cache it.
+	// IndexMerge plan would be built, we should not cache it.
 	tk.MustQuery("execute s4 using @b4,@a4").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous IndexMerge with partial TableDual plan.
 	tk.MustQuery("execute s4 using @a4,@b4").Check(testkit.Rows("2 1 1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
