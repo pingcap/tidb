@@ -661,6 +661,10 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 72}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 72)}, cancelState: model.StateWriteOnly},
 		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 73}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 73)}, cancelState: model.StateDeleteOnly},
 		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 74}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 74)}, cancelState: model.StateWriteReorganization},
+
+		// for alter db placement
+		{act: model.ActionModifySchemaDefaultPlacement, jobIDs: []int64{firstID + 75}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionModifySchemaDefaultPlacement, jobIDs: []int64{firstID + 76}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 76)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -836,19 +840,19 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	// When the job satisfies this test case, the option will be rollback, so the job's schema state is none.
 	cancelState := model.StateNone
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[1])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[2])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[3])
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "idx", "c2")
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Commit(context.Background()), IsNil)
@@ -868,22 +872,22 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 
 	addColumnArgs := []interface{}{col, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, false)
 
 	updateTest(&tests[5])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, false)
 
 	updateTest(&tests[6])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, false)
 
 	updateTest(&tests[7])
 	testAddColumn(c, ctx, d, dbInfo, tblInfo, addColumnArgs)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, true)
 
 	// for create table
@@ -905,28 +909,28 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	dropColName := "c3"
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, false)
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, true)
 
 	updateTest(&tests[11])
 	dropColName = "c4"
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, false)
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, true)
 
 	updateTest(&tests[12])
 	dropColName = "c5"
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, false)
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, true)
 
 	// cancel rebase auto id
 	updateTest(&tests[13])
 	rebaseIDArgs := []interface{}{int64(200)}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, rebaseIDArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	changedTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(changedTable.Meta().AutoIncID, Equals, tableAutoID)
 
@@ -1071,19 +1075,19 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 		}}, nil}
 	cancelState = model.StateNone
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddPrimaryKey, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[30])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddPrimaryKey, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[31])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddPrimaryKey, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[32])
 	testCreatePrimaryKey(c, ctx, d, dbInfo, tblInfo, "c1")
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Commit(context.Background()), IsNil)
@@ -1092,11 +1096,11 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	// for dropping primary key
 	updateTest(&tests[33])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropPrimaryKey, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkDropIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[34])
 	testDropIndex(c, ctx, d, dbInfo, tblInfo, idxOrigName)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkDropIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, true)
 
 	// for add columns
@@ -1122,22 +1126,22 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 
 	addColumnArgs = []interface{}{cols, positions, offsets, ifNotExists}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, false)
 
 	updateTest(&tests[36])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, false)
 
 	updateTest(&tests[37])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, false)
 
 	updateTest(&tests[38])
 	testAddColumns(c, ctx, d, dbInfo, tblInfo, addColumnArgs)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, true)
 
 	// for drop columns
@@ -1145,27 +1149,27 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	dropColNames := []string{"colA", "colB"}
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, false)
 	testDropColumns(c, ctx, d, dbInfo, tblInfo, dropColNames, false)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, true)
 
 	updateTest(&tests[40])
 	dropColNames = []string{"colC", "colD"}
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, false)
 	testDropColumns(c, ctx, d, dbInfo, tblInfo, dropColNames, false)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, true)
 
 	updateTest(&tests[41])
 	dropColNames = []string{"colE", "colF"}
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, false)
 	testDropColumns(c, ctx, d, dbInfo, tblInfo, dropColNames, false)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, true)
 
 	// test alter index visibility failed caused by canceled.
 	indexName := "idx_c3"
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, indexName, "c3")
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Commit(context.Background()), IsNil)
