@@ -786,9 +786,13 @@ func TestTempTableBinlog(t *testing.T) {
 	require.True(t, ok)
 }
 
-func (s *testBinlogSuite) TestIssue28292(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().BinlogClient = s.client
+func TestIssue28292(t *testing.T) {
+	s, clean := createBinlogSuite(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().BinlogClient = s.client
 	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
 	tk.MustExec(`CREATE TABLE xxx (
 machine_id int(11) DEFAULT NULL,
