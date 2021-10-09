@@ -1535,11 +1535,11 @@ func (s *testSerialSuite) TestPartitionSpillingAgg(c *C) {
 	// Test only some partitions may be spilled.
 	for _, i := range partition1 {
 		sql += fmt.Sprintf(",(%v)", i)
-		partitions = append(partitions, strconv.Itoa(int(i))+".0000")
+		partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
 	}
 	for _, i := range partition3 {
 		sql += fmt.Sprintf(",(%v)", i)
-		partitions = append(partitions, strconv.Itoa(int(i))+".0000")
+		partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
 	}
 	sort.Strings(partitions)
 	sql += ";"
@@ -1577,11 +1577,11 @@ func (s *testSerialSuite) TestPartitionSpillingAgg(c *C) {
 	}
 	for _, i := range partition0 {
 		sql += fmt.Sprintf(",(%v)", i)
-		partitions = append(partitions, strconv.Itoa(int(i))+".0000")
+		partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
 	}
 	for _, i := range partition2 {
 		sql += fmt.Sprintf(",(%v)", i)
-		partitions = append(partitions, strconv.Itoa(int(i))+".0000")
+		partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
 	}
 	sort.Strings(partitions)
 	sql += ";"
@@ -1607,8 +1607,8 @@ func (s *testSerialSuite) TestPartitionSpillingAgg(c *C) {
 	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t group by c1;").Check(testkit.Rows())
 }
 
-func generatePartN(n int, num int) []int32 {
-	data := make([]int32, 0, num)
+func generatePartN(n int, num int) []int64 {
+	data := make([]int64, 0, num)
 	for i := 0; i < num; {
 		s := rand.Int31()
 		sc := &stmtctx.StatementContext{TimeZone: time.Local}
@@ -1624,7 +1624,7 @@ func generatePartN(n int, num int) []int32 {
 		}
 		hashVal := int(farm.Hash32(key[0])) % 4
 		if hashVal == n {
-			data = append(data, s)
+			data = append(data, int64(s))
 			i++
 		}
 	}
