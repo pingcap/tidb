@@ -2526,7 +2526,7 @@ func TestGrantEvent(t *testing.T) {
 	tk.MustExec("CREATE DATABASE event_db")
 	tk.MustExec("USE event_db")
 	tk.MustExec("CREATE USER u1")
-	tk.MustExec("CREATE TABLE grant_event_able (a int)")
+	tk.MustExec("CREATE TABLE event_table (a int)")
 	tk.MustExec("GRANT EVENT on event_db.* to u1")
 	tk.MustExec("GRANT EVENT on *.* to u1")
 	// Must set a session user to avoid null pointer dereferencing
@@ -2550,10 +2550,10 @@ func TestGrantRoutine(t *testing.T) {
 	tk.MustExec("CREATE DATABASE routine_db")
 	tk.MustExec("USE routine_db")
 	tk.MustExec("CREATE USER u1")
-	tk.MustExec("CREATE TABLE grant_routine_able (a int)")
-	tk.MustExec("GRANT CREATE ROUTINE on event_db.* to u1")
+	tk.MustExec("CREATE TABLE routine_table (a int)")
+	tk.MustExec("GRANT CREATE ROUTINE on routine_db.* to u1")
 	tk.MustExec("GRANT CREATE ROUTINE on *.* to u1")
-	tk.MustExec("GRANT ALTER ROUTINE on event_db.* to u1")
+	tk.MustExec("GRANT ALTER ROUTINE on routine_db.* to u1")
 	tk.MustExec("GRANT ALTER ROUTINE on *.* to u1")
 	// Must set a session user to avoid null pointer dereferencing
 	tk.Session().Auth(&auth.UserIdentity{
@@ -2562,7 +2562,7 @@ func TestGrantRoutine(t *testing.T) {
 	}, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
 		`GRANT CREATE ROUTINE,ALTER ROUTINE ON *.* TO 'u1'@'%'`,
-		`GRANT CREATE ROUTINE,ALTER ROUTINE ON event_db.* TO 'u1'@'%'`))
+		`GRANT CREATE ROUTINE,ALTER ROUTINE ON routine_db.* TO 'u1'@'%'`))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE routine_db")
 }
