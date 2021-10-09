@@ -64,7 +64,7 @@ func maxlen(lhsFlen, rhsFlen int) int {
 }
 
 // InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, LEAD and LAG.
-func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
+func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp Expression) (*types.FieldType, error) {
 	lhs, rhs := lexp.GetType(), rexp.GetType()
 	resultFieldType := &types.FieldType{}
 	if lhs.Tp == mysql.TypeNull {
@@ -94,15 +94,21 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 		}
 
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
-			collation := inferCollation(lexp, rexp)
-			resultFieldType.Collate, resultFieldType.Charset = collation.Collation, collation.Charset
+			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
+			if err != nil {
+				return nil, err
+			}
+			resultFieldType.Collate, resultFieldType.Charset = ec.Collation, ec.Charset
 			resultFieldType.Flag = 0
 			if mysql.HasBinaryFlag(lhs.Flag) || !types.IsNonBinaryStr(rhs) {
 				resultFieldType.Flag |= mysql.BinaryFlag
 			}
 		} else if types.IsNonBinaryStr(rhs) && !types.IsBinaryStr(lhs) {
-			collation := inferCollation(lexp, rexp)
-			resultFieldType.Collate, resultFieldType.Charset = collation.Collation, collation.Charset
+			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
+			if err != nil {
+				return nil, err
+			}
+			resultFieldType.Collate, resultFieldType.Charset = ec.Collation, ec.Charset
 			resultFieldType.Flag = 0
 			if mysql.HasBinaryFlag(rhs.Flag) || !types.IsNonBinaryStr(lhs) {
 				resultFieldType.Flag |= mysql.BinaryFlag
@@ -150,7 +156,7 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 			resultFieldType.Tp = mysql.TypeVarchar
 		}
 	}
-	return resultFieldType
+	return resultFieldType, nil
 }
 
 type caseWhenFunctionClass struct {
@@ -519,7 +525,10 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	retTp := InferType4ControlFuncs(args[1], args[2])
+	retTp, err := InferType4ControlFuncs(ctx, c.funcName, args[1], args[2])
+	if err != nil {
+		return nil, err
+	}
 	evalTps := retTp.EvalType()
 	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
 	if err != nil {
@@ -713,7 +722,10 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	lhs, rhs := args[0].GetType(), args[1].GetType()
-	retTp := InferType4ControlFuncs(args[0], args[1])
+	retTp, err := InferType4ControlFuncs(ctx, c.funcName, args[0], args[1])
+	if err != nil {
+		return nil, err
+	}
 	retTp.Flag |= (lhs.Flag & mysql.NotNullFlag) | (rhs.Flag & mysql.NotNullFlag)
 	if lhs.Tp == mysql.TypeNull && rhs.Tp == mysql.TypeNull {
 		retTp.Tp = mysql.TypeNull
