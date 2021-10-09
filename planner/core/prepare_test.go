@@ -1186,7 +1186,7 @@ func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
 	tk.MustQuery("execute s3 using @b3,@a3").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute s3 using @a3,@b3").Check(testkit.Rows("2 1 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec("create table t4(c1 int primary key, c2 int, c3 int, key(c2))")
 	tk.MustExec("insert into t4 values(2,1,1)")
