@@ -121,5 +121,5 @@ func TestSlowQueryLoggerCreation(t *testing.T) {
 	// assert after init slow query logger, the original conf is not changed
 	require.Equal(t, conf.Level, level)
 	require.Nil(t, err)
-	require.Equal(t, prop.Level.String(), conf.Level)
+	require.Equal(t, prop.Level.String(), zap.DebugLevel.String())
 }

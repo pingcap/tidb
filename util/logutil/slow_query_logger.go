@@ -32,6 +32,10 @@ func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error)
 	// copy global config and override slow query log file
 	// if slow query log filename is empty, slow query log will behave the same as global log
 	sqConfig := cfg.Config
+	// enable/disable of slow logger is controlled by different configs, not the level of global logger
+	// the level of slow logger should always be "debug"
+	sqConfig.Level = zap.DebugLevel.String()
+	// file config
 	if len(cfg.SlowQueryFile) != 0 {
 		sqConfig.File = log.FileLogConfig{
 			MaxSize:  cfg.File.MaxSize,
