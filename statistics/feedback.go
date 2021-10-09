@@ -762,6 +762,8 @@ func UpdateHistogram(h *Histogram, feedback *QueryFeedback, statsVer int) *Histo
 	return UpdateHistogramWithBucketCount(h, feedback, statsVer, defaultBucketCount)
 }
 
+// UpdateHistogramWithBucketCount updates the histogram according buckets with customized
+// bucketCount for testing.
 func UpdateHistogramWithBucketCount(h *Histogram, feedback *QueryFeedback, statsVer int, bucketCount int) *Histogram {
 	if statsVer < Version2 {
 		// If it's the stats we haven't maintained the bucket NDV yet. Reset the ndv.
