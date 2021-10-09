@@ -2886,6 +2886,10 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			preparedParams:  sessVars.PreparedParams,
 			enableRedactLog: sessVars.EnableRedactLog,
 		}
+		_, ok := execStmt.StmtNode.(ast.SensitiveStmtNode)
+		if !isPrepared && !sessVars.EnableRedactLog && !ok {
+			logEntry.Query.originalSQL = string(sessVars.StmtCtx.OriginalSQL)
+		}
 
 		putGeneralLogOrDrop(logEntry)
 	}

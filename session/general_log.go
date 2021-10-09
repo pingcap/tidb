@@ -101,6 +101,7 @@ type generalLogEntry struct {
 type generalLogEntryQuery struct {
 	isPrepared      bool
 	originalText    string
+	originalSQL     string
 	stmtNode        ast.StmtNode
 	stmtCtx         *stmtctx.StatementContext
 	preparedParams  variable.PreparedParams
@@ -146,7 +147,7 @@ func (gl *generalLogger) logEntry(e *generalLogEntry) {
 		} else if sensitiveStmt, ok := q.stmtNode.(ast.SensitiveStmtNode); ok {
 			buf.WriteString(sensitiveStmt.SecureText())
 		} else {
-			buf.WriteString(q.stmtCtx.OriginalSQL)
+			buf.WriteString(q.originalSQL)
 			buf.WriteString(q.preparedParams.String())
 		}
 	}
