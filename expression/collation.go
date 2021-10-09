@@ -230,7 +230,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		if err != nil {
 			return nil, err
 		}
-		ec.Coer = CoercibilityCoercible
+		ec.Coer = CoercibilityNumeric
 		ec.Repe = ASCII
 		return ec, nil
 	case ast.In:
@@ -241,9 +241,11 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		charsetInfo, collation := ctx.GetSessionVars().GetCharsetInfo()
 		return &ExprCollation{args[1].Coercibility(), args[1].Repertoire(), charsetInfo, collation}, nil
 	case ast.Cast:
-		// we assume all the cast are implicit.
-		ec = &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), charset.CharsetBin, charset.CollationBin}
-		if retType == types.ETString {
+		// We assume all the cast are implicit.
+		ec = &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), args[0].GetType().Charset, args[0].GetType().Collate}
+		// Non-string type cast to string type should use @@character_set_connection and @@collation_connection.
+		// String type cast to string type should keep its original charset and collation. It should not happen.
+		if retType == types.ETString && argTps[0] != types.ETString {
 			ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
 		}
 		return ec, nil
@@ -254,7 +256,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		chs, coll := charset.GetDefaultCharsetAndCollate()
 		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil
 	case ast.Format:
-		// format function should return ASCII repertoire, MySQL's doc says it depend on character_set_connection, but it not ture from its source code.
+		// Format function should return ASCII repertoire, MySQL's doc says it depend on character_set_connection, but it not ture from its source code.
 		ec = &ExprCollation{Coer: CoercibilityCoercible, Repe: ASCII}
 		ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
 		return ec, nil

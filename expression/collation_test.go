@@ -546,10 +546,100 @@ func TestDeriveCollation(t *testing.T) {
 				newColString(charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
 				newColString(charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
 			},
-			[]types.EvalType{types.ETString, types.ETString},
+			[]types.EvalType{types.ETInt, types.ETString, types.ETString},
 			types.ETString,
 			false,
 			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Concat, ast.ConcatWS, ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote, ast.Coalesce, ast.In,
+			},
+			[]Expression{
+				newConstString("a", CoercibilityCoercible, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
+				newColString(charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
+				newColString(charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
+			},
+			[]types.EvalType{types.ETInt, types.ETString, types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.If,
+			},
+			[]Expression{
+				newColInt(CoercibilityExplicit),
+				newColString(charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
+				newColString(charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
+			},
+			[]types.EvalType{types.ETInt, types.ETString, types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Like,
+			},
+			[]Expression{
+				newColString(charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
+				newConstString("like", CoercibilityExplicit, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
+				newConstString("\\", CoercibilityExplicit, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
+			},
+			[]types.EvalType{types.ETString, types.ETString, types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityNumeric, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.DateFormat, ast.TimeFormat,
+			},
+			[]Expression{
+				newConstString("2020-02-02", CoercibilityExplicit, charset.CharsetUTF8MB4, "utf8mb4_general_ci"),
+				newConstString("%Y %M %D", CoercibilityExplicit, charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
+			},
+			[]types.EvalType{types.ETDatetime, types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityExplicit, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.DateFormat, ast.TimeFormat,
+			},
+			[]Expression{
+				newConstString("2020-02-02", CoercibilityExplicit, charset.CharsetUTF8MB4, "utf8mb4_general_ci"),
+				newConstString("%Y %M %D", CoercibilityCoercible, charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
+			},
+			[]types.EvalType{types.ETDatetime, types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityCoercible, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion,
+			},
+			[]Expression{},
+			[]types.EvalType{},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilitySysconst, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Cast,
+			},
+			[]Expression{
+				newColInt(CoercibilityExplicit),
+			},
+			[]types.EvalType{types.ETInt},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityExplicit, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 	}
 
