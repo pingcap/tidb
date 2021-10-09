@@ -19,9 +19,6 @@ import (
 	"fmt"
 	"runtime/trace"
 
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -229,30 +226,16 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			if err != nil {
 				return nil, err
 			}
-			checkKey1 := tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
-			if _, err := us.memBufSnap.Get(context.TODO(), checkKey1); err == nil {
+			checkKey := tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
+			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
 				continue
 			}
-			iter, err := us.memBuf.Iter([]byte("t"), []byte("u"))
-			s := ""
-			if err == nil {
-				for {
-					if !iter.Valid() {
-						break
-					}
-					s = fmt.Sprintf("%s-(%v, %v)", s, iter.Key(), iter.Value())
-					iter.Next()
-				}
-			}
-			logutil.BgLogger().Info("MYLOG check key",
-				zap.String("k1", fmt.Sprintf("%v", checkKey1)),
-				zap.String("iter result", s))
 			// Though the handle does not appear in added rows,
 			// there may be still some conflicts on unique indexes when common handle is not enabled.
 			// UnionScan with two records which have same primary index is weird which should be handled here.
 			// The newly added rows will overwrite the snapshot rows.
 			// FIXME: For optimistic transaction, it's better to handle the conflict on unique indexes when execute the DMLs instead of handling here.
-			if !us.table.Meta().IsCommonHandle {
+			if isPessimistic && !us.table.Meta().IsCommonHandle {
 				cols := us.table.Meta().Columns
 				if datumCols == nil {
 					datumCols = make(map[int64]struct {

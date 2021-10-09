@@ -35,7 +35,7 @@ func (f KeyFlags) HasNeedLocked() bool {
 
 // HasReadable returns whether the in-transaction operations is able to read the key.
 func (f KeyFlags) HasReadable() bool {
-	return f&flagReadable == 0
+	return f&flagReadable != 0
 }
 
 // FlagsOp describes KeyFlags modify operation.
@@ -56,10 +56,10 @@ func ApplyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 		switch op {
 		case SetPresumeKeyNotExists:
 			origin |= flagPresumeKNE
-		case SetReadable:
-			origin |= flagReadable
 		case SetNeedLocked:
 			origin |= flagNeedLocked
+		case SetReadable:
+			origin |= flagReadable
 		}
 	}
 	return origin
