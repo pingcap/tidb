@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -250,6 +251,10 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 // Next implements the Executor Next interface.
 func (e *ReplaceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
+	if e.collectRuntimeStatsEnabled() {
+		ctx = context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)
+	}
+
 	if len(e.children) > 0 && e.children[0] != nil {
 		return insertRowsFromSelect(ctx, e)
 	}
