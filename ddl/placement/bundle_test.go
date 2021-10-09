@@ -789,7 +789,7 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	})
 
 	for _, t := range tests {
-		bundle, err := NewBundleFromOptions(t.input)
+		bundle, err := newBundleFromOptions(t.input)
 		comment := Commentf("[%s]\nerr1 %s\nerr2 %s", t.name, err, t.err)
 		if t.err != nil {
 			c.Assert(errors.Is(err, t.err), IsTrue, comment)
@@ -800,7 +800,7 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	}
 }
 
-func (s *testBundleSuite) TestReset(c *C) {
+func (s *testBundleSuite) TestResetBundleWithSingleRule(c *C) {
 	bundle := &Bundle{
 		ID: GroupID(1),
 	}
@@ -809,8 +809,10 @@ func (s *testBundleSuite) TestReset(c *C) {
 	c.Assert(err, IsNil)
 	bundle.Rules = rules
 
-	bundle.Reset(3)
+	bundle.Reset(RuleIndexTable, []int64{3})
 	c.Assert(bundle.ID, Equals, GroupID(3))
+	c.Assert(bundle.Override, Equals, true)
+	c.Assert(bundle.Index, Equals, RuleIndexTable)
 	c.Assert(bundle.Rules, HasLen, 1)
 	c.Assert(bundle.Rules[0].GroupID, Equals, bundle.ID)
 
@@ -819,6 +821,100 @@ func (s *testBundleSuite) TestReset(c *C) {
 
 	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(4)))
 	c.Assert(bundle.Rules[0].EndKeyHex, Equals, endKey)
+}
+
+func (s *testBundleSuite) TestResetBundleWithMultiRules(c *C) {
+	// build a bundle with three rules.
+	bundle, err := NewBundleFromOptions(&model.PlacementSettings{
+		LeaderConstraints:   `["+zone=bj"]`,
+		Followers:           2,
+		FollowerConstraints: `["+zone=hz"]`,
+		Learners:            1,
+		LearnerConstraints:  `["+zone=cd"]`,
+		Constraints:         `["+disk=ssd"]`,
+	})
+	c.Assert(err, IsNil)
+	c.Assert(len(bundle.Rules), Equals, 3)
+
+	// test if all the three rules are basic rules even the start key are not set.
+	bundle.Reset(RuleIndexTable, []int64{1, 2, 3})
+	c.Assert(bundle.ID, Equals, GroupID(1))
+	c.Assert(bundle.Index, Equals, RuleIndexTable)
+	c.Assert(bundle.Override, Equals, true)
+	c.Assert(len(bundle.Rules), Equals, 3*3)
+	// for id 1.
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(1)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2)))
+	c.Assert(bundle.Rules[0].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[0].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[1].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[1].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[2].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[2].EndKeyHex, Equals, endKey)
+	// for id 2.
+	startKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2)))
+	endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(3)))
+	c.Assert(bundle.Rules[3].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[3].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[4].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[4].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[5].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[5].EndKeyHex, Equals, endKey)
+	// for id 3.
+	startKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(3)))
+	endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(4)))
+	c.Assert(bundle.Rules[6].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[6].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[7].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[7].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[8].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[8].EndKeyHex, Equals, endKey)
+
+	// test if bundle has redundant rules.
+	// for now, the bundle has 9 rules, each table id or partition id has the three with them.
+	// once we reset this bundle for another ids, for example, adding partitions. we should
+	// extend the basic rules(3 of them) to the new partition id.
+	bundle.Reset(RuleIndexTable, []int64{1, 3, 4, 5})
+	c.Assert(bundle.ID, Equals, GroupID(1))
+	c.Assert(bundle.Index, Equals, RuleIndexTable)
+	c.Assert(bundle.Override, Equals, true)
+	c.Assert(len(bundle.Rules), Equals, 3*4)
+	// for id 1.
+	startKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(1)))
+	endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2)))
+	c.Assert(bundle.Rules[0].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[0].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[1].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[1].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[2].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[2].EndKeyHex, Equals, endKey)
+	// for id 3.
+	startKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(3)))
+	endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(4)))
+	c.Assert(bundle.Rules[3].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[3].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[4].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[4].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[5].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[5].EndKeyHex, Equals, endKey)
+	// for id 4.
+	startKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(4)))
+	endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(5)))
+	c.Assert(bundle.Rules[6].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[6].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[7].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[7].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[8].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[8].EndKeyHex, Equals, endKey)
+	// for id 5.
+	startKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(5)))
+	endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(6)))
+	c.Assert(bundle.Rules[9].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[9].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[10].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[10].EndKeyHex, Equals, endKey)
+	c.Assert(bundle.Rules[11].StartKeyHex, Equals, startKey)
+	c.Assert(bundle.Rules[11].EndKeyHex, Equals, endKey)
 }
 
 func (s *testBundleSuite) TestTidy(c *C) {

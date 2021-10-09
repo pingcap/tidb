@@ -361,7 +361,7 @@ func (tk *TestKit) MustPointGet(sql string, args ...interface{}) *Result {
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	comment := check.Commentf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(sql, args...)
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Assert(err, check.IsNil, comment)
 	tk.c.Assert(rs, check.NotNil, comment)
 	return tk.ResultSetToResult(rs, comment)
 }
@@ -371,7 +371,7 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 func (tk *TestKit) MayQuery(sql string, args ...interface{}) *Result {
 	comment := check.Commentf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(sql, args...)
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Assert(err, check.IsNil, comment)
 	if rs == nil {
 		var emptyStringAoA [][]string
 		return &Result{rows: emptyStringAoA, c: tk.c, comment: comment}
@@ -383,7 +383,7 @@ func (tk *TestKit) MayQuery(sql string, args ...interface{}) *Result {
 func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
 	comment := check.Commentf("sql:%s, args:%v", sql, args)
 	res, err := tk.Exec(sql, args...)
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Assert(err, check.IsNil, comment)
 	tk.c.Assert(res, check.NotNil, comment)
 	_, resErr := session.GetRows4Test(context.Background(), tk.Se, res)
 	tk.c.Assert(res.Close(), check.IsNil)
@@ -426,7 +426,7 @@ func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.Comment
 // ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
 func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
 	sRows, err := session.ResultSetToStringSlice(ctx, tk.Se, rs)
-	tk.c.Check(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Check(err, check.IsNil, comment)
 	return &Result{rows: sRows, c: tk.c, comment: comment}
 }
 
