@@ -751,11 +751,7 @@ func (b *builtinLowerSig) evalString(row chunk.Row) (d string, isNull bool, err 
 		return d, isNull, err
 	}
 
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return d, false, nil
-	}
-
-	return strings.ToLower(d), false, nil
+	return d, false, nil
 }
 
 type reverseFunctionClass struct {
