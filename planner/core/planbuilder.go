@@ -2362,11 +2362,13 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			isView = table.Meta().IsView()
 			isSequence = table.Meta().IsSequence()
 		}
+		user := b.ctx.GetSessionVars().User
 		if isView {
-			err = ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
+			if user != nil {
+				err = ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 		} else {
-			user := b.ctx.GetSessionVars().User
 			if user != nil {
 				err = ErrTableaccessDenied.GenWithStackByArgs("SHOW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
 			}
@@ -2376,10 +2378,15 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		privErr := ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
 	case ast.ShowCreateView:
-		// SHOW CREATE VIEW needs SHOW VIEW + any other privilege
-		err := ErrSpecificAccessDenied.GenWithStackByArgs("SELECT")
+		var err error
+		user := b.ctx.GetSessionVars().User
+		if user != nil {
+			err = ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
-		err = ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
+		if user != nil {
+			err = ErrTableaccessDenied.GenWithStackByArgs("SHOW VIEW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 	case ast.ShowBackups:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or BACKUP_ADMIN")

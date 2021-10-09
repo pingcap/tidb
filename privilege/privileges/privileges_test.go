@@ -578,30 +578,50 @@ func TestShowViewPriv(t *testing.T) {
 		userName     string
 		showViewErr  string
 		showTableErr string
+		explainErr   string
+		explainRes   string
+		descErr      string
+		descRes      string
 		tablesNum    string
 		columnsNum   string
 	}{
 		{"vnobody",
-			"[planner:1227]Access denied; you need (at least one of) the SELECT privilege(s) for this operation",
-			"[planner:1227]Access denied; you need (at least one of) the SHOW VIEW privilege(s) for this operation",
+			"[planner:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"[planner:1142]SHOW VIEW command denied to user 'vnobody'@'%' for table 'v'",
+			"[executor:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"",
+			"[executor:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"",
 			"0",
 			"0",
 		},
 		{"vshowview",
-			"[planner:1227]Access denied; you need (at least one of) the SELECT privilege(s) for this operation",
+			"[planner:1142]SELECT command denied to user 'vshowview'@'%' for table 'v'",
+			"",
+			"",
+			"",
+			"",
 			"",
 			"1",
 			"0",
 		},
 		{"vselect",
-			"[planner:1227]Access denied; you need (at least one of) the SHOW VIEW privilege(s) for this operation",
-			"[planner:1227]Access denied; you need (at least one of) the SHOW VIEW privilege(s) for this operation",
+			"[planner:1142]SHOW VIEW command denied to user 'vselect'@'%' for table 'v'",
+			"[planner:1142]SHOW VIEW command denied to user 'vselect'@'%' for table 'v'",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"",
+			"1 bigint(1) NO  <nil> ",
 			"1",
 			"1",
 		},
 		{"vshowandselect",
 			"",
 			"",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"",
+			"1 bigint(1) NO  <nil> ",
 			"1",
 			"1",
 		},
@@ -611,7 +631,6 @@ func TestShowViewPriv(t *testing.T) {
 		tk.Session().Auth(&auth.UserIdentity{Username: test.userName, Hostname: "localhost"}, nil, nil)
 		err := tk.ExecToErr("SHOW CREATE VIEW test.v")
 		if test.showViewErr != "" {
-			// The error message is different from MySQL.
 			require.EqualError(t, err, test.showViewErr, test)
 		} else {
 			require.NoError(t, err, test)
@@ -622,8 +641,22 @@ func TestShowViewPriv(t *testing.T) {
 		} else {
 			require.NoError(t, err, test)
 		}
+		if test.explainErr != "" {
+			err = tk.QueryToErr("explain test.v")
+			require.EqualError(t, err, test.explainErr, test)
+		} else {
+			// TODO: expecting empty set but got one row for vshowview.
+			// tk.MustQuery("explain test.v").Check(testkit.Rows(test.explainRes))
+		}
+		if test.descErr != "" {
+			err = tk.QueryToErr("explain test.v")
+			require.EqualError(t, err, test.descErr, test)
+		} else {
+			// TODO: expecting empty set but got one row for vshowview.
+			// tk.MustQuery("desc test.v").Check(testkit.Rows(test.descRes))
+		}
 		tk.MustQuery("select count(*) from information_schema.tables where table_schema='test' and table_name='v'").Check(testkit.Rows(test.tablesNum))
-		// TODO: expected 0 but got 1 for vshowview.
+		// TODO: expecting 0 but got 1 for vshowview.
 		// tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows(test.columnsNum))
 	}
 }
