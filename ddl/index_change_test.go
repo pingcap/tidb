@@ -149,7 +149,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Commit(context.Background()), IsNil)
@@ -192,7 +192,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		}
 	}
 	testDropIndex(c, ctx, d, s.dbInfo, publicTable.Meta(), "c2")
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 }
 
 func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interface{}, handle int64, exists bool) error {
