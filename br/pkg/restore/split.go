@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/tikv/pd/pkg/codec"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -277,22 +279,62 @@ func (rs *RegionSplitter) splitAndScatterRegions(
 	return newRegions, nil
 }
 
+// ScatterRegionsWithBackoffer scatter the region with some backoffer.
+// This function is for testing the retry mechanism.
+// For a real cluster, directly use ScatterRegions would be fine.
+func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRegions []*RegionInfo, backoffer utils.Backoffer) {
+	newRegionSet := make(map[uint64]*RegionInfo, len(newRegions))
+	for _, newRegion := range newRegions {
+		newRegionSet[newRegion.Region.Id] = newRegion
+	}
+
+	if err := utils.WithRetry(ctx, func() error {
+		log.Info("trying to scatter regions...", zap.Int("remain", len(newRegionSet)))
+		var errs error
+		for _, region := range newRegionSet {
+			// Wait for a while until the regions successfully split.
+			rs.waitForSplit(ctx, region.Region.Id)
+			err := rs.client.ScatterRegion(ctx, region)
+			if err == nil {
+				// it is safe accroding to the Go language spec.
+				delete(newRegionSet, region.Region.Id)
+			} else if !pdErrorCanRetry(err) {
+				log.Warn("scatter meet error cannot be retried, skipping",
+					logutil.ShortError(err),
+					logutil.Region(region.Region),
+				)
+				delete(newRegionSet, region.Region.Id)
+			}
+			errs = multierr.Append(errs, err)
+		}
+		return errs
+	}, backoffer); err != nil {
+		log.Warn("Some regions haven't been scattered because errors.",
+			zap.Int("count", len(newRegionSet)),
+			// if all region are failed to scatter, the short error might also be verbose...
+			logutil.ShortError(err),
+			logutil.AbbreviatedArray("failed-regions", newRegionSet, func(i interface{}) []string {
+				m := i.(map[uint64]*RegionInfo)
+				result := make([]string, len(m))
+				for id := range m {
+					result = append(result, strconv.Itoa(int(id)))
+				}
+				return result
+			}),
+		)
+	}
+
+}
+
 // ScatterRegions scatter the regions.
 func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*RegionInfo) {
-	for _, region := range newRegions {
-		// Wait for a while until the regions successfully split.
-		rs.waitForSplit(ctx, region.Region.Id)
-		if err := utils.WithRetry(ctx,
-			func() error { return rs.client.ScatterRegion(ctx, region) },
-			// backoff about 6s, or we give up scattering this region.
-			&scatterBackoffer{
-				attempt:     7,
-				baseBackoff: 100 * time.Millisecond,
-			},
-		); err != nil {
-			log.Warn("scatter region failed, stop retry", logutil.Region(region.Region), zap.Error(err))
-		}
-	}
+	rs.ScatterRegionsWithBackoffer(
+		ctx, newRegions,
+		// backoff about 6s, or we give up scattering this region.
+		&exponentialBackoffer{
+			attempt:     7,
+			baseBackoff: 100 * time.Millisecond,
+		})
 }
 
 func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
