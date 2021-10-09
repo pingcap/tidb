@@ -232,10 +232,14 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			}
 			// Though the handle does not appear in added rows,
 			// there may be still some conflicts on unique indexes when common handle is not enabled.
-			// UnionScan with two records which have same primary index is weird which should be handled here.
-			// The newly added rows will overwrite the snapshot rows.
-			// FIXME: For optimistic transaction, it's better to handle the conflict on unique indexes when execute the DMLs instead of handling here.
-			if isPessimistic && !us.table.Meta().IsCommonHandle {
+			// UnionScan's result have two records which have the same primary index is weird, this case should be handled here.
+			// There are some constraints and rules:
+			// 1. The newly added rows will overwrite the snapshot rows.
+			// 2. The inconsistency issue can be solved with `tidb_constraint_check_in_place` in optimistic transactions,
+			//    which will harm the performance. Though the inconsistency is not able to be solved, the same behavior between
+			//    common handle or not is required.
+			// 3. The inconsistency issue in pessimistic transaction is now allowed.
+			if !us.table.Meta().IsCommonHandle {
 				cols := us.table.Meta().Columns
 				if datumCols == nil {
 					datumCols = make(map[int64]struct {
@@ -254,9 +258,9 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 				}
 			INDEX:
 				for _, index := range us.table.Meta().Indices {
-					// only check primary index for pessimistic transactions
-					// check all unique indexes for optimistic transactions
-					if !index.Unique || (!index.Primary && isPessimistic) {
+					// only check primary index for optimistic transactions
+					// check all unique indexes for pessimistic transactions
+					if !index.Unique || (!isPessimistic && !index.Primary) {
 						continue
 					}
 					indexDatums := make([]types.Datum, len(index.Columns))

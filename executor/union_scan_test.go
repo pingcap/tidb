@@ -406,6 +406,7 @@ func (s *testSuite7) TestForApplyAndUnionScan(c *C) {
 
 func (s *testSuite7) TestIssueOptimisticConflictUnionScan(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_constraint_check_in_place=0")
 	clusteredIndexOptions := []string{"ON", "OFF", "INT_ONLY"}
 	for _, clusteredIndexOption := range clusteredIndexOptions {
 		tk.MustExec("set session tidb_enable_clustered_index = '" + clusteredIndexOption + "'")
@@ -453,18 +454,16 @@ func (s *testSuite7) TestIssueOptimisticConflictUnionScan(c *C) {
 		err = tk.ExecToErr("commit")
 		c.Assert(err, NotNil)
 
-		// unique index
+		// optimistic transaction does not guarantee consistency with unique index
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t (a int, b int, primary key (a), unique index uk(b))")
 		tk.MustExec("insert into t values(1, 10)")
-
 		// insert same value
 		tk.MustExec("begin optimistic")
 		tk.MustExec("insert into t values (2, 10)")
-		tk.MustQuery("select * from t").Check(testkit.Rows("2 10"))
+		tk.MustQuery("select * from t order by a asc").Check(testkit.Rows("1 10", "2 10"))
 		err = tk.ExecToErr("commit")
 		c.Assert(err, NotNil)
-
 		// insert same pk
 		tk.MustExec("begin optimistic")
 		tk.MustExec("insert into t values (1, 11)")
@@ -472,7 +471,7 @@ func (s *testSuite7) TestIssueOptimisticConflictUnionScan(c *C) {
 		err = tk.ExecToErr("commit")
 		c.Assert(err, NotNil)
 
-		// select twice should got same data
+		// select twice should get the same result, this prevents misuse of PUT operations
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(c1 varchar(20) key, c2 int, c3 int, unique key k1(c2), key k2(c3))")
 		tk.MustExec("insert into t values (\"1\", 1, 1), (\"2\", 2, 2), (\"3\", 3, 3)")
@@ -481,6 +480,36 @@ func (s *testSuite7) TestIssueOptimisticConflictUnionScan(c *C) {
 			Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
 		tk.MustQuery("select * from t use index(k2) where c2 in (2, 3) for update").
 			Check(testkit.Rows("2 2 2", "3 3 3"))
+		tk.MustExec("commit")
+	}
+}
+
+// check in place solves the inconsistency in optimistic transactions, however with performing impact
+func (s *testSuite7) TestIssueOptimisticConflictUnionScanInPlace(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set session tidb_constraint_check_in_place=1")
+	clusteredIndexOptions := []string{"ON", "OFF", "INT_ONLY"}
+	for _, clusteredIndexOption := range clusteredIndexOptions {
+		tk.MustExec("set session tidb_enable_clustered_index = '" + clusteredIndexOption + "'")
+		// multi-column index
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int, primary key (a, b))")
+		tk.MustExec("insert into t values (1, 10)")
+		tk.MustExec("begin optimistic")
+		err := tk.ExecToErr("insert into t values (1, 10)")
+		c.Assert(err, NotNil)
+		tk.MustQuery("select * from t").Check(testkit.Rows("1 10"))
+		tk.MustExec("commit")
+
+		// int index
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int, primary key (a))")
+		tk.MustExec("insert into t values(1, 10)")
+		// insert same value
+		tk.MustExec("begin optimistic")
+		err = tk.ExecToErr("insert into t values (1, 10)")
+		c.Assert(err, NotNil)
+		tk.MustQuery("select * from t").Check(testkit.Rows("1 10"))
 		tk.MustExec("commit")
 	}
 }
