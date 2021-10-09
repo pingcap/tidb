@@ -725,11 +725,11 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, bucketCount int, totalCoun
 }
 
 // splitBuckets split the histogram buckets according to the feedback.
-func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int64) {
+func splitBuckets(h *Histogram, feedback *QueryFeedback, bucketCount int) ([]bucket, []bool, int64) {
 	bktID2FB, numTotalFBs := buildBucketFeedback(h, feedback)
 	buckets := make([]bucket, 0, h.Len())
 	isNewBuckets := make([]bool, 0, h.Len())
-	splitCount := getSplitCount(numTotalFBs, defaultBucketCount-h.Len())
+	splitCount := getSplitCount(numTotalFBs, bucketCount-h.Len())
 	for i := 0; i < h.Len(); i++ {
 		bktFB, ok := bktID2FB[i]
 		// No feedback, just use the original one.
@@ -771,7 +771,7 @@ func UpdateHistogramWithBucketCount(h *Histogram, feedback *QueryFeedback, stats
 			feedback.Feedback[i].Ndv = 0
 		}
 	}
-	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback)
+	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback, bucketCount)
 	buckets = mergeBuckets(buckets, isNewBuckets, bucketCount, float64(totalCount))
 	hist := buildNewHistogram(h, buckets)
 	// Update the NDV of primary key column.

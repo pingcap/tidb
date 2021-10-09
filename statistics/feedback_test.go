@@ -97,7 +97,7 @@ func TestSplitBuckets(t *testing.T) {
 		oldNdvs[i] = q.Hist.Buckets[i].NDV
 	}
 	log.Warn("in test", zap.Int64s("ndvs", oldNdvs), zap.Int64s("cnts", oldCnts))
-	buckets, isNewBuckets, totalCount := splitBuckets(q.Hist, q)
+	buckets, isNewBuckets, totalCount := splitBuckets(q.Hist, q, defaultBucketCount)
 	ndvs := make([]int64, len(buckets))
 	for i := range buckets {
 		ndvs[i] = buckets[i].Ndv
@@ -122,7 +122,7 @@ func TestSplitBuckets(t *testing.T) {
 	}
 	q = NewQueryFeedback(0, genHistogram(), 0, false)
 	q.Feedback = feedbacks
-	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q)
+	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q, defaultBucketCount)
 	require.Equal(t,
 		"column:0 ndv:0 totColSize:0\n"+
 			"num: 100000 lower_bound: 0 upper_bound: 1 repeats: 0 ndv: 1\n"+
@@ -146,7 +146,7 @@ func TestSplitBuckets(t *testing.T) {
 	}
 	q = NewQueryFeedback(0, h, 0, false)
 	q.Feedback = feedbacks
-	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q)
+	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q, defaultBucketCount)
 	require.Equal(t,
 		"column:0 ndv:0 totColSize:0\n"+
 			"num: 1000000 lower_bound: 0 upper_bound: 1000000 repeats: 0 ndv: 1000000",
@@ -163,7 +163,7 @@ func TestSplitBuckets(t *testing.T) {
 	}
 	q = NewQueryFeedback(0, h, 0, false)
 	q.Feedback = feedbacks
-	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q)
+	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q, defaultBucketCount)
 	require.Equal(t,
 		"column:0 ndv:0 totColSize:0\n"+
 			"num: 1 lower_bound: 0 upper_bound: 10 repeats: 0 ndv: 1\n"+
@@ -180,7 +180,7 @@ func TestSplitBuckets(t *testing.T) {
 	feedbacks = append(feedbacks, newFeedback(4001, 9999, 1000, 1000))
 	q = NewQueryFeedback(0, h, 0, false)
 	q.Feedback = feedbacks
-	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q)
+	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist, q, defaultBucketCount)
 	require.Equal(t,
 		"column:0 ndv:0 totColSize:0\n"+
 			"num: 5001 lower_bound: 0 upper_bound: 10000 repeats: 0 ndv: 5001",
