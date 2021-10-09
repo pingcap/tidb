@@ -724,8 +724,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
 
-		pid, err := w.doGCPlacementRules(r)
-		if err != nil {
+		if pid, err := w.doGCPlacementRules(r); err != nil {
 			logutil.Logger(ctx).Error("[gc worker] gc placement rules failed on range",
 				zap.String("uuid", w.uuid),
 				zap.Int64("jobID", r.JobID),
@@ -1895,18 +1894,14 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 		if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs); err != nil {
 			return
 		}
-		// If it's a partitioned table, then the element ID is the partition ID.
-		if len(physicalTableIDs) > 0 {
-			pid = dr.ElementID
+		// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
+		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
+		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+		for _, id := range physicalTableIDs {
+			bundles = append(bundles, placement.NewBundle(id))
 		}
+		err = infosync.PutRuleBundles(context.TODO(), bundles)
 	}
-	// Not drop table / truncate table or not a partitioned table, no need to GC placement rules.
-	if pid == 0 {
-		return
-	}
-	// Notify PD to drop the placement rules, even if there may be no placement rules.
-	bundles := []*placement.Bundle{placement.NewBundle(pid)}
-	err = infosync.PutRuleBundles(context.TODO(), bundles)
 	return
 }
 
