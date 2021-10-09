@@ -1526,26 +1526,30 @@ func (s *testSerialSuite) TestPartitionSpillingAgg(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	sql := "insert into t values (0)"
-	partition1 := generatePartN(1)
-	partition3 := generatePartN(3)
-	sum := int64(0)
-	// Test only some partitions will be spilled.
+	partition0 := generatePartN(0, 10000)
+	partition1 := generatePartN(1, 10000)
+	partition2 := generatePartN(2, 10000)
+	partition3 := generatePartN(3, 10000)
+	partitions := make([]string, 0, len(partition0)+len(partition1)+len(partition2)+len(partition3))
+	partitions = append(partitions, "0.0000")
+	// Test only some partitions may be spilled.
 	for i := 0; i < len(partition1); i++ {
 		sql += fmt.Sprintf(",(%v)", partition1[i])
-		sum += int64(partition1[i])
+		partitions = append(partitions, strconv.Itoa(int(partition1[i]))+".0000")
 	}
 	for i := 0; i < len(partition3); i++ {
 		sql += fmt.Sprintf(",(%v)", partition3[i])
-		sum += int64(partition3[i])
+		partitions = append(partitions, strconv.Itoa(int(partition3[i]))+".0000")
 	}
+	sort.Strings(partitions)
 	sql += ";"
 	tk.MustExec(sql)
-	rows := tk.MustQuery("desc analyze select /*+ HASH_AGG() */ avg(t1.a) from t t1 join t t2 group by t1.a, t2.a;").Rows()
+	rows := tk.MustQuery("desc analyze select /*+ HASH_AGG() */ avg(t.a) from t group by t.a;").Rows()
 	for _, row := range rows {
 		length := len(row)
 		line := fmt.Sprintf("%v", row)
 		disk := fmt.Sprintf("%v", row[length-1])
-		if strings.Contains(line, "HashAgg") {
+		if strings.Contains(line, "HashAgg") && !strings.Contains(line, "cop") {
 			c.Assert(strings.Contains(disk, "0 Bytes"), IsFalse)
 			c.Assert(strings.Contains(disk, "MB") ||
 				strings.Contains(disk, "KB") ||
@@ -1554,54 +1558,48 @@ func (s *testSerialSuite) TestPartitionSpillingAgg(c *C) {
 	}
 
 	// Add code cover
-	// Test spill chunk. Add a line to avoid tmp spill chunk is always full.
-	tk.MustExec("insert into t values(0)")
-	tk.MustQuery("select sum(tt.b) from ( select /*+ HASH_AGG() */ avg(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
-		testkit.Rows(strconv.FormatInt(sum*int64(1+len(partition3)+len(partition1)), 10) + ".0000"))
+	tk.MustQuery("select /*+ HASH_AGG() */ avg(t.a) from t group by t.a").Sort().Check(testkit.Rows(partitions...))
+	// Test no groupby and no data.
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(c int, c1 int);")
+	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t;").Check(testkit.Rows("0"))
+	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t group by c1;").Check(testkit.Rows())
 
-	// Test all partitions will be spilled
+	// Test all partitions may be spilled
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	sql = "insert into t values (0)"
-	sum = int64(0)
 	for i := 0; i < len(partition1); i++ {
 		sql += fmt.Sprintf(",(%v)", partition1[i])
-		sum += int64(partition1[i])
 	}
 	for i := 0; i < len(partition3); i++ {
 		sql += fmt.Sprintf(",(%v)", partition3[i])
-		sum += int64(partition3[i])
 	}
-	partition0 := generatePartN(0)
-	partition2 := generatePartN(2)
 	for i := 0; i < len(partition0); i++ {
 		sql += fmt.Sprintf(",(%v)", partition0[i])
-		sum += int64(partition0[i])
+		partitions = append(partitions, strconv.Itoa(int(partition0[i]))+".0000")
 	}
 	for i := 0; i < len(partition2); i++ {
 		sql += fmt.Sprintf(",(%v)", partition2[i])
-		sum += int64(partition2[i])
+		partitions = append(partitions, strconv.Itoa(int(partition2[i]))+".0000")
 	}
+	sort.Strings(partitions)
 	sql += ";"
 	tk.MustExec(sql)
-	rows = tk.MustQuery("desc analyze select /*+ HASH_AGG() */ avg(t1.a) from t t1 join t t2 group by t1.a, t2.a;").Rows()
+	rows = tk.MustQuery("desc analyze select /*+ HASH_AGG() */ avg(t.a) from t group by t.a;").Rows()
 	for _, row := range rows {
 		length := len(row)
 		line := fmt.Sprintf("%v", row)
 		disk := fmt.Sprintf("%v", row[length-1])
-		if strings.Contains(line, "HashAgg") {
+		if strings.Contains(line, "HashAgg") && !strings.Contains(line, "cop") {
 			c.Assert(strings.Contains(disk, "0 Bytes"), IsFalse)
 			c.Assert(strings.Contains(disk, "MB") ||
 				strings.Contains(disk, "KB") ||
 				strings.Contains(disk, "Bytes"), IsTrue)
 		}
 	}
-	// Add code cover
-	// Test spill chunk. Add a line to avoid tmp spill chunk is always full.
-	tk.MustExec("insert into t values(0)")
-	tk.MustQuery("select sum(tt.b) from ( select /*+ HASH_AGG() */ avg(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
-		testkit.Rows(strconv.FormatInt(sum*int64(1+len(partition3)+len(partition1)+len(partition0)+len(partition1)), 10) + ".0000"))
-
+	//Add code cover
+	tk.MustQuery("select /*+ HASH_AGG() */ avg(t.a) from t group by t.a").Sort().Check(testkit.Rows(partitions...))
 	// Test no groupby and no data.
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(c int, c1 int);")
@@ -1609,10 +1607,9 @@ func (s *testSerialSuite) TestPartitionSpillingAgg(c *C) {
 	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t group by c1;").Check(testkit.Rows())
 }
 
-func generatePartN(n int) []int32 {
-	// generate 100 lines
-	data := make([]int32, 0, 100)
-	for i := 0; i < 100; {
+func generatePartN(n int, num int) []int32 {
+	data := make([]int32, 0, num)
+	for i := 0; i < num; {
 		s := rand.Int31()
 		sc := &stmtctx.StatementContext{TimeZone: time.Local}
 		tp := types.NewFieldType(mysql.TypeLong)
