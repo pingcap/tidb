@@ -639,6 +639,8 @@ func (b *BucketFeedback) refineBucketCount(sc *stmtctx.StatementContext, bkt buc
 const (
 	defaultSplitCount = 10
 	splitPerFeedback  = 10
+	// defaultBucketCount is the number of buckets a column histogram has.
+	defaultBucketCount = 256
 )
 
 // getSplitCount gets the split count for the histogram. It is based on the intuition that:
@@ -686,11 +688,8 @@ func getBucketScore(bkts []bucket, totalCount float64, id int) bucketScore {
 	return bucketScore{id, math.Abs(err / (preCount + count))}
 }
 
-// defaultBucketCount is the number of buckets a column histogram has.
-var defaultBucketCount = 256
-
-func mergeBuckets(bkts []bucket, isNewBuckets []bool, totalCount float64) []bucket {
-	mergeCount := len(bkts) - defaultBucketCount
+func mergeBuckets(bkts []bucket, isNewBuckets []bool, bucketCount int, totalCount float64) []bucket {
+	mergeCount := len(bkts) - bucketCount
 	if mergeCount <= 0 {
 		return bkts
 	}
@@ -760,14 +759,18 @@ func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int6
 
 // UpdateHistogram updates the histogram according buckets.
 func UpdateHistogram(h *Histogram, feedback *QueryFeedback, statsVer int) *Histogram {
+	return UpdateHistogramWithBucketCount(h, feedback, statsVer, defaultBucketCount)
+}
+
+func UpdateHistogramWithBucketCount(h *Histogram, feedback *QueryFeedback, statsVer int, bucketCount int) *Histogram {
 	if statsVer < Version2 {
-		// If it's the stats we haven't maintain the bucket NDV yet. Reset the ndv.
+		// If it's the stats we haven't maintained the bucket NDV yet. Reset the ndv.
 		for i := range feedback.Feedback {
 			feedback.Feedback[i].Ndv = 0
 		}
 	}
 	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback)
-	buckets = mergeBuckets(buckets, isNewBuckets, float64(totalCount))
+	buckets = mergeBuckets(buckets, isNewBuckets, bucketCount, float64(totalCount))
 	hist := buildNewHistogram(h, buckets)
 	// Update the NDV of primary key column.
 	if feedback.Tp == PkType {

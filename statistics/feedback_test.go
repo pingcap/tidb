@@ -68,9 +68,6 @@ func TestUpdateHistogram(t *testing.T) {
 
 	q := NewQueryFeedback(0, genHistogram(), 0, false)
 	q.Feedback = feedbacks
-	originBucketCount := defaultBucketCount
-	defaultBucketCount = 7
-	defer func() { defaultBucketCount = originBucketCount }()
 	require.Equal(t,
 		"column:0 ndv:10053 totColSize:0\n"+
 			"num: 10001 lower_bound: 0 upper_bound: 2 repeats: 0 ndv: 2\n"+
@@ -79,7 +76,7 @@ func TestUpdateHistogram(t *testing.T) {
 			"num: 11 lower_bound: 10 upper_bound: 20 repeats: 0 ndv: 11\n"+
 			"num: 19 lower_bound: 30 upper_bound: 49 repeats: 0 ndv: 19\n"+
 			"num: 11 lower_bound: 50 upper_bound: 60 repeats: 0 ndv: 11",
-		UpdateHistogram(q.Hist, q, Version2).ToString(0))
+		UpdateHistogramWithBucketCount(q.Hist, q, Version2, 7).ToString(0))
 }
 
 func TestSplitBuckets(t *testing.T) {
@@ -194,8 +191,6 @@ func TestSplitBuckets(t *testing.T) {
 
 func TestMergeBuckets(t *testing.T) {
 	t.Parallel()
-	originBucketCount := defaultBucketCount
-	defer func() { defaultBucketCount = originBucketCount }()
 	tests := []struct {
 		points       []int64
 		counts       []int64
@@ -244,8 +239,7 @@ func TestMergeBuckets(t *testing.T) {
 			bkts = append(bkts, bucket{&lower, &upper, tt.counts[i], 0, tt.ndvs[i]})
 			totalCount += tt.counts[i]
 		}
-		defaultBucketCount = tt.bucketCount
-		bkts = mergeBuckets(bkts, tt.isNewBuckets, float64(totalCount))
+		bkts = mergeBuckets(bkts, tt.isNewBuckets, tt.bucketCount, float64(totalCount))
 		result := buildNewHistogram(&Histogram{Tp: types.NewFieldType(mysql.TypeLong)}, bkts).ToString(0)
 		require.Equal(t, tt.result, result)
 	}
