@@ -43,7 +43,6 @@ import (
 // variables from downstream which may affect KV encode result. The values record the default
 // values if missing.
 var defaultImportantVariables = map[string]string{
-	"tidb_row_format_version": "1",
 	"max_allowed_packet":      "67108864",
 	"div_precision_increment": "4",
 	"time_zone":               "SYSTEM",
@@ -51,6 +50,13 @@ var defaultImportantVariables = map[string]string{
 	"default_week_format":     "0",
 	"block_encryption_mode":   "aes-128-ecb",
 	"group_concat_max_len":    "1024",
+}
+
+// defaultImportVariablesTiDB is used in ObtainImportantVariables to retrieve the system
+// variables from downstream in local/importer backend. The values record the default
+// values if missing.
+var defaultImportVariablesTiDB = map[string]string{
+	"tidb_row_format_version": "1",
 }
 
 type TiDBManager struct {
@@ -76,7 +82,8 @@ func isUnknownSystemVariableErr(err error) bool {
 	return code == mysql.ErrUnknownSystemVariable
 }
 
-func DBFromConfig(dsn config.DBStore) (*sql.DB, error) {
+func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
+
 	param := common.MySQLConnectParam{
 		Host:             dsn.Host,
 		Port:             dsn.Port,
@@ -85,39 +92,44 @@ func DBFromConfig(dsn config.DBStore) (*sql.DB, error) {
 		SQLMode:          dsn.StrSQLMode,
 		MaxAllowedPacket: dsn.MaxAllowedPacket,
 		TLS:              dsn.TLS,
-		Vars: map[string]string{
-			"tidb_build_stats_concurrency":       strconv.Itoa(dsn.BuildStatsConcurrency),
-			"tidb_distsql_scan_concurrency":      strconv.Itoa(dsn.DistSQLScanConcurrency),
-			"tidb_index_serial_scan_concurrency": strconv.Itoa(dsn.IndexSerialScanConcurrency),
-			"tidb_checksum_table_concurrency":    strconv.Itoa(dsn.ChecksumTableConcurrency),
-
-			// after https://github.com/pingcap/tidb/pull/17102 merge,
-			// we need set session to true for insert auto_random value in TiDB Backend
-			"allow_auto_random_explicit_insert": "1",
-			// allow use _tidb_rowid in sql statement
-			"tidb_opt_write_row_id": "1",
-			// always set auto-commit to ON
-			"autocommit": "1",
-		},
 	}
 	db, err := param.Connect()
 	if err != nil {
-		if isUnknownSystemVariableErr(err) {
-			// not support allow_auto_random_explicit_insert, retry connect
-			delete(param.Vars, "allow_auto_random_explicit_insert")
-			db, err = param.Connect()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		} else {
-			return nil, errors.Trace(err)
+		return nil, errors.Trace(err)
+	}
+
+	vars := map[string]string{
+		"tidb_build_stats_concurrency":       strconv.Itoa(dsn.BuildStatsConcurrency),
+		"tidb_distsql_scan_concurrency":      strconv.Itoa(dsn.DistSQLScanConcurrency),
+		"tidb_index_serial_scan_concurrency": strconv.Itoa(dsn.IndexSerialScanConcurrency),
+		"tidb_checksum_table_concurrency":    strconv.Itoa(dsn.ChecksumTableConcurrency),
+
+		// after https://github.com/pingcap/tidb/pull/17102 merge,
+		// we need set session to true for insert auto_random value in TiDB Backend
+		"allow_auto_random_explicit_insert": "1",
+		// allow use _tidb_rowid in sql statement
+		"tidb_opt_write_row_id": "1",
+		// always set auto-commit to ON
+		"autocommit": "1",
+	}
+
+	for k, v := range vars {
+		q := fmt.Sprintf("SET SESSION %s = %s;", k, v)
+		if _, err1 := db.ExecContext(ctx, q); err1 != nil {
+			log.L().Warn("set session variable failed, will skip this query", zap.String("query", q),
+				zap.Error(err1))
+			delete(vars, k)
 		}
 	}
-	return db, nil
+	_ = db.Close()
+
+	param.Vars = vars
+	db, err = param.Connect()
+	return db, errors.Trace(err)
 }
 
-func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
-	db, err := DBFromConfig(dsn)
+func NewTiDBManager(ctx context.Context, dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
+	db, err := DBFromConfig(ctx, dsn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -305,7 +317,7 @@ func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 	)
 }
 
-func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor) map[string]string {
+func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBVars bool) map[string]string {
 	var query strings.Builder
 	query.WriteString("SHOW VARIABLES WHERE Variable_name IN ('")
 	first := true
@@ -317,6 +329,12 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor) map[strin
 		}
 		query.WriteString(k)
 	}
+	if needTiDBVars {
+		for k := range defaultImportVariablesTiDB {
+			query.WriteString("','")
+			query.WriteString(k)
+		}
+	}
 	query.WriteString("')")
 	kvs, err := g.QueryStringsWithLog(ctx, query.String(), "obtain system variables", log.L())
 	if err != nil {
@@ -325,14 +343,21 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor) map[strin
 	}
 
 	// convert result into a map. fill in any missing variables with default values.
-	result := make(map[string]string, len(defaultImportantVariables))
+	result := make(map[string]string, len(defaultImportantVariables)+len(defaultImportVariablesTiDB))
 	for _, kv := range kvs {
 		result[kv[0]] = kv[1]
 	}
-	for k, defV := range defaultImportantVariables {
-		if _, ok := result[k]; !ok {
-			result[k] = defV
+
+	setDefaultValue := func(res map[string]string, vars map[string]string) {
+		for k, defV := range vars {
+			if _, ok := res[k]; !ok {
+				res[k] = defV
+			}
 		}
+	}
+	setDefaultValue(result, defaultImportantVariables)
+	if needTiDBVars {
+		setDefaultValue(result, defaultImportVariablesTiDB)
 	}
 
 	return result

@@ -497,3 +497,26 @@ func TestInjectProj(t *testing.T) {
 	transformationRulesSuiteData.GetTestCases(t, &input, &output)
 	testGroupToString(t, input, output, optimizer)
 }
+
+func TestMergeAdjacentWindow(t *testing.T) {
+	optimizer := NewOptimizer()
+	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandProjection: {
+			NewRuleMergeAdjacentProjection(),
+			NewRuleEliminateProjection(),
+		},
+		memo.OperandWindow: {
+			NewRuleMergeAdjacentWindow(),
+		},
+	})
+	defer func() {
+		optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	testGroupToString(t, input, output, optimizer)
+}
