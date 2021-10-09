@@ -147,7 +147,7 @@ func readPassword(prompt string) (string, error) {
 	fmt.Fprint(stderr, prompt)
 	psw, err := term.ReadPassword(int(stdin.Fd()))
 	if err != nil {
-		return "", err
+		return "", errors.Trace(err)
 	}
 	fmt.Fprintln(stderr)
 	return string(psw), nil
