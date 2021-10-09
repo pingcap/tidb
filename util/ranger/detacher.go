@@ -534,7 +534,8 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		}
 		points[offset] = rb.intersection(points[offset], rb.build(cond))
 		// Early termination if false expression found
-		if len(points[offset]) == 0 {
+		if len(points[offset]) == 0 &&
+			!expression.MaybeOverOptimized4PlanCache(sctx, conditions) { // cannot return an empty-range since parameters may change later
 			return nil, nil, nil, nil, true
 		}
 	}
@@ -554,7 +555,8 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		if points[i] == nil {
 			// There exists an interval whose length is larger than 0
 			accesses[i] = nil
-		} else if len(points[i]) == 0 {
+		} else if len(points[i]) == 0 &&
+			!expression.MaybeOverOptimized4PlanCache(sctx, conditions) { // cannot return an empty-range since parameters may change later
 			// Early termination if false expression found
 			return nil, nil, nil, nil, true
 		} else {
