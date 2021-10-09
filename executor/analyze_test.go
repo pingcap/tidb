@@ -1132,3 +1132,7 @@ func (s *testSuite10) TestSnapshotAnalyze(c *C) {
 	c.Assert(s3Str, Equals, s2Str)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"), IsNil)
 }
+
+func (s *testSerialSuite2) TestAnalyzePredicateColumns(c *C) {
+
+}

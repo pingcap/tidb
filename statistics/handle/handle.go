@@ -1124,6 +1124,11 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 					return err
 				}
 			}
+			if result.IsIndex == 0 {
+				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	// 3. Save extended statistics.
@@ -1244,6 +1249,11 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 	if isAnalyzed == 1 && len(lastAnalyzePos) > 0 {
 		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, isIndex, hg.ID); err != nil {
+			return err
+		}
+	}
+	if isAnalyzed == 1 && isIndex == 0 {
+		if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {
 			return err
 		}
 	}
@@ -1785,7 +1795,7 @@ type colStatsUsage struct {
 }
 
 func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsUsage, error) {
-	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, last_used_at, last_analyzed_at from mysql.column_stats_usage")
+	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, last_used_at, last_analyzed_at FROM mysql.column_stats_usage")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1796,4 +1806,17 @@ func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsUsage, 
 		colStatsMap[key] = value
 	}
 	return colStatsMap, nil
+}
+
+// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
+func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
+	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT column_id FROM mysql.column_stats_usage WHERE table_id = %? AND last_used_at IS NOT NULL", tableID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	columnIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		columnIDs = append(columnIDs, row.GetInt64(0))
+	}
+	return columnIDs, nil
 }
