@@ -5575,3 +5575,122 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
 	}
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSessionSuite) TestTemporaryTableInterceptor(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
+	tbl, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tmp1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().TempTableType, Equals, model.TempTableLocal)
+	tblID := tbl.Meta().ID
+
+	// prepare a kv pair for temporary table
+	k := append(tablecodec.EncodeTablePrefix(tblID), 1)
+	err = tk.Se.GetSessionVars().TemporaryTableData.SetTableKey(tblID, k, []byte("v1"))
+	c.Assert(err, IsNil)
+
+	initTxnFuncs := []func() error{
+		func() error {
+			tk.Se.PrepareTSFuture(context.Background())
+			return nil
+		},
+		func() error {
+			return tk.Se.NewTxn(context.Background())
+		},
+		func() error {
+			return tk.Se.NewStaleTxnWithStartTS(context.Background(), 0)
+		},
+		func() error {
+			return tk.Se.InitTxnWithStartTS(0)
+		},
+	}
+
+	for _, initFunc := range initTxnFuncs {
+		err := initFunc()
+		c.Assert(err, IsNil)
+
+		txn, err := tk.Se.Txn(true)
+		c.Assert(err, IsNil)
+
+		val, err := txn.Get(context.Background(), k)
+		c.Assert(err, IsNil)
+		c.Assert(val, BytesEquals, []byte("v1"))
+
+		val, err = txn.GetSnapshot().Get(context.Background(), k)
+		c.Assert(err, IsNil)
+		c.Assert(val, BytesEquals, []byte("v1"))
+
+		tk.Se.RollbackTxn(context.Background())
+	}
+
+	// Also check GetSnapshotWithTS
+	snap := tk.Se.GetSnapshotWithTS(0)
+	val, err := snap.Get(context.Background(), k)
+	c.Assert(err, IsNil)
+	c.Assert(val, BytesEquals, []byte("v1"))
+}
+
+func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
+	initAndCloseTiDB := func() {
+		store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+		c.Assert(err, IsNil)
+		defer store.Close()
+
+		dom, err := session.BootstrapSession(store)
+		//nolint:staticcheck
+		defer dom.Close()
+		c.Assert(err, IsNil)
+	}
+
+	runtime.GC()
+	memStat := runtime.MemStats{}
+	runtime.ReadMemStats(&memStat)
+	oldHeapInUse := memStat.HeapInuse
+
+	for i := 0; i < 20; i++ {
+		initAndCloseTiDB()
+	}
+
+	runtime.GC()
+	runtime.ReadMemStats(&memStat)
+	// before the fix, initAndCloseTiDB for 20 times will cost 900 MB memory, so we test for a quite loose upper bound.
+	c.Assert(memStat.HeapInuse-oldHeapInUse, Less, uint64(300*units.MiB))
+}
+
+func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_read_staleness='-5'")
+	err := tk.ExecToErr("set @@tidb_read_staleness='-5s'")
+	c.Assert(err, NotNil)
+	err = tk.ExecToErr("set @@tidb_read_staleness='foo'")
+	c.Assert(err, NotNil)
+	tk.MustExec("set @@tidb_read_staleness=''")
+	tk.MustExec("set @@tidb_read_staleness='0'")
+}
+
+func (s *testSessionSuite) TestFixSetTiDBSnapshotTS(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	tk.MustExec("create database t123")
+	time.Sleep(time.Second)
+	ts := time.Now().Format("2006-1-2 15:04:05")
+	time.Sleep(time.Second)
+	tk.MustExec("drop database t123")
+	err := tk.ExecToErr("use t123")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*Unknown database.*")
+	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot='%s'", ts))
+	tk.MustExec("use t123")
+	// update any session variable and assert whether infoschema is changed
+	tk.MustExec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER';")
+	tk.MustExec("use t123")
+}
+>>>>>>> 417c7358e... session: fix set session variable make tidb_snapshot unwork (#28677)
