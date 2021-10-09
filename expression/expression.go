@@ -1090,7 +1090,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return false
 		}
 	case ast.Lower:
-			return true
+		return true
 	}
 	return false
 }
