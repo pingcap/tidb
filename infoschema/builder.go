@@ -17,8 +17,6 @@ package infoschema
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
 	"sort"
 	"strings"
 
@@ -89,7 +87,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			return nil, errors.Trace(err)
 		}
 	case model.ActionDropTable:
-		log.Error("在第一阶段就删了?", zap.Int64("id", oldTableID), zap.Int64("meta ver", diff.Version))
 		b.applyPlacementDelete(placement.GroupID(oldTableID))
 	case model.ActionTruncateTable:
 		b.applyPlacementDelete(placement.GroupID(oldTableID))
@@ -523,7 +520,6 @@ func (b *Builder) applyPlacementUpdate(id string) error {
 
 	if !bundle.IsEmpty() {
 		b.is.SetBundle(bundle)
-		log.Error("bundle map profile", zap.String("id", id), zap.String("bundle", bundle.ID))
 	} else {
 		b.applyPlacementDelete(id)
 	}
