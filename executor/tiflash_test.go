@@ -17,6 +17,7 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"math/rand"
 	"strings"
 	"sync"
@@ -32,10 +33,12 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/tikv/client-go/v2/testutils"
@@ -542,6 +545,57 @@ func (s *tiflashTestSuite) TestMppEnum(c *C) {
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 	tk.MustQuery("select t1.b from t t1 join t t2 on t1.a = t2.a order by t1.b").Check(testkit.Rows("aca", "bca", "zca"))
+}
+
+func (s *tiflashTestSuite) TestTiFlashPlanCacheable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("alter table test.t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv, tiflash'")
+	tk.MustExec("insert into t values(1);")
+	tk.MustExec("prepare stmt from 'select /*+ read_from_storage(tiflash[t]) */ * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	// The TiFlash plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec("prepare stmt from 'select /*+ read_from_storage(tikv[t]) */ * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	// The TiKV plan can be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// test the mpp plan
+	tk.MustExec("set @@session.tidb_allow_mpp = 1;")
+	tk.MustExec("set @@session.tidb_enforce_mpp = 1;")
+	tk.MustExec("prepare stmt from 'select count(t1.a) from t t1 join t t2 on t1.a = t2.a where t1.a > ?;';")
+	tk.MustExec("set @a = 0;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @a = 1;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("0"))
+	// The TiFlash plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func (s *tiflashTestSuite) TestDispatchTaskRetry(c *C) {

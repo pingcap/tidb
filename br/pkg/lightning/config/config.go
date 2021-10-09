@@ -242,6 +242,74 @@ func (t PostOpLevel) String() string {
 	}
 }
 
+type CheckpointKeepStrategy int
+
+const (
+	// remove checkpoint data
+	CheckpointRemove CheckpointKeepStrategy = iota
+	// keep by rename checkpoint file/db according to task id
+	CheckpointRename
+	// keep checkpoint data unchanged
+	CheckpointOrigin
+)
+
+func (t *CheckpointKeepStrategy) UnmarshalTOML(v interface{}) error {
+	switch val := v.(type) {
+	case bool:
+		if val {
+			*t = CheckpointRename
+		} else {
+			*t = CheckpointRemove
+		}
+	case string:
+		return t.FromStringValue(val)
+	default:
+		return errors.Errorf("invalid checkpoint keep strategy '%v', please choose valid option between ['remove', 'rename', 'origin']", v)
+	}
+	return nil
+}
+
+func (t CheckpointKeepStrategy) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
+}
+
+// parser command line parameter
+func (t *CheckpointKeepStrategy) FromStringValue(s string) error {
+	switch strings.ToLower(s) {
+	//nolint:goconst // This 'false' and other 'false's aren't the same.
+	case "remove", "false":
+		*t = CheckpointRemove
+	case "rename", "true":
+		*t = CheckpointRename
+	case "origin":
+		*t = CheckpointOrigin
+	default:
+		return errors.Errorf("invalid checkpoint keep strategy '%s', please choose valid option between ['remove', 'rename', 'origin']", s)
+	}
+	return nil
+}
+
+func (t *CheckpointKeepStrategy) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + t.String() + `"`), nil
+}
+
+func (t *CheckpointKeepStrategy) UnmarshalJSON(data []byte) error {
+	return t.FromStringValue(strings.Trim(string(data), `"`))
+}
+
+func (t CheckpointKeepStrategy) String() string {
+	switch t {
+	case CheckpointRemove:
+		return "remove"
+	case CheckpointRename:
+		return "rename"
+	case CheckpointOrigin:
+		return "origin"
+	default:
+		panic(fmt.Sprintf("invalid post process type '%d'", t))
+	}
+}
+
 // MaxError configures the maximum number of acceptable errors per kind.
 type MaxError struct {
 	// Syntax is the maximum number of syntax errors accepted.
@@ -396,11 +464,11 @@ type TikvImporter struct {
 }
 
 type Checkpoint struct {
-	Schema           string `toml:"schema" json:"schema"`
-	DSN              string `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
-	Driver           string `toml:"driver" json:"driver"`
-	Enable           bool   `toml:"enable" json:"enable"`
-	KeepAfterSuccess bool   `toml:"keep-after-success" json:"keep-after-success"`
+	Schema           string                 `toml:"schema" json:"schema"`
+	DSN              string                 `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
+	Driver           string                 `toml:"driver" json:"driver"`
+	Enable           bool                   `toml:"enable" json:"enable"`
+	KeepAfterSuccess CheckpointKeepStrategy `toml:"keep-after-success" json:"keep-after-success"`
 }
 
 type Cron struct {

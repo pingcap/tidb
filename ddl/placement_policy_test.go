@@ -52,8 +52,6 @@ func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
 	tk.MustExec("create placement policy x " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1,cn-east-2\" " +
 		"LEARNERS=1 " +
 		"LEARNER_CONSTRAINTS=\"[+region=cn-west-1]\" " +
 		"VOTERS=3 " +
@@ -62,8 +60,6 @@ func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 	checkFunc := func(policyInfo *model.PolicyInfo) {
 		c.Assert(policyInfo.ID != 0, Equals, true)
 		c.Assert(policyInfo.Name.L, Equals, "x")
-		c.Assert(policyInfo.PrimaryRegion, Equals, "cn-east-1")
-		c.Assert(policyInfo.Regions, Equals, "cn-east-1,cn-east-2")
 		c.Assert(policyInfo.Followers, Equals, uint64(0))
 		c.Assert(policyInfo.FollowerConstraints, Equals, "")
 		c.Assert(policyInfo.Voters, Equals, uint64(3))
@@ -135,63 +131,35 @@ func testGetPolicyByNameFromIS(c *C, ctx sessionctx.Context, policy string) *mod
 	return po
 }
 
-func (s *testDBSuite6) TestConstraintCompatibility(c *C) {
+func (s *testDBSuite6) TestPlacementValidation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
 
 	cases := []struct {
+		name     string
 		settings string
 		success  bool
 		errmsg   string
 	}{
-		// Dict is not allowed for common constraint.
 		{
-			settings: "PRIMARY_REGION=\"cn-east-1\" " +
-				"REGIONS=\"cn-east-1,cn-east-2\" " +
-				"LEARNERS=1 " +
+			name: "Dict is not allowed for common constraint",
+			settings: "LEARNERS=1 " +
 				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1]\" " +
 				"CONSTRAINTS=\"{'+disk=ssd':2}\"",
-			errmsg: "invalid label constraints format: should be [constraint1, ...] (error yaml: unmarshal errors:\n  line 1: cannot unmarshal !!map into []string)",
+			errmsg: "invalid label constraints format: 'Constraints' should be [constraint1, ...] or any yaml compatible array representation",
 		},
-		// Special constraints may be incompatible with itself.
 		{
-			settings: "PRIMARY_REGION=\"cn-east-1\" " +
-				"REGIONS=\"cn-east-1,cn-east-2\" " +
-				"LEARNERS=1 " +
+			name: "constraints may be incompatible with itself",
+			settings: "LEARNERS=1 " +
 				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-2]\"",
-			errmsg: "conflicting label constraints: '+zone=cn-west-2' and '+zone=cn-west-1'",
+			errmsg: "invalid label constraints format: should be [constraint1, ...] (error conflicting label constraints: '+zone=cn-west-2' and '+zone=cn-west-1'), {constraint1: cnt1, ...} (error yaml: unmarshal errors:\n" +
+				"  line 1: cannot unmarshal !!seq into map[string]int), or any yaml compatible representation: invalid LearnerConstraints",
 		},
 		{
 			settings: "PRIMARY_REGION=\"cn-east-1\" " +
-				"REGIONS=\"cn-east-1,cn-east-2\" " +
-				"LEARNERS=1 " +
-				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, -zone=cn-west-1]\"",
-			errmsg: "conflicting label constraints: '-zone=cn-west-1' and '+zone=cn-west-1'",
-		},
-		{
-			settings: "PRIMARY_REGION=\"cn-east-1\" " +
-				"REGIONS=\"cn-east-1,cn-east-2\" " +
-				"LEARNERS=1 " +
-				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-1]\"",
+				"REGIONS=\"cn-east-1,cn-east-2\" ",
 			success: true,
-		},
-		// Special constraints may be incompatible with common constraint.
-		{
-			settings: "PRIMARY_REGION=\"cn-east-1\" " +
-				"REGIONS=\"cn-east-1, cn-east-2\" " +
-				"FOLLOWERS=2 " +
-				"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-				"CONSTRAINTS=\"[+zone=cn-east-2]\"",
-			errmsg: "conflicting label constraints: '+zone=cn-east-2' and '+zone=cn-east-1'",
-		},
-		{
-			settings: "PRIMARY_REGION=\"cn-east-1\" " +
-				"REGIONS=\"cn-east-1, cn-east-2\" " +
-				"FOLLOWERS=2 " +
-				"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-				"CONSTRAINTS=\"[+disk=ssd,-zone=cn-east-1]\"",
-			errmsg: "conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'",
 		},
 	}
 
@@ -203,23 +171,23 @@ func (s *testDBSuite6) TestConstraintCompatibility(c *C) {
 			tk.MustExec("drop placement policy if exists x")
 		} else {
 			err := tk.ExecToErr(sql)
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, ca.errmsg)
+			c.Assert(err, NotNil, Commentf(ca.name))
+			c.Assert(err.Error(), Equals, ca.errmsg, Commentf(ca.name))
 		}
 	}
 
 	// test for alter
-	tk.MustExec("create placement policy x regions=\"cn-east1,cn-east\"")
+	tk.MustExec("create placement policy x primary_region=\"cn-east-1\" regions=\"cn-east-1,cn-east\"")
 	for _, ca := range cases {
 		sql := fmt.Sprintf("%s %s", "alter placement policy x", ca.settings)
 		if ca.success {
 			tk.MustExec(sql)
-			tk.MustExec("alter placement policy x regions=\"cn-east1,cn-east\"")
+			tk.MustExec("alter placement policy x primary_region=\"cn-east-1\" regions=\"cn-east-1,cn-east\"")
 		} else {
 			err := tk.ExecToErr(sql)
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Equals, ca.errmsg)
-			tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x REGIONS=\"cn-east1,cn-east\""))
+			tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east\""))
 		}
 	}
 	tk.MustExec("drop placement policy x")
@@ -229,18 +197,18 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
-	tk.MustExec("create placement policy x primary_region=\"cn-east-1\" regions=\"cn-east1,cn-east\"")
+	tk.MustExec("create placement policy x primary_region=\"cn-east-1\" regions=\"cn-east-1,cn-east\"")
 	defer tk.MustExec("drop placement policy if exists x")
 
 	// test for normal cases
-	tk.MustExec("alter placement policy x REGIONS=\"bj,sh\"")
-	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x REGIONS=\"bj,sh\""))
+	tk.MustExec("alter placement policy x PRIMARY_REGION=\"bj\" REGIONS=\"bj,sh\"")
+	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj,sh\""))
 
 	tk.MustExec("alter placement policy x " +
 		"PRIMARY_REGION=\"bj\" " +
-		"REGIONS=\"sh\" " +
+		"REGIONS=\"bj\" " +
 		"SCHEDULE=\"EVEN\"")
-	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"sh\" SCHEDULE=\"EVEN\""))
+	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj\" SCHEDULE=\"EVEN\""))
 
 	tk.MustExec("alter placement policy x " +
 		"LEADER_CONSTRAINTS=\"[+region=us-east-1]\" " +
@@ -273,19 +241,16 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 
 	// Direct placement option: special constraints may be incompatible with common constraint.
 	_, err := tk.Exec("create table t(a int) " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
 		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd,-zone=cn-east-1]\"")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'")
+	c.Assert(err, ErrorMatches, ".*conflicting label constraints.*")
 
 	tk.MustExec("create table t(a int) " +
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"CONSTRAINTS=\"[+disk=ssd]\"")
+		"FOLLOWERS=2 ")
 
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
 	c.Assert(tbl, NotNil)
@@ -301,7 +266,7 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		c.Assert(policySetting.VoterConstraints, Equals, "")
 		c.Assert(policySetting.Learners, Equals, uint64(0))
 		c.Assert(policySetting.LearnerConstraints, Equals, "")
-		c.Assert(policySetting.Constraints, Equals, "[+disk=ssd]")
+		c.Assert(policySetting.Constraints, Equals, "")
 		c.Assert(policySetting.Schedule, Equals, "")
 	}
 	checkFunc(tbl.Meta().DirectPlacementOpts)
@@ -321,8 +286,6 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	tk.MustGetErrCode("create table t(a int)"+
 		"PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
 	tk.MustExec("create placement policy x " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
 	tk.MustExec("create table t(a int)" +
@@ -335,19 +298,7 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	c.Assert(tbl.Meta().PlacementPolicyRef.ID != 0, Equals, true)
 	tk.MustExec("drop table if exists t")
 
-	// Only direct placement options should check the compatibility itself.
-	_, err = tk.Exec("create table t(a int)" +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-		"CONSTRAINTS=\"[+disk=ssd, -zone=cn-east-1]\" ")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'")
-
 	tk.MustExec("create table t(a int)" +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
 
@@ -356,8 +307,8 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	c.Assert(tbl.Meta().DirectPlacementOpts, NotNil)
 
 	checkFunc = func(policySetting *model.PlacementSettings) {
-		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
-		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
+		c.Assert(policySetting.PrimaryRegion, Equals, "")
+		c.Assert(policySetting.Regions, Equals, "")
 		c.Assert(policySetting.Followers, Equals, uint64(2))
 		c.Assert(policySetting.FollowerConstraints, Equals, "")
 		c.Assert(policySetting.Voters, Equals, uint64(0))
@@ -473,7 +424,7 @@ func testGetPolicyDependency(storage kv.Storage, name string) []int64 {
 	return ids
 }
 
-func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
+func (s *testDBSuite6) TestPolicyCacheAndPolicyDependency(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
@@ -543,4 +494,166 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
 	dependencies = testGetPolicyDependency(s.store, "x")
 	c.Assert(dependencies, NotNil)
 	c.Assert(len(dependencies), Equals, 0)
+}
+
+func (s *testDBSuite6) TestAlterTablePartitionWithPlacementPolicy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop placement policy if exists x")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	// Direct placement option: special constraints may be incompatible with common constraint.
+	tk.MustExec("create table t1 (c int) PARTITION BY RANGE (c) " +
+		"(PARTITION p0 VALUES LESS THAN (6)," +
+		"PARTITION p1 VALUES LESS THAN (11)," +
+		"PARTITION p2 VALUES LESS THAN (16)," +
+		"PARTITION p3 VALUES LESS THAN (21));")
+
+	tk.MustExec("alter table t1 partition p0 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 ")
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t1")
+	c.Assert(tbl, NotNil)
+	ptDef := testGetPartitionDefinitionsByName(c, tk.Se, "test", "t1", "p0")
+	c.Assert(ptDef.PlacementPolicyRef.Name.L, Equals, "")
+	c.Assert(ptDef.DirectPlacementOpts, NotNil)
+
+	checkFunc := func(policySetting *model.PlacementSettings) {
+		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
+		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
+		c.Assert(policySetting.Followers, Equals, uint64(2))
+		c.Assert(policySetting.FollowerConstraints, Equals, "")
+		c.Assert(policySetting.Voters, Equals, uint64(0))
+		c.Assert(policySetting.VoterConstraints, Equals, "")
+		c.Assert(policySetting.Learners, Equals, uint64(0))
+		c.Assert(policySetting.LearnerConstraints, Equals, "")
+		c.Assert(policySetting.Constraints, Equals, "")
+		c.Assert(policySetting.Schedule, Equals, "")
+	}
+	checkFunc(ptDef.DirectPlacementOpts)
+
+	//Direct placement option and placement policy can't co-exist.
+	_, err := tk.Exec("alter table t1 partition p0 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"PLACEMENT POLICY=\"x\"")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8240]Placement policy 'x' can't co-exist with direct placement options")
+
+	// Only placement policy should check the policy existence.
+	tk.MustGetErrCode("alter table t1 partition p0 "+
+		"PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
+	tk.MustExec("create placement policy x " +
+		"FOLLOWERS=2 ")
+	tk.MustExec("alter table t1 partition p0 " +
+		"PLACEMENT POLICY=\"x\"")
+
+	ptDef = testGetPartitionDefinitionsByName(c, tk.Se, "test", "t1", "p0")
+	c.Assert(ptDef, NotNil)
+	c.Assert(ptDef.PlacementPolicyRef, NotNil)
+	c.Assert(ptDef.PlacementPolicyRef.Name.L, Equals, "x")
+	c.Assert(ptDef.PlacementPolicyRef.ID != 0, Equals, true)
+
+	tk.MustExec("alter table t1 partition p0 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 ")
+
+	ptDef = testGetPartitionDefinitionsByName(c, tk.Se, "test", "t1", "p0")
+	c.Assert(ptDef, NotNil)
+	c.Assert(ptDef.DirectPlacementOpts, NotNil)
+
+	checkFunc = func(policySetting *model.PlacementSettings) {
+		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
+		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
+		c.Assert(policySetting.Followers, Equals, uint64(2))
+		c.Assert(policySetting.FollowerConstraints, Equals, "")
+		c.Assert(policySetting.Voters, Equals, uint64(0))
+		c.Assert(policySetting.VoterConstraints, Equals, "")
+		c.Assert(policySetting.Learners, Equals, uint64(0))
+		c.Assert(policySetting.LearnerConstraints, Equals, "")
+		c.Assert(policySetting.Constraints, Equals, "")
+		c.Assert(policySetting.Schedule, Equals, "")
+	}
+	checkFunc(ptDef.DirectPlacementOpts)
+}
+
+func testGetPartitionDefinitionsByName(c *C, ctx sessionctx.Context, db string, table string, ptName string) model.PartitionDefinition {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(err, IsNil)
+	c.Assert(tbl, NotNil)
+	var ptDef model.PartitionDefinition
+	for _, def := range tbl.Meta().Partition.Definitions {
+		if ptName == def.Name.L {
+			ptDef = def
+			break
+		}
+	}
+	return ptDef
+}
+
+func (s *testDBSuite6) TestPolicyInheritance(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop placement policy if exists x")
+
+	// test table inherit database's placement rules.
+	tk.MustExec("create database mydb constraints=\"[+zone=hangzhou]\"")
+	tk.MustQuery("show create database mydb").Check(testkit.Rows("mydb CREATE DATABASE `mydb` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */"))
+
+	tk.MustExec("use mydb")
+	tk.MustExec("create table t(a int)")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */"))
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t(a int) constraints=\"[+zone=suzhou]\"")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */"))
+	tk.MustExec("drop table if exists t")
+
+	// table will inherit db's placement rules, which is shared by all partition as default one.
+	tk.MustExec("create table t(a int) partition by range(a) (partition p0 values less than (100), partition p1 values less than (200))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */\n" +
+		"PARTITION BY RANGE ( `a` ) (\n" +
+		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
+		"  PARTITION `p1` VALUES LESS THAN (200)\n" +
+		")"))
+	tk.MustExec("drop table if exists t")
+
+	// partition's specified placement rules will override the default one.
+	tk.MustExec("create table t(a int) partition by range(a) (partition p0 values less than (100) constraints=\"[+zone=suzhou]\", partition p1 values less than (200))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */\n" +
+		"PARTITION BY RANGE ( `a` ) (\n" +
+		"  PARTITION `p0` VALUES LESS THAN (100) /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */,\n" +
+		"  PARTITION `p1` VALUES LESS THAN (200)\n" +
+		")"))
+	tk.MustExec("drop table if exists t")
+
+	// test partition override table's placement rules.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int) CONSTRAINTS=\"[+zone=suzhou]\" partition by range(a) (partition p0 values less than (100) CONSTRAINTS=\"[+zone=changzhou]\", partition p1 values less than (200))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */\n" +
+		"PARTITION BY RANGE ( `a` ) (\n" +
+		"  PARTITION `p0` VALUES LESS THAN (100) /*T![placement] CONSTRAINTS=\"[+zone=changzhou]\" */,\n" +
+		"  PARTITION `p1` VALUES LESS THAN (200)\n" +
+		")"))
 }
