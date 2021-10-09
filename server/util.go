@@ -291,9 +291,12 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resul
 }
 
 type resultEncoder struct {
+	// chsName and encoding are unchanged after the initialization from
+	// session variable @@character_set_results.
 	chsName  string
 	encoding charset.Encoding
 
+	// dataEncoding can be updated to match the column data charset.
 	dataEncoding charset.Encoding
 
 	buffer []byte
@@ -326,9 +329,9 @@ func (d *resultEncoder) updateDataEncoding(chsID uint16) {
 	d.dataEncoding.UpdateEncoding(charset.Formatted(chs))
 }
 
-// Only replace the charset when @@character_set_results is valid and
-// the target column is a non-binary string.
 func (d *resultEncoder) columnTypeInfoCharsetID(info *ColumnInfo) uint16 {
+	// Only replace the charset when @@character_set_results is valid and
+	// the target column is a non-binary string.
 	if d.isNull || len(d.chsName) == 0 || !isStringColumnType(info.Type) {
 		return info.Charset
 	}

@@ -866,7 +866,8 @@ func (cc *clientConn) skipInitConnect() bool {
 	return checker != nil && checker.RequestDynamicVerification(activeRoles, "CONNECTION_ADMIN", false)
 }
 
-func (cc *clientConn) initTextDumper(ctx context.Context) {
+// initResultEncoder initialize the result encoder for current connection.
+func (cc *clientConn) initResultEncoder(ctx context.Context) {
 	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetResults)
 	if err != nil {
 		chs = ""
@@ -1947,7 +1948,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 		return err
 	}
 	data := cc.alloc.AllocWithLen(4, 1024)
-	cc.initTextDumper(ctx)
+	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.clean()
 	for _, column := range columns {
 		// Current we doesn't output defaultValue but reserve defaultValue length byte to make mariadb client happy.
@@ -1992,7 +1993,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		buf = buf[:stackSize]
 		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.String("stack", string(buf)))
 	}()
-	cc.initTextDumper(ctx)
+	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.clean()
 	var err error
 	if mysql.HasCursorExistsFlag(serverStatus) {
