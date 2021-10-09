@@ -92,6 +92,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	tctx, conf, pool := d.tctx, d.conf, d.dbHandle
 	tctx.L().Info("begin to run Dump", zap.Stringer("conf", conf))
 	m := newGlobalMetadata(tctx, d.extStore, conf.Snapshot)
+	repeatableRead := needRepeatableRead(conf.ServerInfo.ServerType, conf.Consistency)
 	defer func() {
 		if dumpErr == nil {
 			_ = m.writeGlobalMetaData()
@@ -100,7 +101,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	// for consistency lock, we should get table list at first to generate the lock tables SQL
 	if conf.Consistency == consistencyTypeLock {
-		conn, err = createConnWithConsistency(tctx, pool)
+		conn, err = createConnWithConsistency(tctx, pool, repeatableRead)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -126,7 +127,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		}
 	}()
 
-	metaConn, err := createConnWithConsistency(tctx, pool)
+	metaConn, err := createConnWithConsistency(tctx, pool, repeatableRead)
 	if err != nil {
 		return err
 	}
@@ -161,7 +162,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		}
 		// give up the last broken connection
 		conn.Close()
-		newConn, err1 := createConnWithConsistency(tctx, pool)
+		newConn, err1 := createConnWithConsistency(tctx, pool, repeatableRead)
 		if err1 != nil {
 			return conn, errors.Trace(err1)
 		}
@@ -251,7 +252,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 	conf, pool := d.conf, d.dbHandle
 	writers := make([]*Writer, conf.Threads)
 	for i := 0; i < conf.Threads; i++ {
-		conn, err := createConnWithConsistency(tctx, pool)
+		conn, err := createConnWithConsistency(tctx, pool, needRepeatableRead(conf.ServerInfo.ServerType, conf.Consistency))
 		if err != nil {
 			return nil, func() {}, err
 		}
