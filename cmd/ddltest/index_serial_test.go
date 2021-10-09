@@ -132,7 +132,7 @@ func (s *ddlSuite) checkDropIndex(t *testing.T, indexInfo *model.IndexInfo) {
 
 // TestIndex operations on table test_index (c int, c1 bigint, c2 double, c3 varchar(256), primary key(c)).
 func TestIndex(t *testing.T) {
-	s := createDdlSuite(t)
+	s := createDDLSuite(t)
 	defer s.teardown(t)
 
 	// first add many data

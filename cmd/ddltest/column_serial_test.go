@@ -118,7 +118,7 @@ func (s *ddlSuite) checkDropColumn(t *testing.T, rowID int64, alterColumn *table
 }
 
 func TestColumn(t *testing.T) {
-	s := createDdlSuite(t)
+	s := createDDLSuite(t)
 	defer s.teardown(t)
 
 	// first add many data
@@ -211,7 +211,7 @@ func (s *ddlSuite) execColumnOperations(t *testing.T, workerNum, count int, rowI
 }
 
 func TestCommitWhenSchemaChanged(t *testing.T) {
-	s := createDdlSuite(t)
+	s := createDDLSuite(t)
 	defer s.teardown(t)
 
 	s.mustExec("drop table if exists test_commit")
@@ -239,7 +239,7 @@ func TestCommitWhenSchemaChanged(t *testing.T) {
 }
 
 func TestForIssue24621(t *testing.T) {
-	s := createDdlSuite(t)
+	s := createDDLSuite(t)
 	defer s.teardown(t)
 
 	s.mustExec("use test")

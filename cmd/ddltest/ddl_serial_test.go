@@ -90,7 +90,7 @@ type ddlSuite struct {
 	retryCount int
 }
 
-func createDdlSuite(t *testing.T) (s *ddlSuite) {
+func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	s = new(ddlSuite)
 
 	err := logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
@@ -571,7 +571,7 @@ func (s *ddlSuite) Bootstrap(t *testing.T) {
 }
 
 func TestSimple(t *testing.T) {
-	s := createDdlSuite(t)
+	s := createDDLSuite(t)
 	defer s.teardown(t)
 
 	done := s.runDDL("create table if not exists test_simple (c1 int, c2 int, c3 int)")
@@ -591,7 +591,7 @@ func TestSimple(t *testing.T) {
 }
 
 func TestSimpleInsert(t *testing.T) {
-	s := createDdlSuite(t)
+	s := createDDLSuite(t)
 	defer s.teardown(t)
 
 	tests := []struct {
@@ -645,7 +645,7 @@ func TestSimpleInsert(t *testing.T) {
 }
 
 func TestSimpleConflictInsert(t *testing.T) {
-	s := createDdlSuite(t)
+	s := createDDLSuite(t)
 	defer s.teardown(t)
 
 	tests := []struct {
@@ -707,7 +707,7 @@ func TestSimpleConflictInsert(t *testing.T) {
 }
 
 func TestSimpleUpdate(t *testing.T) {
-	s := createDdlSuite(t)
+	s := createDDLSuite(t)
 	defer s.teardown(t)
 
 	tests := []struct {
@@ -770,7 +770,7 @@ func TestSimpleUpdate(t *testing.T) {
 }
 
 func TestSimpleConflictUpdate(t *testing.T) {
-	s := createDdlSuite(t)
+	s := createDDLSuite(t)
 	defer s.teardown(t)
 
 	tests := []struct {
@@ -857,7 +857,7 @@ func TestSimpleConflictUpdate(t *testing.T) {
 }
 
 func TestSimpleDelete(t *testing.T) {
-	s := createDdlSuite(t)
+	s := createDDLSuite(t)
 	defer s.teardown(t)
 
 	tests := []struct {
@@ -913,7 +913,7 @@ func TestSimpleDelete(t *testing.T) {
 }
 
 func TestSimpleConflictDelete(t *testing.T) {
-	s := createDdlSuite(t)
+	s := createDDLSuite(t)
 	defer s.teardown(t)
 
 	tests := []struct {
@@ -995,7 +995,7 @@ func TestSimpleConflictDelete(t *testing.T) {
 }
 
 func TestSimpleMixed(t *testing.T) {
-	s := createDdlSuite(t)
+	s := createDDLSuite(t)
 	defer s.teardown(t)
 
 	tests := []struct {
@@ -1085,7 +1085,7 @@ func TestSimpleMixed(t *testing.T) {
 }
 
 func TestSimpleInc(t *testing.T) {
-	s := createDdlSuite(t)
+	s := createDDLSuite(t)
 	defer s.teardown(t)
 
 	tests := []struct {
