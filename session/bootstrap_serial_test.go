@@ -65,6 +65,8 @@ func TestBootstrap(t *testing.T) {
 	require.NoError(t, rs.Close())
 	rs = mustExec(t, se, "SELECT * from mysql.columns_priv")
 	require.NoError(t, rs.Close())
+	rs = mustExec(t, se, "SELECT * from mysql.global_grants")
+	require.NoError(t, rs.Close())
 
 	// Check privilege tables.
 	r = mustExec(t, se, "SELECT COUNT(*) from mysql.global_variables")
