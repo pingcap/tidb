@@ -212,7 +212,7 @@ func cleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 		tableName = ""
 	}
 	// try to clean up table metas if exists
-	db, err := restore.DBFromConfig(cfg.TiDB)
+	db, err := restore.DBFromConfig(ctx, cfg.TiDB)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -252,7 +252,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 	}
 	defer cpdb.Close()
 
-	target, err := restore.NewTiDBManager(cfg.TiDB, tls)
+	target, err := restore.NewTiDBManager(ctx, cfg.TiDB, tls)
 	if err != nil {
 		return errors.Trace(err)
 	}

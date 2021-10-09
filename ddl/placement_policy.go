@@ -67,30 +67,8 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 }
 
 func checkPolicyValidation(info *model.PlacementSettings) error {
-	checkMergeConstraint := func(replica uint64, constr1, constr2 string) error {
-		// Constr2 only make sense when replica is set (whether it is in the replica field or included in the constr1)
-		if replica == 0 && constr1 == "" {
-			return nil
-		}
-		if _, err := placement.NewMergeRules(replica, constr1, constr2); err != nil {
-			return err
-		}
-		return nil
-	}
-	if err := checkMergeConstraint(1, info.LeaderConstraints, info.Constraints); err != nil {
-		return err
-	}
-	if err := checkMergeConstraint(info.Followers, info.FollowerConstraints, info.Constraints); err != nil {
-		return err
-	}
-	if err := checkMergeConstraint(info.Voters, info.VoterConstraints, info.Constraints); err != nil {
-		return err
-	}
-	if err := checkMergeConstraint(info.Learners, info.LearnerConstraints, info.Constraints); err != nil {
-		return err
-	}
-	// For constraint labels and default region label, they should be checked by `SHOW LABELS` if necessary when it is applied.
-	return nil
+	_, err := placement.NewBundleFromOptions(info)
+	return err
 }
 
 func getPolicyInfo(t *meta.Meta, policyID int64) (*model.PolicyInfo, error) {
@@ -230,45 +208,33 @@ func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 
-	dbIDs, tblIDs, partIDs, err := getPlacementPolicyDependedObjectsIDs(t, oldPolicy)
+	dbIDs, partIDs, tblInfos, err := getPlacementPolicyDependedObjectsIDs(t, oldPolicy)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if len(dbIDs)+len(tblIDs)+len(partIDs) != 0 {
+	if len(dbIDs)+len(tblInfos)+len(partIDs) != 0 {
 		// build bundle from new placement policy.
 		bundle, err := placement.NewBundleFromOptions(newPolicyInfo.PlacementSettings)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		err = bundle.Tidy()
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 		// Do the http request only when the rules is existed.
-		bundles := make([]*placement.Bundle, 0, len(tblIDs)+len(partIDs))
-		// Reset bundle for tables.
-		for _, id := range tblIDs {
+		bundles := make([]*placement.Bundle, 0, len(tblInfos)+len(partIDs))
+		// Reset bundle for tables (including the default rule for partition).
+		for _, tbl := range tblInfos {
 			cp := bundle.Clone()
-			bundles = append(bundles, cp.Reset(id))
-			if len(bundle.Rules) == 0 {
-				bundle.Index = 0
-				bundle.Override = false
-			} else {
-				bundle.Index = placement.RuleIndexTable
-				bundle.Override = true
+			ids := []int64{tbl.ID}
+			if tbl.Partition != nil {
+				for _, pDef := range tbl.Partition.Definitions {
+					ids = append(ids, pDef.ID)
+				}
 			}
+			bundles = append(bundles, cp.Reset(placement.RuleIndexTable, ids))
 		}
 		// Reset bundle for partitions.
 		for _, id := range partIDs {
 			cp := bundle.Clone()
-			bundles = append(bundles, cp.Reset(id))
-			if len(bundle.Rules) == 0 {
-				bundle.Index = 0
-				bundle.Override = false
-			} else {
-				bundle.Index = placement.RuleIndexPartition
-				bundle.Override = true
-			}
+			bundles = append(bundles, cp.Reset(placement.RuleIndexPartition, []int64{id}))
 		}
 		err = infosync.PutRuleBundles(context.TODO(), bundles)
 		if err != nil {
@@ -316,15 +282,15 @@ func checkPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy
 	return nil
 }
 
-func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo) (dbIDs, tblIDs, partIDs []int64, err error) {
+func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo) (dbIDs, partIDs []int64, tblInfos []*model.TableInfo, err error) {
 	schemas, err := t.ListDatabases()
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	// DB ids don't have to set the bundle themselves, but to check the dependency.
 	dbIDs = make([]int64, 0, len(schemas))
-	tblIDs = make([]int64, 0, len(schemas))
 	partIDs = make([]int64, 0, len(schemas))
+	tblInfos = make([]*model.TableInfo, 0, len(schemas))
 	for _, dbInfo := range schemas {
 		if dbInfo.PlacementPolicyRef != nil && dbInfo.PlacementPolicyRef.ID == policy.ID {
 			dbIDs = append(dbIDs, dbInfo.ID)
@@ -335,7 +301,7 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo
 		}
 		for _, tblInfo := range tables {
 			if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
-				tblIDs = append(tblIDs, tblInfo.ID)
+				tblInfos = append(tblInfos, tblInfo)
 			}
 			if tblInfo.Partition != nil {
 				for _, part := range tblInfo.Partition.Definitions {
@@ -346,7 +312,7 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo
 			}
 		}
 	}
-	return dbIDs, tblIDs, partIDs, nil
+	return dbIDs, partIDs, tblInfos, nil
 }
 
 func checkPlacementPolicyNotInUseFromMeta(t *meta.Meta, policy *model.PolicyInfo) error {
