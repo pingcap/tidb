@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
@@ -975,11 +976,16 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 }
 
 func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
-	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
+	noopFuncsMode := p.ctx.GetSessionVars().NoopFuncsMode
 	for _, item := range stmt.Items {
-		if !item.NullOrder && !enableNoopFuncs {
-			p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("GROUP BY expr ASC|DESC")
-			return
+		if !item.NullOrder && noopFuncsMode != variable.OnInt {
+			err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("GROUP BY expr ASC|DESC")
+			if noopFuncsMode == variable.OffInt {
+				p.err = err
+				return
+			}
+			// NoopFuncsMode is Warn, append an error
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}
 }
