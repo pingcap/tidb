@@ -680,15 +680,18 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 	return newDB, errors.Trace(err)
 }
 
-func createConnWithConsistency(ctx context.Context, db *sql.DB) (*sql.Conn, error) {
+func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead bool) (*sql.Conn, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	query := "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ"
-	_, err = conn.ExecContext(ctx, query)
-	if err != nil {
-		return nil, errors.Annotatef(err, "sql: %s", query)
+	var query string
+	if repeatableRead {
+		query = "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+		_, err = conn.ExecContext(ctx, query)
+		if err != nil {
+			return nil, errors.Annotatef(err, "sql: %s", query)
+		}
 	}
 	query = "START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */"
 	_, err = conn.ExecContext(ctx, query)
