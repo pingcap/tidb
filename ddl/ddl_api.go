@@ -2283,7 +2283,7 @@ func checkCharsetAndCollation(cs string, co string) error {
 func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd int64, tp autoid.AllocatorType) error {
 	allocs := autoid.NewAllocatorsFromTblInfo(d.store, schemaID, tbInfo)
 	if alloc := allocs.Get(tp); alloc != nil {
-		err := alloc.Rebase(newEnd, false)
+		err := alloc.Rebase(context.Background(), newEnd, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -6191,9 +6191,8 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		return errors.Trace(err)
 	}
 
+	// TODO: the old placement rules should be migrated to new format. use the bundle from meta directly.
 	bundle := infoschema.GetBundle(d.infoCache.GetLatest(), []int64{partitionID, meta.ID, schema.ID})
-
-	bundle.ID = placement.GroupID(partitionID)
 
 	err = bundle.ApplyPlacementSpec(spec.PlacementSpecs)
 	if err != nil {
@@ -6212,15 +6211,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bundle.Reset(partitionID)
-
-	if len(bundle.Rules) == 0 {
-		bundle.Index = 0
-		bundle.Override = false
-	} else {
-		bundle.Index = placement.RuleIndexPartition
-		bundle.Override = true
-	}
+	bundle.Reset(placement.RuleIndexPartition, []int64{partitionID})
 
 	job := &model.Job{
 		SchemaID:   schema.ID,

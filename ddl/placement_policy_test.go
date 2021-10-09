@@ -424,7 +424,7 @@ func testGetPolicyDependency(storage kv.Storage, name string) []int64 {
 	return ids
 }
 
-func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
+func (s *testDBSuite6) TestPolicyCacheAndPolicyDependency(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
@@ -599,4 +599,61 @@ func testGetPartitionDefinitionsByName(c *C, ctx sessionctx.Context, db string, 
 		}
 	}
 	return ptDef
+}
+
+func (s *testDBSuite6) TestPolicyInheritance(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop placement policy if exists x")
+
+	// test table inherit database's placement rules.
+	tk.MustExec("create database mydb constraints=\"[+zone=hangzhou]\"")
+	tk.MustQuery("show create database mydb").Check(testkit.Rows("mydb CREATE DATABASE `mydb` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */"))
+
+	tk.MustExec("use mydb")
+	tk.MustExec("create table t(a int)")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */"))
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t(a int) constraints=\"[+zone=suzhou]\"")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */"))
+	tk.MustExec("drop table if exists t")
+
+	// table will inherit db's placement rules, which is shared by all partition as default one.
+	tk.MustExec("create table t(a int) partition by range(a) (partition p0 values less than (100), partition p1 values less than (200))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */\n" +
+		"PARTITION BY RANGE ( `a` ) (\n" +
+		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
+		"  PARTITION `p1` VALUES LESS THAN (200)\n" +
+		")"))
+	tk.MustExec("drop table if exists t")
+
+	// partition's specified placement rules will override the default one.
+	tk.MustExec("create table t(a int) partition by range(a) (partition p0 values less than (100) constraints=\"[+zone=suzhou]\", partition p1 values less than (200))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=hangzhou]\" */\n" +
+		"PARTITION BY RANGE ( `a` ) (\n" +
+		"  PARTITION `p0` VALUES LESS THAN (100) /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */,\n" +
+		"  PARTITION `p1` VALUES LESS THAN (200)\n" +
+		")"))
+	tk.MustExec("drop table if exists t")
+
+	// test partition override table's placement rules.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int) CONSTRAINTS=\"[+zone=suzhou]\" partition by range(a) (partition p0 values less than (100) CONSTRAINTS=\"[+zone=changzhou]\", partition p1 values less than (200))")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */\n" +
+		"PARTITION BY RANGE ( `a` ) (\n" +
+		"  PARTITION `p0` VALUES LESS THAN (100) /*T![placement] CONSTRAINTS=\"[+zone=changzhou]\" */,\n" +
+		"  PARTITION `p1` VALUES LESS THAN (200)\n" +
+		")"))
 }

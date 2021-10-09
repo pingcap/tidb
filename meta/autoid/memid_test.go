@@ -72,19 +72,19 @@ func TestInMemoryAlloc(t *testing.T) {
 	require.Equal(t, int64(30), id)
 
 	// rebase
-	err = alloc.Rebase(int64(40), true)
+	err = alloc.Rebase(context.Background(), int64(40), true)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(41), id)
-	err = alloc.Rebase(int64(10), true)
+	err = alloc.Rebase(context.Background(), int64(10), true)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(42), id)
 
 	// maxInt64
-	err = alloc.Rebase(int64(math.MaxInt64-2), true)
+	err = alloc.Rebase(context.Background(), int64(math.MaxInt64-2), true)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestInMemoryAlloc(t *testing.T) {
 	require.NotNil(t, alloc)
 
 	var n uint64 = math.MaxUint64 - 2
-	err = alloc.Rebase(int64(n), true)
+	err = alloc.Rebase(context.Background(), int64(n), true)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
