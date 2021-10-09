@@ -3257,7 +3257,7 @@ func (s *testSessionSuite2) TestGrantViewRelated(c *C) {
 	c.Assert(err, NotNil)
 
 	tkRoot.MustExec(`grant show view, select on v_version29 to 'u_version29'@'%'`)
-	tkRoot.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29'").Check(testkit.Rows("Show View"))
+	tkRoot.MustQuery("select table_priv from mysql.tables_priv where host='%' and db='test' and user='u_version29' and table_name='v_version29'").Check(testkit.Rows("Select,Show View"))
 
 	tkUser.MustQuery("select current_user();").Check(testkit.Rows("u_version29@%"))
 	tkUser.MustQuery("show create view v_version29;")
