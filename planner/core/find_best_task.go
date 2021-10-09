@@ -566,6 +566,10 @@ func (ds *DataSource) getIndexMergeCandidate(path *util.AccessPath) *candidatePa
 func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candidatePath {
 	candidates := make([]*candidatePath, 0, 4)
 	for _, path := range ds.possibleAccessPaths {
+		// We should check whether the possible access path is valid first.
+		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
+			continue
+		}
 		if path.PartialIndexPaths != nil {
 			candidates = append(candidates, ds.getIndexMergeCandidate(path))
 			continue
@@ -573,9 +577,6 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		// if we already know the range of the scan is empty, just return a TableDual
 		if len(path.Ranges) == 0 {
 			return []*candidatePath{{path: path}}
-		}
-		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
-			continue
 		}
 		var currentCandidate *candidatePath
 		if path.IsTablePath() {
