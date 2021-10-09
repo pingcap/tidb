@@ -2886,6 +2886,20 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			preparedParams:  sessVars.PreparedParams,
 			enableRedactLog: sessVars.EnableRedactLog,
 		}
+		// copy OriginalSQL to avoid a weird panic like this:
+		// panic: runtime error: invalid memory address or nil pointer dereference
+		// [signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x12b0d07]
+		//
+		// goroutine 433 [running]:
+		// strings.(*Builder).WriteString(...)
+		// 	/usr/local/go/src/strings/builder.go:123
+		// github.com/pingcap/tidb/session.(*generalLogger).logEntry(0xc000703ad0, 0xc0017f68f0)
+		// 	/home/ubuntu/tidb/session/general_log.go:149 +0xe3e
+		// github.com/pingcap/tidb/session.(*generalLogger).startLogWorker(0xc000703ad0)
+		// 	/home/ubuntu/tidb/session/general_log.go:176 +0x4c
+		// created by github.com/pingcap/tidb/session.newGeneralLogger
+		// 	/home/ubuntu/tidb/session/general_log.go:132 +0xe7
+		// FIXME: find the bug and fix it
 		_, ok := execStmt.StmtNode.(ast.SensitiveStmtNode)
 		if !isPrepared && !sessVars.EnableRedactLog && !ok {
 			logEntry.Query.originalSQL = string(sessVars.StmtCtx.OriginalSQL)
