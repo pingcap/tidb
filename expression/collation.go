@@ -388,11 +388,11 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 		}
 
 		// If charset is different, only if conversion without data loss is allowed:
-		//		1. ASCII repertoire is always convertable.
+		//		1. ASCII repertoire is always convertible.
 		//		2. Non-Unicode charset can convert to Unicode charset.
 		//		3. utf8 can convert to utf8mb4.
 		//		4. constant value is allowed because we can eval and convert it directly.
-		// If we can not aggregate this two collations, we will get CoercibilityNone and wait for an explicit COLLATE clause, if
+		// If we can not aggregate these two collations, we will get CoercibilityNone and wait for an explicit COLLATE clause, if
 		// there is no explicit COLLATE clause, we will get an error.
 		if dstCharset != arg.GetType().Charset {
 			switch {

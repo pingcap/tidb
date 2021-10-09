@@ -130,11 +130,11 @@ func TestInferCollation(t *testing.T) {
 		},
 		{
 			[]Expression{
-				newExpression(CoercibilityExplicit, UNICODE, charset.CharsetUTF8MB4, "utf8mb4_general_ci"),
-				newExpression(CoercibilityExplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, "utf8mb4_general_ci"),
+				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4),
 			},
-			true,
-			nil,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 		// binary charset with non-binary charset.
 		{
