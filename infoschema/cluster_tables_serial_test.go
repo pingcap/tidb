@@ -218,13 +218,13 @@ func SubTestSelectClusterTable(s *clusterTablesSuite) func(*testing.T) {
 			tk.MustExec(fmt.Sprintf("set @@tidb_enable_streaming=%d", i))
 			tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
 			tk.MustExec("set time_zone = '+08:00';")
-			tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
+			tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("2"))
 			tk.MustQuery("select time from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953"))
 			tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
 			tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0 ", "")))
 			tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
-			tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
-			tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
+			tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1", "1"))
+			tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest order by digest").Check(testkit.Rows("124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc 1", "42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
 			tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953"))
 			tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
 			re := tk.MustQuery("select * from `CLUSTER_statements_summary`")
@@ -303,10 +303,11 @@ func SubTestStmtSummaryEvictedCountTable(s *clusterTablesSuite) func(*testing.T)
 		tk := s.newTestKitWithRoot(t)
 		// disable refreshing
 		tk.MustExec("set global tidb_stmt_summary_refresh_interval=9999")
-		// set information_schema.statements_summary's size to 1
-		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
+		// set information_schema.statements_summary's size to 2
+		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 2")
 		// no evict happened, no record in cluster evicted table.
 		tk.MustQuery("select count(*) from information_schema.cluster_statements_summary_evicted;").Check(testkit.Rows("0"))
+		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
 		// cleanup side effects
 		defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
 		defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")

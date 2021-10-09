@@ -317,6 +317,7 @@ build_for_br_integration_test:
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
+	@export TZ='Asia/Shanghai';
 	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -tags leak $(ARGS) || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 

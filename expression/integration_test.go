@@ -8111,13 +8111,54 @@ func (s *testIntegrationSerialSuite) TestNoopFunctions(c *C) {
 		"SELECT * FROM t1 LOCK IN SHARE MODE",
 		"SELECT * FROM t1 GROUP BY a DESC",
 		"SELECT * FROM t1 GROUP BY a ASC",
+		"SELECT GET_LOCK('acdc', 10)",
+		"SELECT RELEASE_LOCK('acdc')",
 	}
+
 	for _, stmt := range stmts {
-		tk.MustExec("SET tidb_enable_noop_functions=1")
+		// test on
+		tk.MustExec("SET tidb_enable_noop_functions='ON'")
 		tk.MustExec(stmt)
-		tk.MustExec("SET tidb_enable_noop_functions=0")
+		// test warning
+		tk.MustExec("SET tidb_enable_noop_functions='WARN'")
+		tk.MustExec(stmt)
+		warn := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(warn[0].Err.Error(), Matches, message)
+		// test off
+		tk.MustExec("SET tidb_enable_noop_functions='OFF'")
 		_, err := tk.Exec(stmt)
 		c.Assert(err.Error(), Matches, message)
+	}
+
+	// These statements return a different error message
+	// to the above. Test for error, not specifically the message.
+	// After they execute, we need to reset the values because
+	// otherwise tidb_enable_noop_functions can't be changed.
+
+	stmts = []string{
+		"START TRANSACTION READ ONLY",
+		"SET TRANSACTION READ ONLY",
+		"SET tx_read_only = 1",
+		"SET transaction_read_only = 1",
+	}
+
+	for _, stmt := range stmts {
+		// test off
+		tk.MustExec("SET tidb_enable_noop_functions='OFF'")
+		_, err := tk.Exec(stmt)
+		c.Assert(err.Error(), NotNil)
+		// test warning
+		tk.MustExec("SET tidb_enable_noop_functions='WARN'")
+		tk.MustExec(stmt)
+		warn := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warn), Equals, 1)
+		// test on
+		tk.MustExec("SET tidb_enable_noop_functions='ON'")
+		tk.MustExec(stmt)
+
+		// Reset (required for future loop iterations and future tests)
+		tk.MustExec("SET tx_read_only = 0")
+		tk.MustExec("SET transaction_read_only = 0")
 	}
 }
 
