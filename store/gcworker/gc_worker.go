@@ -724,12 +724,11 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
 
-		if pid, err := w.doGCPlacementRules(r); err != nil {
+		if err := w.doGCPlacementRules(r); err != nil {
 			logutil.Logger(ctx).Error("[gc worker] gc placement rules failed on range",
 				zap.String("uuid", w.uuid),
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),
-				zap.Int64("pid", pid),
 				zap.Error(err))
 			continue
 		}
@@ -1857,7 +1856,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
-func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err error) {
+func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
@@ -1882,7 +1881,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 			return
 		}
 		if historyJob == nil {
-			return 0, admin.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
+			return admin.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
 		}
 	}
 
@@ -1900,6 +1899,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 		for _, id := range physicalTableIDs {
 			bundles = append(bundles, placement.NewBundle(id))
 		}
+		fmt.Println("ids", physicalTableIDs)
 		err = infosync.PutRuleBundles(context.TODO(), bundles)
 	}
 	return
