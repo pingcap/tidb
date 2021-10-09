@@ -794,3 +794,49 @@ func (s *configTestSuite) TestDataCharacterSet(c *C) {
 		}
 	}
 }
+
+func (s *configTestSuite) TestCheckpointKeepStrategy(c *C) {
+	tomlCases := map[interface{}]config.CheckpointKeepStrategy{
+		true:     config.CheckpointRename,
+		false:    config.CheckpointRemove,
+		"remove": config.CheckpointRemove,
+		"rename": config.CheckpointRename,
+		"origin": config.CheckpointOrigin,
+	}
+	var cp config.CheckpointKeepStrategy
+	for key, strategy := range tomlCases {
+		err := cp.UnmarshalTOML(key)
+		c.Assert(err, IsNil)
+		c.Assert(cp, Equals, strategy)
+	}
+
+	defaultCp := "enable = true\r\n"
+	cpCfg := &config.Checkpoint{}
+	_, err := toml.Decode(defaultCp, cpCfg)
+	c.Assert(err, IsNil)
+	c.Assert(cpCfg.KeepAfterSuccess, Equals, config.CheckpointRemove)
+
+	cpFmt := "keep-after-success = %v\r\n"
+	for key, strategy := range tomlCases {
+		cpValue := key
+		if strVal, ok := key.(string); ok {
+			cpValue = `"` + strVal + `"`
+		}
+		tomlStr := fmt.Sprintf(cpFmt, cpValue)
+		cpCfg := &config.Checkpoint{}
+		_, err := toml.Decode(tomlStr, cpCfg)
+		c.Assert(err, IsNil)
+		c.Assert(cpCfg.KeepAfterSuccess, Equals, strategy)
+	}
+
+	marshalTextCases := map[config.CheckpointKeepStrategy]string{
+		config.CheckpointRemove: "remove",
+		config.CheckpointRename: "rename",
+		config.CheckpointOrigin: "origin",
+	}
+	for strategy, value := range marshalTextCases {
+		res, err := strategy.MarshalText()
+		c.Assert(err, IsNil)
+		c.Assert(res, DeepEquals, []byte(value))
+	}
+}

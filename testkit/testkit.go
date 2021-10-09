@@ -39,6 +39,7 @@ var testKitIDGenerator atomic.Uint64
 type TestKit struct {
 	require *require.Assertions
 	assert  *assert.Assertions
+	t       *testing.T
 	store   kv.Storage
 	session session.Session
 }
@@ -48,12 +49,23 @@ func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
 	return &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
+		t:       t,
 		store:   store,
 		session: newSession(t, store),
 	}
 }
 
-// Session return a session
+// RefreshSession set a new session for the testkit
+func (tk *TestKit) RefreshSession() {
+	tk.session = newSession(tk.t, tk.store)
+}
+
+// SetSession set the session of testkit
+func (tk *TestKit) SetSession(session session.Session) {
+	tk.session = session
+}
+
+// Session return the session associated with the testkit
 func (tk *TestKit) Session() session.Session {
 	return tk.session
 }
@@ -178,6 +190,13 @@ func newSession(t *testing.T, store kv.Storage) session.Session {
 	return se
 }
 
+// RefreshConnectionID refresh the connection ID for session of the testkit
+func (tk *TestKit) RefreshConnectionID() {
+	if tk.session != nil {
+		tk.session.SetConnectionID(testKitIDGenerator.Inc())
+	}
+}
+
 // MustGetErrCode executes a sql statement and assert it's error code.
 func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	_, err := tk.Exec(sql)
@@ -194,4 +213,15 @@ func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
 	err := tk.ExecToErr(sql)
 	tk.require.Error(err)
 	tk.require.Equal(errStr, err.Error())
+}
+
+// MustUseIndex checks if the result execution plan contains specific index(es).
+func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][3], "index:"+index) {
+			return true
+		}
+	}
+	return false
 }
