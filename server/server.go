@@ -736,7 +736,9 @@ func (s *Server) GracefulDown(ctx context.Context, done chan struct{}) {
 		case <-ticker:
 		}
 	}
-	close(done)
+	if done != nil {
+		close(done)
+	}
 }
 
 func (s *Server) kickIdleConnection() {
