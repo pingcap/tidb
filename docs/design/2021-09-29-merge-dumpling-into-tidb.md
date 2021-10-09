@@ -15,37 +15,39 @@
 
 ## Introduction
 
-**Dumpling** is a tool and a Go library for creating SQL dump from a MySQL-compatible database. It is intended to replace `mysqldump` and `mydumper` when targeting TiDB.
+[**Dumpling**](https://github.com/pingcap/dumpling) is a tool and a Go library for creating SQL dump from a MySQL-compatible database. It is intended to replace `mysqldump` and `mydumper` when targeting TiDB.
 
 ## Motivation
 
 There are three primary reasons to merge:
 
-1. DM's dependency problem. As we know, DM depends on TiDB and Dumpling; Dumpling depends on TiDB too. Each time DM updated Dumpling's version, would update TiDB's version by the way along with Dumpling, which is unexpected.
-2. Release testing problem. Dumpling releases with TiDB every sprint though two repos, which may lead to the conflict by the newest added code in Dumpling and TiDB this sprint is exposed only when release testing failed not earlier.
+1. DM suffers from dependency problem about TiDB and Dumpling. Concretely, DM depends on TiDB and Dumpling, while Dumpling depends on TiDB too. Every time DM updates Dumpling's version, TiDB's version will be updated along with Dumpling, which is unexpected.
+
+2. Regression during a release. Dumpling releases along with TiDB even though they are in two repos. This results in conflicts are only exposed when testing failed during a release. For example, TiDB adds a new feature, which may cause a fail in Dumpling, which Dumpling isn't aware of. This issue cannot be found on their own tests, but the integration test of Dumpling and TiDB. This is very troublesome!
+
 3. Reduce development costs. In TiDB, there is a function `export SQL` of TiDB similar with Dumpling.
 
 After merged, we will:
 
-1. Not worry about the DM's dependency problem;
-2. Conflict by the added code is exposed before each pr merged;
-3. Maybe we can use Dumpling to implement `export SQL` of TiDB.
+1. Get rid of the DM's dependency problem;
+2. Test in a monorepo and thus expose problem earlier;
+3. Reduce duplicated code such as implementing `export SQL` for TiDB with Dumpling.
 
 ## Milestones
 
-* Milestone 1: Merge **master code** of Dumpling into TiDB repo.
-* Milestone 2: Wait released branches in maintaining to be **expired**. E.g. release-4.0, release-5.0, release-5.1.
-* Milestone 3: Migrate all useful possibly from Dumpling to TiDB repo. E.g. Issues. Dumpling repo **archived**.
+* Milestone 1: Merge **master** branch of Dumpling into TiDB repo.
+* Milestone 2: Keep maintaining released branches until they are **end of maintenance**; e.g., release-4.0.
+* Milestone 3: Migrate all useful content from Dumpling to TiDB repo, e.g. issues. And then **archives** Dumpling repo.
 
 ### Milestone 1
 
-> This section, we refer to https://internals.tidb.io/t/topic/256.
+> This section refers to https://internals.tidb.io/t/topic/256.
 
-To achieve it, we should do as follow:
+To achieve milestone 1, we should do as follow:
 
 1. `git checkout -b clone-dumpling && git subtree add --fetch=dumpling https://github.com/pingcap/dumpling.git master --squash`
 2. `git checkout -b merge-dumpling` (we will update code in this branch)
-3. Do necessary merging
+3. Do necessary merging:
    1. merge go.mod, go.sum;
    2. update Makefile;
    3. update the import path for DM and Dumpling;
@@ -54,25 +56,23 @@ To achieve it, we should do as follow:
 5. Create true PR from `okJiang/merge-dumpling` to `pingcap:master` (link if create)
 6. After reviewing, merge it to master
 
-
-
 ### Milestone 2
 
-In this stage, we should do lots of maintaination in both repos:
+In this stage, we should do lots of maintenance in both repos:
 
-* All increment activities happened in TiDB repo and give some corresponding guidance;
-* Release new version from TiDB repo, e.g. >= 5.3.
-* Maintain active branches released before milestone 1 from TiDB repo to Dumpling repo;
+* All increment activities happened in TiDB repo and give some corresponding guidance.
+* Release new version (>= 5.3) from TiDB repo.
+* Maintain existing active branches released for TiDB repo and Dumpling repo.
 
 #### What increment activities should happen in TiDB repo?
 
 * All created PRs, issues about Dumpling;
-* When we want to fix an exited issue, we can create a new issue in TiDB repo with a link to original issue.
+* When we want to fix an existing issue, we can create a new issue in TiDB repo with a link to original issue.
 
 #### What guidance should we give?
 
-* Post new address in pingcap/Dumpling/README.md like https://github.com/pingcap/br/blob/master/README.md
-* When contributor create issues or PRs, we should tell them how to re-create in TiDB repo.
+* Post migrated notice on README.md like https://github.com/pingcap/br/blob/master/README.md
+* When contributors create issues or PRs, we should tell them how to re-create in TiDB repo.
 
 #### How do we release new version from TiDB repo?
 
@@ -80,9 +80,9 @@ In this stage, we should do lots of maintaination in both repos:
 
 #### How do we maintain former active released branches?
 
-> Ref: https://internals.tidb.io/t/topic/256
+> This section refers to https://internals.tidb.io/t/topic/256
 
-if we want to cherry-pick the specific commit<COMMIT_SHA> to Dumpling repo. DO THE FOLLOWING THINGS
+If we want to cherry-pick the specific commit <COMMIT_SHA> to Dumpling repo. DO THE FOLLOWING THINGS
 
 1. if the <COMMIT_SHA> not in <SPLIT_BRANCH>:
     1. In TiDB repo:
@@ -100,7 +100,7 @@ if we want to cherry-pick the specific commit<COMMIT_SHA> to Dumpling repo. DO T
 
 ### Milestone 3
 
-After all releases(<= 5.2) expired, it is time to archive Dumpling repo. But before the truly end, we should do some closing work:
+After all releases(<= 5.2) end of maintenance, it is time to archive Dumpling repo. But before the truly end, we should do some closing work:
 
 * Migrate issues from Dumpling to TiDB
 * ...
