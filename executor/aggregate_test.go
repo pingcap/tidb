@@ -1533,13 +1533,13 @@ func (s *testSerialSuite) TestPartitionSpillingAgg(c *C) {
 	partitions := make([]string, 0, len(partition0)+len(partition1)+len(partition2)+len(partition3))
 	partitions = append(partitions, "0.0000")
 	// Test only some partitions may be spilled.
-	for i := 0; i < len(partition1); i++ {
-		sql += fmt.Sprintf(",(%v)", partition1[i])
-		partitions = append(partitions, strconv.Itoa(int(partition1[i]))+".0000")
+	for _, i := range partition1 {
+		sql += fmt.Sprintf(",(%v)", i)
+		partitions = append(partitions, strconv.Itoa(int(i))+".0000")
 	}
-	for i := 0; i < len(partition3); i++ {
-		sql += fmt.Sprintf(",(%v)", partition3[i])
-		partitions = append(partitions, strconv.Itoa(int(partition3[i]))+".0000")
+	for _, i := range partition3 {
+		sql += fmt.Sprintf(",(%v)", i)
+		partitions = append(partitions, strconv.Itoa(int(i))+".0000")
 	}
 	sort.Strings(partitions)
 	sql += ";"
@@ -1569,19 +1569,19 @@ func (s *testSerialSuite) TestPartitionSpillingAgg(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	sql = "insert into t values (0)"
-	for i := 0; i < len(partition1); i++ {
-		sql += fmt.Sprintf(",(%v)", partition1[i])
+	for _, i := range partition1 {
+		sql += fmt.Sprintf(",(%v)", i)
 	}
-	for i := 0; i < len(partition3); i++ {
-		sql += fmt.Sprintf(",(%v)", partition3[i])
+	for _, i := range partition3 {
+		sql += fmt.Sprintf(",(%v)", i)
 	}
-	for i := 0; i < len(partition0); i++ {
-		sql += fmt.Sprintf(",(%v)", partition0[i])
-		partitions = append(partitions, strconv.Itoa(int(partition0[i]))+".0000")
+	for _, i := range partition0 {
+		sql += fmt.Sprintf(",(%v)", i)
+		partitions = append(partitions, strconv.Itoa(int(i))+".0000")
 	}
-	for i := 0; i < len(partition2); i++ {
-		sql += fmt.Sprintf(",(%v)", partition2[i])
-		partitions = append(partitions, strconv.Itoa(int(partition2[i]))+".0000")
+	for _, i := range partition2 {
+		sql += fmt.Sprintf(",(%v)", i)
+		partitions = append(partitions, strconv.Itoa(int(i))+".0000")
 	}
 	sort.Strings(partitions)
 	sql += ";"
