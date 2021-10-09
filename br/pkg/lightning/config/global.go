@@ -149,6 +149,7 @@ func readPassword(prompt string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	fmt.Fprintln(stderr)
 	return string(psw), nil
 }
 
