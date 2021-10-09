@@ -173,8 +173,8 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 			corColIDs:  []int64{},
 			idxColIDs:  []int64{3},
 			idxColLens: []int{types.UnspecifiedLength},
-			access:     "[]",
-			remained:   "[eq(Column#3, \x01)]",
+			access:     "[eq(Column#3, \x01)]",
+			remained:   "[]",
 		},
 	}
 	collate.SetNewCollationEnabledForTest(true)

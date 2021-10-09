@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
@@ -64,34 +65,74 @@ func (s *testDDLSuite) TestPlacementPolicyInUse(c *C) {
 
 	db1 := testSchemaInfo(c, d, "db1")
 	testCreateSchema(c, sctx, d, db1)
+	db1.State = model.StatePublic
+
 	db2 := testSchemaInfo(c, d, "db2")
 	testCreateSchema(c, sctx, d, db2)
+	db2.State = model.StatePublic
 
 	policySettings := &model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1,r2"}
 	p1 := testPlacementPolicyInfo(c, d, "p1", policySettings)
 	p2 := testPlacementPolicyInfo(c, d, "p2", policySettings)
 	p3 := testPlacementPolicyInfo(c, d, "p3", policySettings)
+	p4 := testPlacementPolicyInfo(c, d, "p4", policySettings)
+	p5 := testPlacementPolicyInfo(c, d, "p5", policySettings)
 	testCreatePlacementPolicy(c, sctx, d, p1)
 	testCreatePlacementPolicy(c, sctx, d, p2)
 	testCreatePlacementPolicy(c, sctx, d, p3)
+	testCreatePlacementPolicy(c, sctx, d, p4)
+	testCreatePlacementPolicy(c, sctx, d, p5)
 
 	t1 := testTableInfo(c, d, "t1", 1)
 	t1.PlacementPolicyRef = &model.PolicyRefInfo{ID: p1.ID, Name: p1.Name}
 	testCreateTable(c, sctx, d, db1, t1)
+	t1.State = model.StatePublic
+	db1.Tables = append(db1.Tables, t1)
 
 	t2 := testTableInfo(c, d, "t2", 1)
 	t2.PlacementPolicyRef = &model.PolicyRefInfo{ID: p1.ID, Name: p1.Name}
 	testCreateTable(c, sctx, d, db2, t2)
+	t2.State = model.StatePublic
+	db2.Tables = append(db2.Tables, t2)
 
 	t3 := testTableInfo(c, d, "t3", 1)
 	t3.PlacementPolicyRef = &model.PolicyRefInfo{ID: p2.ID, Name: p2.Name}
 	testCreateTable(c, sctx, d, db1, t3)
+	t3.State = model.StatePublic
+	db1.Tables = append(db1.Tables, t3)
 
+	dbP := testSchemaInfo(c, d, "db_p")
+	dbP.PlacementPolicyRef = &model.PolicyRefInfo{ID: p4.ID, Name: p4.Name}
+	dbP.State = model.StatePublic
+	testCreateSchema(c, sctx, d, dbP)
+
+	t4 := testTableInfoWithPartition(c, d, "t4", 1)
+	t4.Partition.Definitions[0].PlacementPolicyRef = &model.PolicyRefInfo{ID: p5.ID, Name: p5.Name}
+	testCreateTable(c, sctx, d, db1, t4)
+	t4.State = model.StatePublic
+	db1.Tables = append(db1.Tables, t4)
+
+	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(
+		[]*model.DBInfo{db1, db2, dbP},
+		nil,
+		[]*model.PolicyInfo{p1, p2, p3, p4, p5},
+		1,
+	)
+	c.Assert(err, IsNil)
+	is := builder.Build()
+
+	for _, policy := range []*model.PolicyInfo{p1, p2, p4, p5} {
+		c.Assert(ErrPlacementPolicyInUse.Equal(checkPlacementPolicyNotInUseFromInfoSchema(is, policy)), IsTrue)
+		c.Assert(kv.RunInNewTxn(ctx, sctx.GetStore(), false, func(ctx context.Context, txn kv.Transaction) error {
+			m := meta.NewMeta(txn)
+			c.Assert(ErrPlacementPolicyInUse.Equal(checkPlacementPolicyNotInUseFromMeta(m, policy)), IsTrue)
+			return nil
+		}), IsNil)
+	}
+
+	c.Assert(checkPlacementPolicyNotInUseFromInfoSchema(is, p3), IsNil)
 	c.Assert(kv.RunInNewTxn(ctx, sctx.GetStore(), false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
-
-		c.Assert(ErrPlacementPolicyInUse.Equal(checkPlacementPolicyNotInUseFromMeta(m, p1)), IsTrue)
-		c.Assert(ErrPlacementPolicyInUse.Equal(checkPlacementPolicyNotInUseFromMeta(m, p2)), IsTrue)
 		c.Assert(checkPlacementPolicyNotInUseFromMeta(m, p3), IsNil)
 		return nil
 	}), IsNil)

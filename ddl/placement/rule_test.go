@@ -15,7 +15,6 @@
 package placement
 
 import (
-	"encoding/json"
 	"errors"
 
 	. "github.com/pingcap/check"
@@ -34,25 +33,20 @@ func (t *testRuleSuite) TestClone(c *C) {
 	c.Assert(newRule, DeepEquals, &Rule{ID: "121"})
 }
 
-func matchRule(r1 *Rule, t2 []*Rule) bool {
-	for _, r2 := range t2 {
-		if ok, _ := DeepEquals.Check([]interface{}{r1, r2}, nil); ok {
-			return true
-		}
-	}
-	return false
-}
-
 func matchRules(t1, t2 []*Rule, prefix string, c *C) {
-	expected, err := json.Marshal(t1)
-	c.Assert(err, IsNil)
-	got, err := json.Marshal(t2)
-	c.Assert(err, IsNil)
-	comment := Commentf("%s\nexpected %s\nbut got %s", prefix, expected, got)
-	c.Assert(len(t1), Equals, len(t2), comment)
-	for _, r1 := range t1 {
-		comment = Commentf("%s\nerror on %+v\nexpected %s\nbut got %s", prefix, r1, expected, got)
-		c.Assert(matchRule(r1, t2), IsTrue, comment)
+	c.Assert(len(t2), Equals, len(t1), Commentf(prefix))
+	for i := range t1 {
+		found := false
+		for j := range t2 {
+			ok, _ := DeepEquals.Check([]interface{}{t2[j], t1[i]}, []string{})
+			if ok {
+				found = true
+				break
+			}
+		}
+		if !found {
+			c.Errorf("%s\n\ncan not found %d rule\n%+v\n%+v", prefix, i, t1[i], t2)
+		}
 	}
 }
 
@@ -71,11 +65,7 @@ func (t *testRuleSuite) TestNewRuleAndNewRules(c *C) {
 		input:    "",
 		replicas: 3,
 		output: []*Rule{
-			{
-				Count:       3,
-				Role:        Voter,
-				Constraints: Constraints{},
-			},
+			NewRule(Voter, 3, NewConstraintsDirect()),
 		},
 	})
 
@@ -86,40 +76,30 @@ func (t *testRuleSuite) TestNewRuleAndNewRules(c *C) {
 		err:      ErrInvalidConstraintsRelicas,
 	})
 
-	labels, err := NewConstraints([]string{"+zone=sh", "+zone=sh"})
-	c.Assert(err, IsNil)
 	tests = append(tests, TestCase{
 		name:     "normal array constraints",
-		input:    `["+zone=sh", "+zone=sh"]`,
+		input:    `["+zone=sh", "+region=sh"]`,
 		replicas: 3,
 		output: []*Rule{
-			{
-				Count:       3,
-				Role:        Voter,
-				Constraints: labels,
-			},
+			NewRule(Voter, 3, NewConstraintsDirect(
+				NewConstraintDirect("zone", In, "sh"),
+				NewConstraintDirect("region", In, "sh"),
+			)),
 		},
 	})
 
-	labels1, err := NewConstraints([]string{"+zone=sh", "-zone=bj"})
-	c.Assert(err, IsNil)
-	labels2, err := NewConstraints([]string{"+zone=sh"})
-	c.Assert(err, IsNil)
 	tests = append(tests, TestCase{
 		name:     "normal object constraints",
 		input:    `{"+zone=sh,-zone=bj":2, "+zone=sh": 1}`,
 		replicas: 3,
 		output: []*Rule{
-			{
-				Count:       2,
-				Role:        Voter,
-				Constraints: labels1,
-			},
-			{
-				Count:       1,
-				Role:        Voter,
-				Constraints: labels2,
-			},
+			NewRule(Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("zone", In, "sh"),
+				NewConstraintDirect("zone", NotIn, "bj"),
+			)),
+			NewRule(Voter, 1, NewConstraintsDirect(
+				NewConstraintDirect("zone", In, "sh"),
+			)),
 		},
 	})
 
@@ -128,20 +108,14 @@ func (t *testRuleSuite) TestNewRuleAndNewRules(c *C) {
 		input:    "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
 		replicas: 4,
 		output: []*Rule{
-			{
-				Count:       2,
-				Role:        Voter,
-				Constraints: labels1,
-			},
-			{
-				Count:       1,
-				Role:        Voter,
-				Constraints: labels2,
-			},
-			{
-				Count: 1,
-				Role:  Voter,
-			},
+			NewRule(Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("zone", In, "sh"),
+				NewConstraintDirect("zone", NotIn, "bj"),
+			)),
+			NewRule(Voter, 1, NewConstraintsDirect(
+				NewConstraintDirect("zone", In, "sh"),
+			)),
+			NewRule(Voter, 1, NewConstraintsDirect()),
 		},
 	})
 
@@ -149,16 +123,13 @@ func (t *testRuleSuite) TestNewRuleAndNewRules(c *C) {
 		name:  "normal object constraints, without count",
 		input: "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
 		output: []*Rule{
-			{
-				Count:       2,
-				Role:        Voter,
-				Constraints: labels1,
-			},
-			{
-				Count:       1,
-				Role:        Voter,
-				Constraints: labels2,
-			},
+			NewRule(Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("zone", In, "sh"),
+				NewConstraintDirect("zone", NotIn, "bj"),
+			)),
+			NewRule(Voter, 1, NewConstraintsDirect(
+				NewConstraintDirect("zone", In, "sh"),
+			)),
 		},
 	})
 

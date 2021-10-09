@@ -773,12 +773,13 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 		expected string
 		isNil    bool
 		getErr   bool
+		flen     int
 	}{
-		{"2003-12-31 01:02:03", "01:02:03", false, false},
-		{"2003-12-31 01:02:03.000123", "01:02:03.000123", false, false},
-		{"01:02:03.000123", "01:02:03.000123", false, false},
-		{"01:02:03", "01:02:03", false, false},
-		{"-838:59:59.000000", "-838:59:59.000000", false, false},
+		{"2003-12-31 01:02:03", "01:02:03", false, false, 10},
+		{"2003-12-31 01:02:03.000123", "01:02:03.000123", false, false, 17},
+		{"01:02:03.000123", "01:02:03.000123", false, false, 17},
+		{"01:02:03", "01:02:03", false, false, 10},
+		{"-838:59:59.000000", "-838:59:59.000000", false, false, 17},
 	}
 
 	for _, t := range cases {
@@ -789,7 +790,7 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 		c.Assert(tp.Charset, Equals, charset.CharsetBin)
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
 		c.Assert(tp.Flag&mysql.BinaryFlag, Equals, mysql.BinaryFlag)
-		c.Assert(tp.Flen, Equals, mysql.MaxDurationWidthWithFsp)
+		c.Assert(tp.Flen, Equals, t.flen)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -848,15 +849,11 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		c.Assert(ts.Sub(gotime(t, ts.Location())), LessEqual, 3*time.Second)
 
 		resetStmtContext(s.ctx)
-		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(8)))
-		c.Assert(err, IsNil)
-		_, err = evalBuiltinFunc(f, chunk.Row{})
+		_, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(8)))
 		c.Assert(err, NotNil)
 
 		resetStmtContext(s.ctx)
-		f, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-2)))
-		c.Assert(err, IsNil)
-		_, err = evalBuiltinFunc(f, chunk.Row{})
+		_, err = x.fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-2)))
 		c.Assert(err, NotNil)
 	}
 
@@ -1351,10 +1348,15 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	tests := []struct {
 		param  interface{}
 		expect int
-	}{{0, 8}, {3, 12}, {6, 15}, {-1, 0}, {7, 0}}
+		error  bool
+	}{{0, 8, false}, {3, 12, false}, {6, 15, false}, {-1, 0, true}, {7, 0, true}}
 
 	for _, test := range tests {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(test.param)))
+		if test.error {
+			c.Assert(err, NotNil)
+			continue
+		}
 		c.Assert(err, IsNil)
 		resetStmtContext(s.ctx)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1581,14 +1583,15 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		expectStr  string
 		isNil      bool
 		fsp        int8
+		flen       int
 		getWarning bool
 	}{
-		{[]interface{}{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001"}, "-00:00:00.000001", false, 6, false},
-		{[]interface{}{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002"}, "46:58:57.999999", false, 6, false},
-		{[]interface{}{"2016-12-00 12:00:00", "2016-12-01 12:00:00"}, "-24:00:00", false, 0, false},
-		{[]interface{}{"10:10:10", "10:9:0"}, "00:01:10", false, 0, false},
-		{[]interface{}{"2016-12-00 12:00:00", "10:9:0"}, "", true, 0, false},
-		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, true},
+		{[]interface{}{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001"}, "-00:00:00.000001", false, 6, 17, false},
+		{[]interface{}{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002"}, "46:58:57.999999", false, 6, 17, false},
+		{[]interface{}{"2016-12-00 12:00:00", "2016-12-01 12:00:00"}, "-24:00:00", false, 0, 10, false},
+		{[]interface{}{"10:10:10", "10:9:0"}, "00:01:10", false, 0, 10, false},
+		{[]interface{}{"2016-12-00 12:00:00", "10:9:0"}, "", true, 0, 10, false},
+		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, 10, true},
 	}
 
 	for _, t := range tests {
@@ -1600,7 +1603,7 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		c.Assert(tp.Charset, Equals, charset.CharsetBin)
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
 		c.Assert(tp.Flag, Equals, mysql.BinaryFlag)
-		c.Assert(tp.Flen, Equals, mysql.MaxDurationWidthWithFsp)
+		c.Assert(tp.Flen, Equals, t.flen)
 		d, err := f.Eval(chunk.Row{})
 		if t.getWarning {
 			c.Assert(err, IsNil)

@@ -36,7 +36,6 @@ func TestTemporaryTableNoNetwork(t *testing.T) {
 
 	t.Run("local", func(t *testing.T) {
 		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
-			tk.MustExec("set tidb_enable_noop_functions=true")
 			tk.MustExec("create temporary table tmp_t (id int primary key, a int, b int, index(a))")
 		})
 	})

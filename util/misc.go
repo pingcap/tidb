@@ -584,6 +584,14 @@ func initInternalClient() {
 	}
 }
 
+// ComposeURL adds HTTP schema if missing and concats address with path
+func ComposeURL(address, path string) string {
+	if strings.HasPrefix(address, "http://") || strings.HasPrefix(address, "https://") {
+		return fmt.Sprintf("%s%s", address, path)
+	}
+	return fmt.Sprintf("%s://%s%s", InternalHTTPSchema(), address, path)
+}
+
 // GetLocalIP will return a local IP(non-loopback, non 0.0.0.0), if there is one
 func GetLocalIP() string {
 	addrs, err := net.InterfaceAddrs()

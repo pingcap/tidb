@@ -2015,10 +2015,9 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 				if !ok {
 					return invalidTask
 				}
-				_, coll := expression.DeriveCollationFromExprs(p.ctx, col)
 				partitionCols = append(partitionCols, &property.MPPPartitionColumn{
 					Col:       col,
-					CollateID: property.GetCollateIDByNameForPartition(coll),
+					CollateID: property.GetCollateIDByNameForPartition(col.GetType().Collate),
 				})
 			}
 		}
