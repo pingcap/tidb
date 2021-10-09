@@ -5763,7 +5763,7 @@ func (s *testSessionSuite) TestFixSetTiDBSnapshotTS(c *C) {
 	c.Assert(err.Error(), Matches, ".*Unknown database.*")
 	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot='%s'", ts))
 	tk.MustExec("use t123")
-	// update any session varaible and assert whether infoschema is changed
+	// update any session variable and assert whether infoschema is changed
 	tk.MustExec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER';")
 	tk.MustExec("use t123")
 }
