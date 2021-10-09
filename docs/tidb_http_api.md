@@ -522,3 +522,9 @@ timezone.*
     curl -X POST -d "tidb_enable_1pc=0" http://{TiDBIP}:10080/settings
     ```
 
+1. Enable/disable the mutation checker
+
+    ```shell
+    curl -X POST -d "tidb_enable_mutation_checker=1" http://{TiDBIP}:10080/settings
+    curl -X POST -d "tidb_enable_mutation_checker=0" http://{TiDBIP}:10080/settings
+    ```
