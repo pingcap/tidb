@@ -15,10 +15,10 @@ package statistics_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/domain"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
