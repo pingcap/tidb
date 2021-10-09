@@ -1643,8 +1643,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &stmtSummaryTableRetriever{
-					table:   v.Table,
-					columns: v.Columns,
+					table:     v.Table,
+					columns:   v.Columns,
+					extractor: v.Extractor.(*plannercore.StatementsSummaryExtractor),
 				},
 			}
 		case strings.ToLower(infoschema.TableColumns):
@@ -4396,8 +4397,14 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 		startTS:      startTS,
 	}
 
-	if v.TableInfo.Meta().TempTableType != model.TempTableNone {
-		e.sampler = &emptySampler{}
+	tblInfo := v.TableInfo.Meta()
+	if tblInfo.TempTableType != model.TempTableNone {
+		if tblInfo.TempTableType == model.TempTableGlobal {
+			e.sampler = &emptySampler{}
+		} else {
+			b.err = errors.New("TABLESAMPLE clause can not be applied to local temporary tables")
+			return nil
+		}
 	} else if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
 		e.sampler = newTableRegionSampler(
 			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),

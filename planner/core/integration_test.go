@@ -2489,6 +2489,106 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML(c *C) {
 	checkExplain("BatchGet")
 }
 
+func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	cases := []struct {
+		prepare    string
+		sql        string
+		planRegexp string
+	}{
+		// Test for alloc auto ID.
+		{
+			sql:        "insert into t () values ()",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
+		},
+		// Test for rebase ID.
+		{
+			sql:        "insert into t (a) values (99000000000)",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
+		},
+		// Test for alloc auto ID and rebase ID.
+		{
+			sql:        "insert into t (a) values (null), (99000000000)",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
+		},
+		// Test for insert ignore.
+		{
+			sql:        "insert ignore into t values (null,1), (2, 2), (99000000000, 3), (100000000000, 4)",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 2, Get.*num_rpc.*total_time.*commit_txn.*count: 3, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
+		},
+		// Test for insert on duplicate.
+		{
+			sql:        "insert into t values (null,null), (1,1),(2,2) on duplicate key update a = a + 100000000000",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*count: 2, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
+		},
+		// Test for replace with alloc ID.
+		{
+			sql:        "replace into t () values ()",
+			planRegexp: ".*auto_id_allocator.*alloc_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
+		},
+		// Test for replace with alloc ID and rebase ID.
+		{
+			sql:        "replace into t (a) values (null), (99000000000)",
+			planRegexp: ".*auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
+		},
+		// Test for update with rebase ID.
+		{
+			prepare:    "insert into t values (1,1),(2,2)",
+			sql:        "update t set a=a*100000000000",
+			planRegexp: ".*auto_id_allocator.*rebase_cnt: 2, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
+		},
+	}
+
+	for _, ca := range cases {
+		for i := 0; i < 3; i++ {
+			tk.MustExec("drop table if exists t")
+			switch i {
+			case 0:
+				tk.MustExec("create table t (a bigint auto_increment, b int, primary key (a));")
+			case 1:
+				tk.MustExec("create table t (a bigint unsigned auto_increment, b int, primary key (a));")
+			case 2:
+				if strings.Contains(ca.sql, "on duplicate key") {
+					continue
+				}
+				tk.MustExec("create table t (a bigint primary key auto_random(5), b int);")
+				tk.MustExec("set @@allow_auto_random_explicit_insert=1;")
+			default:
+				panic("should never happen")
+			}
+			if ca.prepare != "" {
+				tk.MustExec(ca.prepare)
+			}
+			res := tk.MustQuery("explain analyze " + ca.sql)
+			resBuff := bytes.NewBufferString("")
+			for _, row := range res.Rows() {
+				fmt.Fprintf(resBuff, "%s\t", row)
+			}
+			explain := resBuff.String()
+			c.Assert(explain, Matches, ca.planRegexp, Commentf("idx: %v,sql: %v", i, ca.sql))
+		}
+	}
+
+	// Test for table without auto id.
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a bigint, b int);")
+		tk.MustExec("insert into t () values ()")
+		if ca.prepare != "" {
+			tk.MustExec(ca.prepare)
+		}
+		res := tk.MustQuery("explain analyze " + ca.sql)
+		resBuff := bytes.NewBufferString("")
+		for _, row := range res.Rows() {
+			fmt.Fprintf(resBuff, "%s\t", row)
+		}
+		explain := resBuff.String()
+		c.Assert(strings.Contains(explain, "auto_id_allocator"), IsFalse, Commentf("sql: %v, explain: %v", ca.sql, explain))
+	}
+}
+
 func (s *testIntegrationSuite) TestPartitionExplain(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3237,7 +3337,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 	tk.MustExec("analyze table t")
 	tk.MustExec("set session tidb_allow_mpp=OFF")
 
@@ -3277,7 +3377,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForMPP(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 	tk.MustExec("analyze table t")
 
 	// Create virtual tiflash replica info.

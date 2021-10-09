@@ -3573,7 +3573,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustExec("CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);")
 	tk.MustExec("INSERT INTO t SELECT 1<<63, 1<<63;")
 	rs, err := tk.Exec("SELECT a+b FROM t;")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rs, NotNil)
 	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
@@ -3581,7 +3581,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a + test.t.b)'")
 	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(-3 as signed) + cast(2 as unsigned);")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rs, NotNil)
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
@@ -3589,7 +3589,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(-3 + 2)'")
 	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(2 as unsigned) + cast(-3 as signed);")
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	c.Assert(rs, NotNil)
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
@@ -8111,13 +8111,54 @@ func (s *testIntegrationSerialSuite) TestNoopFunctions(c *C) {
 		"SELECT * FROM t1 LOCK IN SHARE MODE",
 		"SELECT * FROM t1 GROUP BY a DESC",
 		"SELECT * FROM t1 GROUP BY a ASC",
+		"SELECT GET_LOCK('acdc', 10)",
+		"SELECT RELEASE_LOCK('acdc')",
 	}
+
 	for _, stmt := range stmts {
-		tk.MustExec("SET tidb_enable_noop_functions=1")
+		// test on
+		tk.MustExec("SET tidb_enable_noop_functions='ON'")
 		tk.MustExec(stmt)
-		tk.MustExec("SET tidb_enable_noop_functions=0")
+		// test warning
+		tk.MustExec("SET tidb_enable_noop_functions='WARN'")
+		tk.MustExec(stmt)
+		warn := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(warn[0].Err.Error(), Matches, message)
+		// test off
+		tk.MustExec("SET tidb_enable_noop_functions='OFF'")
 		_, err := tk.Exec(stmt)
 		c.Assert(err.Error(), Matches, message)
+	}
+
+	// These statements return a different error message
+	// to the above. Test for error, not specifically the message.
+	// After they execute, we need to reset the values because
+	// otherwise tidb_enable_noop_functions can't be changed.
+
+	stmts = []string{
+		"START TRANSACTION READ ONLY",
+		"SET TRANSACTION READ ONLY",
+		"SET tx_read_only = 1",
+		"SET transaction_read_only = 1",
+	}
+
+	for _, stmt := range stmts {
+		// test off
+		tk.MustExec("SET tidb_enable_noop_functions='OFF'")
+		_, err := tk.Exec(stmt)
+		c.Assert(err.Error(), NotNil)
+		// test warning
+		tk.MustExec("SET tidb_enable_noop_functions='WARN'")
+		tk.MustExec(stmt)
+		warn := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warn), Equals, 1)
+		// test on
+		tk.MustExec("SET tidb_enable_noop_functions='ON'")
+		tk.MustExec(stmt)
+
+		// Reset (required for future loop iterations and future tests)
+		tk.MustExec("SET tx_read_only = 0")
+		tk.MustExec("SET transaction_read_only = 0")
 	}
 }
 
@@ -10337,4 +10378,18 @@ func (s *testIntegrationSuite) TestLastInsertId(c *C) {
 	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("2 2"))
 	tk.MustExec(`INSERT INTO lastinsertid VALUES (NULL);`)
 	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
+}
+
+func (s *testIntegrationSuite) TestIdentity(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists identity;`)
+	tk.MustExec(`create table identity (id int not null primary key auto_increment);`)
+	tk.MustQuery("SELECT @@identity;").Check(testkit.Rows("0"))
+	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
+	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("1 1"))
+	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
+	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("2 2"))
+	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
+	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
 }
