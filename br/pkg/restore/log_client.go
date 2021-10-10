@@ -229,7 +229,7 @@ func (l *LogClient) collectDDLFiles(ctx context.Context) ([]string, error) {
 
 func (l *LogClient) isDBRelatedDDL(ddl *cdclog.MessageDDL) bool {
 	switch ddl.Type {
-	case model.ActionDropSchema, model.ActionCreateSchema, model.ActionModifySchemaCharsetAndCollate:
+	case model.ActionDropSchema, model.ActionCreateSchema, model.ActionModifySchemaCharsetAndCollate, model.ActionModifySchemaDefaultPlacement:
 		return true
 	}
 	return false
