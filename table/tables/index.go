@@ -213,9 +213,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
-			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
+			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists, kv.SetReadable)
 		} else {
-			err = txn.GetMemBuffer().Set(key, idxVal)
+			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetReadable)
 		}
 		return nil, err
 	}

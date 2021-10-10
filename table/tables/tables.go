@@ -812,9 +812,9 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 
 	if setPresume {
-		err = memBuffer.SetWithFlags(key, value, kv.SetPresumeKeyNotExists)
+		err = memBuffer.SetWithFlags(key, value, kv.SetPresumeKeyNotExists, kv.SetReadable)
 	} else {
-		err = memBuffer.Set(key, value)
+		err = memBuffer.SetWithFlags(key, value, kv.SetReadable)
 	}
 	if err != nil {
 		return nil, err

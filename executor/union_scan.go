@@ -206,6 +206,11 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		return us.snapshotRows[us.cursor4SnapshotRows], nil
 	}
 	var err error
+	var datumCols map[int64]struct {
+		*model.ColumnInfo
+		offset int
+	}
+	isPessimistic := us.ctx.GetSessionVars().TxnCtx.IsPessimistic
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
@@ -214,6 +219,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			return nil, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
+	ITER:
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			var snapshotHandle kv.Handle
 			snapshotHandle, err = us.belowHandleCols.BuildHandle(row)
@@ -222,9 +228,67 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			}
 			checkKey := tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
 			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
-				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
-				// commit, but for simplicity, we don't handle it here.
 				continue
+			}
+			// Though the handle does not appear in added rows,
+			// there may be still some conflicts on unique indexes when common handle is not enabled.
+			// UnionScan's result have two records which have the same primary index is weird, this case should be handled here.
+			// There are some constraints and rules:
+			// 1. The newly added rows will overwrite the snapshot rows.
+			// 2. The inconsistency issue can be solved with `tidb_constraint_check_in_place` in optimistic transactions,
+			//    which will harm the performance. Though the inconsistency is not able to be solved, the same behavior between
+			//    common handle or not is required.
+			// 3. The inconsistency issue in pessimistic transaction is now allowed.
+			if !us.table.Meta().IsCommonHandle {
+				cols := us.table.Meta().Columns
+				if datumCols == nil {
+					datumCols = make(map[int64]struct {
+						*model.ColumnInfo
+						offset int
+					})
+					for i, col := range us.columns {
+						datumCols[col.ID] = struct {
+							*model.ColumnInfo
+							offset int
+						}{
+							col,
+							i,
+						}
+					}
+				}
+			INDEX:
+				for _, index := range us.table.Meta().Indices {
+					// only check primary index for optimistic transactions
+					// check all unique indexes for pessimistic transactions
+					if !index.Unique || (!isPessimistic && !index.Primary) {
+						continue
+					}
+					indexDatums := make([]types.Datum, len(index.Columns))
+					for i, uniqueCol := range index.Columns {
+						if col, ok := datumCols[cols[uniqueCol.Offset].ID]; ok {
+							indexDatums[i] = row.GetDatum(col.offset, &col.FieldType)
+						} else {
+							// Skip this index check since there is not a full row.
+							// Here we have the risk of missing check operation does not use union scan.
+							// e.g. push down some aggregation functions into TiKV, so we may calculate same record twice in TiDB.
+							continue INDEX
+						}
+					}
+					checkKey, err := EncodeUniqueIndexKey(us.ctx, us.table.Meta(), index, indexDatums, us.table.Meta().ID)
+					if err != nil {
+						return nil, err
+					}
+
+					if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
+						flag, err := us.memBuf.GetFlags(checkKey)
+						if err != nil {
+							return nil, err
+						}
+						if flag.HasReadable() {
+							continue ITER
+						}
+					}
+				}
 			}
 			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.children[0])))
 		}

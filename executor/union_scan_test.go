@@ -403,3 +403,151 @@ func (s *testSuite7) TestForApplyAndUnionScan(c *C) {
 	tk.MustQuery("select c_int, c_str from t where (select count(*) from t1 where t1.c_int in (t.c_int, t.c_int + 2, t.c_int + 10)) > 2").Check(testkit.Rows())
 	tk.MustExec("rollback")
 }
+
+func (s *testSuite7) TestIssueOptimisticConflictUnionScan(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_constraint_check_in_place=0")
+	clusteredIndexOptions := []string{"ON", "OFF", "INT_ONLY"}
+	for _, clusteredIndexOption := range clusteredIndexOptions {
+		tk.MustExec("set session tidb_enable_clustered_index = '" + clusteredIndexOption + "'")
+		// multi-column index
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int, primary key (a, b))")
+		tk.MustExec("insert into t values (1, 10)")
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into t values (1, 10)")
+		tk.MustQuery("select * from t").Check(testkit.Rows("1 10"))
+		err := tk.ExecToErr("commit")
+		c.Assert(err, NotNil)
+
+		// int index
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int, primary key (a))")
+		tk.MustExec("insert into t values(1, 10)")
+		// insert same value
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into t values (1, 10)")
+		tk.MustQuery("select * from t").Check(testkit.Rows("1 10"))
+		err = tk.ExecToErr("commit")
+		c.Assert(err, NotNil)
+		// insert same pk
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into t values (1, 11)")
+		tk.MustQuery("select * from t").Check(testkit.Rows("1 11"))
+		err = tk.ExecToErr("commit")
+		c.Assert(err, NotNil)
+
+		// non-int index
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a varchar(255), b int, primary key (a))")
+		tk.MustExec("insert into t values('tag', 10)")
+		// insert same value
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into t values ('tag', 10)")
+		tk.MustQuery("select * from t").Check(testkit.Rows("tag 10"))
+		err = tk.ExecToErr("commit")
+		c.Assert(err, NotNil)
+		// insert same pk
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into t values ('tag', 11)")
+		tk.MustQuery("select * from t").Check(testkit.Rows("tag 11"))
+		err = tk.ExecToErr("commit")
+		c.Assert(err, NotNil)
+
+		// optimistic transaction does not guarantee consistency with unique index
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int, primary key (a), unique index uk(b))")
+		tk.MustExec("insert into t values(1, 10)")
+		// insert same value
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into t values (2, 10)")
+		tk.MustQuery("select * from t order by a asc").Check(testkit.Rows("1 10", "2 10"))
+		err = tk.ExecToErr("commit")
+		c.Assert(err, NotNil)
+		// insert same pk
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into t values (1, 11)")
+		tk.MustQuery("select * from t").Check(testkit.Rows("1 11"))
+		err = tk.ExecToErr("commit")
+		c.Assert(err, NotNil)
+
+		// select twice should get the same result, this prevents misuse of PUT operations
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(c1 varchar(20) key, c2 int, c3 int, unique key k1(c2), key k2(c3))")
+		tk.MustExec("insert into t values (\"1\", 1, 1), (\"2\", 2, 2), (\"3\", 3, 3)")
+		tk.MustExec("begin optimistic")
+		tk.MustQuery("select * from t use index(k1) where c2 in (1, 2, 3) for update").
+			Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
+		tk.MustQuery("select * from t use index(k2) where c2 in (2, 3) for update").
+			Check(testkit.Rows("2 2 2", "3 3 3"))
+		tk.MustExec("commit")
+	}
+}
+
+// check in place solves the inconsistency in optimistic transactions, however with performing impact
+func (s *testSuite7) TestIssueOptimisticConflictUnionScanInPlace(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set session tidb_constraint_check_in_place=1")
+	clusteredIndexOptions := []string{"ON", "OFF", "INT_ONLY"}
+	for _, clusteredIndexOption := range clusteredIndexOptions {
+		tk.MustExec("set session tidb_enable_clustered_index = '" + clusteredIndexOption + "'")
+		// multi-column index
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int, primary key (a, b))")
+		tk.MustExec("insert into t values (1, 10)")
+		tk.MustExec("begin optimistic")
+		err := tk.ExecToErr("insert into t values (1, 10)")
+		c.Assert(err, NotNil)
+		tk.MustQuery("select * from t").Check(testkit.Rows("1 10"))
+		tk.MustExec("commit")
+
+		// int index
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int, primary key (a))")
+		tk.MustExec("insert into t values(1, 10)")
+		// insert same value
+		tk.MustExec("begin optimistic")
+		err = tk.ExecToErr("insert into t values (1, 10)")
+		c.Assert(err, NotNil)
+		tk.MustQuery("select * from t").Check(testkit.Rows("1 10"))
+		tk.MustExec("commit")
+	}
+}
+
+func (s *testSuite7) TestIssuePessimisticConflictUnionScan(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	clusteredIndexOptions := []string{"ON", "OFF", "INT_ONLY"}
+	for _, clusteredIndexOption := range clusteredIndexOptions {
+		tk.MustExec("set session tidb_enable_clustered_index = '" + clusteredIndexOption + "'")
+		// multi-column index
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (c1 varchar(10), c2 int, c3 char(20), primary key (c1, c2))")
+		tk.MustExec("insert into t values ('tag', 10, 't'), ('cat', 20, 'c')")
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("update t set c1=reverse(c1) where c1='tag'")
+		tk1.MustExec("begin pessimistic")
+		errCh := make(chan error)
+		go func() {
+			errCh <- tk1.ExecToErr("insert into t values('dress',40,'d'),('tag', 10, 't')")
+		}()
+		tk.MustExec("commit")
+		c.Assert(<-errCh, IsNil)
+		tk1.MustQuery("select * from t use index(primary) order by c1, c2").
+			Check(testkit.Rows("cat 20 c", "dress 40 d", "tag 10 t"))
+		tk1.MustExec("commit")
+		tk1.MustQuery("select * from t use index(primary) order by c1, c2").
+			Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
+
+		// select twice should got same data
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(c1 varchar(20) key, c2 int, c3 int, unique key k1(c2), key k2(c3))")
+		tk.MustExec("insert into t values (\"1\", 1, 1), (\"2\", 2, 2), (\"3\", 3, 3)")
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery("select * from t use index(k1) where c2 in (1, 2, 3) for update").
+			Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
+		tk.MustQuery("select * from t use index(k2) where c2 in (2, 3) for update").
+			Check(testkit.Rows("2 2 2", "3 3 3"))
+		tk.MustExec("commit")
+	}
+}
