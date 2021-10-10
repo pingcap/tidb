@@ -870,6 +870,7 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 			results = append(results, ch)
 			go func(ch chan hotRegionsResult, address string, body *bytes.Buffer) {
 				util.WithRecovery(func() {
+					defer close(ch)
 					url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), address, pdapi.HotHistory)
 					req, err := http.NewRequest(http.MethodGet, url, body)
 					if err != nil {
@@ -917,7 +918,6 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		// Initialize the heap
 		e.heap = &hotRegionsResponseHeap{}
 		for _, ch := range results {
-			defer close(ch)
 			result := <-ch
 			if result.err != nil || len(result.messages.HistoryHotRegion) == 0 {
 				if result.err != nil {
