@@ -195,7 +195,7 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
          | --------------------- | ---------------------- | ------------------------ |
          | 20                | 264                 | 528                 |
          
-         Because of the compression of LevelDB, the actual data sizes of all three time dimensions are close to and slightly smaller than the estimated data sizes. Given the size of the data, we set `HisHotRegionTTL` to 7 days. If the data survival time exceeds the preservation time,it will be delete from LevelDB,but really delete happend in every month data compaction and LevelDB's auto compation. 
+         Because of the compression of LevelDB, the actual data sizes of all three time dimensions are close to and slightly smaller than the estimated data sizes. Given the size of the data, we set `HisHotRegionTTL` to 7 days. If the data survival time exceeds the preservation time,it will be delete from LevelDB,but really delete by LevelDB's auto compaction. 
 
 6. PD-CTL
    Support history hot regions in pd-ctl.
