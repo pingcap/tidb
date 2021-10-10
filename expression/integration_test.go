@@ -9249,6 +9249,22 @@ func (s *testIntegrationSerialSuite) TestCollationUnion(c *C) {
 	c.Check(len(res.Rows()), Equals, 1)
 }
 
+func (s *testIntegrationSuite2) TestTableStmt(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustQuery("table t").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("table t order by a desc").Check(testkit.Rows("3", "2", "1"))
+	tk.MustQuery("table t limit 2").Check(testkit.Rows("1", "2"))
+	selectStarRows := tk.MustQuery("explain select * from t").Rows()
+	tableRows := tk.MustQuery("explain table t").Rows()
+	c.Assert(selectStarRows, DeepEquals, tableRows)
+	tableRows = tk.MustQuery("explain (table t)").Rows()
+	c.Assert(selectStarRows, DeepEquals, tableRows)
+	tk.MustQuery("table t union all table t").Check(testkit.Rows("1", "2", "3", "1", "2", "3"))
+}
+
 func (s *testIntegrationSuite) TestIssue22098(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 

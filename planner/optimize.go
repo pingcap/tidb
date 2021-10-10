@@ -391,6 +391,11 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
+		if _, isShow := x.Stmt.(*ast.ShowStmt); isShow {
+			// "EXPLAIN `table_name`" is encoded in AST as explaining a ShowStmt.
+			// The ShowStmt cannot have any bind records.
+			return nil, "", "", nil
+		}
 		// This function is only used to find bind record.
 		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
 		// but some of them do not want to obtain bind record.
@@ -399,29 +404,28 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 		if len(x.Text()) == 0 {
 			return x.Stmt, "", "", nil
 		}
-		switch x.Stmt.(type) {
-		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-			normalizeSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
-			normalizeSQL = plannercore.EraseLastSemicolonInSQL(normalizeSQL)
-			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash.String(), nil
-		case *ast.SetOprStmt:
-			plannercore.EraseLastSemicolon(x)
-			var normalizeExplainSQL string
-			if specifiledDB != "" {
-				normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
-			} else {
-				normalizeExplainSQL = parser.Normalize(x.Text())
-			}
-			idx := strings.Index(normalizeExplainSQL, "select")
-			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
-			if parenthesesIdx != -1 && parenthesesIdx < idx {
-				idx = parenthesesIdx
-			}
-			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash.String(), nil
+		plannercore.EraseLastSemicolon(x)
+		var normalizeExplainSQL string
+		if specifiledDB != "" {
+			normalizeExplainSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
+		} else {
+			normalizeExplainSQL = parser.Normalize(x.Text())
 		}
+		keyword, err := hint.ExplainableStmtKeyword(x.Stmt)
+		if err != nil {
+			return nil, "", "", err
+		}
+		idx := strings.Index(normalizeExplainSQL, strings.ToLower(keyword))
+		parenthesesIdx := -1
+		if _, ok := x.Stmt.(*ast.SetOprStmt); ok {
+			parenthesesIdx = strings.Index(normalizeExplainSQL, "(")
+		}
+		if parenthesesIdx != -1 && parenthesesIdx < idx {
+			idx = parenthesesIdx
+		}
+		normalizeSQL := normalizeExplainSQL[idx:]
+		hash := parser.DigestNormalized(normalizeSQL)
+		return x.Stmt, normalizeSQL, hash.String(), nil
 	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		plannercore.EraseLastSemicolon(x)
 		// This function is only used to find bind record.

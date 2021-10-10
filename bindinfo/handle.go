@@ -26,7 +26,6 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
@@ -845,50 +844,19 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 	if bindSQL == "" {
 		return ""
 	}
-	switch n := stmtNode.(type) {
-	case *ast.DeleteStmt:
-		deleteIdx := strings.Index(bindSQL, "DELETE")
-		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[deleteIdx:]
-		return strings.Replace(bindSQL, "DELETE", fmt.Sprintf("DELETE /*+ %s*/", planHint), 1)
-	case *ast.UpdateStmt:
-		updateIdx := strings.Index(bindSQL, "UPDATE")
-		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[updateIdx:]
-		return strings.Replace(bindSQL, "UPDATE", fmt.Sprintf("UPDATE /*+ %s*/", planHint), 1)
-	case *ast.SelectStmt:
-		var selectIdx int
-		if n.With != nil {
-			var withSb strings.Builder
-			withIdx := strings.Index(bindSQL, "WITH")
-			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
-			restoreCtx.DefaultDB = defaultDB
-			err := n.With.Restore(restoreCtx)
-			if err != nil {
-				logutil.BgLogger().Debug("[sql-bind] restore SQL failed", zap.Error(err))
-				return ""
-			}
-			withEnd := withIdx + len(withSb.String())
-			tmp := strings.Replace(bindSQL[withEnd:], "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
-			return strings.Join([]string{bindSQL[withIdx:withEnd], tmp}, "")
-		}
-		selectIdx = strings.Index(bindSQL, "SELECT")
-		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[selectIdx:]
-		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
-	case *ast.InsertStmt:
-		insertIdx := int(0)
-		if n.IsReplace {
-			insertIdx = strings.Index(bindSQL, "REPLACE")
-		} else {
-			insertIdx = strings.Index(bindSQL, "INSERT")
-		}
-		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[insertIdx:]
-		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
+	keyword, err := hint.ExplainableStmtKeyword(stmtNode)
+	if err != nil {
+		logutil.Logger(ctx).Debug("[sql-bind] unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
+		return ""
 	}
-	logutil.Logger(ctx).Debug("[sql-bind] unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
-	return ""
+	idx := strings.Index(bindSQL, keyword)
+	// Remove possible `explain` prefix.
+	bindSQL = bindSQL[idx:]
+	if keyword == "INSERT" || keyword == "REPLACE" {
+		// for INSERT ... SELECT, the hint is placed after the SELECT, not the INSERT.
+		keyword = "SELECT"
+	}
+	return strings.Replace(bindSQL, keyword, fmt.Sprintf("%s /*+ %s*/", keyword, planHint), 1)
 }
 
 type paramMarkerChecker struct {
