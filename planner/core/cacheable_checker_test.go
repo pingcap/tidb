@@ -27,9 +27,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type testCacheableSuite struct {
-}
-
 func TestCacheable(t *testing.T) {
 	t.Parallel()
 
