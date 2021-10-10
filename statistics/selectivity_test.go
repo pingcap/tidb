@@ -50,6 +50,7 @@ import (
 
 const eps = 1e-9
 
+// TODO call it
 func registerHook() {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
@@ -542,8 +543,10 @@ func TestPrimaryKeySelectivity(t *testing.T) {
 
 func BenchmarkSelectivity(b *testing.B) {
 	domain.RunAutoAnalyze = false
+	// TODO 可以考虑返回 error， 这样就不用传入 t
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	// TODO 考虑传入 nil ?
 	testKit := testkit.NewTestKit(t, store)
 	statsTbl, err := prepareSelectivity(testKit, dom)
 	require.NoError(b, err)
