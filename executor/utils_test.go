@@ -15,11 +15,14 @@
 package executor
 
 import (
-	. "github.com/pingcap/check"
+	"reflect"
+	"testing"
+
 	"github.com/pingcap/errors"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *pkgTestSuite) TestBatchRetrieverHelper(c *C) {
+func TestBatchRetrieverHelper(t *testing.T) {
 	rangeStarts := make([]int, 0)
 	rangeEnds := make([]int, 0)
 	collect := func(start, end int) error {
@@ -30,9 +33,9 @@ func (s *pkgTestSuite) TestBatchRetrieverHelper(c *C) {
 
 	r := &batchRetrieverHelper{}
 	err := r.nextBatch(collect)
-	c.Assert(err, IsNil)
-	c.Assert(rangeStarts, DeepEquals, []int{})
-	c.Assert(rangeEnds, DeepEquals, []int{})
+	require.NoError(t, err)
+	reflect.DeepEqual(rangeStarts, []int{})
+	reflect.DeepEqual(rangeEnds, []int{})
 
 	r = &batchRetrieverHelper{
 		retrieved: true,
@@ -40,9 +43,9 @@ func (s *pkgTestSuite) TestBatchRetrieverHelper(c *C) {
 		totalRows: 10,
 	}
 	err = r.nextBatch(collect)
-	c.Assert(err, IsNil)
-	c.Assert(rangeStarts, DeepEquals, []int{})
-	c.Assert(rangeEnds, DeepEquals, []int{})
+	require.NoError(t, err)
+	reflect.DeepEqual(rangeStarts, []int{})
+	reflect.DeepEqual(rangeEnds, []int{})
 
 	r = &batchRetrieverHelper{
 		batchSize: 3,
@@ -51,8 +54,8 @@ func (s *pkgTestSuite) TestBatchRetrieverHelper(c *C) {
 	err = r.nextBatch(func(start, end int) error {
 		return errors.New("some error")
 	})
-	c.Assert(err, NotNil)
-	c.Assert(r.retrieved, IsTrue)
+	require.Error(t, err)
+	require.True(t, r.retrieved)
 
 	r = &batchRetrieverHelper{
 		batchSize: 3,
@@ -60,10 +63,10 @@ func (s *pkgTestSuite) TestBatchRetrieverHelper(c *C) {
 	}
 	for !r.retrieved {
 		err = r.nextBatch(collect)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
-	c.Assert(rangeStarts, DeepEquals, []int{0, 3, 6, 9})
-	c.Assert(rangeEnds, DeepEquals, []int{3, 6, 9, 10})
+	reflect.DeepEqual(rangeStarts, []int{0, 3, 6, 9})
+	reflect.DeepEqual(rangeEnds, []int{3, 6, 9, 10})
 	rangeStarts = rangeStarts[:0]
 	rangeEnds = rangeEnds[:0]
 
@@ -73,10 +76,10 @@ func (s *pkgTestSuite) TestBatchRetrieverHelper(c *C) {
 	}
 	for !r.retrieved {
 		err = r.nextBatch(collect)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
-	c.Assert(rangeStarts, DeepEquals, []int{0, 3, 6})
-	c.Assert(rangeEnds, DeepEquals, []int{3, 6, 9})
+	reflect.DeepEqual(rangeStarts, []int{0, 3, 6})
+	reflect.DeepEqual(rangeEnds, []int{3, 6, 9})
 	rangeStarts = rangeStarts[:0]
 	rangeEnds = rangeEnds[:0]
 
@@ -86,8 +89,8 @@ func (s *pkgTestSuite) TestBatchRetrieverHelper(c *C) {
 	}
 	for !r.retrieved {
 		err = r.nextBatch(collect)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
-	c.Assert(rangeStarts, DeepEquals, []int{0})
-	c.Assert(rangeEnds, DeepEquals, []int{10})
+	reflect.DeepEqual(rangeStarts, []int{0})
+	reflect.DeepEqual(rangeEnds, []int{10})
 }
