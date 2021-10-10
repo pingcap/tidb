@@ -156,14 +156,16 @@ func loadTestCases(t *testing.T, input interface{}, output interface{}) {
 	testData.GetTestCases(t, input, output)
 }
 
-func prepareSelectivity(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain) *statistics.Table {
+func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statistics.Table, error) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx_cd(c, d), index idx_de(d, e))")
 
 	is := dom.InfoSchema()
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 	tbl := tb.Meta()
 
 	// mock the statistic table
@@ -171,18 +173,22 @@ func prepareSelectivity(t *testing.T, testKit *testkit.TestKit, dom *domain.Doma
 
 	// Set the value of columns' histogram.
 	colValues, err := generateIntDatum(1, 54)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 	for i := 1; i <= 5; i++ {
 		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
 	}
 
 	// Set the value of two indices' histograms.
 	idxValues, err := generateIntDatum(2, 3)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 	tp := types.NewFieldType(mysql.TypeBlob)
 	statsTbl.Indices[1] = &statistics.Index{Histogram: *mockStatsHistogram(1, idxValues, 60, tp), Info: tbl.Indices[0]}
 	statsTbl.Indices[2] = &statistics.Index{Histogram: *mockStatsHistogram(2, idxValues, 60, tp), Info: tbl.Indices[1]}
-	return statsTbl
+	return statsTbl, nil
 }
 
 func TestSelectivity(t *testing.T) {
@@ -190,8 +196,8 @@ func TestSelectivity(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
-	statsTbl := prepareSelectivity(t, testKit, dom)
-
+	statsTbl, err := prepareSelectivity(testKit, dom)
+	require.NoError(t, err)
 	longExpr := "0 < a and a = 1 "
 	for i := 1; i < 64; i++ {
 		longExpr += fmt.Sprintf(" and a > %d ", i)
@@ -539,7 +545,8 @@ func BenchmarkSelectivity(b *testing.B) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
-	statsTbl := prepareSelectivity(t, testKit, dom)
+	statsTbl, err := prepareSelectivity(testKit, dom)
+	require.NoError(b, err)
 	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
 	sql := "select * from t where " + exprs
 	sctx := testKit.Session().(sessionctx.Context)
