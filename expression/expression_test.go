@@ -55,6 +55,32 @@ func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	c.Assert(res.Equal(s.ctx, NewOne()), IsTrue)
 }
 
+func (s *testEvaluatorSerialSuites) TestEvaluateExprWithNullAndParameters(c *C) {
+	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).build()
+	schema := tableInfoToSchemaForTest(tblInfo)
+	col0 := schema.Columns[0]
+
+	defer func(original bool) {
+		s.ctx.GetSessionVars().StmtCtx.UseCache = original
+	}(s.ctx.GetSessionVars().StmtCtx.UseCache)
+	s.ctx.GetSessionVars().StmtCtx.UseCache = true
+
+	// cases for parameters
+	ltWithoutParam, err := newFunctionForTest(s.ctx, ast.LT, col0, NewOne())
+	c.Assert(err, IsNil)
+	res := EvaluateExprWithNull(s.ctx, schema, ltWithoutParam)
+	c.Assert(res.Equal(s.ctx, NewNull()), IsTrue) // the expression is evaluated to null
+
+	param := NewOne()
+	param.ParamMarker = &ParamMarker{ctx: s.ctx, order: 0}
+	s.ctx.GetSessionVars().PreparedParams = append(s.ctx.GetSessionVars().PreparedParams, types.NewIntDatum(10))
+	ltWithParam, err := newFunctionForTest(s.ctx, ast.LT, col0, param)
+	c.Assert(err, IsNil)
+	res = EvaluateExprWithNull(s.ctx, schema, ltWithParam)
+	_, isScalarFunc := res.(*ScalarFunction)
+	c.Assert(isScalarFunc, IsTrue) // the expression with parameters is not evaluated
+}
+
 func (s *testEvaluatorSuite) TestConstant(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	c.Assert(NewZero().IsCorrelated(), IsFalse)

@@ -281,7 +281,7 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	c.Assert(strings.Index(rows[1][0].(string), `Point_Get`), Equals, 6)
+	c.Assert(strings.Contains(rows[3][0].(string), `TableRangeScan`), IsTrue)
 
 	// case 3:
 	tk.MustExec(`drop table if exists ta, tb`)

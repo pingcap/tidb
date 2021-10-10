@@ -1071,7 +1071,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.PlacementPolicyRef != nil {
-		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(tableInfo.PlacementPolicyRef.Name.O, sqlMode))
+		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(tableInfo.PlacementPolicyRef.Name.String(), sqlMode))
 	}
 
 	// add direct placement info here
@@ -1347,13 +1347,13 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	}
 	// MySQL 5.7 always show the charset info but TiDB may ignore it, which makes a slight difference. We keep this
 	// behavior unchanged because it is trivial enough.
-	if dbInfo.DirectPlacementOpts != nil {
-		// add direct placement info here
-		appendDirectPlacementInfo(dbInfo.DirectPlacementOpts, buf)
-	}
 	if dbInfo.PlacementPolicyRef != nil {
 		// add placement ref info here
 		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
+	}
+	if dbInfo.DirectPlacementOpts != nil {
+		// add direct placement info here
+		appendDirectPlacementInfo(dbInfo.DirectPlacementOpts, buf)
 	}
 	return nil
 }
