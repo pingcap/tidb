@@ -45,7 +45,7 @@ After merged, we will:
 
 To achieve milestone 1, we should do as follow:
 
-1. `git checkout -b clone-dumpling && git subtree add --fetch=dumpling https://github.com/pingcap/dumpling.git master --squash`
+1. `git checkout -b clone-dumpling && git subtree add --prefix=dumpling https://github.com/pingcap/dumpling.git master --squash`
 2. `git checkout -b merge-dumpling` (we will update code in this branch)
 3. Do necessary merging:
    1. merge go.mod, go.sum;
