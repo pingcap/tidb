@@ -1,0 +1,62 @@
+#!/bin/sh
+#
+# Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
+
+set -eu
+
+stop_services() {
+    killall -9 tidb-server || true
+
+    find "$DUMPLING_TEST_DIR" -maxdepth 1 -not -path "$DUMPLING_TEST_DIR" -not -name "*.log" | xargs rm -r || true
+}
+
+start_services() {
+    stop_services
+    echo "Ensure mysql can connected..."
+
+    i=0
+    while ! run_sql 'select 0 limit 0' > /dev/null; do
+       i=$((i+1))
+       if [ "$i" -gt 10 ]; then
+          echo 'Failed to ping MySQL Server'
+          exit 1
+       fi
+       sleep 3
+    done
+
+    echo "Generate TLS keys..."
+    openssl genrsa -out "$DUMPLING_TEST_DIR/ca.key" 2048
+    openssl req -new -batch -sha256 -subj '/CN=127.0.0.1/OU=ca' -key "$DUMPLING_TEST_DIR/ca.key" -out "$DUMPLING_TEST_DIR/ca.csr"
+    openssl x509 -req -sha256 -days 2 -in "$DUMPLING_TEST_DIR/ca.csr" -signkey "$DUMPLING_TEST_DIR/ca.key" -out "$DUMPLING_TEST_DIR/ca.pem" 2> /dev/null
+    for cluster in tidb dumpling; do
+        openssl genrsa -out "$DUMPLING_TEST_DIR/$cluster.key" 2048
+        openssl req -new -batch -sha256 -subj "/CN=127.0.0.1/OU=$cluster" -key "$DUMPLING_TEST_DIR/$cluster.key" -out "$DUMPLING_TEST_DIR/$cluster.csr"
+        openssl x509 -req -sha256 -days 1 -extensions EXT -extfile tests/tls/ipsan.cnf -in "$DUMPLING_TEST_DIR/$cluster.csr" -CA "$DUMPLING_TEST_DIR/ca.pem" -CAkey "$DUMPLING_TEST_DIR/ca.key" -CAcreateserial -out "$DUMPLING_TEST_DIR/$cluster.pem" 2> /dev/null
+    done
+
+    cat > "$DUMPLING_TEST_DIR/tidb.toml" <<EOF
+port = 4000
+mem-quota-query = 1073741824
+[status]
+status-port = 10080
+[log.file]
+filename = '$DUMPLING_TEST_DIR/tidb.log'
+[security]
+ssl-ca = '$DUMPLING_TEST_DIR/ca.pem'
+ssl-cert = '$DUMPLING_TEST_DIR/tidb.pem'
+ssl-key = '$DUMPLING_TEST_DIR/tidb.key'
+EOF
+    bin/tidb-server --config "$DUMPLING_TEST_DIR/tidb.toml" &
+
+    echo "Verifying TiDB is started..."
+    i=0
+    while ! curl -o /dev/null -sf "http://127.0.0.1:10080/status"; do
+        i=$((i+1))
+        if [ "$i" -gt 10 ]; then
+            echo 'Failed to start TiDB'
+            exit 1
+        fi
+        sleep 3
+    done
+}
+
