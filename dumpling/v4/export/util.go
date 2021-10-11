@@ -9,9 +9,8 @@ import (
 	"strings"
 	"time"
 
-	tcontext "github.com/pingcap/dumpling/v4/context"
-
 	"github.com/pingcap/errors"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
 	"go.etcd.io/etcd/clientv3"
 )
 

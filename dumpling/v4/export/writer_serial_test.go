@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	tcontext "github.com/pingcap/dumpling/v4/context"
 	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
 )
 
 func TestWriteMeta(t *testing.T) {

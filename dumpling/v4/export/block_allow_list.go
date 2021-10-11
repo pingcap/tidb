@@ -5,7 +5,7 @@ package export
 import (
 	"go.uber.org/zap"
 
-	tcontext "github.com/pingcap/dumpling/v4/context"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
 )
 
 func filterDatabases(tctx *tcontext.Context, conf *Config, databases []string) []string {

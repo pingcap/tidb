@@ -14,10 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/dumpling/v4/cli"
-	tcontext "github.com/pingcap/dumpling/v4/context"
-	"github.com/pingcap/dumpling/v4/log"
-
 	// import mysql driver
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -25,6 +21,9 @@ import (
 	pclog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/dumpling/v4/cli"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
+	"github.com/pingcap/tidb/dumpling/v4/log"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"

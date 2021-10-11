@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	tcontext "github.com/pingcap/dumpling/v4/context"
 	"github.com/stretchr/testify/require"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
 	"golang.org/x/sync/errgroup"
 )
 

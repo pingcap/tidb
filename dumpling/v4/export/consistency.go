@@ -6,10 +6,9 @@ import (
 	"context"
 	"database/sql"
 
-	tcontext "github.com/pingcap/dumpling/v4/context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
 )
 
 const (

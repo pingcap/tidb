@@ -6,11 +6,10 @@ import (
 	"strings"
 	"time"
 
-	tcontext "github.com/pingcap/dumpling/v4/context"
-
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-tools/pkg/dbutil"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
 	"go.uber.org/zap"
 )
 

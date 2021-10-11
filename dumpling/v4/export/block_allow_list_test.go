@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	tcontext "github.com/pingcap/dumpling/v4/context"
 	"github.com/pingcap/tidb-tools/pkg/filter"
 	tf "github.com/pingcap/tidb-tools/pkg/table-filter"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
 	"github.com/stretchr/testify/require"
 )
 
