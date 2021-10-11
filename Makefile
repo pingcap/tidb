@@ -270,6 +270,7 @@ bench-daily:
 	go test github.com/pingcap/tidb/expression -run TestBenchDaily --outfile bench_daily.json
 	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily --outfile bench_daily.json
 	go test github.com/pingcap/tidb/util/codec -run TestBenchDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/distsql -run TestBenchDaily --outfile bench_daily.json
 	go test github.com/pingcap/tidb/util/benchdaily -run TestBenchDaily \
 		-date `git log -n1 --date=unix --pretty=format:%cd` \
 		-commit `git log -n1 --pretty=format:%h` \
