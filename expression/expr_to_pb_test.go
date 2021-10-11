@@ -611,6 +611,7 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	binaryStringColumn.RetType.Collate = charset.CollationBin
 	int32Column := dg.genColumn(mysql.TypeLong, 8)
 	float32Column := dg.genColumn(mysql.TypeFloat, 9)
+	enumColumn := dg.genColumn(mysql.TypeEnum, 10)
 
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	c.Assert(err, IsNil)
@@ -1022,9 +1023,51 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// cast Enum as String : not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), enumColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiFlash)
 	c.Assert(len(pushed), Equals, 0)
 	c.Assert(len(remained), Equals, len(exprs))
+
+	pushed, remained = PushDownExprsWithExtraInfo(sc, exprs, client, kv.TiFlash, true)
+	c.Assert(len(pushed), Equals, 0)
+	c.Assert(len(remained), Equals, len(exprs))
+
+	exprs = exprs[:0]
+	// cast Enum as UInt : supported
+	unsignedInt:= types.NewFieldType(mysql.TypeLonglong)
+	unsignedInt.Flag = mysql.UnsignedFlag
+	function, err = NewFunction(mock.NewContext(), ast.Cast, unsignedInt, enumColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast Enum as Int : supported for sum()
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), enumColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast Enum as Double : supported for sum()
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDouble), enumColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast Enum as Decimal : supported for sum()
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, enumColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	//enum-pushdown will be disable when canEnumPush is false.
+	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
+	c.Assert(len(pushed), Equals, 0)
+	c.Assert(len(remained), Equals, len(exprs))
+
+	//enum-pushdown will be enable when canEnumPush is true.
+	pushed, remained = PushDownExprsWithExtraInfo(sc, exprs, client, kv.TiFlash, true)
+	c.Assert(len(pushed), Equals, len(exprs))
+	c.Assert(len(remained), Equals, 0)
 }
 
 func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
