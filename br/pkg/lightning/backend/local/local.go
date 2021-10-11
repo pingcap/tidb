@@ -2206,11 +2206,7 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	// Commit the transaction.
 	err = txn.Commit(ctx)
 	txn = nil
-	if err != nil {
-		return errors.Annotate(err, "cannot delete duplicated entries")
-	}
-
-	return nil
+	return errors.Annotate(err, "cannot delete duplicated entries")
 }
 
 func (e *File) unfinishedRanges(ranges []Range) []Range {
