@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -250,7 +251,8 @@ func prepareTestData(se *session, mutations *transaction.PlainMutations, oldTblI
 
 func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 	ctx := context.Background()
-	store := newStore(c, "test_schema_amender")
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
 	defer store.Close()
 	se := &session{
 		store:       store,
