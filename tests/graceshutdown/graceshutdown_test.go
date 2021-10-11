@@ -25,7 +25,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"

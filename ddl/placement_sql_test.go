@@ -23,9 +23,11 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testDBSuite6) TestAlterTableAlterPartition(c *C) {
@@ -731,15 +733,15 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 		tk.Se.GetSessionVars().EnableAlterPlacement = false
 	}()
 
-	tk.MustExec(`CREATE SCHEMA SchemaDirectPlacementTest PRIMARY_REGION='nl' REGIONS = "se,nz" FOLLOWERS=3`)
-	tk.MustQuery("SHOW CREATE SCHEMA schemadirectplacementtest").Check(testkit.Rows("SchemaDirectPlacementTest CREATE DATABASE `SchemaDirectPlacementTest` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ PRIMARY_REGION=\"nl\" REGIONS=\"se,nz\" FOLLOWERS=3"))
+	tk.MustExec(`CREATE SCHEMA SchemaDirectPlacementTest PRIMARY_REGION='nl' REGIONS = "se,nz,nl" FOLLOWERS=3`)
+	tk.MustQuery("SHOW CREATE SCHEMA schemadirectplacementtest").Check(testkit.Rows("SchemaDirectPlacementTest CREATE DATABASE `SchemaDirectPlacementTest` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PRIMARY_REGION=\"nl\" REGIONS=\"se,nz,nl\" FOLLOWERS=3 */"))
 
 	tk.MustExec(`CREATE PLACEMENT POLICY PolicySchemaTest LEADER_CONSTRAINTS = "[+region=nl]" FOLLOWER_CONSTRAINTS="[+region=se]" FOLLOWERS=4 LEARNER_CONSTRAINTS="[+region=be]" LEARNERS=4`)
 	tk.MustExec(`CREATE PLACEMENT POLICY PolicyTableTest LEADER_CONSTRAINTS = "[+region=tl]" FOLLOWER_CONSTRAINTS="[+region=tf]" FOLLOWERS=2 LEARNER_CONSTRAINTS="[+region=tle]" LEARNERS=1`)
 	tk.MustQuery("SHOW PLACEMENT like 'POLICY %PolicySchemaTest%'").Check(testkit.Rows("POLICY PolicySchemaTest LEADER_CONSTRAINTS=\"[+region=nl]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=se]\" LEARNERS=4 LEARNER_CONSTRAINTS=\"[+region=be]\""))
 	tk.MustQuery("SHOW PLACEMENT like 'POLICY %PolicyTableTest%'").Check(testkit.Rows("POLICY PolicyTableTest LEADER_CONSTRAINTS=\"[+region=tl]\" FOLLOWERS=2 FOLLOWER_CONSTRAINTS=\"[+region=tf]\" LEARNERS=1 LEARNER_CONSTRAINTS=\"[+region=tle]\""))
 	tk.MustExec("CREATE SCHEMA SchemaPolicyPlacementTest PLACEMENT POLICY = `PolicySchemaTest`")
-	tk.MustQuery("SHOW CREATE SCHEMA SCHEMAPOLICYPLACEMENTTEST").Check(testkit.Rows("SchemaPolicyPlacementTest CREATE DATABASE `SchemaPolicyPlacementTest` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ PLACEMENT POLICY = `PolicySchemaTest`"))
+	tk.MustQuery("SHOW CREATE SCHEMA SCHEMAPOLICYPLACEMENTTEST").Check(testkit.Rows("SchemaPolicyPlacementTest CREATE DATABASE `SchemaPolicyPlacementTest` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`PolicySchemaTest` */"))
 
 	tk.MustExec(`CREATE TABLE SchemaDirectPlacementTest.UseSchemaDefault (a int unsigned primary key, b varchar(255))`)
 	tk.MustQuery(`SHOW CREATE TABLE SchemaDirectPlacementTest.UseSchemaDefault`).Check(testkit.Rows(
@@ -747,21 +749,15 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 			"  `a` int(10) unsigned NOT NULL,\n" +
 			"  `b` varchar(255) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"nl\" REGIONS=\"se,nz\" FOLLOWERS=3 */"))
-	tk.MustExec(`CREATE TABLE SchemaDirectPlacementTest.UseDirectPlacement (a int unsigned primary key, b varchar(255)) PRIMARY_REGION="se"`)
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"nl\" REGIONS=\"se,nz,nl\" FOLLOWERS=3 */"))
+	tk.MustExec(`CREATE TABLE SchemaDirectPlacementTest.UseDirectPlacement (a int unsigned primary key, b varchar(255)) PRIMARY_REGION="se" REGIONS="se"`)
+
 	tk.MustQuery(`SHOW CREATE TABLE SchemaDirectPlacementTest.UseDirectPlacement`).Check(testkit.Rows(
 		"UseDirectPlacement CREATE TABLE `UseDirectPlacement` (\n" +
 			"  `a` int(10) unsigned NOT NULL,\n" +
 			"  `b` varchar(255) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"se\" */"))
-	tk.MustExec(`CREATE TABLE SchemaDirectPlacementTest.UsePolicy (a int unsigned primary key, b varchar(255)) PLACEMENT POLICY = "PolicyTableTest"`)
-	tk.MustQuery(`SHOW CREATE TABLE SchemaDirectPlacementTest.UsePolicy`).Check(testkit.Rows(
-		"UsePolicy CREATE TABLE `UsePolicy` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(255) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`PolicyTableTest` */"))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"se\" REGIONS=\"se\" */"))
 
 	tk.MustExec(`CREATE TABLE SchemaPolicyPlacementTest.UseSchemaDefault (a int unsigned primary key, b varchar(255))`)
 	tk.MustQuery(`SHOW CREATE TABLE SchemaPolicyPlacementTest.UseSchemaDefault`).Check(testkit.Rows(
@@ -770,13 +766,7 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 			"  `b` varchar(255) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`PolicySchemaTest` */"))
-	tk.MustExec(`CREATE TABLE SchemaPolicyPlacementTest.UseDirectPlacement (a int unsigned primary key, b varchar(255)) PRIMARY_REGION="se"`)
-	tk.MustQuery(`SHOW CREATE TABLE SchemaPolicyPlacementTest.UseDirectPlacement`).Check(testkit.Rows(
-		"UseDirectPlacement CREATE TABLE `UseDirectPlacement` (\n" +
-			"  `a` int(10) unsigned NOT NULL,\n" +
-			"  `b` varchar(255) DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"se\" */"))
+
 	tk.MustExec(`CREATE TABLE SchemaPolicyPlacementTest.UsePolicy (a int unsigned primary key, b varchar(255)) PLACEMENT POLICY = "PolicyTableTest"`)
 	tk.MustQuery(`SHOW CREATE TABLE SchemaPolicyPlacementTest.UsePolicy`).Check(testkit.Rows(
 		"UsePolicy CREATE TABLE `UsePolicy` (\n" +
@@ -792,7 +782,7 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 	c.Assert(db.PlacementPolicyRef, IsNil)
 	c.Assert(db.DirectPlacementOpts, NotNil)
 	c.Assert(db.DirectPlacementOpts.PrimaryRegion, Matches, "nl")
-	c.Assert(db.DirectPlacementOpts.Regions, Matches, "se,nz")
+	c.Assert(db.DirectPlacementOpts.Regions, Matches, "se,nz,nl")
 	c.Assert(db.DirectPlacementOpts.Followers, Equals, uint64(3))
 	c.Assert(db.DirectPlacementOpts.Learners, Equals, uint64(0))
 
@@ -801,4 +791,107 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 	c.Assert(db.PlacementPolicyRef, NotNil)
 	c.Assert(db.DirectPlacementOpts, IsNil)
 	c.Assert(db.PlacementPolicyRef.Name.O, Equals, "PolicySchemaTest")
+}
+
+func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists TestAlterDB;")
+	tk.MustExec("create database TestAlterDB;")
+	tk.MustExec("use TestAlterDB")
+	tk.MustExec("drop placement policy if exists alter_x")
+	tk.MustExec("drop placement policy if exists alter_y")
+	tk.MustExec("create placement policy alter_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";")
+	tk.MustExec("create placement policy alter_y PRIMARY_REGION=\"cn-east-2\", REGIONS=\"cn-east-2\";")
+
+	// Policy Test
+	// Test for Non-Exist policy
+	tk.MustGetErrCode("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`alter_z`;", mysql.ErrPlacementPolicyNotExists)
+
+	tk.MustExec("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`alter_x`;")
+	// Test for Show Create Database
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PLACEMENT POLICY=`alter_x` */",
+	))
+	// Test for Alter Placement Policy affect table created.
+	tk.MustExec("create table t(a int);")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PLACEMENT POLICY=`alter_x` */",
+	))
+	// Test for Alter Default Placement Policy, And will not update the old table options.
+	tk.MustExec("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`alter_y`;")
+	tk.MustExec("create table t2(a int);")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PLACEMENT POLICY=`alter_x` */",
+	))
+	tk.MustQuery(`show create table t2`).Check(testutil.RowsWithSep("|",
+		"t2 CREATE TABLE `t2` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PLACEMENT POLICY=`alter_y` */",
+	))
+
+	// Reset Test
+	tk.MustExec("drop database if exists TestAlterDB;")
+	tk.MustExec("create database TestAlterDB;")
+	tk.MustExec("use TestAlterDB")
+
+	// DirectOption Test
+	tk.MustExec("ALTER DATABASE TestAlterDB PRIMARY_REGION=\"se\" FOLLOWERS=2 REGIONS=\"se\";")
+	// Test for Show Create Database
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PRIMARY_REGION=\"se\" REGIONS=\"se\" FOLLOWERS=2 */",
+	))
+	// Test for Alter Placement Rule affect table created.
+	tk.MustExec("create table t3(a int);")
+	tk.MustQuery(`show create table t3`).Check(testutil.RowsWithSep("|",
+		"t3 CREATE TABLE `t3` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PRIMARY_REGION=\"se\" REGIONS=\"se\" FOLLOWERS=2 */",
+	))
+	// Test for override default option
+	tk.MustExec("create table t4(a int) PLACEMENT POLICY=\"alter_x\";")
+	tk.MustQuery(`show create table t4`).Check(testutil.RowsWithSep("|",
+		"t4 CREATE TABLE `t4` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PLACEMENT POLICY=`alter_x` */",
+	))
+
+	// Hybrid Test
+	// Test for alter both policy and  direct options.
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PRIMARY_REGION=\"se\" REGIONS=\"se\" FOLLOWERS=2 */",
+	))
+	tk.MustGetErrCode("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`alter_x` FOLLOWERS=2;", mysql.ErrPlacementPolicyWithDirectOption)
+	tk.MustGetErrCode("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`alter_y` PRIMARY_REGION=\"se\" FOLLOWERS=2;", mysql.ErrPlacementPolicyWithDirectOption)
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PRIMARY_REGION=\"se\" REGIONS=\"se\" FOLLOWERS=2 */",
+	))
+	// Test for change direct options to policy.
+	tk.MustExec("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`alter_x`;")
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PLACEMENT POLICY=`alter_x` */",
+	))
+	// Test for change policy to direct options.
+	tk.MustExec("ALTER DATABASE TestAlterDB PRIMARY_REGION=\"se\" FOLLOWERS=2 REGIONS=\"se\" ;")
+	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PRIMARY_REGION=\"se\" REGIONS=\"se\" FOLLOWERS=2 */",
+	))
+
+	tk.MustExec(`DROP DATABASE IF EXISTS TestAlterDB;`)
+	tk.MustExec("drop placement policy if exists alter_x")
+	tk.MustExec("drop placement policy if exists alter_y")
 }

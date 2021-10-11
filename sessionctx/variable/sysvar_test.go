@@ -464,7 +464,7 @@ func TestTiDBMultiStatementMode(t *testing.T) {
 
 func TestReadOnlyNoop(t *testing.T) {
 	vars := NewSessionVars()
-	mock := NewMockGlobalAccessor()
+	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
 	noopFuncs := GetSysVar(TiDBEnableNoopFuncs)
@@ -632,7 +632,7 @@ func TestInstanceScopedVars(t *testing.T) {
 // The default values should also be normalized for consistency.
 func TestDefaultValuesAreSettable(t *testing.T) {
 	vars := NewSessionVars()
-	vars.GlobalVarsAccessor = NewMockGlobalAccessor()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	for _, sv := range GetSysVars() {
 		if sv.HasSessionScope() && !sv.ReadOnly {
 			val, err := sv.Validate(vars, sv.Value, ScopeSession)
@@ -700,7 +700,7 @@ func TestTiDBReplicaRead(t *testing.T) {
 func TestSQLAutoIsNull(t *testing.T) {
 	svSQL, svNoop := GetSysVar(SQLAutoIsNull), GetSysVar(TiDBEnableNoopFuncs)
 	vars := NewSessionVars()
-	vars.GlobalVarsAccessor = NewMockGlobalAccessor()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	_, err := svSQL.Validate(vars, "ON", ScopeSession)
 	require.True(t, terror.ErrorEqual(err, ErrFunctionsNoopImpl))
 	// change tidb_enable_noop_functions to 1, it will success
@@ -731,6 +731,18 @@ func TestLastInsertID(t *testing.T) {
 
 	vars.StmtCtx.PrevLastInsertID = 21
 	val, err = GetSessionOrGlobalSystemVar(vars, LastInsertID)
+	require.NoError(t, err)
+	require.Equal(t, val, "21")
+}
+
+func TestIdentity(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := GetSessionOrGlobalSystemVar(vars, Identity)
+	require.NoError(t, err)
+	require.Equal(t, val, "0")
+
+	vars.StmtCtx.PrevLastInsertID = 21
+	val, err = GetSessionOrGlobalSystemVar(vars, Identity)
 	require.NoError(t, err)
 	require.Equal(t, val, "21")
 }
