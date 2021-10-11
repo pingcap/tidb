@@ -9054,8 +9054,8 @@ func checkFileName(s string) bool {
 	files := []string{
 		"config.toml",
 		"meta.txt",
-		"stats/test.t.json",
-		"schema/test.t.schema.txt",
+		"stats/test.t_dump_single.json",
+		"schema/test.t_dump_single.schema.txt",
 		"variables.toml",
 		"sqls.sql",
 		"session_bindings.sql",
