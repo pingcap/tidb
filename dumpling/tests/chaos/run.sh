@@ -20,7 +20,7 @@ run_sql "insert into $DB_NAME.$TABLE_NAME values $(seq -s, 100 | sed 's/,*$//g' 
 
 # dumping with consistency none
 export DUMPLING_TEST_DATABASE=$DB_NAME
-export GO_FAILPOINTS="github.com/pingcap/dumpling/v4/export/ChaosBrokenMySQLConn=1*return"
+export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/v4/export/ChaosBrokenMySQLConn=1*return"
 run_dumpling --consistency=none --loglevel debug
 
 # check data record count
