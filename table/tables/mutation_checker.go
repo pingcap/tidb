@@ -44,7 +44,7 @@ type columnMaps struct {
 	IndexIDToRowColInfos map[int64][]rowcodec.ColInfo
 }
 
-// CheckIndexConsistency checks whether the given set of mutations corresponding to a single row is consistent.
+// CheckDataConsistency checks whether the given set of mutations corresponding to a single row is consistent.
 // Namely, assume the database is consistent before, applying the mutations shouldn't break the consistency.
 // It aims at reducing bugs that will corrupt data, and preventing mistakes from spreading if possible.
 //
@@ -62,7 +62,7 @@ type columnMaps struct {
 // I = the sum of the number of columns in all indices,
 // The time complexity is O(M * C + I)
 // The space complexity is O(M + C + I)
-func CheckIndexConsistency(
+func CheckDataConsistency(
 	txn kv.Transaction, sessVars *variable.SessionVars, t *TableCommon,
 	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle,
 ) error {
@@ -122,7 +122,6 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 		return errors.Trace(err)
 	}
 
-	var indexHandle kv.Handle
 	for _, m := range indexMutations {
 		if len(m.value) == 0 {
 			continue
@@ -133,7 +132,7 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 			return errors.New("index not found")
 		}
 
-		indexHandle, err = tablecodec.DecodeIndexHandle(m.key, m.value, len(indexInfo.Columns))
+		indexHandle, err := tablecodec.DecodeIndexHandle(m.key, m.value, len(indexInfo.Columns))
 		if err != nil {
 			return errors.Trace(err)
 		}

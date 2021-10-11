@@ -265,14 +265,13 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 					IsCommonHandle: isCommonHandle,
 				}
 				table := MockTableFromMeta(&tableInfo).(*TableCommon)
-				//
 				var handle, corruptedHandle kv.Handle
 				if isCommonHandle {
 					encoded, err := codec.EncodeKey(sessVars.StmtCtx, nil, rowToInsert[0])
 					require.Nil(t, err)
 					corrupted := make([]byte, len(encoded))
 					copy(corrupted, encoded)
-					corrupted[len(corrupted)-1] = corrupted[len(corrupted)-1] ^ 1
+					corrupted[len(corrupted)-1] ^= 1
 					handle, err = kv.NewCommonHandle(encoded)
 					require.Nil(t, err)
 					corruptedHandle, err = kv.NewCommonHandle(corrupted)
@@ -297,7 +296,6 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 						{key: insertionKey, value: insertionValue, indexID: indexInfo.ID},
 						{key: deletionKey, indexID: indexInfo.ID},
 					}
-					require.Nil(t, err)
 					err = checkIndexKeys(
 						sessVars, table, rowToInsert, rowToRemove, indexMutations, maps.IndexIDToInfo,
 						maps.IndexIDToRowColInfos,
