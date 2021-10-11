@@ -98,6 +98,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	scanDetail := &util.ScanDetail{
 		TotalKeys:                 15,
 		ProcessedKeys:             10,
+		ProcessedKeysSize:         10,
 		RocksdbDeleteSkippedCount: 5,
 		RocksdbKeySkippedCount:    1,
 		RocksdbBlockCacheHitCount: 10,
@@ -109,7 +110,7 @@ func TestCopRuntimeStats(t *testing.T) {
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tikv")
 	expected := "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, " +
-		"scan_detail: {total_process_keys: 10, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 1, block: {cache_hit_count: 10, read_count: 20, read_byte: 100 Bytes}}}"
+		"scan_detail: {total_process_keys: 10, total_process_keys_size: 10, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 1, block: {cache_hit_count: 10, read_count: 20, read_byte: 100 Bytes}}}"
 	require.Equal(t, expected, cop.String())
 
 	copStats := cop.stats["8.8.8.8"]
@@ -125,11 +126,12 @@ func TestCopRuntimeStats(t *testing.T) {
 	require.True(t, stats.ExistsRootStats(tableReaderID))
 
 	cop.scanDetail.ProcessedKeys = 0
+	cop.scanDetail.ProcessedKeysSize = 0
 	cop.scanDetail.RocksdbKeySkippedCount = 0
 	cop.scanDetail.RocksdbBlockReadCount = 0
 	// Print all fields even though the value of some fields is 0.
 	str := "tikv_task:{proc max:1s, min:2ns, p80:1s, p95:1s, iters:4, tasks:2}, " +
-		"scan_detail: {total_process_keys: 0, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 0, block: {cache_hit_count: 10, read_count: 0, read_byte: 100 Bytes}}}"
+		"scan_detail: {total_process_keys: 0, total_process_keys_size: 0, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 0, block: {cache_hit_count: 10, read_count: 0, read_byte: 100 Bytes}}}"
 	require.Equal(t, str, cop.String())
 
 	zeroScanDetail := util.ScanDetail{}
