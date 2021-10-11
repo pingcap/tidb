@@ -5,12 +5,10 @@ package logutil_test
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -18,24 +16,17 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 )
 
-func Test(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testLoggingSuite{})
-
-type testLoggingSuite struct{}
-
-func assertTrimEqual(c *C, f zapcore.Field, expect string) {
+func assertTrimEqual(t *testing.T, f zapcore.Field, expect string) {
 	encoder := zapcore.NewConsoleEncoder(zapcore.EncoderConfig{})
 	out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{f})
-	c.Assert(err, IsNil)
-	c.Assert(strings.TrimRight(out.String(), "\n"), Equals, expect)
+	require.NoError(t, err)
+	require.JSONEq(t, expect, strings.TrimRight(out.String(), "\n"))
 }
 
 func newFile(j int) *backuppb.File {
@@ -54,29 +45,8 @@ func newFile(j int) *backuppb.File {
 	}
 }
 
-type isAbout struct{}
-
-func (isAbout) Info() *CheckerInfo {
-	return &CheckerInfo{
-		Name: "isAbout",
-		Params: []string{
-			"actual",
-			"expect",
-		},
-	}
-}
-
-func (isAbout) Check(params []interface{}, names []string) (result bool, error string) {
-	actual := params[0].(float64)
-	expect := params[1].(float64)
-
-	if diff := math.Abs(1 - (actual / expect)); diff > 0.1 {
-		return false, fmt.Sprintf("The diff(%.2f) between actual(%.2f) and expect(%.2f) is too huge.", diff, actual, expect)
-	}
-	return true, ""
-}
-
-func (s *testLoggingSuite) TestRater(c *C) {
+func TestRater(t *testing.T) {
+	t.Parallel()
 	m := prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "testing",
 		Name:      "rater",
@@ -87,19 +57,21 @@ func (s *testLoggingSuite) TestRater(c *C) {
 	rater := logutil.TraceRateOver(m)
 	timePass := time.Now()
 	rater.Inc()
-	c.Assert(rater.RateAt(timePass.Add(100*time.Millisecond)), isAbout{}, 10.0)
+	require.InEpsilon(t, 10.0, rater.RateAt(timePass.Add(100*time.Millisecond)), 0.1)
 	rater.Inc()
-	c.Assert(rater.RateAt(timePass.Add(150*time.Millisecond)), isAbout{}, 13.0)
+	require.InEpsilon(t, 13.0, rater.RateAt(timePass.Add(150*time.Millisecond)), 0.1)
 	rater.Add(18)
-	c.Assert(rater.RateAt(timePass.Add(200*time.Millisecond)), isAbout{}, 100.0)
+	require.InEpsilon(t, 100.0, rater.RateAt(timePass.Add(200*time.Millisecond)), 0.1)
 }
 
-func (s *testLoggingSuite) TestFile(c *C) {
-	assertTrimEqual(c, logutil.File(newFile(1)),
+func TestFile(t *testing.T) {
+	t.Parallel()
+	assertTrimEqual(t, logutil.File(newFile(1)),
 		`{"file": {"name": "1", "CF": "write", "sha256": "31", "startKey": "31", "endKey": "32", "startVersion": 1, "endVersion": 2, "totalKvs": 1, "totalBytes": 1, "CRC64Xor": 1}}`)
 }
 
-func (s *testLoggingSuite) TestFiles(c *C) {
+func TestFiles(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		count  int
 		expect string
@@ -119,18 +91,20 @@ func (s *testLoggingSuite) TestFiles(c *C) {
 		for j := 0; j < cs.count; j++ {
 			ranges[j] = newFile(j)
 		}
-		assertTrimEqual(c, logutil.Files(ranges), cs.expect)
+		assertTrimEqual(t, logutil.Files(ranges), cs.expect)
 	}
 }
 
-func (s *testLoggingSuite) TestKey(c *C) {
+func TestKey(t *testing.T) {
+	t.Parallel()
 	encoder := zapcore.NewConsoleEncoder(zapcore.EncoderConfig{})
 	out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{logutil.Key("test", []byte{0, 1, 2, 3})})
-	c.Assert(err, IsNil)
-	c.Assert(strings.Trim(out.String(), "\n"), Equals, `{"test": "00010203"}`)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"test": "00010203"}`, strings.Trim(out.String(), "\n"))
 }
 
-func (s *testLoggingSuite) TestKeys(c *C) {
+func TestKeys(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		count  int
 		expect string
@@ -150,11 +124,12 @@ func (s *testLoggingSuite) TestKeys(c *C) {
 		for j := 0; j < cs.count; j++ {
 			keys[j] = []byte(fmt.Sprintf("%04d", j))
 		}
-		assertTrimEqual(c, logutil.Keys(keys), cs.expect)
+		assertTrimEqual(t, logutil.Keys(keys), cs.expect)
 	}
 }
 
-func (s *testLoggingSuite) TestRewriteRule(c *C) {
+func TestRewriteRule(t *testing.T) {
+	t.Parallel()
 	rule := &import_sstpb.RewriteRule{
 		OldKeyPrefix: []byte("old"),
 		NewKeyPrefix: []byte("new"),
@@ -163,11 +138,12 @@ func (s *testLoggingSuite) TestRewriteRule(c *C) {
 
 	encoder := zapcore.NewConsoleEncoder(zapcore.EncoderConfig{})
 	out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{logutil.RewriteRule(rule)})
-	c.Assert(err, IsNil)
-	c.Assert(strings.Trim(out.String(), "\n"), Equals, `{"rewriteRule": {"oldKeyPrefix": "6f6c64", "newKeyPrefix": "6e6577", "newTimestamp": 5592405}}`)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"rewriteRule": {"oldKeyPrefix": "6f6c64", "newKeyPrefix": "6e6577", "newTimestamp": 5592405}}`, strings.Trim(out.String(), "\n"))
 }
 
-func (s *testLoggingSuite) TestRegion(c *C) {
+func TestRegion(t *testing.T) {
+	t.Parallel()
 	region := &metapb.Region{
 		Id:          1,
 		StartKey:    []byte{0x00, 0x01},
@@ -176,17 +152,19 @@ func (s *testLoggingSuite) TestRegion(c *C) {
 		Peers:       []*metapb.Peer{{Id: 2, StoreId: 3}, {Id: 4, StoreId: 5}},
 	}
 
-	assertTrimEqual(c, logutil.Region(region),
+	assertTrimEqual(t, logutil.Region(region),
 		`{"region": {"ID": 1, "startKey": "0001", "endKey": "0002", "epoch": "conf_ver:1 version:1 ", "peers": "id:2 store_id:3 ,id:4 store_id:5 "}}`)
 }
 
-func (s *testLoggingSuite) TestLeader(c *C) {
+func TestLeader(t *testing.T) {
+	t.Parallel()
 	leader := &metapb.Peer{Id: 2, StoreId: 3}
 
-	assertTrimEqual(c, logutil.Leader(leader), `{"leader": "id:2 store_id:3 "}`)
+	assertTrimEqual(t, logutil.Leader(leader), `{"leader": "id:2 store_id:3 "}`)
 }
 
-func (s *testLoggingSuite) TestSSTMeta(c *C) {
+func TestSSTMeta(t *testing.T) {
+	t.Parallel()
 	meta := &import_sstpb.SSTMeta{
 		Uuid: []byte("mock uuid"),
 		Range: &import_sstpb.Range{
@@ -200,39 +178,19 @@ func (s *testLoggingSuite) TestSSTMeta(c *C) {
 		RegionEpoch: &metapb.RegionEpoch{ConfVer: 1, Version: 1},
 	}
 
-	assertTrimEqual(c, logutil.SSTMeta(meta),
+	assertTrimEqual(t, logutil.SSTMeta(meta),
 		`{"sstMeta": {"CF": "default", "endKeyExclusive": false, "CRC32": 5592405, "length": 1, "regionID": 1, "regionEpoch": "conf_ver:1 version:1 ", "startKey": "0001", "endKey": "0002", "UUID": "invalid UUID 6d6f636b2075756964"}}`)
 }
 
-func (s *testLoggingSuite) TestShortError(c *C) {
+func TestShortError(t *testing.T) {
+	t.Parallel()
 	err := errors.Annotate(berrors.ErrInvalidArgument, "test")
 
-	assertTrimEqual(c, logutil.ShortError(err), `{"error": "test: [BR:Common:ErrInvalidArgument]invalid argument"}`)
+	assertTrimEqual(t, logutil.ShortError(err), `{"error": "test: [BR:Common:ErrInvalidArgument]invalid argument"}`)
 }
 
-type FieldEquals struct{}
-
-func (f FieldEquals) Info() *CheckerInfo {
-	return &CheckerInfo{
-		Name: "FieldEquals",
-		Params: []string{
-			"expected",
-			"actual",
-		},
-	}
-}
-
-func (f FieldEquals) Check(params []interface{}, names []string) (result bool, err string) {
-	expected := params[0].(zap.Field)
-	actual := params[1].(zap.Field)
-
-	if !expected.Equals(actual) {
-		return false, "Field not match."
-	}
-	return true, ""
-}
-
-func (s *testLoggingSuite) TestContextual(c *C) {
+func TestContextual(t *testing.T) {
+	t.Parallel()
 	testCore, logs := observer.New(zap.InfoLevel)
 	logutil.ResetGlobalLogger(zap.New(testCore))
 
@@ -244,15 +202,15 @@ func (s *testLoggingSuite) TestContextual(c *C) {
 	l.Info("let's go!", zap.String("character", "solte"))
 
 	observedLogs := logs.TakeAll()
-	checkLog(c, observedLogs[0],
+	checkLog(t, observedLogs[0],
 		"going to take an adventure?", zap.Int("HP", 50), zap.Int("HP-MAX", 50), zap.String("character", "solte"))
-	checkLog(c, observedLogs[1],
+	checkLog(t, observedLogs[1],
 		"let's go!", zap.Strings("friends", []string{"firo", "seren", "black"}), zap.String("character", "solte"))
 }
 
-func checkLog(c *C, actual observer.LoggedEntry, message string, fields ...zap.Field) {
-	c.Assert(message, Equals, actual.Message)
+func checkLog(t *testing.T, actual observer.LoggedEntry, message string, fields ...zap.Field) {
+	require.Equal(t, message, actual.Message)
 	for i, f := range fields {
-		c.Assert(f, FieldEquals{}, actual.Context[i])
+		require.Truef(t, f.Equals(actual.Context[i]), "Expected field(%+v) does not equal to actual one(%+v).", f, actual.Context[i])
 	}
 }

@@ -2461,7 +2461,7 @@ func TestPlacementPolicyStmt(t *testing.T) {
 	defer clean()
 	se := newSession(t, store, dbName)
 	mustExec(t, se, "drop placement policy if exists x")
-	createStmt := "create placement policy x PRIMARY_REGION=\"cn-east-1\" "
+	createStmt := "create placement policy x PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1\""
 	dropStmt := "drop placement policy if exists x"
 
 	// high privileged user setting password for other user (passes)
@@ -2491,4 +2491,28 @@ func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
 	se := newSession(t, store, dbName)
 	mustExec(t, se, "CREATE USER test_user")
 	mustExec(t, se, "grant select on metrics_schema.up to test_user;")
+}
+
+func TestGrantCreateTmpTables(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE create_tmp_table_db")
+	tk.MustExec("USE create_tmp_table_db")
+	tk.MustExec("CREATE USER u1")
+	tk.MustExec("CREATE TABLE create_tmp_table_table (a int)")
+	tk.MustExec("GRANT CREATE TEMPORARY TABLES on create_tmp_table_db.* to u1")
+	tk.MustExec("GRANT CREATE TEMPORARY TABLES on *.* to u1")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
+		`GRANT CREATE TEMPORARY TABLES ON *.* TO 'u1'@'%'`,
+		`GRANT CREATE TEMPORARY TABLES ON create_tmp_table_db.* TO 'u1'@'%'`))
+	tk.MustExec("DROP USER u1")
+	tk.MustExec("DROP DATABASE create_tmp_table_db")
 }

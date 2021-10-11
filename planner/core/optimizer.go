@@ -199,7 +199,38 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = enableParallelApply(sctx, plan)
+	checkPlanCacheable(sctx, plan)
 	return plan
+}
+
+// checkPlanCacheable used to check whether a plan can be cached. Plans that
+// meet the following characteristics cannot be cached:
+// 1. Use the TiFlash engine.
+// Todo: make more careful check here.
+func checkPlanCacheable(sctx sessionctx.Context, plan PhysicalPlan) {
+	if sctx.GetSessionVars().StmtCtx.UseCache && useTiFlash(plan) {
+		sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+	}
+}
+
+// useTiFlash used to check whether the plan use the TiFlash engine.
+func useTiFlash(p PhysicalPlan) bool {
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		switch x.StoreType {
+		case kv.TiFlash:
+			return true
+		default:
+			return false
+		}
+	default:
+		if len(p.Children()) > 0 {
+			for _, plan := range p.Children() {
+				return useTiFlash(plan)
+			}
+		}
+	}
+	return false
 }
 
 func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {

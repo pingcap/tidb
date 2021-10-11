@@ -281,7 +281,7 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	c.Assert(strings.Index(rows[1][0].(string), `Point_Get`), Equals, 6)
+	c.Assert(strings.Contains(rows[3][0].(string), `TableRangeScan`), IsTrue)
 
 	// case 3:
 	tk.MustExec(`drop table if exists ta, tb`)
@@ -406,6 +406,148 @@ func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
 	}
 }
 
+func (s *testPrepareSuite) TestPlanCacheXXX(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+
+	type ExecCase struct {
+		Parameters []string
+		UseCache   bool
+	}
+	type PrepCase struct {
+		PrepStmt  string
+		ExecCases []ExecCase
+	}
+
+	cases := []PrepCase{
+		{"use test", nil},
+
+		// cases for Limit
+		{"create table t (a int)", nil},
+		{"insert into t values (1), (1), (2), (2), (3), (4), (5), (6), (7), (8), (9), (0), (0)", nil},
+		{"select * from t limit ?", []ExecCase{
+			{[]string{"20"}, false},
+			{[]string{"30"}, false},
+		}},
+		{"select * from t limit 40, ?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, false},
+		}},
+		{"select * from t limit ?, 10", []ExecCase{
+			{[]string{"20"}, false},
+			{[]string{"30"}, false},
+		}},
+		{"select * from t limit ?, ?", []ExecCase{
+			{[]string{"20", "20"}, false},
+			{[]string{"20", "40"}, false},
+		}},
+		{"select * from t where a<? limit 20", []ExecCase{
+			{[]string{"2"}, false},
+			{[]string{"5"}, true},
+			{[]string{"9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for order
+		{"create table t (a int, b int)", nil},
+		{"insert into t values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)", nil},
+		{"select * from t order by ?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, false},
+		}},
+		{"select * from t order by b+?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select * from t order by mod(a, ?)", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select * from t where b>? order by mod(a, 3)", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+
+		// cases for topN
+		{"select * from t order by b limit ?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, false},
+		}},
+		{"select * from t order by b limit 10, ?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, false},
+		}},
+		{"select * from t order by ? limit 10", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, false},
+		}},
+		{"select * from t order by ? limit ?", []ExecCase{
+			{[]string{"1", "10"}, false},
+			{[]string{"2", "20"}, false},
+		}},
+	}
+
+	for _, prepCase := range cases {
+		isQuery := strings.Contains(prepCase.PrepStmt, "select")
+		if !isQuery {
+			tk.MustExec(prepCase.PrepStmt)
+			continue
+		}
+
+		tk.MustExec(fmt.Sprintf(`prepare stmt from '%v'`, prepCase.PrepStmt))
+		for _, execCase := range prepCase.ExecCases {
+			// set all parameters
+			usingStmt := ""
+			if len(execCase.Parameters) > 0 {
+				setStmt := "set "
+				usingStmt = "using "
+				for i, parameter := range execCase.Parameters {
+					if i > 0 {
+						setStmt += ", "
+						usingStmt += ", "
+					}
+					setStmt += fmt.Sprintf("@x%v=%v", i, parameter)
+					usingStmt += fmt.Sprintf("@x%v", i)
+				}
+				tk.MustExec(setStmt)
+			}
+
+			// execute this statement and check whether it uses a cached plan
+			results := tk.MustQuery("execute stmt " + usingStmt).Sort().Rows()
+			useCache := "0"
+			if execCase.UseCache {
+				useCache = "1"
+			}
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(useCache))
+
+			// check whether the result is correct
+			tmp := strings.Split(prepCase.PrepStmt, "?")
+			c.Assert(len(tmp), Equals, len(execCase.Parameters)+1)
+			query := ""
+			for i := range tmp {
+				query += tmp[i]
+				if i < len(execCase.Parameters) {
+					query += execCase.Parameters[i]
+				}
+			}
+			tk.MustQuery(query).Sort().Check(results)
+		}
+	}
+}
+
 func (s *testSerialSuite) TestIssue28087And28162(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -471,6 +613,7 @@ func (s *testSerialSuite) TestIssue28064(c *C) {
 		"`d` decimal(10,0) DEFAULT NULL," +
 		"KEY `iabc` (`a`,`b`,`c`));")
 	tk.MustExec("set @a='123', @b='234', @c='345';")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("prepare stmt1 from 'select * from t28064 use index (iabc) where a = ? and b = ? and c = ?';")
 
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
@@ -478,8 +621,9 @@ func (s *testSerialSuite) TestIssue28064(c *C) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	rows.Check(testkit.Rows("IndexLookUp_7 0.00 root  ",
-		"├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+	rows.Check(testkit.Rows("IndexLookUp_8 0.00 root  ",
+		"├─Selection_7(Build) 0.00 cop[tikv]  eq(test.t28064.a, 123), eq(test.t28064.b, 234), eq(test.t28064.c, 345)",
+		"│ └─IndexRangeScan_5 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
 		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
 
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
@@ -488,7 +632,8 @@ func (s *testSerialSuite) TestIssue28064(c *C) {
 
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	rows.Check(testkit.Rows("IndexLookUp_7 0.00 root  ",
-		"├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+	rows.Check(testkit.Rows("IndexLookUp_8 0.00 root  ",
+		"├─Selection_7(Build) 0.00 cop[tikv]  eq(test.t28064.a, 123), eq(test.t28064.b, 234), eq(test.t28064.c, 345)",
+		"│ └─IndexRangeScan_5 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
 		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
 }
