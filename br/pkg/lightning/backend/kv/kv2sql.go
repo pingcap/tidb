@@ -17,7 +17,7 @@ package kv
 import (
 	"fmt"
 
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"

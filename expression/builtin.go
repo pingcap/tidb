@@ -31,10 +31,10 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -912,7 +912,7 @@ func GetBuiltinList() []string {
 		}
 		// Skip literal functions
 		// (their names are not readable: 'tidb`.(dateliteral, for example)
-		// See: https://github.com/pingcap/parser/pull/591
+		// See: https://github.com/pingcap/tidb/parser/pull/591
 		if strings.HasPrefix(funcName, "'tidb`.(") {
 			skipFunc = true
 		}

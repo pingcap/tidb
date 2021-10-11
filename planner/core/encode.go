@@ -21,7 +21,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/plancodec"
 )

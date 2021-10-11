@@ -18,8 +18,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/testkit"

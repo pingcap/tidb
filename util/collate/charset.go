@@ -17,7 +17,7 @@ package collate
 import (
 	"strings"
 
-	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/tidb/parser/charset"
 )
 
 var (

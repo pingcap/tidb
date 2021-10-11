@@ -15,7 +15,7 @@
 package tableutil
 
 import (
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/meta/autoid"
 )
 

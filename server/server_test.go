@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	tmysql "github.com/pingcap/parser/mysql"
+	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"

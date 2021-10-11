@@ -13,7 +13,7 @@ import (
 
 	gomock "github.com/golang/mock/gomock"
 	uuid "github.com/google/uuid"
-	model "github.com/pingcap/parser/model"
+	model "github.com/pingcap/tidb/parser/model"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
 	kv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	table "github.com/pingcap/tidb/table"

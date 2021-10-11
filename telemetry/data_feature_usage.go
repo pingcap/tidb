@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	m "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"

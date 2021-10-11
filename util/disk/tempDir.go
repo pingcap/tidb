@@ -21,7 +21,7 @@ import (
 	"github.com/danjacques/gofslock/fslock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"

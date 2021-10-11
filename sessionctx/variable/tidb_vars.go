@@ -17,7 +17,7 @@ package variable
 import (
 	"math"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"go.uber.org/atomic"
 )

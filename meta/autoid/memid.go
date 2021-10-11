@@ -18,7 +18,7 @@ import (
 	"context"
 	"math"
 
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser/model"
 )
 
 // NewAllocatorFromTempTblInfo creates an in-memory allocator from a temporary table info.

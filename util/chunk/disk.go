@@ -21,7 +21,7 @@ import (
 	"sync"
 
 	errors2 "github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/checksum"

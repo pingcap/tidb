@@ -15,7 +15,7 @@
 package core
 
 import (
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	driver "github.com/pingcap/tidb/types/parser_driver"

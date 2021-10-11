@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta"

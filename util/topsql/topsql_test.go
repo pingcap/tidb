@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
-	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/topsql"
