@@ -15,8 +15,10 @@
 package autoid
 
 import (
+	"bytes"
 	"context"
 	"math"
+	"strconv"
 	"sync"
 	"time"
 
@@ -30,7 +32,10 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -142,7 +147,7 @@ type Allocator interface {
 	// Rebase rebases the autoID base for table with tableID and the new base value.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
-	Rebase(newBase int64, allocIDs bool) error
+	Rebase(ctx context.Context, newBase int64, allocIDs bool) error
 
 	// ForceRebase set the next global auto ID to newBase.
 	ForceRebase(newBase int64) error
@@ -244,7 +249,7 @@ func (alloc *allocator) NextGlobalAutoID() (int64, error) {
 	return autoID + 1, err
 }
 
-func (alloc *allocator) rebase4Unsigned(requiredBase uint64, allocIDs bool) error {
+func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64, allocIDs bool) error {
 	// Satisfied by alloc.base, nothing to do.
 	if requiredBase <= uint64(alloc.base) {
 		return nil
@@ -254,9 +259,22 @@ func (alloc *allocator) rebase4Unsigned(requiredBase uint64, allocIDs bool) erro
 		alloc.base = int64(requiredBase)
 		return nil
 	}
+
+	ctx, allocatorStats, commitDetail := getAllocatorStatsFromCtx(ctx)
+	if allocatorStats != nil {
+		allocatorStats.rebaseCount++
+		defer func() {
+			if commitDetail != nil {
+				allocatorStats.mergeCommitDetail(*commitDetail)
+			}
+		}()
+	}
 	var newBase, newEnd uint64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		if allocatorStats != nil {
+			txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
+		}
 		idAcc := alloc.getIDAccessor(txn)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -290,7 +308,7 @@ func (alloc *allocator) rebase4Unsigned(requiredBase uint64, allocIDs bool) erro
 	return nil
 }
 
-func (alloc *allocator) rebase4Signed(requiredBase int64, allocIDs bool) error {
+func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, allocIDs bool) error {
 	// Satisfied by alloc.base, nothing to do.
 	if requiredBase <= alloc.base {
 		return nil
@@ -300,9 +318,22 @@ func (alloc *allocator) rebase4Signed(requiredBase int64, allocIDs bool) error {
 		alloc.base = requiredBase
 		return nil
 	}
+
+	ctx, allocatorStats, commitDetail := getAllocatorStatsFromCtx(ctx)
+	if allocatorStats != nil {
+		allocatorStats.rebaseCount++
+		defer func() {
+			if commitDetail != nil {
+				allocatorStats.mergeCommitDetail(*commitDetail)
+			}
+		}()
+	}
 	var newBase, newEnd int64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		if allocatorStats != nil {
+			txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
+		}
 		idAcc := alloc.getIDAccessor(txn)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -379,13 +410,13 @@ func (alloc *allocator) rebase4Sequence(requiredBase int64) (int64, bool, error)
 // Rebase implements autoid.Allocator Rebase interface.
 // The requiredBase is the minimum base value after Rebase.
 // The real base may be greater than the required base.
-func (alloc *allocator) Rebase(requiredBase int64, allocIDs bool) error {
+func (alloc *allocator) Rebase(ctx context.Context, requiredBase int64, allocIDs bool) error {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.isUnsigned {
-		return alloc.rebase4Unsigned(uint64(requiredBase), allocIDs)
+		return alloc.rebase4Unsigned(ctx, uint64(requiredBase), allocIDs)
 	}
-	return alloc.rebase4Signed(requiredBase, allocIDs)
+	return alloc.rebase4Signed(ctx, requiredBase, allocIDs)
 }
 
 // ForceRebase implements autoid.Allocator ForceRebase interface.
@@ -695,7 +726,7 @@ func SeekToFirstAutoIDUnSigned(base, increment, offset uint64) uint64 {
 func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
-		if err := alloc.rebase4Signed(offset-1, true); err != nil {
+		if err := alloc.rebase4Signed(ctx, offset-1, true); err != nil {
 			return 0, 0, err
 		}
 	}
@@ -716,11 +747,25 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 			consumeDur := startTime.Sub(alloc.lastAllocTime)
 			nextStep = NextStep(alloc.step, consumeDur)
 		}
+
+		ctx, allocatorStats, commitDetail := getAllocatorStatsFromCtx(ctx)
+		if allocatorStats != nil {
+			allocatorStats.allocCount++
+			defer func() {
+				if commitDetail != nil {
+					allocatorStats.mergeCommitDetail(*commitDetail)
+				}
+			}()
+		}
+
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 				span1 := span.Tracer().StartSpan("alloc.alloc4Signed", opentracing.ChildOf(span.Context()))
 				defer span1.Finish()
 				opentracing.ContextWithSpan(ctx, span1)
+			}
+			if allocatorStats != nil {
+				txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
 			}
 
 			idAcc := alloc.getIDAccessor(txn)
@@ -770,7 +815,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
 	// Check offset rebase if necessary.
 	if uint64(offset-1) > uint64(alloc.base) {
-		if err := alloc.rebase4Unsigned(uint64(offset-1), true); err != nil {
+		if err := alloc.rebase4Unsigned(ctx, uint64(offset-1), true); err != nil {
 			return 0, 0, err
 		}
 	}
@@ -791,12 +836,27 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 			consumeDur := startTime.Sub(alloc.lastAllocTime)
 			nextStep = NextStep(alloc.step, consumeDur)
 		}
+
+		ctx, allocatorStats, commitDetail := getAllocatorStatsFromCtx(ctx)
+		if allocatorStats != nil {
+			allocatorStats.allocCount++
+			defer func() {
+				if commitDetail != nil {
+					allocatorStats.mergeCommitDetail(*commitDetail)
+				}
+			}()
+		}
+
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 				span1 := span.Tracer().StartSpan("alloc.alloc4Unsigned", opentracing.ChildOf(span.Context()))
 				defer span1.Finish()
 				opentracing.ContextWithSpan(ctx, span1)
 			}
+			if allocatorStats != nil {
+				txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
+			}
+
 			idAcc := alloc.getIDAccessor(txn)
 			var err1 error
 			newBase, err1 = idAcc.Get()
@@ -840,6 +900,17 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
 	return min, alloc.base, nil
+}
+
+func getAllocatorStatsFromCtx(ctx context.Context) (context.Context, *AllocatorRuntimeStats, **tikvutil.CommitDetails) {
+	var allocatorStats *AllocatorRuntimeStats
+	var commitDetail *tikvutil.CommitDetails
+	ctxValue := ctx.Value(AllocatorRuntimeStatsCtxKey)
+	if ctxValue != nil {
+		allocatorStats = ctxValue.(*AllocatorRuntimeStats)
+		ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
+	}
+	return ctx, allocatorStats, &commitDetail
 }
 
 // alloc4Sequence is used to alloc value for sequence, there are several aspects different from autoid logic.
@@ -1023,4 +1094,112 @@ func (l *ShardIDLayout) IncrementalBitsCapacity() uint64 {
 // IncrementalMask returns 00..0[11..1], where [xxx] is the incremental section of the current layout.
 func (l *ShardIDLayout) IncrementalMask() int64 {
 	return (1 << l.IncrementalBits) - 1
+}
+
+type allocatorRuntimeStatsCtxKeyType struct{}
+
+// AllocatorRuntimeStatsCtxKey is the context key of allocator runtime stats.
+var AllocatorRuntimeStatsCtxKey = allocatorRuntimeStatsCtxKeyType{}
+
+// AllocatorRuntimeStats is the execution stats of auto id allocator.
+type AllocatorRuntimeStats struct {
+	*txnsnapshot.SnapshotRuntimeStats
+	*execdetails.RuntimeStatsWithCommit
+	allocCount  int
+	rebaseCount int
+}
+
+// NewAllocatorRuntimeStats return a new AllocatorRuntimeStats.
+func NewAllocatorRuntimeStats() *AllocatorRuntimeStats {
+	return &AllocatorRuntimeStats{
+		SnapshotRuntimeStats: &txnsnapshot.SnapshotRuntimeStats{},
+	}
+}
+
+func (e *AllocatorRuntimeStats) mergeCommitDetail(detail *tikvutil.CommitDetails) {
+	if detail == nil {
+		return
+	}
+	if e.RuntimeStatsWithCommit == nil {
+		e.RuntimeStatsWithCommit = &execdetails.RuntimeStatsWithCommit{}
+	}
+	e.RuntimeStatsWithCommit.MergeCommitDetails(detail)
+}
+
+// String implements the RuntimeStats interface.
+func (e *AllocatorRuntimeStats) String() string {
+	if e.allocCount == 0 && e.rebaseCount == 0 {
+		return ""
+	}
+	var buf bytes.Buffer
+	buf.WriteString("auto_id_allocator: {")
+	initialSize := buf.Len()
+	if e.allocCount > 0 {
+		buf.WriteString("alloc_cnt: ")
+		buf.WriteString(strconv.FormatInt(int64(e.allocCount), 10))
+	}
+	if e.rebaseCount > 0 {
+		if buf.Len() > initialSize {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("rebase_cnt: ")
+		buf.WriteString(strconv.FormatInt(int64(e.rebaseCount), 10))
+	}
+	if e.SnapshotRuntimeStats != nil {
+		stats := e.SnapshotRuntimeStats.String()
+		if stats != "" {
+			if buf.Len() > initialSize {
+				buf.WriteString(", ")
+			}
+			buf.WriteString(e.SnapshotRuntimeStats.String())
+		}
+	}
+	if e.RuntimeStatsWithCommit != nil {
+		stats := e.RuntimeStatsWithCommit.String()
+		if stats != "" {
+			if buf.Len() > initialSize {
+				buf.WriteString(", ")
+			}
+			buf.WriteString(stats)
+		}
+	}
+	buf.WriteString("}")
+	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *AllocatorRuntimeStats) Clone() *AllocatorRuntimeStats {
+	newRs := &AllocatorRuntimeStats{
+		allocCount:  e.allocCount,
+		rebaseCount: e.rebaseCount,
+	}
+	if e.SnapshotRuntimeStats != nil {
+		snapshotStats := e.SnapshotRuntimeStats.Clone()
+		newRs.SnapshotRuntimeStats = snapshotStats
+	}
+	if e.RuntimeStatsWithCommit != nil {
+		newRs.RuntimeStatsWithCommit = e.RuntimeStatsWithCommit.Clone().(*execdetails.RuntimeStatsWithCommit)
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *AllocatorRuntimeStats) Merge(other *AllocatorRuntimeStats) {
+	if other == nil {
+		return
+	}
+	if other.SnapshotRuntimeStats != nil {
+		if e.SnapshotRuntimeStats == nil {
+			e.SnapshotRuntimeStats = other.SnapshotRuntimeStats.Clone()
+		} else {
+			e.SnapshotRuntimeStats.Merge(other.SnapshotRuntimeStats)
+		}
+	}
+	if other.RuntimeStatsWithCommit != nil {
+		if e.RuntimeStatsWithCommit == nil {
+			e.RuntimeStatsWithCommit = other.RuntimeStatsWithCommit.Clone().(*execdetails.RuntimeStatsWithCommit)
+		} else {
+			e.RuntimeStatsWithCommit.Merge(other.RuntimeStatsWithCommit)
+		}
+	}
 }
