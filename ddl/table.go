@@ -333,6 +333,8 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 				break
 			}
 		}
+		// Placement rules cannot be removed immediately after drop table / truncate table, because the
+		// tables can be flashed back or recovered, therefore it moved to doGCPlacementRules in gc_worker.go.
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)

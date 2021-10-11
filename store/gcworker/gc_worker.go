@@ -1899,7 +1899,6 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 		for _, id := range physicalTableIDs {
 			bundles = append(bundles, placement.NewBundle(id))
 		}
-		fmt.Println("ids", physicalTableIDs)
 		err = infosync.PutRuleBundles(context.TODO(), bundles)
 	}
 	return
