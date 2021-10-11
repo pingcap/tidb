@@ -1,0 +1,27 @@
+name: "\U0001F914 Question"
+description: Usage question that isn't answered in docs or discussion
+labels: ["question"]
+body:
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Before asking a question, make sure you have
+      options:
+        - label: Searched existing Stack Overflow questions
+          required: true
+        - label: Googled your question
+          required: true
+        - label: Searched open and closed [GitHub issues](https://github.com/pingcap/dumpling/issues?q=is%3Aissue)
+          required: true
+        - label: Read the documentation
+                - [Detailed documentation](https://github.com/pingcap/dumpling/blob/master/docs/en/user-guide.md)
+                - [简体中文文档](https://github.com/pingcap/dumpling/blob/master/docs/cn/user-guide.md)
+          required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: What is your question?
+    validations:
+      required: true
+
+
