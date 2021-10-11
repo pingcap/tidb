@@ -316,6 +316,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.Tp = mysql.TypeUnspecified
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = UnspecifiedLength
+		tp.Charset = charset.CharsetUTF8MB4
+		tp.Collate = charset.CollationUTF8MB4
 	}
 }
 

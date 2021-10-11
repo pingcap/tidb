@@ -15,7 +15,8 @@
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -23,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-func (s *testSuite) TestLeadLag(c *C) {
+func TestLeadLag(t *testing.T) {
+	t.Parallel()
+
 	zero := expression.NewZero()
 	one := expression.NewOne()
 	two := &expression.Constant{
@@ -111,12 +114,14 @@ func (s *testSuite) TestLeadLag(c *C) {
 			[]expression.Expression{million, defaultArg}, 0, numRows, 0, 1, 2),
 	}
 	for _, test := range tests {
-		s.testWindowFunc(c, test)
+		testWindowFunc(t, test)
 	}
 
 }
 
-func (s *testSuite) TestMemLeadLag(c *C) {
+func TestMemLeadLag(t *testing.T) {
+	t.Parallel()
+
 	zero := expression.NewZero()
 	one := expression.NewOne()
 	two := &expression.Constant{
@@ -160,7 +165,7 @@ func (s *testSuite) TestMemLeadLag(c *C) {
 	}
 
 	for _, test := range tests {
-		s.testWindowAggMemFunc(c, test)
+		testWindowAggMemFunc(t, test)
 	}
 
 }
