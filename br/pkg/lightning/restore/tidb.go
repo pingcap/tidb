@@ -93,6 +93,13 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		MaxAllowedPacket: dsn.MaxAllowedPacket,
 		TLS:              dsn.TLS,
 	}
+
+	if dsn.Vars != nil {
+		for k, v := range dsn.Vars {
+			param.Vars[k] = v
+		}
+	}
+
 	db, err := param.Connect()
 	if err != nil {
 		return nil, errors.Trace(err)
