@@ -83,7 +83,18 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: gotest gogenerate br_unit_test
+test_part_2: test_part_parser gotest gogenerate br_unit_test
+
+test_part_parser: parser_yacc parser_fmt parser_unit_test
+
+parser_yacc:
+	@cd parser && mv parser.go parser.go.committed && make parser && diff -u parser.go.committed parser.go && rm parser.go.committed
+
+parser_fmt:
+	@cd parser && make fmt
+
+parser_unit_test:
+	@cd parser && make test
 
 test_part_br: br_unit_test br_integration_test
 
