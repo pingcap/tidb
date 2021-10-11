@@ -340,7 +340,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	// Mock the server is in `write reorg` state.
 	err = testInfo.execSQL(3)
 	c.Assert(err, IsNil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(checkErr, IsNil)
 }
 
 type stateCase struct {
@@ -882,7 +882,7 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 	d.(ddl.DDLForTest).SetHook(callback)
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(checkErr, IsNil)
 	d.(ddl.DDLForTest).SetHook(originalCallback)
 
 	if expectQuery != nil {
@@ -966,7 +966,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	alterTableSQL := `alter table t add index c2(c2)`
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(checkErr, IsNil)
 
 	result, err := s.execQuery(tk, showIndexSQL)
 	c.Assert(err, IsNil)

@@ -743,7 +743,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, resp)
 	}
-	metrics.TiKVCoprocessorHistogram.Observe(costTime.Seconds())
+	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
+	staleRead := strconv.FormatBool(req.StaleRead)
+	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, staleRead).Observe(costTime.Seconds())
 
 	if task.cmdType == tikvrpc.CmdCopStream {
 		return worker.handleCopStreamResult(bo, rpcCtx, resp.Resp.(*tikvrpc.CopStreamResponse), task, ch, costTime)

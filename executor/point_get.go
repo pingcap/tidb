@@ -176,12 +176,10 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			},
 		})
 	}
-	failpoint.Inject("assertPointStalenessOption", func(val failpoint.Value) {
+	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
-		if len(assertScope) > 0 {
-			if e.isStaleness && assertScope != e.readReplicaScope {
-				panic("batch point get staleness option fail")
-			}
+		if readReplicaType.IsClosestRead() && assertScope != e.readReplicaScope {
+			panic("point get replica option fail")
 		}
 	})
 	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)

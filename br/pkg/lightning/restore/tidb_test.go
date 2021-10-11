@@ -462,7 +462,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionSucceed(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor())
+	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
 	c.Assert(sysVars, DeepEquals, map[string]string{
 		"tidb_row_format_version": "2",
 		"max_allowed_packet":      "1073741824",
@@ -488,7 +488,7 @@ func (s *tidbSuite) TestObtainRowFormatVersionFailure(c *C) {
 	s.mockDB.
 		ExpectClose()
 
-	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor())
+	sysVars := ObtainImportantVariables(ctx, s.tiGlue.GetSQLExecutor(), true)
 	c.Assert(sysVars, DeepEquals, map[string]string{
 		"tidb_row_format_version": "1",
 		"max_allowed_packet":      "67108864",
