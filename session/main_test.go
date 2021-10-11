@@ -44,6 +44,7 @@ func TestMain(m *testing.M) {
 	})
 	tikv.EnableFailpoints()
 	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/internal/retry.newBackoffFn.func1"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc.(*addrConn).resetTransport"),
