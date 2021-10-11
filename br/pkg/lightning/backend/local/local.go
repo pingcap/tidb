@@ -819,6 +819,7 @@ type local struct {
 	localWriterMemCacheSize int64
 	supportMultiIngest      bool
 
+	checkTiKVAvaliable bool
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
 	errorMgr           *errormanager.ErrorManager
@@ -895,24 +896,22 @@ func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 func NewLocalBackend(
 	ctx context.Context,
 	tls *common.TLS,
-	pdAddr string,
-	cfg *config.TikvImporter,
-	enableCheckpoint bool,
+	cfg *config.Config,
 	g glue.Glue,
 	maxOpenFiles int,
 	errorMgr *errormanager.ErrorManager,
 ) (backend.Backend, error) {
-	localFile := cfg.SortedKVDir
-	rangeConcurrency := cfg.RangeConcurrency
+	localFile := cfg.TikvImporter.SortedKVDir
+	rangeConcurrency := cfg.TikvImporter.RangeConcurrency
 
-	pdCtl, err := pdutil.NewPdController(ctx, pdAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
+	pdCtl, err := pdutil.NewPdController(ctx, cfg.TiDB.PdAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
 	if err != nil {
 		return backend.MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
 	}
 	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig())
 
 	shouldCreate := true
-	if enableCheckpoint {
+	if cfg.Checkpoint.Enable {
 		if info, err := os.Stat(localFile); err != nil {
 			if !os.IsNotExist(err) {
 				return backend.MakeBackend(nil), err
@@ -930,7 +929,7 @@ func NewLocalBackend(
 	}
 
 	var duplicateDB *pebble.DB
-	if cfg.DuplicateDetection {
+	if cfg.TikvImporter.DuplicateDetection {
 		duplicateDB, err = openDuplicateDB(localFile)
 		if err != nil {
 			return backend.MakeBackend(nil), errors.Annotate(err, "open duplicate db failed")
@@ -942,20 +941,21 @@ func NewLocalBackend(
 		pdCtl:    pdCtl,
 		splitCli: splitCli,
 		tls:      tls,
-		pdAddr:   pdAddr,
+		pdAddr:   cfg.TiDB.PdAddr,
 		g:        g,
 
 		localStoreDir:     localFile,
 		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
 		ingestConcurrency: worker.NewPool(ctx, rangeConcurrency*2, "ingest"),
 		tcpConcurrency:    rangeConcurrency,
-		batchWriteKVPairs: cfg.SendKVPairs,
-		checkpointEnabled: enableCheckpoint,
+		batchWriteKVPairs: cfg.TikvImporter.SendKVPairs,
+		checkpointEnabled: cfg.Checkpoint.Enable,
 		maxOpenFiles:      utils.MaxInt(maxOpenFiles, openFilesLowerThreshold),
 
-		engineMemCacheSize:      int(cfg.EngineMemCacheSize),
-		localWriterMemCacheSize: int64(cfg.LocalWriterMemCacheSize),
-		duplicateDetection:      cfg.DuplicateDetection,
+		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
+		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
+		duplicateDetection:      cfg.TikvImporter.DuplicateDetection,
+		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
 		errorMgr:                errorMgr,
 	}
@@ -1385,26 +1385,28 @@ func (local *local) WriteToTiKV(
 	regionSplitSize int64,
 	regionSplitKeys int64,
 ) ([]*sst.SSTMeta, Range, rangeStats, error) {
-	for _, peer := range region.Region.GetPeers() {
-		var e error
-		for i := 0; i < maxRetryTimes; i++ {
-			store, err := local.pdCtl.GetStoreInfo(ctx, peer.StoreId)
-			if err != nil {
-				e = err
-				continue
-			}
-			if store.Status.Capacity > 0 {
-				// The available disk percent of TiKV
-				ratio := store.Status.Available * 100 / store.Status.Capacity
-				if ratio < 10 {
-					return nil, Range{}, rangeStats{}, errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d",
-						store.Store.Address, store.Status.Available, store.Status.Capacity)
+	if local.checkTiKVAvaliable {
+		for _, peer := range region.Region.GetPeers() {
+			var e error
+			for i := 0; i < maxRetryTimes; i++ {
+				store, err := local.pdCtl.GetStoreInfo(ctx, peer.StoreId)
+				if err != nil {
+					e = err
+					continue
 				}
+				if store.Status.Capacity > 0 {
+					// The available disk percent of TiKV
+					ratio := store.Status.Available * 100 / store.Status.Capacity
+					if ratio < 10 {
+						return nil, Range{}, rangeStats{}, errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d",
+							store.Store.Address, store.Status.Available, store.Status.Capacity)
+					}
+				}
+				break
 			}
-			break
-		}
-		if e != nil {
-			log.L().Error("failed to get StoreInfo from pd http api", zap.Error(e))
+			if e != nil {
+				log.L().Error("failed to get StoreInfo from pd http api", zap.Error(e))
+			}
 		}
 	}
 	begin := time.Now()
