@@ -17,10 +17,10 @@ package core
 import (
 	"context"
 
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/expression"
 )
 
 type buildKeySolver struct{}

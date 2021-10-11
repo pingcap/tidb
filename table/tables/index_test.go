@@ -18,11 +18,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"

@@ -16,9 +16,9 @@ package aggfuncs_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/executor/aggfuncs"
 )
 
 func (s *testSuite) TestMergePartialResult4BitFuncs(c *C) {

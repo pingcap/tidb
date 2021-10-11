@@ -17,9 +17,9 @@ package aggfuncs_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/executor/aggfuncs"
 )
 
 func TestMemRowNumber(t *testing.T) {

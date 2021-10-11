@@ -23,11 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	pd "github.com/tikv/pd/client"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
