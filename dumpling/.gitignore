@@ -1,0 +1,8 @@
+.DS_Store
+bin/
+coverage.txt
+.idea
+var
+fix.sql
+.vscode/
+export-20*/
