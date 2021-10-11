@@ -106,13 +106,6 @@ func TestUTF8CollatorKey(t *testing.T) {
 	testKeyTable(t, collations, tests)
 }
 
-func TestXXX(t *testing.T) {
-	SetCharsetFeatEnabledForTest(true)
-	defer SetCharsetFeatEnabledForTest(false)
-
-	GetCollator("gbk_bin").Key("Foo © bar 𝌆 baz ☃ qux")
-}
-
 func TestSetNewCollateEnabled(t *testing.T) {
 	defer SetNewCollationEnabledForTest(false)
 
