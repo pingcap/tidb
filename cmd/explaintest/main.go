@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"go.uber.org/zap"
@@ -119,9 +118,6 @@ func (t *tester) Run() error {
 	if err = t.openResult(); err != nil {
 		return errors.Trace(err)
 	}
-
-	// Enable new charset to pass the syntax-check like `a char(1) charset gbk`.
-	collate.EnableNewCharset()
 
 	var s string
 	defer func() {
