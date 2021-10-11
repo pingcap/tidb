@@ -1188,7 +1188,7 @@ func init() {
 
 func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
 	pbCode := scalarFunc.Function.PbCode()
-
+	canEnumPush = canEnumPush && scalarFunc.FuncName.String() == ast.Cast && (scalarFunc.RetType.EvalType() == types.ETInt || scalarFunc.RetType.EvalType() ==types.ETReal || scalarFunc.RetType.EvalType() ==types.ETDecimal)
 	// Check whether this function can be pushed.
 	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(scalarFunc, storeType) {
 		if unspecified {
