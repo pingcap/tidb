@@ -5,6 +5,7 @@ package restore
 import (
 	"context"
 	"database/sql/driver"
+	"sort"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
@@ -261,4 +262,64 @@ func (s *metaMgrSuite) prepareMock(rowsVal [][]driver.Value, nextRowID *int64, u
 			WithArgs(*updateStatus, int64(1), int64(1)).
 			WillReturnResult(sqlmock.NewResult(int64(0), int64(1)))
 	}
+}
+
+var _ = Suite(&taskMetaMgrSuite{})
+
+type taskMetaMgrSuite struct {
+	mgr    *dbTaskMetaMgr
+	mockDB sqlmock.Sqlmock
+}
+
+func (s *taskMetaMgrSuite) SetUpTest(c *C) {
+	db, m, err := sqlmock.New()
+	c.Assert(err, IsNil)
+
+	s.mgr = &dbTaskMetaMgr{
+		session:   db,
+		taskID:    1,
+		tableName: common.UniqueTable("test", "t1"),
+	}
+	s.mockDB = m
+}
+
+func (s *taskMetaMgrSuite) TestCheckTasksExclusively(c *C) {
+	s.mockDB.ExpectExec("SET SESSION tidb_txn_mode = 'pessimistic';").
+		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
+	s.mockDB.ExpectBegin()
+	s.mockDB.ExpectQuery("SELECT task_id, pd_cfgs, status, state, source_bytes, cluster_avail from `test`.`t1` FOR UPDATE").
+		WillReturnRows(sqlmock.NewRows([]string{"task_id", "pd_cfgs", "status", "state", "source_bytes", "cluster_avail"}).
+			AddRow("0", "", taskMetaStatusInitial.String(), "0", "0", "0").
+			AddRow("1", "", taskMetaStatusInitial.String(), "0", "0", "0").
+			AddRow("2", "", taskMetaStatusInitial.String(), "0", "0", "0").
+			AddRow("3", "", taskMetaStatusInitial.String(), "0", "0", "0").
+			AddRow("4", "", taskMetaStatusInitial.String(), "0", "0", "0"))
+
+	s.mockDB.ExpectExec("\\QREPLACE INTO `test`.`t1` (task_id, pd_cfgs, status, state, source_bytes, cluster_avail) VALUES(?, ?, ?, ?, ?, ?)\\E").
+		WithArgs(int64(2), "", taskMetaStatusInitial.String(), int(0), uint64(2048), uint64(0)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mockDB.ExpectExec("\\QREPLACE INTO `test`.`t1` (task_id, pd_cfgs, status, state, source_bytes, cluster_avail) VALUES(?, ?, ?, ?, ?, ?)\\E").
+		WithArgs(int64(3), "", taskMetaStatusInitial.String(), int(0), uint64(3072), uint64(0)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mockDB.ExpectCommit()
+
+	err := s.mgr.CheckTasksExclusively(context.Background(), func(tasks []taskMeta) ([]taskMeta, error) {
+		c.Assert(len(tasks), Equals, 5)
+		sort.Slice(tasks, func(i, j int) bool {
+			return tasks[i].taskID < tasks[j].taskID
+		})
+		for j := 0; j < 5; j++ {
+			c.Assert(tasks[j].taskID, Equals, int64(j))
+		}
+
+		var newTasks []taskMeta
+		for j := 2; j < 4; j++ {
+			task := tasks[j]
+			task.sourceBytes = uint64(j * 1024)
+			newTasks = append(newTasks, task)
+		}
+		return newTasks, nil
+	})
+	c.Assert(err, IsNil)
+
 }

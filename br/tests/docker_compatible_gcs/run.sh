@@ -31,15 +31,16 @@ EOF
 )
 
 # save CREDENTIALS to file
-echo $KEY > "tests/$TEST_NAME/config.json"
+echo $KEY > "br/tests/$TEST_NAME/config.json"
 
 # export test CREDENTIALS for gcs oauth
-export GOOGLE_APPLICATION_CREDENTIALS="tests/$TEST_NAME/config.json"
+export GOOGLE_APPLICATION_CREDENTIALS="br/tests/$TEST_NAME/config.json"
 
 # restore backup data one by one
 for TAG in ${TAGS}; do
     echo "restore ${TAG} data starts..."
-    bin/br restore db --db test -s "gcs://$BUCKET/bk${TAG}" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT/storage/v1/"
+    # after BR merged into TiDB we need skip version check because the build from tidb is not a release version.
+    bin/br restore db --db test -s "gcs://$BUCKET/bk${TAG}" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT/storage/v1/" --check-requirements=false
     row_count=$(run_sql_in_container  "SELECT COUNT(*) FROM test.usertable;" | awk '/COUNT/{print $2}')
     if [ $row_count != $EXPECTED_KVS ]; then
        echo "restore kv count is not as expected(1000) $row_count"

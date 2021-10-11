@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/tikv/pd/server/api"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -77,7 +79,8 @@ const (
 	defaultIndexConcurrency           = 2
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
-	defaultMetaSchemaName = "lightning_metadata"
+	defaultMetaSchemaName     = "lightning_metadata"
+	defaultTaskInfoSchemaName = "lightning_task_info"
 
 	// autoDiskQuotaLocalReservedSpeed is the estimated size increase per
 	// millisecond per write thread the local backend may gain on all engines.
@@ -93,6 +96,9 @@ const (
 	maxRetryTimes           = 4
 	defaultRetryBackoffTime = 100 * time.Millisecond
 	pdStores                = "/pd/api/v1/stores"
+
+	defaultCSVDataCharacterSet       = "binary"
+	defaultCSVDataInvalidCharReplace = utf8.RuneError
 )
 
 var (
@@ -123,10 +129,11 @@ type DBStore struct {
 	SQLMode          mysql.SQLMode `toml:"-" json:"-"`
 	MaxAllowedPacket uint64        `toml:"max-allowed-packet" json:"max-allowed-packet"`
 
-	DistSQLScanConcurrency     int `toml:"distsql-scan-concurrency" json:"distsql-scan-concurrency"`
-	BuildStatsConcurrency      int `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
-	IndexSerialScanConcurrency int `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
-	ChecksumTableConcurrency   int `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
+	DistSQLScanConcurrency     int               `toml:"distsql-scan-concurrency" json:"distsql-scan-concurrency"`
+	BuildStatsConcurrency      int               `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
+	IndexSerialScanConcurrency int               `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
+	ChecksumTableConcurrency   int               `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
+	Vars                       map[string]string `toml:"-" json:"vars"`
 }
 
 type Config struct {
@@ -166,6 +173,9 @@ type Lightning struct {
 	IOConcurrency     int    `toml:"io-concurrency" json:"io-concurrency"`
 	CheckRequirements bool   `toml:"check-requirements" json:"check-requirements"`
 	MetaSchemaName    string `toml:"meta-schema-name" json:"meta-schema-name"`
+
+	MaxError           MaxError `toml:"max-error" json:"max-error"`
+	TaskInfoSchemaName string   `toml:"task-info-schema-name" json:"task-info-schema-name"`
 }
 
 type PostOpLevel int
@@ -233,6 +243,118 @@ func (t PostOpLevel) String() string {
 	}
 }
 
+type CheckpointKeepStrategy int
+
+const (
+	// remove checkpoint data
+	CheckpointRemove CheckpointKeepStrategy = iota
+	// keep by rename checkpoint file/db according to task id
+	CheckpointRename
+	// keep checkpoint data unchanged
+	CheckpointOrigin
+)
+
+func (t *CheckpointKeepStrategy) UnmarshalTOML(v interface{}) error {
+	switch val := v.(type) {
+	case bool:
+		if val {
+			*t = CheckpointRename
+		} else {
+			*t = CheckpointRemove
+		}
+	case string:
+		return t.FromStringValue(val)
+	default:
+		return errors.Errorf("invalid checkpoint keep strategy '%v', please choose valid option between ['remove', 'rename', 'origin']", v)
+	}
+	return nil
+}
+
+func (t CheckpointKeepStrategy) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
+}
+
+// parser command line parameter
+func (t *CheckpointKeepStrategy) FromStringValue(s string) error {
+	switch strings.ToLower(s) {
+	//nolint:goconst // This 'false' and other 'false's aren't the same.
+	case "remove", "false":
+		*t = CheckpointRemove
+	case "rename", "true":
+		*t = CheckpointRename
+	case "origin":
+		*t = CheckpointOrigin
+	default:
+		return errors.Errorf("invalid checkpoint keep strategy '%s', please choose valid option between ['remove', 'rename', 'origin']", s)
+	}
+	return nil
+}
+
+func (t *CheckpointKeepStrategy) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + t.String() + `"`), nil
+}
+
+func (t *CheckpointKeepStrategy) UnmarshalJSON(data []byte) error {
+	return t.FromStringValue(strings.Trim(string(data), `"`))
+}
+
+func (t CheckpointKeepStrategy) String() string {
+	switch t {
+	case CheckpointRemove:
+		return "remove"
+	case CheckpointRename:
+		return "rename"
+	case CheckpointOrigin:
+		return "origin"
+	default:
+		panic(fmt.Sprintf("invalid post process type '%d'", t))
+	}
+}
+
+// MaxError configures the maximum number of acceptable errors per kind.
+type MaxError struct {
+	// Syntax is the maximum number of syntax errors accepted.
+	// When tolerated, the file chunk causing syntax error will be skipped, and adds 1 to the counter.
+	// TODO Currently this is hard-coded to zero.
+	Syntax atomic.Int64 `toml:"syntax" json:"-"`
+
+	// Charset is the maximum number of character-set conversion errors accepted.
+	// When tolerated, and `data-invalid-char-replace` is not changed from "\ufffd",
+	// every invalid byte in the source file will be converted to U+FFFD and adds 1 to the counter.
+	// Note that a failed conversion a column's character set (e.g. UTF8-to-GBK conversion)
+	// is counted as a type error, not a charset error.
+	// TODO character-set conversion is not yet implemented.
+	Charset atomic.Int64 `toml:"charset" json:"-"`
+
+	// Type is the maximum number of type errors accepted.
+	// This includes strict-mode errors such as zero in dates, integer overflow, character string too long, etc.
+	// In TiDB backend, this also includes all possible SQL errors raised from INSERT,
+	// such as unique key conflict when `on-duplicate` is set to `error`.
+	// When tolerated, the row causing the error will be skipped, and adds 1 to the counter.
+	Type atomic.Int64 `toml:"type" json:"type"`
+
+	// Conflict is the maximum number of unique key conflicts in local backend accepted.
+	// When tolerated, every pair of conflict adds 1 to the counter.
+	// Those pairs will NOT be deleted from the target. Conflict resolution is performed separately.
+	// TODO Currently this is hard-coded to infinity.
+	Conflict atomic.Int64 `toml:"conflict" json:"-"`
+}
+
+func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
+	switch val := v.(type) {
+	case int64:
+		cfg.Syntax.Store(0)
+		cfg.Charset.Store(math.MaxInt64)
+		cfg.Type.Store(val)
+		cfg.Conflict.Store(math.MaxInt64)
+		return nil
+	case map[string]interface{}:
+		// TODO support stuff like `max-error = { charset = 1000, type = 1000 }` if proved useful.
+	default:
+	}
+	return errors.Errorf("invalid max-error '%v', should be an integer", v)
+}
+
 // PostRestore has some options which will be executed after kv restored.
 type PostRestore struct {
 	Checksum          PostOpLevel `toml:"checksum" json:"checksum"`
@@ -243,6 +365,7 @@ type PostRestore struct {
 }
 
 type CSVConfig struct {
+	// Separator, Delimiter and Terminator should all be in utf8mb4 encoding.
 	Separator       string `toml:"separator" json:"separator"`
 	Delimiter       string `toml:"delimiter" json:"delimiter"`
 	Terminator      string `toml:"terminator" json:"terminator"`
@@ -269,6 +392,16 @@ type MydumperRuntime struct {
 	StrictFormat     bool             `toml:"strict-format" json:"strict-format"`
 	DefaultFileRules bool             `toml:"default-file-rules" json:"default-file-rules"`
 	IgnoreColumns    AllIgnoreColumns `toml:"ignore-data-columns" json:"ignore-data-columns"`
+	// DataCharacterSet is the character set of the source file. Only CSV files are supported now. The following options are supported.
+	//   - utf8mb4
+	//   - GB18030
+	//   - GBK: an extension of the GB2312 character set and is also known as Code Page 936.
+	//   - binary: no attempt to convert the encoding.
+	// Leave DataCharacterSet empty will make it use `binary` by default.
+	DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
+	// DataInvalidCharReplace is the replacement characters for non-compatible characters, which shouldn't duplicate with the separators or line breaks.
+	// Changing the default value will result in increased parsing time. Non-compatible characters do not cause an increase in error.
+	DataInvalidCharReplace string `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
 }
 
 type AllIgnoreColumns []*IgnoreColumns
@@ -309,6 +442,10 @@ type FileRouteRule struct {
 	Type        string `json:"type" toml:"type" yaml:"type"`
 	Key         string `json:"key" toml:"key" yaml:"key"`
 	Compression string `json:"compression" toml:"compression" yaml:"compression"`
+	// TODO: DataCharacterSet here can overide the same field in [mydumper.csv] with a higher level.
+	// This could provide users a more flexable usage to configure different files with
+	// different data charsets.
+	// DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
 }
 
 type TikvImporter struct {
@@ -328,11 +465,11 @@ type TikvImporter struct {
 }
 
 type Checkpoint struct {
-	Schema           string `toml:"schema" json:"schema"`
-	DSN              string `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
-	Driver           string `toml:"driver" json:"driver"`
-	Enable           bool   `toml:"enable" json:"enable"`
-	KeepAfterSuccess bool   `toml:"keep-after-success" json:"keep-after-success"`
+	Schema           string                 `toml:"schema" json:"schema"`
+	DSN              string                 `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
+	Driver           string                 `toml:"driver" json:"driver"`
+	Enable           bool                   `toml:"enable" json:"enable"`
+	KeepAfterSuccess CheckpointKeepStrategy `toml:"keep-after-success" json:"keep-after-success"`
 }
 
 type Cron struct {
@@ -396,6 +533,11 @@ func NewConfig() *Config {
 			IndexConcurrency:  0,
 			IOConcurrency:     5,
 			CheckRequirements: true,
+			MaxError: MaxError{
+				Charset:  *atomic.NewInt64(math.MaxInt64),
+				Conflict: *atomic.NewInt64(math.MaxInt64),
+			},
+			TaskInfoSchemaName: defaultTaskInfoSchemaName,
 		},
 		Checkpoint: Checkpoint{
 			Enable: true,
@@ -427,16 +569,18 @@ func NewConfig() *Config {
 				BackslashEscape: true,
 				TrimLastSep:     false,
 			},
-			StrictFormat:  false,
-			MaxRegionSize: MaxRegionSize,
-			Filter:        DefaultFilter,
+			StrictFormat:           false,
+			MaxRegionSize:          MaxRegionSize,
+			Filter:                 DefaultFilter,
+			DataCharacterSet:       defaultCSVDataCharacterSet,
+			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
 			Backend:         "",
 			OnDuplicate:     ReplaceOnDup,
 			MaxKVPairs:      4096,
 			SendKVPairs:     32768,
-			RegionSplitSize: SplitRegionSize,
+			RegionSplitSize: 0,
 			DiskQuota:       ByteSize(math.MaxInt64),
 		},
 		PostRestore: PostRestore{
@@ -578,6 +722,10 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		cfg.Mydumper.DefaultFileRules = true
 	}
 
+	if len(cfg.Mydumper.DataCharacterSet) == 0 {
+		cfg.Mydumper.DataCharacterSet = defaultCSVDataCharacterSet
+	}
+
 	if cfg.TikvImporter.Backend == "" {
 		return errors.New("tikv-importer.backend must not be empty!")
 	}
@@ -589,6 +737,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		mustHaveInternalConnections = false
 		cfg.PostRestore.Checksum = OpLevelOff
 		cfg.PostRestore.Analyze = OpLevelOff
+		cfg.PostRestore.Compact = false
 		cfg.TikvImporter.DuplicateDetection = false
 	case BackendImporter, BackendLocal:
 		// RegionConcurrency > NumCPU is meaningless.
@@ -739,9 +888,6 @@ func (cfg *Config) DefaultVarsForImporterAndLocalBackend(ctx context.Context) {
 	}
 	if cfg.TikvImporter.RangeConcurrency == 0 {
 		cfg.TikvImporter.RangeConcurrency = 16
-	}
-	if cfg.TikvImporter.RegionSplitSize == 0 {
-		cfg.TikvImporter.RegionSplitSize = SplitRegionSize
 	}
 	if cfg.TiDB.BuildStatsConcurrency == 0 {
 		cfg.TiDB.BuildStatsConcurrency = defaultBuildStatsConcurrency

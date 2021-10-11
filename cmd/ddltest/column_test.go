@@ -226,3 +226,12 @@ func (s *TestDDLSuite) TestCommitWhenSchemaChanged(c *C) {
 	_, err = s1.Execute(ctx, "commit")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
 }
+
+func (s *TestDDLSuite) TestForIssue24621(c *C) {
+	s.mustExec(c, "use test")
+	s.mustExec(c, "drop table if exists t")
+	s.mustExec(c, "create table t(a char(250));")
+	s.mustExec(c, "insert into t values('0123456789abc');")
+	_, err := s.exec("alter table t modify a char(12) null;")
+	c.Assert(err.Error(), Equals, "[types:1265]Data truncated for column 'a', value is '0123456789abc'")
+}

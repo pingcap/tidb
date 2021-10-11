@@ -1866,8 +1866,9 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	snapshot.SetOption(kv.IsolationLevel, kv.SI)
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
 	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
-	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
+	if readReplicaType.IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, readReplicaType)
 	}
 
 	rander := rand.New(rand.NewSource(e.randSeed)) // #nosec G404

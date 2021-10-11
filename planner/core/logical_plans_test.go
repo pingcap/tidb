@@ -2,7 +2,7 @@
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain col1 copy of the License at
+// You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
@@ -173,8 +173,8 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 			corColIDs:  []int64{},
 			idxColIDs:  []int64{3},
 			idxColLens: []int{types.UnspecifiedLength},
-			access:     "[]",
-			remained:   "[eq(Column#3, \x01)]",
+			access:     "[eq(Column#3, \x01)]",
+			remained:   "[]",
 		},
 	}
 	collate.SetNewCollationEnabledForTest(true)

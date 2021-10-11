@@ -392,15 +392,6 @@ func (c *RPCClient) handleDebugGetRegionProperties(ctx context.Context, req *deb
 		}}}, nil
 }
 
-// Client is a client that sends RPC.
-// This is same with tikv.Client, define again for avoid circle import.
-type Client interface {
-	// Close should release all data.
-	Close() error
-	// SendRequest sends Request.
-	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
-}
-
 // Close closes RPCClient and cleanup temporal resources.
 func (c *RPCClient) Close() error {
 	atomic.StoreInt32(&c.closed, 1)

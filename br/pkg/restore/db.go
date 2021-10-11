@@ -107,7 +107,6 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
 		return errors.Trace(err)
 	}
 
-	var restoreMetaSQL string
 	if table.Info.IsSequence() {
 		setValFormat := fmt.Sprintf("do setval(%s.%s, %%d);",
 			utils.EncloseName(table.DB.Name.O),
@@ -149,55 +148,16 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
 				return errors.Trace(err)
 			}
 		}
-		restoreMetaSQL = fmt.Sprintf(setValFormat, table.Info.AutoIncID)
-		err = db.se.Execute(ctx, restoreMetaSQL)
-	} else {
-		var alterAutoIncIDFormat string
-		switch {
-		case table.Info.IsView():
-			return nil
-		default:
-			alterAutoIncIDFormat = "alter table %s.%s auto_increment = %d;"
-		}
-		restoreMetaSQL = fmt.Sprintf(
-			alterAutoIncIDFormat,
-			utils.EncloseName(table.DB.Name.O),
-			utils.EncloseName(table.Info.Name.O),
-			table.Info.AutoIncID)
-		if utils.NeedAutoID(table.Info) {
-			err = db.se.Execute(ctx, restoreMetaSQL)
-		}
-	}
-
-	if err != nil {
-		log.Error("restore meta sql failed",
-			zap.String("query", restoreMetaSQL),
-			zap.Stringer("db", table.DB.Name),
-			zap.Stringer("table", table.Info.Name),
-			zap.Error(err))
-		return errors.Trace(err)
-	}
-	if table.Info.PKIsHandle && table.Info.ContainsAutoRandomBits() {
-		// this table has auto random id, we need rebase it
-
-		// we can't merge two alter query, because
-		// it will cause Error: [ddl:8200]Unsupported multi schema change
-		alterAutoRandIDSQL := fmt.Sprintf(
-			"alter table %s.%s auto_random_base = %d",
-			utils.EncloseName(table.DB.Name.O),
-			utils.EncloseName(table.Info.Name.O),
-			table.Info.AutoRandID)
-
-		err = db.se.Execute(ctx, alterAutoRandIDSQL)
-		if err != nil {
-			log.Error("alter AutoRandID failed",
-				zap.String("query", alterAutoRandIDSQL),
+		restoreMetaSQL := fmt.Sprintf(setValFormat, table.Info.AutoIncID)
+		if err = db.se.Execute(ctx, restoreMetaSQL); err != nil {
+			log.Error("restore meta sql failed",
+				zap.String("query", restoreMetaSQL),
 				zap.Stringer("db", table.DB.Name),
 				zap.Stringer("table", table.Info.Name),
 				zap.Error(err))
+			return errors.Trace(err)
 		}
 	}
-
 	return errors.Trace(err)
 }
 

@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -102,4 +103,15 @@ func BenchmarkDecodeOneToChunk(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkDecodeWithSize,
+		BenchmarkDecodeWithOutSize,
+		BenchmarkEncodeIntWithSize,
+		BenchmarkEncodeIntWithOutSize,
+		BenchmarkDecodeDecimal,
+		BenchmarkDecodeOneToChunk,
+	)
 }

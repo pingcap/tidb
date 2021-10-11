@@ -5,19 +5,14 @@ package metautil
 import (
 	"context"
 	"crypto/sha256"
+	"regexp"
 	"testing"
 
 	"github.com/golang/mock/gomock"
-	. "github.com/pingcap/check"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	mockstorage "github.com/pingcap/tidb/br/pkg/mock/storage"
+	"github.com/stretchr/testify/require"
 )
-
-type metaSuit struct{}
-
-var _ = Suite(&metaSuit{})
-
-func Test(t *testing.T) { TestingT(t) }
 
 func checksum(m *backuppb.MetaFile) []byte {
 	b, err := m.Marshal()
@@ -28,34 +23,43 @@ func checksum(m *backuppb.MetaFile) []byte {
 	return sum[:]
 }
 
-func (m *metaSuit) TestWalkMetaFileEmpty(c *C) {
+func TestWalkMetaFileEmpty(t *testing.T) {
+	t.Parallel()
+
 	files := []*backuppb.MetaFile{}
 	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
 	err := walkLeafMetaFile(context.Background(), nil, nil, collect)
-	c.Assert(err, IsNil)
-	c.Assert(files, HasLen, 0)
+
+	require.NoError(t, err)
+	require.Len(t, files, 0)
 
 	empty := &backuppb.MetaFile{}
 	err = walkLeafMetaFile(context.Background(), nil, empty, collect)
-	c.Assert(err, IsNil)
-	c.Assert(files, HasLen, 1)
-	c.Assert(files[0], Equals, empty)
+
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	require.Equal(t, empty, files[0])
 }
 
-func (m *metaSuit) TestWalkMetaFileLeaf(c *C) {
+func TestWalkMetaFileLeaf(t *testing.T) {
+	t.Parallel()
+
 	leaf := &backuppb.MetaFile{Schemas: []*backuppb.Schema{
 		{Db: []byte("db"), Table: []byte("table")},
 	}}
 	files := []*backuppb.MetaFile{}
 	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
 	err := walkLeafMetaFile(context.Background(), nil, leaf, collect)
-	c.Assert(err, IsNil)
-	c.Assert(files, HasLen, 1)
-	c.Assert(files[0], Equals, leaf)
+
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	require.Equal(t, leaf, files[0])
 }
 
-func (m *metaSuit) TestWalkMetaFileInvalid(c *C) {
-	controller := gomock.NewController(c)
+func TestWalkMetaFileInvalid(t *testing.T) {
+	t.Parallel()
+
+	controller := gomock.NewController(t)
 	defer controller.Finish()
 	mockStorage := mockstorage.NewMockExternalStorage(controller)
 
@@ -71,11 +75,14 @@ func (m *metaSuit) TestWalkMetaFileInvalid(c *C) {
 
 	collect := func(m *backuppb.MetaFile) { panic("unreachable") }
 	err := walkLeafMetaFile(ctx, mockStorage, root, collect)
-	c.Assert(err, ErrorMatches, ".*ErrInvalidMetaFile.*")
+
+	require.Regexp(t, regexp.MustCompile(".*ErrInvalidMetaFile.*"), err)
 }
 
-func (m *metaSuit) TestWalkMetaFile(c *C) {
-	controller := gomock.NewController(c)
+func TestWalkMetaFile(t *testing.T) {
+	t.Parallel()
+
+	controller := gomock.NewController(t)
 	defer controller.Finish()
 	mockStorage := mockstorage.NewMockExternalStorage(controller)
 
@@ -125,10 +132,10 @@ func (m *metaSuit) TestWalkMetaFile(c *C) {
 	files := []*backuppb.MetaFile{}
 	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
 	err := walkLeafMetaFile(ctx, mockStorage, root, collect)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	c.Assert(files, HasLen, len(expect))
+	require.Len(t, files, len(expect))
 	for i := range expect {
-		c.Assert(files[i], DeepEquals, expect[i])
+		require.Equal(t, expect[i], files[i])
 	}
 }

@@ -268,10 +268,6 @@ func BuildBackupRangeAndSchema(
 			continue
 		}
 
-		idAlloc := autoid.NewAllocator(storage, dbInfo.ID, false, autoid.RowIDAllocType)
-		seqAlloc := autoid.NewAllocator(storage, dbInfo.ID, false, autoid.SequenceType)
-		randAlloc := autoid.NewAllocator(storage, dbInfo.ID, false, autoid.AutoRandomType)
-
 		tables, err := m.ListTables(dbInfo.ID)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -294,14 +290,19 @@ func BuildBackupRangeAndSchema(
 				zap.String("table", tableInfo.Name.O),
 			)
 
+			tblVer := autoid.AllocOptionTableInfoVersion(tableInfo.Version)
+			idAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.RowIDAllocType, tblVer)
+			seqAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.SequenceType, tblVer)
+			randAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.AutoRandomType, tblVer)
+
 			var globalAutoID int64
 			switch {
 			case tableInfo.IsSequence():
-				globalAutoID, err = seqAlloc.NextGlobalAutoID(tableInfo.ID)
+				globalAutoID, err = seqAlloc.NextGlobalAutoID()
 			case tableInfo.IsView() || !utils.NeedAutoID(tableInfo):
 				// no auto ID for views or table without either rowID nor auto_increment ID.
 			default:
-				globalAutoID, err = idAlloc.NextGlobalAutoID(tableInfo.ID)
+				globalAutoID, err = idAlloc.NextGlobalAutoID()
 			}
 			if err != nil {
 				return nil, nil, errors.Trace(err)
@@ -311,7 +312,7 @@ func BuildBackupRangeAndSchema(
 			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
 				var globalAutoRandID int64
-				globalAutoRandID, err = randAlloc.NextGlobalAutoID(tableInfo.ID)
+				globalAutoRandID, err = randAlloc.NextGlobalAutoID()
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -460,7 +461,7 @@ func (bc *Client) BackupRange(
 		zap.Uint32("concurrency", req.Concurrency))
 
 	var allStores []*metapb.Store
-	allStores, err = conn.GetAllTiKVStores(ctx, bc.mgr.GetPDClient(), conn.SkipTiFlash)
+	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), conn.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}

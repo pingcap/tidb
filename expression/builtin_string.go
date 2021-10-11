@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package expression
 
@@ -371,8 +371,8 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	// add separator
-	argsLen := len(args) - 1
-	bf.tp.Flen += argsLen - 1
+	sepsLen := len(args) - 2
+	bf.tp.Flen += sepsLen * args[0].GetType().Flen
 
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
@@ -1364,6 +1364,10 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 	if len(delim) == 0 {
 		return "", false, nil
 	}
+	// when count > MaxInt64, returns whole string.
+	if count < 0 && mysql.HasUnsignedFlag(b.args[2].GetType().Flag) {
+		return str, false, nil
+	}
 
 	strs := strings.Split(str, delim)
 	start, end := int64(0), int64(len(strs))
@@ -1376,8 +1380,8 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 		// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
 		count = -count
 		if count < 0 {
-			// -count overflows max int64, returns an empty string.
-			return "", false, nil
+			// -count overflows max int64, returns whole string.
+			return str, false, nil
 		}
 
 		if count < end {
@@ -1588,8 +1592,8 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 			return nil, err
 		}
 		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-		// Use UTF-8 as default
-		bf.tp.Flen = args[0].GetType().Flen * 3 * 2
+		// Use UTF8MB4 as default.
+		bf.tp.Flen = args[0].GetType().Flen * 4 * 2
 		sig := &builtinHexStrArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
@@ -1665,10 +1669,10 @@ func (c *unhexFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	argEvalTp := argType.EvalType()
 	switch argEvalTp {
 	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
-		// Use UTF-8 as default charset, so there're (Flen * 3 + 1) / 2 byte-pairs
-		retFlen = (argType.Flen*3 + 1) / 2
+		// Use UTF8MB4 as default charset, so there're (Flen * 4 + 1) / 2 byte-pairs.
+		retFlen = (argType.Flen*4 + 1) / 2
 	case types.ETInt, types.ETReal, types.ETDecimal:
-		// For number value, there're (Flen + 1) / 2 byte-pairs
+		// For number value, there're (Flen + 1) / 2 byte-pairs.
 		retFlen = (argType.Flen + 1) / 2
 	default:
 		return nil, errors.Errorf("Unhex invalid args, need int or string but get %s", argType)
@@ -3073,7 +3077,16 @@ func (c *exportSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = mysql.MaxBlobWidth
+	// Calculate the flen as MySQL does.
+	l := args[1].GetType().Flen
+	if args[2].GetType().Flen > l {
+		l = args[2].GetType().Flen
+	}
+	sepL := 1
+	if len(args) > 3 {
+		sepL = args[3].GetType().Flen
+	}
+	bf.tp.Flen = (l*64 + sepL*63) * 4
 	switch len(args) {
 	case 3:
 		sig = &builtinExportSet3ArgSig{bf}
@@ -3407,7 +3420,15 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = mysql.MaxBlobWidth
+	// The calculation of Flen is the same as MySQL.
+	if args[0].GetType().Flen == types.UnspecifiedLength {
+		bf.tp.Flen = types.UnspecifiedLength
+	} else {
+		bf.tp.Flen = args[0].GetType().Flen * 3
+		if bf.tp.Flen > mysql.MaxBlobWidth {
+			bf.tp.Flen = mysql.MaxBlobWidth
+		}
+	}
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)

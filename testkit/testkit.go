@@ -19,9 +19,11 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/types"
@@ -37,6 +39,7 @@ var testKitIDGenerator atomic.Uint64
 type TestKit struct {
 	require *require.Assertions
 	assert  *assert.Assertions
+	t       *testing.T
 	store   kv.Storage
 	session session.Session
 }
@@ -46,12 +49,23 @@ func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
 	return &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
+		t:       t,
 		store:   store,
 		session: newSession(t, store),
 	}
 }
 
-// Session return a session
+// RefreshSession set a new session for the testkit
+func (tk *TestKit) RefreshSession() {
+	tk.session = newSession(tk.t, tk.store)
+}
+
+// SetSession set the session of testkit
+func (tk *TestKit) SetSession(session session.Session) {
+	tk.session = session
+}
+
+// Session return the session associated with the testkit
 func (tk *TestKit) Session() session.Session {
 	return tk.session
 }
@@ -60,10 +74,10 @@ func (tk *TestKit) Session() session.Session {
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	res, err := tk.Exec(sql, args...)
 	comment := fmt.Sprintf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
-	tk.require.Nil(err, comment)
+	tk.require.NoError(err, comment)
 
 	if res != nil {
-		tk.require.Nil(res.Close())
+		tk.require.NoError(res.Close())
 	}
 }
 
@@ -84,7 +98,7 @@ func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
 	tk.require.NoError(err, comment)
 	tk.require.NotNil(res, comment)
 	_, resErr := session.GetRows4Test(context.Background(), tk.session, res)
-	tk.require.Nil(res.Close())
+	tk.require.NoError(res.Close())
 	return resErr
 }
 
@@ -99,6 +113,17 @@ func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.Reco
 	rows, err := session.ResultSetToStringSlice(ctx, tk.session, rs)
 	tk.require.NoError(err, comment)
 	return &Result{rows: rows, comment: comment, assert: tk.assert, require: tk.require}
+}
+
+// HasPlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], plan) {
+			return true
+		}
+	}
+	return false
 }
 
 // Exec executes a sql statement using the prepared stmt API
@@ -149,9 +174,54 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	return rs, nil
 }
 
+// ExecToErr executes a sql statement and discard results.
+func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
+	res, err := tk.Exec(sql, args...)
+	if res != nil {
+		tk.require.NoError(res.Close())
+	}
+	return err
+}
+
 func newSession(t *testing.T, store kv.Storage) session.Session {
 	se, err := session.CreateSession4Test(store)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())
 	return se
+}
+
+// RefreshConnectionID refresh the connection ID for session of the testkit
+func (tk *TestKit) RefreshConnectionID() {
+	if tk.session != nil {
+		tk.session.SetConnectionID(testKitIDGenerator.Inc())
+	}
+}
+
+// MustGetErrCode executes a sql statement and assert it's error code.
+func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
+	_, err := tk.Exec(sql)
+	tk.require.Error(err)
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	tk.require.Truef(ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
+	sqlErr := terror.ToSQLError(tErr)
+	tk.require.Equalf(errCode, int(sqlErr.Code), "Assertion failed, origin err:\n  %v", sqlErr)
+}
+
+// MustGetErrMsg executes a sql statement and assert it's error message.
+func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
+	err := tk.ExecToErr(sql)
+	tk.require.Error(err)
+	tk.require.Equal(errStr, err.Error())
+}
+
+// MustUseIndex checks if the result execution plan contains specific index(es).
+func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][3], "index:"+index) {
+			return true
+		}
+	}
+	return false
 }

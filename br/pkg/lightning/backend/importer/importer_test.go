@@ -219,7 +219,7 @@ func (s *importerSuite) TestCloseImportCleanupEngine(c *C) {
 
 	engine, err := s.engine.Close(s.ctx, nil)
 	c.Assert(err, IsNil)
-	err = engine.Import(s.ctx)
+	err = engine.Import(s.ctx, 1)
 	c.Assert(err, IsNil)
 	err = engine.Cleanup(s.ctx)
 	c.Assert(err, IsNil)

@@ -1418,26 +1418,26 @@ func TestAccessPrivilege(t *testing.T) {
 
 	reader := newStmtSummaryReaderForTest(ssMap)
 	reader.user = user
-	reader.isSuper = false
+	reader.hasProcessPriv = false
 	datums := reader.GetStmtSummaryCurrentRows()
 	require.Len(t, datums, loops)
 	reader.user = badUser
-	reader.isSuper = false
+	reader.hasProcessPriv = false
 	datums = reader.GetStmtSummaryCurrentRows()
 	require.Len(t, datums, 0)
-	reader.isSuper = true
+	reader.hasProcessPriv = true
 	datums = reader.GetStmtSummaryCurrentRows()
 	require.Len(t, datums, loops)
 
 	reader.user = user
-	reader.isSuper = false
+	reader.hasProcessPriv = false
 	datums = reader.GetStmtSummaryHistoryRows()
 	require.Len(t, datums, loops)
 	reader.user = badUser
-	reader.isSuper = false
+	reader.hasProcessPriv = false
 	datums = reader.GetStmtSummaryHistoryRows()
 	require.Len(t, datums, 0)
-	reader.isSuper = true
+	reader.hasProcessPriv = true
 	datums = reader.GetStmtSummaryHistoryRows()
 	require.Len(t, datums, loops)
 }
