@@ -103,7 +103,6 @@ func DBFromConfig(dsn config.DBStore) (*sql.DB, error) {
 
 	if dsn.Vars != nil {
 		for k, v := range dsn.Vars {
-			log.L().Info("create db with session variable", zap.String(k, v))
 			param.Vars[k] = v
 		}
 	}
