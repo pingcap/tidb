@@ -38,9 +38,10 @@ func init() {
 // FoldConstant does constant folding optimization on an expression excluding deferred ones.
 func FoldConstant(expr Expression) Expression {
 	e, _ := foldConstant(expr)
-	// keep the original coercibility, charset and collation values after folding
+	// keep the original coercibility, charset, collation and repertoire values after folding
 	e.SetCoercibility(expr.Coercibility())
 	e.GetType().Charset, e.GetType().Collate = expr.GetType().Charset, expr.GetType().Collate
+	e.SetRepertoire(expr.Repertoire())
 	return e
 }
 
