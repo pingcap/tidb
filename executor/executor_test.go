@@ -5670,8 +5670,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
 	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_bin"))
 
-	// TODO: it will fail if update parser, comment it to prevent block CI. Will fix after https://github.com/pingcap/tidb/pull/27875 merged.
-	//tk.MustQuery("select _gbk 'a'").Check(testkit.Rows("a"))
+	tk.MustGetErrCode("select _gbk 'a';", errno.ErrUnknownCharacterSet)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a char(10) charset gbk);")
