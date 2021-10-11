@@ -545,7 +545,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 	// Lexpr cannot compare with rexpr by different collate
 	opString := new(strings.Builder)
 	v.Op.Format(opString)
-	_, _, er.err = expression.CheckAndDeriveCollationFromExprs(er.sctx, opString.String(), types.ETInt, lexpr, rexpr)
+	_, er.err = expression.CheckAndDeriveCollationFromExprs(er.sctx, opString.String(), types.ETInt, lexpr, rexpr)
 	if er.err != nil {
 		return v, true
 	}
@@ -1050,6 +1050,16 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		v.Datum.SetValue(v.Datum.GetValue(), retType)
 		value := &expression.Constant{Value: v.Datum, RetType: retType}
+		value.SetRepertoire(expression.ASCII)
+		if retType.EvalType() == types.ETString {
+			for _, b := range v.Datum.GetBytes() {
+				// if any character in constant is not ascii, set the repertoire to UNICODE.
+				if b >= 0x80 {
+					value.SetRepertoire(expression.UNICODE)
+					break
+				}
+			}
+		}
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
 		var value expression.Expression
@@ -1105,8 +1115,14 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		castFunction := expression.BuildCastFunction(er.sctx, arg, v.Tp)
 		if v.Tp.EvalType() == types.ETString {
 			castFunction.SetCoercibility(expression.CoercibilityImplicit)
+			if v.Tp.Charset == charset.CharsetASCII {
+				castFunction.SetRepertoire(expression.ASCII)
+			} else {
+				castFunction.SetRepertoire(expression.UNICODE)
+			}
 		} else {
 			castFunction.SetCoercibility(expression.CoercibilityNumeric)
+			castFunction.SetRepertoire(expression.ASCII)
 		}
 
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
@@ -1639,7 +1655,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 
 	expr, lexp, rexp := er.wrapExpWithCast()
 
-	dstCharset, dstCollation, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "BETWEEN", types.ETInt, expr, lexp, rexp)
+	coll, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "BETWEEN", types.ETInt, expr, lexp, rexp)
 	er.err = err
 	if er.err != nil {
 		return
@@ -1654,8 +1670,8 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	if er.err != nil {
 		return
 	}
-	l.SetCharsetAndCollation(dstCharset, dstCollation)
-	r.SetCharsetAndCollation(dstCharset, dstCollation)
+	l.SetCharsetAndCollation(coll.Charset, coll.Collation)
+	r.SetCharsetAndCollation(coll.Charset, coll.Collation)
 	l = expression.FoldConstant(l)
 	r = expression.FoldConstant(r)
 	function, err := er.newFunction(ast.LogicAnd, &v.Type, l, r)

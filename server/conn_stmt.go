@@ -83,10 +83,12 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 		return err
 	}
 
+	cc.initResultEncoder(ctx)
+	defer cc.rsEncoder.clean()
 	if len(params) > 0 {
 		for i := 0; i < len(params); i++ {
 			data = data[0:4]
-			data = params[i].Dump(data)
+			data = params[i].Dump(data, cc.rsEncoder)
 
 			if err := cc.writePacket(data); err != nil {
 				return err
@@ -101,7 +103,7 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	if len(columns) > 0 {
 		for i := 0; i < len(columns); i++ {
 			data = data[0:4]
-			data = columns[i].Dump(data)
+			data = columns[i].Dump(data, cc.rsEncoder)
 
 			if err := cc.writePacket(data); err != nil {
 				return err
@@ -232,6 +234,8 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
 	// Tell the client cursor exists in server by setting proper serverStatus.
 	if useCursor {
+		cc.initResultEncoder(ctx)
+		defer cc.rsEncoder.clean()
 		stmt.StoreResultSet(rs)
 		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
