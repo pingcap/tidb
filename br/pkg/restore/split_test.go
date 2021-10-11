@@ -280,16 +280,10 @@ func TestScatterFinishInTime(t *testing.T) {
 // range: [aaa, aae), [aae, aaz), [ccd, ccf), [ccf, ccj)
 // rewrite rules: aa -> xx,  cc -> bb
 // expected regions after split:
-<<<<<<< HEAD
 //   [, aay), [aay, bb), [bb, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
 //   [bbj, cca), [cca, xx), [xx, xxe), [xxe, xxz), [xxz, )
-func (s *testRangeSuite) TestSplitAndScatter(c *C) {
-=======
-//   [, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
-//   [bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func TestSplitAndScatter(t *testing.T) {
 	t.Parallel()
->>>>>>> 6782628bc... BR: Fix stuck when many missing-peer regions in cluster (#28497)
 	client := initTestClient()
 	ranges := initRanges()
 	rewriteRules := initRewriteRules()
