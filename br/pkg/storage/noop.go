@@ -8,6 +8,11 @@ import (
 
 type noopStorage struct{}
 
+// DeleteFile delete the file in storage
+func (s *noopStorage) DeleteFile(ctx context.Context, name string) error {
+	return nil
+}
+
 // WriteFile file to storage.
 func (*noopStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	return nil
