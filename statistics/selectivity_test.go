@@ -543,10 +543,8 @@ func TestPrimaryKeySelectivity(t *testing.T) {
 
 func BenchmarkSelectivity(b *testing.B) {
 	domain.RunAutoAnalyze = false
-	// TODO 可以考虑返回 error， 这样就不用传入 t
 	store, dom, clean := testkit.CreateMockStoreAndDomain(b)
 	defer clean()
-	// TODO 考虑传入 nil ?
 	testKit := testkit.NewTestKit(b, store)
 	statsTbl, err := prepareSelectivity(testKit, dom)
 	require.NoError(b, err)
