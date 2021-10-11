@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"go.uber.org/zap"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 // DeleteExec represents a delete executor.
