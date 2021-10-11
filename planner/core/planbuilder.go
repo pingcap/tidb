@@ -3812,6 +3812,20 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 	case *ast.DropPlacementPolicyStmt, *ast.CreatePlacementPolicyStmt, *ast.AlterPlacementPolicyStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or PLACEMENT_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "PLACEMENT_ADMIN", false, err)
+	case *ast.OptimizeTableStmt:
+		// Optimize table requires SELECT and INSERT privileges on the tables to be optimized.
+		for _, t := range v.Tables {
+			if b.ctx.GetSessionVars().User != nil {
+				authErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", b.ctx.GetSessionVars().User.AuthUsername,
+					b.ctx.GetSessionVars().User.AuthHostname, t.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, t.Schema.L, t.Name.L, "", authErr)
+			if b.ctx.GetSessionVars().User != nil {
+				authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
+					b.ctx.GetSessionVars().User.AuthHostname, t.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, t.Schema.L, t.Name.L, "", authErr)
+		}
 	}
 	p := &DDL{Statement: node}
 	return p, nil

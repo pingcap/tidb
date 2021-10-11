@@ -262,6 +262,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// The RepairTable should consist of the logic for creating tables and renaming tables.
 		p.flag |= inRepairTable
 		p.checkRepairTableGrammar(node)
+	case *ast.OptimizeTableStmt:
+		// Optimize is a special case that is judged safe to noop because PD is always optimizing.
+		// But a warning should be returned to tell a user it is non-functional.
+		err := ErrNotSupportedYet.GenWithStackByArgs("OPTIMIZE TABLE")
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	case *ast.CreateSequenceStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable

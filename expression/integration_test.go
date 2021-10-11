@@ -10393,3 +10393,14 @@ func (s *testIntegrationSuite) TestIdentity(c *C) {
 	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
 	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
 }
+
+func (s *testIntegrationSuite) TestOptimizeTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`create table topt1 (a int);`)
+	tk.MustExec(`create table topt2 (a int);`)
+	tk.MustExec(`optimize table topt1`)
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 This version of TiDB doesn't yet support 'OPTIMIZE TABLE'"))
+	tk.MustExec(`optimize table topt1, topt2`)
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 This version of TiDB doesn't yet support 'OPTIMIZE TABLE'"))
+}

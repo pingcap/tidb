@@ -1024,6 +1024,22 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+			sql: "OPTIMIZE TABLE test.t",
+			ans: []visitInfo{
+				{mysql.InsertPriv, "test", "t", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+			},
+		},
+		{
+			sql: "OPTIMIZE TABLE mysql.user, test.t",
+			ans: []visitInfo{
+				{mysql.InsertPriv, "mysql", "user", "", nil, false, "", false},
+				{mysql.SelectPriv, "mysql", "user", "", nil, false, "", false},
+				{mysql.InsertPriv, "test", "t", "", nil, false, "", false},
+				{mysql.SelectPriv, "test", "t", "", nil, false, "", false},
+			},
+		},
+		{
 			sql: "create table t (a int)",
 			ans: []visitInfo{
 				{mysql.CreatePriv, "test", "t", "", nil, false, "", false},
