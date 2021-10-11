@@ -6,13 +6,13 @@ services:
   control:
     image: control:nightly
     build:
-      context: ../
-      dockerfile: ./docker/Dockerfile
+      context: ../../
+      dockerfile: ./br/docker/Dockerfile
     volumes:
       - /tmp/br/docker/backup_data/${TAG}:/data
       - /tmp/br/docker/backup_logs/${TAG}:/tmp
       - /tmp/br/docker/backup_logs/${TAG}:/logs
-      - ../bin:/go/src/github.com/pingcap/br/bin
+      - ../../bin:/go/src/github.com/pingcap/br/bin
       - ./prepare_data:/prepare_data
     command: -c "/usr/bin/tail -f /dev/null"
     environment:

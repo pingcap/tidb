@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -195,12 +196,17 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		if db == "" {
 			return nil, errors.Trace(ErrNoDB)
 		}
-
 		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
-	if !ctx.GetSessionVars().EnableNoopFuncs {
+	noopFuncsMode := ctx.GetSessionVars().NoopFuncsMode
+	if noopFuncsMode != variable.OnInt {
 		if _, ok := noopFuncs[funcName]; ok {
-			return nil, ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
+			err := ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
+			if noopFuncsMode == variable.OffInt {
+				return nil, err
+			}
+			// NoopFuncsMode is Warn, append an error
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}
 	funcArgs := make([]Expression, len(args))
@@ -363,7 +369,7 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		var str string
 		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
 		if !isNull && err == nil && tp.Tp == mysql.TypeEnum {
-			res, err = types.ParseEnumName(tp.Elems, str, tp.Collate)
+			res, err = types.ParseEnum(tp.Elems, str, tp.Collate)
 		} else {
 			res = str
 		}
@@ -560,4 +566,14 @@ func (sf *ScalarFunction) CharsetAndCollation(ctx sessionctx.Context) (string, s
 // SetCharsetAndCollation ...
 func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string) {
 	sf.Function.SetCharsetAndCollation(chs, coll)
+}
+
+// Repertoire returns the repertoire value which is used to check collations.
+func (sf *ScalarFunction) Repertoire() Repertoire {
+	return sf.Function.Repertoire()
+}
+
+// SetRepertoire sets a specified repertoire for this expression.
+func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
+	sf.Function.SetRepertoire(r)
 }

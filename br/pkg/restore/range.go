@@ -72,12 +72,14 @@ func SortRanges(ranges []rtree.Range, rewriteRules *RewriteRules) ([]rtree.Range
 						"rewrite start key",
 						logutil.Key("key", rg.StartKey), logutil.RewriteRule(rule))
 				}
+				oldKey := rg.EndKey
 				rg.EndKey, rule = replacePrefix(rg.EndKey, rewriteRules)
 				if rule == nil {
 					log.Warn("cannot find rewrite rule", logutil.Key("key", rg.EndKey))
 				} else {
 					log.Debug(
 						"rewrite end key",
+						logutil.Key("origin-key", oldKey),
 						logutil.Key("key", rg.EndKey),
 						logutil.RewriteRule(rule))
 				}

@@ -2031,6 +2031,13 @@ func (cli *testServerClient) runTestInitConnect(c *C) {
 		// change the init-connect to invalid.
 		dbt.mustExec(`SET GLOBAL init_connect="invalidstring"`)
 	})
+	// set global init_connect to empty to avoid fail other tests
+	defer cli.runTests(c, func(config *mysql.Config) {
+		config.User = "init_super"
+	}, func(dbt *DBTest) {
+		// set init_connect to empty to avoid fail other tests
+		dbt.mustExec(`SET GLOBAL init_connect=""`)
+	})
 
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "init_nonsuper"

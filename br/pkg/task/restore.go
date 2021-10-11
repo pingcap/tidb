@@ -35,9 +35,15 @@ const (
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
 	// FlagMergeRegionKeyCount is the flag name of merge small regions by key count
 	FlagMergeRegionKeyCount = "merge-region-key-count"
+	// FlagPDConcurrency controls concurrency pd-relative operations like split & scatter.
+	FlagPDConcurrency = "pd-concurrency"
+	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
+	FlagBatchFlushInterval = "batch-flush-interval"
 
 	defaultRestoreConcurrency = 128
 	maxRestoreBatchSizeLimit  = 10240
+	defaultPDConcurrency      = 1
+	defaultBatchFlushInterval = 16 * time.Second
 	defaultDDLConcurrency     = 16
 )
 
@@ -71,9 +77,15 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint64(FlagMergeRegionSizeBytes, restore.DefaultMergeRegionSizeBytes,
 		"the threshold of merging small regions (Default 96MB, region split size)")
 	flags.Uint64(FlagMergeRegionKeyCount, restore.DefaultMergeRegionKeyCount,
-		"the threshold of merging smalle regions (Default 960_000, region split key count)")
+		"the threshold of merging small regions (Default 960_000, region split key count)")
+	flags.Uint(FlagPDConcurrency, defaultPDConcurrency,
+		"concurrency pd-relative operations like split & scatter.")
+	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
+		"after how long a restore batch would be auto sended.")
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
+	_ = flags.MarkHidden(FlagPDConcurrency)
+	_ = flags.MarkHidden(FlagBatchFlushInterval)
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -99,7 +111,9 @@ type RestoreConfig struct {
 	Config
 	RestoreCommonConfig
 
-	NoSchema bool `json:"no-schema" toml:"no-schema"`
+	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
+	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
+	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -130,6 +144,14 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.Config.Concurrency == 0 {
 		cfg.Config.Concurrency = defaultRestoreConcurrency
 	}
+	cfg.PDConcurrency, err = flags.GetUint(FlagPDConcurrency)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagPDConcurrency)
+	}
+	cfg.BatchFlushInterval, err = flags.GetDuration(FlagBatchFlushInterval)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagBatchFlushInterval)
+	}
 	return nil
 }
 
@@ -146,6 +168,12 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 	}
 	if cfg.Config.SwitchModeInterval == 0 {
 		cfg.Config.SwitchModeInterval = defaultSwitchInterval
+	}
+	if cfg.PDConcurrency == 0 {
+		cfg.PDConcurrency = defaultPDConcurrency
+	}
+	if cfg.BatchFlushInterval == 0 {
+		cfg.BatchFlushInterval = defaultBatchFlushInterval
 	}
 }
 
@@ -267,6 +295,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	archiveSize := reader.ArchiveSize(ctx, files)
 	g.Record(summary.RestoreDataSize, archiveSize)
+	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
+	g.Record("Size", archiveSize)
 	restoreTS, err := client.GetTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -277,6 +307,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		TTL:      utils.DefaultBRGCSafePointTTL,
 		ID:       utils.MakeSafePointID(),
 	}
+	g.Record("BackupTS", restoreTS)
+
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
 	// so, we should keep the safe point unchangeable. to avoid GC life time is shorter than transaction duration.
@@ -396,14 +428,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		int64(rangeSize+len(files)+len(tables)),
 		!cfg.LogProgress)
 	defer updateCh.Close()
-	sender, err := restore.NewTiKVSender(ctx, client, updateCh)
+	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	manager := restore.NewBRContextManager(client)
 	batcher, afterRestoreStream := restore.NewBatcher(ctx, sender, manager, errCh)
 	batcher.SetThreshold(batchSize)
-	batcher.EnableAutoCommit(ctx, time.Second)
+	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
 	go restoreTableStream(ctx, rangeStream, batcher, errCh)
 
 	var finish <-chan struct{}

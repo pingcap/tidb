@@ -1,7 +1,7 @@
 # For loading data to TiDB
 FROM golang:1.16.4-buster as go-ycsb-builder
 WORKDIR /go/src/github.com/pingcap/
-RUN git clone https://github.com/pingcap/go-ycsb.git && \
+RUN git clone https://github.com/pingcap/go-ycsb.git --depth=1 && \
     cd go-ycsb && \
     make
 

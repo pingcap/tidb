@@ -23,7 +23,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// GetDefaultDB checks if all columns in the AST have explicit DBName. If not, return specified DBName.
+// GetDefaultDB checks if all tables in the AST have explicit DBName. If not, return specified DBName.
 func GetDefaultDB(sel ast.StmtNode, dbName string) string {
 	implicitDB := &implicitDatabase{}
 	sel.Accept(implicitDB)

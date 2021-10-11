@@ -65,7 +65,7 @@ func TestLoadPlugin(t *testing.T) {
 	require.NoErrorf(t, err, "init plugin [%s] fail, error [%s]\n", pluginSign, err)
 
 	err = plugin.ForeachPlugin(plugin.Audit, func(auditPlugin *plugin.Plugin) error {
-		plugin.DeclareAuditManifest(auditPlugin.Manifest).OnGeneralEvent(context.Background(), nil, plugin.Log, "QUERY")
+		plugin.DeclareAuditManifest(auditPlugin.Manifest).OnGeneralEvent(context.Background(), nil, plugin.Completed, "QUERY")
 		return nil
 	})
 	require.NoErrorf(t, err, "query event fail, error [%s]\n", err)

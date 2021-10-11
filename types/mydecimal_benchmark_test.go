@@ -120,3 +120,57 @@ func BenchmarkToFloat64Old(b *testing.B) {
 		}
 	}
 }
+
+func benchmarkMyDecimalToBinOrHashCases() []string {
+	return []string{
+		"1.000000000000", "3", "12.000000000", "120",
+		"120000", "100000000000.00000", "0.000000001200000000",
+		"98765.4321", "-123.456000000000000000",
+		"0", "0000000000", "0.00000000000",
+	}
+}
+
+func BenchmarkMyDecimalToBin(b *testing.B) {
+	cases := benchmarkMyDecimalToBinOrHashCases()
+	decs := make([]*MyDecimal, 0, len(cases))
+	for _, ca := range cases {
+		var dec MyDecimal
+		if err := dec.FromString([]byte(ca)); err != nil {
+			b.Fatal(err)
+		}
+		decs = append(decs, &dec)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, dec := range decs {
+			prec, frac := dec.PrecisionAndFrac()
+			_, err := dec.ToBin(prec, frac)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
+
+func BenchmarkMyDecimalToHashKey(b *testing.B) {
+	cases := benchmarkMyDecimalToBinOrHashCases()
+	decs := make([]*MyDecimal, 0, len(cases))
+	for _, ca := range cases {
+		var dec MyDecimal
+		if err := dec.FromString([]byte(ca)); err != nil {
+			b.Fatal(err)
+		}
+		decs = append(decs, &dec)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, dec := range decs {
+			_, err := dec.ToHashKey()
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}

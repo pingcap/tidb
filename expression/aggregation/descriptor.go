@@ -63,6 +63,15 @@ func (a *AggFuncDesc) String() string {
 			buffer.WriteString(", ")
 		}
 	}
+	if len(a.OrderByItems) > 0 {
+		buffer.WriteString(" order by ")
+	}
+	for i, arg := range a.OrderByItems {
+		buffer.WriteString(arg.String())
+		if i+1 != len(a.OrderByItems) {
+			buffer.WriteString(", ")
+		}
+	}
 	buffer.WriteString(")")
 	return buffer.String()
 }

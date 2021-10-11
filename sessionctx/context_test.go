@@ -18,12 +18,8 @@ import (
 	"fmt"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 func TestBasicCtxTypeToString(t *testing.T) {
 	tests := []struct {
@@ -36,8 +32,6 @@ func TestBasicCtxTypeToString(t *testing.T) {
 		{basicCtxType(9), "unknown"},
 	}
 	for _, tt := range tests {
-		if tt.key.String() != tt.v {
-			t.Fatalf("want %s but got %s", tt.v, tt.key.String())
-		}
+		require.Equal(t, tt.key.String(), tt.v)
 	}
 }

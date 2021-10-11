@@ -32,20 +32,14 @@ type IndexIterator interface {
 
 // CreateIdxOpt contains the options will be used when creating an index.
 type CreateIdxOpt struct {
-	Ctx             context.Context
-	SkipHandleCheck bool // If true, skip the handle constraint check.
-	Untouched       bool // If true, the index key/value is no need to commit.
+	Ctx       context.Context
+	Untouched bool // If true, the index key/value is no need to commit.
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
 // Here is a blog post about how to use this pattern:
 // https://dave.cheney.net/2014/10/17/functional-options-for-friendly-apis
 type CreateIdxOptFunc func(*CreateIdxOpt)
-
-// SkipHandleCheck is a defined value of CreateIdxFunc.
-var SkipHandleCheck CreateIdxOptFunc = func(opt *CreateIdxOpt) {
-	opt.SkipHandleCheck = true
-}
 
 // IndexIsUntouched uses to indicate the index kv is untouched.
 var IndexIsUntouched CreateIdxOptFunc = func(opt *CreateIdxOpt) {
