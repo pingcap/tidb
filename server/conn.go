@@ -57,17 +57,17 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
@@ -681,23 +681,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
 
-	newAuth, err := cc.checkAuthPlugin(ctx, &resp.AuthPlugin)
+	err = cc.handleAuthPlugin(ctx, &resp)
 	if err != nil {
-		logutil.Logger(ctx).Warn("failed to check the user authplugin", zap.Error(err))
-	}
-	if len(newAuth) > 0 {
-		resp.Auth = newAuth
-	}
-
-	switch resp.AuthPlugin {
-	case mysql.AuthCachingSha2Password:
-		resp.Auth, err = cc.authSha(ctx)
-		if err != nil {
-			return err
-		}
-	case mysql.AuthNativePassword:
-	default:
-		return errors.New("Unknown auth plugin")
+		return err
 	}
 
 	err = cc.openSessionAndDoAuth(resp.Auth)
@@ -705,6 +691,32 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		logutil.Logger(ctx).Warn("open new session or authentication failure", zap.Error(err))
 	}
 	return err
+}
+
+func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeResponse41) error {
+	if resp.Capability&mysql.ClientPluginAuth > 0 {
+		newAuth, err := cc.checkAuthPlugin(ctx, &resp.AuthPlugin)
+		if err != nil {
+			logutil.Logger(ctx).Warn("failed to check the user authplugin", zap.Error(err))
+		}
+		if len(newAuth) > 0 {
+			resp.Auth = newAuth
+		}
+
+		switch resp.AuthPlugin {
+		case mysql.AuthCachingSha2Password:
+			resp.Auth, err = cc.authSha(ctx)
+			if err != nil {
+				return err
+			}
+		case mysql.AuthNativePassword:
+		default:
+			logutil.Logger(ctx).Warn("Unknown Auth Plugin", zap.String("plugin", resp.AuthPlugin))
+		}
+	} else {
+		logutil.Logger(ctx).Warn("Client without Auth Plugin support; Please upgrade client")
+	}
+	return nil
 }
 
 func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {

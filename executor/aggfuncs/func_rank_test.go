@@ -17,9 +17,9 @@ package aggfuncs_test
 import (
 	"testing"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 )
 
 func TestMemRank(t *testing.T) {
