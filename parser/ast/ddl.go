@@ -42,6 +42,7 @@ var (
 	_ DDLNode = &RenameTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
 	_ DDLNode = &RepairTableStmt{}
+	_ DDLNode = &OptimizeTableStmt{}
 
 	_ Node = &AlterTableSpec{}
 	_ Node = &ColumnDef{}
@@ -3253,6 +3254,45 @@ func (n *TruncateTableStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n.Table = node.(*TableName)
 	return v.Leave(n)
+}
+
+// OptimizeTableStmt is a statement to optimize a table
+// See https://dev.mysql.com/doc/refman/5.7/en/optimize-table.html
+type OptimizeTableStmt struct {
+	ddlNode
+
+	Tables []*TableName
+}
+
+// Accept implements Node Accept interface.
+func (n *OptimizeTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*OptimizeTableStmt)
+	for i := range n.Tables {
+		node, ok := n.Tables[i].Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Tables[i] = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
+// Restore implements Node interface.
+func (n *OptimizeTableStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("OPTIMIZE TABLE ")
+	for i, v := range n.Tables {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore OptimizeTableStmt.Tables[%d]", i)
+		}
+	}
+	return nil
 }
 
 var (

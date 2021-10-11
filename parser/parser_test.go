@@ -5093,6 +5093,16 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 	s.RunTest(c, table)
 }
 
+func (s *testParserSuite) TestOptimize(c *C) {
+	table := []testCase{
+		{"optimize table t1", true, "OPTIMIZE TABLE `t1`"},
+		{"optimize table t1.*", false, ""},
+		{"optimize table t1, t2, t3", true, "OPTIMIZE TABLE `t1`, `t2`, `t3`"},
+		{"optimize table test.t1, mysql.t2, t3", true, "OPTIMIZE TABLE `test`.`t1`, `mysql`.`t2`, `t3`"},
+	}
+	s.RunTest(c, table)
+}
+
 func (s *testParserSuite) TestTableSample(c *C) {
 	table := []testCase{
 		// positive test cases

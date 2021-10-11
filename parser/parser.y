@@ -888,6 +888,7 @@ import (
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockTablesStmt             "Lock tables statement"
+	OptimizeTableStmt          "Optimize table statement"
 	PlanRecreatorStmt          "Plan recreator statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
@@ -10982,6 +10983,7 @@ Statement:
 |	ShutdownStmt
 |	RestartStmt
 |	HelpStmt
+|	OptimizeTableStmt
 
 TraceableStmt:
 	DeleteFromStmt
@@ -13249,6 +13251,17 @@ TableLockList:
 |	TableLockList ',' TableLock
 	{
 		$$ = append($1.([]ast.TableLock), $3.(ast.TableLock))
+	}
+
+/**************************************OptimizeTableStmt***************************************
+ * See https://dev.mysql.com/doc/refman/5.7/en/optimize-table.html
+ *******************************************************************************************/
+OptimizeTableStmt:
+	"OPTIMIZE" "TABLE" TableNameList
+	{
+		$$ = &ast.OptimizeTableStmt{
+			Tables: $3.([]*ast.TableName),
+		}
 	}
 
 /********************************************************************
