@@ -10,8 +10,7 @@ import (
 	"text/template"
 
 	"github.com/pingcap/errors"
-
-	tcontext "github.com/pingcap/dumpling/v4/context"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
 )
 
 const (
