@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
@@ -362,6 +363,110 @@ func buildMultiArgsAggMemTester(funcName string, tps []byte, rt byte, numRows in
 	return pt
 }
 
+func testMergePartialResult(t *testing.T, p aggTest) {
+	ctx := mock.NewContext()
+	srcChk := p.genSrcChk()
+	iter := chunk.NewIterator4Chunk(srcChk)
+
+	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
+	if p.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+	}
+	desc, err := aggregation.NewAggFuncDesc(ctx, p.funcName, args, false)
+	require.NoError(t, err)
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	partialDesc, finalDesc := desc.Split([]int{0, 1})
+
+	// build partial func for partial phase.
+	partialFunc := aggfuncs.Build(ctx, partialDesc, 0)
+	partialResult, _ := partialFunc.AllocPartialResult()
+
+	// build final func for final phase.
+	finalFunc := aggfuncs.Build(ctx, finalDesc, 0)
+	finalPr, _ := finalFunc.AllocPartialResult()
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, 1)
+	if p.funcName == ast.AggFuncApproxCountDistinct {
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 1)
+	}
+	if p.funcName == ast.AggFuncJsonArrayagg {
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeJSON)}, 1)
+	}
+
+	// update partial result.
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		_, err = partialFunc.UpdatePartialResult(ctx, []chunk.Row{row}, partialResult)
+		require.NoError(t, err)
+	}
+	p.messUpChunk(srcChk)
+	err = partialFunc.AppendFinalResult2Chunk(ctx, partialResult, resultChk)
+	require.NoError(t, err)
+	dt := resultChk.GetRow(0).GetDatum(0, p.dataType)
+	if p.funcName == ast.AggFuncApproxCountDistinct {
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeString))
+	}
+	if p.funcName == ast.AggFuncJsonArrayagg {
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeJSON))
+	}
+	result, err := dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[0])
+	require.NoError(t, err)
+	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[0])
+
+	_, err = finalFunc.MergePartialResult(ctx, partialResult, finalPr)
+	require.NoError(t, err)
+	partialFunc.ResetPartialResult(partialResult)
+
+	srcChk = p.genSrcChk()
+	iter = chunk.NewIterator4Chunk(srcChk)
+	iter.Begin()
+	iter.Next()
+	for row := iter.Next(); row != iter.End(); row = iter.Next() {
+		_, err = partialFunc.UpdatePartialResult(ctx, []chunk.Row{row}, partialResult)
+		require.NoError(t, err)
+	}
+	p.messUpChunk(srcChk)
+	resultChk.Reset()
+	err = partialFunc.AppendFinalResult2Chunk(ctx, partialResult, resultChk)
+	require.NoError(t, err)
+	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
+	if p.funcName == ast.AggFuncApproxCountDistinct {
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeString))
+	}
+	if p.funcName == ast.AggFuncJsonArrayagg {
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeJSON))
+	}
+	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[1])
+	require.NoError(t, err)
+	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[1])
+	_, err = finalFunc.MergePartialResult(ctx, partialResult, finalPr)
+	require.NoError(t, err)
+
+	if p.funcName == ast.AggFuncApproxCountDistinct {
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+	}
+	if p.funcName == ast.AggFuncJsonArrayagg {
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeJSON)}, 1)
+	}
+	resultChk.Reset()
+	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
+	require.NoError(t, err)
+
+	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
+	if p.funcName == ast.AggFuncApproxCountDistinct {
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeLonglong))
+	}
+	if p.funcName == ast.AggFuncJsonArrayagg {
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeJSON))
+	}
+	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[2])
+	require.NoError(t, err)
+	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[2])
+}
+
+// Deprecated: migrating to testMergePartialResult(t *testing.T, p aggTest)
 func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	srcChk := p.genSrcChk()
 	iter := chunk.NewIterator4Chunk(srcChk)
@@ -615,6 +720,96 @@ func getDataGenFunc(ft *types.FieldType) func(i int) types.Datum {
 	return nil
 }
 
+func testAggFunc(t *testing.T, p aggTest) {
+	srcChk := p.genSrcChk()
+	ctx := mock.NewContext()
+
+	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
+	if p.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+	}
+	if p.funcName == ast.AggFuncApproxPercentile {
+		args = append(args, &expression.Constant{Value: types.NewIntDatum(50), RetType: types.NewFieldType(mysql.TypeLong)})
+	}
+	desc, err := aggregation.NewAggFuncDesc(ctx, p.funcName, args, false)
+	require.NoError(t, err)
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc := aggfuncs.Build(ctx, desc, 0)
+	finalPr, _ := finalFunc.AllocPartialResult()
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+
+	iter := chunk.NewIterator4Chunk(srcChk)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		_, err = finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr)
+		require.NoError(t, err)
+	}
+	p.messUpChunk(srcChk)
+	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
+	require.NoError(t, err)
+	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err := dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[1])
+	require.NoError(t, err)
+	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[1])
+
+	// test the empty input
+	resultChk.Reset()
+	finalFunc.ResetPartialResult(finalPr)
+	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
+	require.NoError(t, err)
+	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[0])
+	require.NoError(t, err)
+	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[0])
+
+	// test the agg func with distinct
+	desc, err = aggregation.NewAggFuncDesc(ctx, p.funcName, args, true)
+	require.NoError(t, err)
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc = aggfuncs.Build(ctx, desc, 0)
+	finalPr, _ = finalFunc.AllocPartialResult()
+
+	resultChk.Reset()
+	srcChk = p.genSrcChk()
+	iter = chunk.NewIterator4Chunk(srcChk)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		_, err = finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr)
+		require.NoError(t, err)
+	}
+	p.messUpChunk(srcChk)
+	srcChk = p.genSrcChk()
+	iter = chunk.NewIterator4Chunk(srcChk)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		_, err = finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr)
+		require.NoError(t, err)
+	}
+	p.messUpChunk(srcChk)
+	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
+	require.NoError(t, err)
+	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[1])
+	require.NoError(t, err)
+	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[1])
+
+	// test the empty input
+	resultChk.Reset()
+	finalFunc.ResetPartialResult(finalPr)
+	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
+	require.NoError(t, err)
+	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[0])
+	require.NoError(t, err)
+	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[0])
+}
+
+// Deprecated: migrating to func testAggFunc(t *testing.T, p aggTest)
 func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	srcChk := p.genSrcChk()
 
@@ -748,6 +943,38 @@ func (s *testSuite) testAggFuncWithoutDistinct(c *C, p aggTest) {
 	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
 }
 
+func testAggMemFunc(t *testing.T, p aggMemTest) {
+	srcChk := p.aggTest.genSrcChk()
+	ctx := mock.NewContext()
+
+	args := []expression.Expression{&expression.Column{RetType: p.aggTest.dataType, Index: 0}}
+	if p.aggTest.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+	}
+	desc, err := aggregation.NewAggFuncDesc(ctx, p.aggTest.funcName, args, p.isDistinct)
+	require.NoError(t, err)
+	if p.aggTest.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc := aggfuncs.Build(ctx, desc, 0)
+	finalPr, memDelta := finalFunc.AllocPartialResult()
+	require.Equal(t, p.allocMemDelta, memDelta)
+
+	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.aggTest.dataType)
+	require.NoError(t, err)
+	iter := chunk.NewIterator4Chunk(srcChk)
+	i := 0
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		memDelta, err := finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr)
+		require.NoError(t, err)
+		require.Equal(t, updateMemDeltas[i], memDelta)
+		i++
+	}
+}
+
+// Deprecated: migrating to testAggMemFunc(t *testing.T, p aggMemTest)
 func (s *testSuite) testAggMemFunc(c *C, p aggMemTest) {
 	srcChk := p.aggTest.genSrcChk()
 
