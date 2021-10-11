@@ -621,7 +621,7 @@ func composeDBPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value s
 func composeTablePrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string) error {
 	var newTablePriv, newColumnPriv []string
 	if priv != mysql.AllPriv {
-		// TODO: https://github.com/pingcap/tidb/parser/pull/581 removed privs from all priv lists
+		// TODO: https://github.com/pingcap/parser/pull/581 removed privs from all priv lists
 		// it is to avoid add GRANT in GRANT ALL SQLs
 		// WithGRANT seems broken, fix it later
 		if priv != mysql.GrantPriv && !mysql.AllTablePrivs.Has(priv) {

@@ -113,7 +113,7 @@ func New() *Parser {
 		ast.NewParamMarkerExpr == nil ||
 		ast.NewHexLiteral == nil ||
 		ast.NewBitLiteral == nil {
-		panic("no parser driver (forgotten import?) https://github.com/pingcap/tidb/parser/issues/43")
+		panic("no parser driver (forgotten import?) https://github.com/pingcap/parser/issues/43")
 	}
 
 	p := &Parser{

@@ -799,7 +799,7 @@ type PartitionInfo struct {
 func (pi *PartitionInfo) GetNameByID(id int64) string {
 	definitions := pi.Definitions
 	// do not convert this loop to `for _, def := range definitions`.
-	// see https://github.com/pingcap/tidb/parser/pull/1072 for the benchmark.
+	// see https://github.com/pingcap/parser/pull/1072 for the benchmark.
 	for i := range definitions {
 		if id == definitions[i].ID {
 			return definitions[i].Name.L
