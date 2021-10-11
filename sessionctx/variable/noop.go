@@ -24,6 +24,7 @@ import (
 // but changing them has no effect on behavior.
 
 var noopSysVars = []*SysVar{
+	{Scope: ScopeGlobal, Name: MaxConnections, Value: "151", Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, AutoConvertOutOfRange: true},
 	// It is unsafe to pretend that any variation of "read only" is enabled when the server
 	// does not support it. It is possible that these features will be supported in future,
 	// but until then...
@@ -199,22 +200,27 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_lru_scan_depth", Value: "1024"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_rseg_truncate_frequency", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLAutoIsNull, Value: Off, Type: TypeBool, IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		// checkSQLAutoIsNull requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.
+		// checkSQLAutoIsNull requires TiDBEnableNoopFuncs != OFF for the same scope otherwise an error will be returned.
 		// See also https://github.com/pingcap/tidb/issues/28230
-		feature := "sql_auto_is_null"
+		errMsg := ErrFunctionsNoopImpl.GenWithStackByArgs("sql_auto_is_null")
 		if TiDBOptOn(normalizedValue) {
-			if scope == ScopeSession {
-				if vars.EnableNoopFuncs {
-					return normalizedValue, nil
+			if scope == ScopeSession && vars.NoopFuncsMode != OnInt {
+				if vars.NoopFuncsMode == OffInt {
+					return Off, errMsg
 				}
-				return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+				vars.StmtCtx.AppendWarning(errMsg)
 			}
-			val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
-			if err != nil {
-				return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
-			}
-			if !TiDBOptOn(val) {
-				return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
+			if scope == ScopeGlobal {
+				val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
+				if err != nil {
+					return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
+				}
+				if val == Off {
+					return Off, errMsg
+				}
+				if val == Warn {
+					vars.StmtCtx.AppendWarning(errMsg)
+				}
 			}
 		}
 		return normalizedValue, nil
