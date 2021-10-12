@@ -80,9 +80,8 @@
   {
     "name": "TestEliminateAgg",
     "cases": [
-      "select count(distinct a), sum(distinct a) from t;",
-      "select min(distinct a) from t group by a;",
-      "select max(a) from t group by a;"
+      "select max(b) from t group by a;",
+      "select max(c) from t group by b;"
     ]
   },
   {

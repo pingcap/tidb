@@ -49,10 +49,10 @@
       {
         "SQL": "select a from t group by a having sum(b) > 4",
         "Plan": [
-          "Projection_13 8000.00 root  test.t.a",
-          "└─TableReader_14 8000.00 root  data:Selection_15",
-          "  └─Selection_15 8000.00 cop[tikv]  gt(cast(test.t.b, decimal(32,0) BINARY), 4)",
-          "    └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Projection_14 8000.00 root  test.t.a",
+          "└─TableReader_15 8000.00 root  data:Selection_16",
+          "  └─Selection_16 8000.00 cop[tikv]  gt(cast(test.t.b, decimal(32,0) BINARY), 4)",
+          "    └─TableFullScan_17 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "5"
@@ -222,10 +222,10 @@
       {
         "SQL": "select sum(a) from t group by a, a+b order by a",
         "Plan": [
-          "Projection_10 10000.00 root  Column#3",
-          "└─Projection_12 10000.00 root  cast(test.t.a, decimal(32,0) BINARY)->Column#3, test.t.a",
-          "  └─TableReader_13 10000.00 root  data:TableFullScan_14",
-          "    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
+          "Projection_11 10000.00 root  Column#3",
+          "└─Projection_13 10000.00 root  cast(test.t.a, decimal(32,0) BINARY)->Column#3, test.t.a",
+          "  └─TableReader_14 10000.00 root  data:TableFullScan_15",
+          "    └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ],
         "Result": [
           "1",
@@ -298,9 +298,9 @@
       {
         "SQL": "select t1.a, max(t1.b) from t as t1 left join (select * from t) as t2 on t1.a = t2.a and t1.b = 3 group by t1.a order by a",
         "Plan": [
-          "Projection_15 10000.00 root  test.t.a, test.t.b",
-          "└─TableReader_16 10000.00 root  data:TableFullScan_17",
-          "  └─TableFullScan_17 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "Projection_17 10000.00 root  test.t.a, test.t.b",
+          "└─TableReader_18 10000.00 root  data:TableFullScan_19",
+          "  └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 11",
@@ -312,9 +312,9 @@
       {
         "SQL": "select t1.a, sum(distinct t1.b) from t as t1 left join (select * from t) as t2 on t1.b = t2.b group by t1.a order by a",
         "Plan": [
-          "Projection_15 10000.00 root  test.t.a, cast(test.t.b, decimal(32,0) BINARY)->Column#5",
-          "└─TableReader_16 10000.00 root  data:TableFullScan_17",
-          "  └─TableFullScan_17 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "Projection_16 10000.00 root  test.t.a, cast(test.t.b, decimal(32,0) BINARY)->Column#5",
+          "└─TableReader_17 10000.00 root  data:TableFullScan_18",
+          "  └─TableFullScan_18 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 11",
@@ -326,9 +326,9 @@
       {
         "SQL": "select t2.a, max(t2.b) from t as t1 right join (select * from t) as t2 on t1.a = t2.a group by t2.a order by a",
         "Plan": [
-          "Projection_15 10000.00 root  test.t.a, test.t.b",
-          "└─TableReader_16 10000.00 root  data:TableFullScan_17",
-          "  └─TableFullScan_17 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
+          "Projection_17 10000.00 root  test.t.a, test.t.b",
+          "└─TableReader_18 10000.00 root  data:TableFullScan_19",
+          "  └─TableFullScan_19 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 11",
@@ -340,9 +340,9 @@
       {
         "SQL": "select t3.a, max(t3.b) from (select t1.a, t1.b from t as t1 left join t as t2 on t1.b = t2.b) t3 group by t3.a order by a",
         "Plan": [
-          "Projection_18 10000.00 root  test.t.a, test.t.b",
-          "└─TableReader_19 10000.00 root  data:TableFullScan_20",
-          "  └─TableFullScan_20 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "Projection_19 10000.00 root  test.t.a, test.t.b",
+          "└─TableReader_20 10000.00 root  data:TableFullScan_21",
+          "  └─TableFullScan_21 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
         "Result": [
           "1 11",
@@ -449,12 +449,12 @@
       {
         "SQL": "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b",
         "Plan": [
-          "Projection_13 8000.00 root  Column#3, Column#4, Column#5, test.t.b, Column#6, Column#7, Column#8, Column#9, Column#10",
-          "└─Projection_15 8000.00 root  if(isnull(test.t.b), 0, 1)->Column#3, cast(test.t.b, decimal(32,0) BINARY)->Column#4, cast(test.t.b, decimal(15,4) BINARY)->Column#5, test.t.b, test.t.b, test.t.b, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#9, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#10, cast(test.t.b, decimal(32,0) BINARY)->Column#4, if(isnull(test.t.b), 0, 1)->Column#3",
-          "  └─Sort_22 8000.00 root  test.t.b",
-          "    └─TableReader_19 8000.00 root  data:Selection_20",
-          "      └─Selection_20 8000.00 cop[tikv]  ge(cast(test.t.b, decimal(32,0) BINARY), 0), ge(if(isnull(test.t.b), 0, 1), 0)",
-          "        └─TableFullScan_21 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Projection_14 8000.00 root  Column#3, Column#4, Column#5, test.t.b, Column#6, Column#7, Column#8, Column#9, Column#10",
+          "└─Projection_16 8000.00 root  if(isnull(test.t.b), 0, 1)->Column#3, cast(test.t.b, decimal(32,0) BINARY)->Column#4, cast(test.t.b, decimal(15,4) BINARY)->Column#5, test.t.b, test.t.b, test.t.b, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#9, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#10, cast(test.t.b, decimal(32,0) BINARY)->Column#4, if(isnull(test.t.b), 0, 1)->Column#3",
+          "  └─Sort_23 8000.00 root  test.t.b",
+          "    └─TableReader_20 8000.00 root  data:Selection_21",
+          "      └─Selection_21 8000.00 cop[tikv]  ge(cast(test.t.b, decimal(32,0) BINARY), 0), ge(if(isnull(test.t.b), 0, 1), 0)",
+          "        └─TableFullScan_22 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 11 11.0000 11 11 11 11 11 11",
@@ -490,6 +490,20 @@
         ],
         "Result": [
           "2"
+        ]
+      },
+      {
+        "SQL": "select min(b) from t group by a",
+        "Plan": [
+          "Projection_9 10000.00 root  test.t.b",
+          "└─TableReader_10 10000.00 root  data:TableFullScan_11",
+          "  └─TableFullScan_11 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "11",
+          "22",
+          "33",
+          "44"
         ]
       }
     ]
