@@ -2398,6 +2398,23 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 	return nil
 }
 
+func SetStatsOption(statsOptions *model.StatsOptions, statsOptionType ast.StatsOptionType, stringVal string, uintVal uint64) error {
+	switch statsOptionType {
+	case ast.StatsOptionBuckets:
+		statsOptions.Buckets = uintVal
+	case ast.StatsOptionTopN:
+		statsOptions.TopN = uintVal
+	case ast.StatsOptionSampleRate:
+		statsOptions.SampleRate, _ = strconv.ParseFloat(stringVal, 64)
+	case ast.StatsOptionColsChoice:
+		statsOptions.ColumnChoice = model.ColumnChoice(uintVal)
+	// TODO
+	default:
+		return errors.Trace(errors.New("unknown placement policy option"))
+	}
+	return nil
+}
+
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	for _, op := range options {
@@ -2452,6 +2469,21 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
 			}
 			err := SetDirectPlacementOpt(tbInfo.DirectPlacementOpts, ast.PlacementOptionType(op.Tp), op.StrValue, op.UintValue)
+			if err != nil {
+				return err
+			}
+		case ast.TableOptionStatsAutoRecalc:
+			if tbInfo.StatsOptions == nil {
+				tbInfo.StatsOptions = &model.StatsOptions{}
+			}
+			tbInfo.StatsOptions.AutoRecalc = op.BoolValue
+		case ast.TableOptionStatsBuckets, ast.TableOptionStatsTopN,
+			ast.TableOptionStatsColsChoice, ast.TableOptionStatsColList,
+			ast.TableOptionStatsSampleRate:
+			if tbInfo.StatsOptions == nil {
+				tbInfo.StatsOptions = &model.StatsOptions{}
+			}
+			err := SetStatsOption(tbInfo.StatsOptions, ast.StatsOptionType(op.Tp), op.StrValue, op.UintValue)
 			if err != nil {
 				return err
 			}

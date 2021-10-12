@@ -1956,6 +1956,16 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type StatsOptionType int
+
+const (
+	StatsOptionBuckets StatsOptionType = 0x5000 + iota
+	StatsOptionTopN
+	StatsOptionColsChoice
+	StatsOptionColList
+	StatsOptionSampleRate
+)
+
 // TableOptionType is the type for TableOption
 type TableOptionType int
 
@@ -2008,6 +2018,11 @@ const (
 	TableOptionPlacementFollowerConstraints = TableOptionType(PlacementOptionFollowerConstraints)
 	TableOptionPlacementVoterConstraints    = TableOptionType(PlacementOptionVoterConstraints)
 	TableOptionPlacementPolicy              = TableOptionType(PlacementOptionPolicy)
+	TableOptionStatsBuckets                 = TableOptionType(StatsOptionBuckets)
+	TableOptionStatsTopN                    = TableOptionType(StatsOptionTopN)
+	TableOptionStatsColsChoice              = TableOptionType(StatsOptionColsChoice)
+	TableOptionStatsColList                 = TableOptionType(StatsOptionColList)
+	TableOptionStatsSampleRate              = TableOptionType(StatsOptionSampleRate)
 )
 
 // RowFormat types
