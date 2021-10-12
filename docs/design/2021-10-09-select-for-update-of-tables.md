@@ -11,7 +11,7 @@ Any other tables used in the SELECT are simply read as usual.
 ## Background
 
 In a multi-table join scenario, simply using the for update clause locks all the rows read in the tables participating in the join.
-This is too granular a lock, and some of the tables participating in the join may not need to be subsequently updated.
+The lock granularity is too coarse, and some of the tables participating in the join may not need to be subsequently updated.
 In MySQL 8.0, the `of tables` option was introduced to support locking only the specified tables.
 
 ## Proposal
