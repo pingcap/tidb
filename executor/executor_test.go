@@ -34,11 +34,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -50,6 +45,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/server"
@@ -5671,8 +5671,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
 	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_bin"))
 
-	// TODO: it will fail if update parser, comment it to prevent block CI. Will fix after https://github.com/pingcap/tidb/pull/27875 merged.
-	//tk.MustQuery("select _gbk 'a'").Check(testkit.Rows("a"))
+	tk.MustGetErrCode("select _gbk 'a';", errno.ErrUnknownCharacterSet)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a char(10) charset gbk);")

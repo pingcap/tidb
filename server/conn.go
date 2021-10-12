@@ -57,17 +57,17 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
@@ -187,6 +187,7 @@ type clientConn struct {
 	lastActive   time.Time         // last active time
 	authPlugin   string            // default authentication plugin
 	isUnixSocket bool              // connection is Unix Socket file
+	rsEncoder    *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -680,23 +681,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
 
-	newAuth, err := cc.checkAuthPlugin(ctx, &resp.AuthPlugin)
+	err = cc.handleAuthPlugin(ctx, &resp)
 	if err != nil {
-		logutil.Logger(ctx).Warn("failed to check the user authplugin", zap.Error(err))
-	}
-	if len(newAuth) > 0 {
-		resp.Auth = newAuth
-	}
-
-	switch resp.AuthPlugin {
-	case mysql.AuthCachingSha2Password:
-		resp.Auth, err = cc.authSha(ctx)
-		if err != nil {
-			return err
-		}
-	case mysql.AuthNativePassword:
-	default:
-		return errors.New("Unknown auth plugin")
+		return err
 	}
 
 	err = cc.openSessionAndDoAuth(resp.Auth)
@@ -704,6 +691,32 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		logutil.Logger(ctx).Warn("open new session or authentication failure", zap.Error(err))
 	}
 	return err
+}
+
+func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeResponse41) error {
+	if resp.Capability&mysql.ClientPluginAuth > 0 {
+		newAuth, err := cc.checkAuthPlugin(ctx, &resp.AuthPlugin)
+		if err != nil {
+			logutil.Logger(ctx).Warn("failed to check the user authplugin", zap.Error(err))
+		}
+		if len(newAuth) > 0 {
+			resp.Auth = newAuth
+		}
+
+		switch resp.AuthPlugin {
+		case mysql.AuthCachingSha2Password:
+			resp.Auth, err = cc.authSha(ctx)
+			if err != nil {
+				return err
+			}
+		case mysql.AuthNativePassword:
+		default:
+			logutil.Logger(ctx).Warn("Unknown Auth Plugin", zap.String("plugin", resp.AuthPlugin))
+		}
+	} else {
+		logutil.Logger(ctx).Warn("Client without Auth Plugin support; Please upgrade client")
+	}
+	return nil
 }
 
 func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
@@ -863,6 +876,16 @@ func (cc *clientConn) skipInitConnect() bool {
 	checker := privilege.GetPrivilegeManager(cc.ctx.Session)
 	activeRoles := cc.ctx.GetSessionVars().ActiveRoles
 	return checker != nil && checker.RequestDynamicVerification(activeRoles, "CONNECTION_ADMIN", false)
+}
+
+// initResultEncoder initialize the result encoder for current connection.
+func (cc *clientConn) initResultEncoder(ctx context.Context) {
+	chs, err := variable.GetSessionOrGlobalSystemVar(cc.ctx.GetSessionVars(), variable.CharacterSetResults)
+	if err != nil {
+		chs = ""
+		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
+	}
+	cc.rsEncoder = newResultEncoder(chs)
 }
 
 // initConnect runs the initConnect SQL statement if it has been specified.
@@ -1915,6 +1938,8 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 		return err
 	}
 	data := cc.alloc.AllocWithLen(4, 1024)
+	cc.initResultEncoder(ctx)
+	defer cc.rsEncoder.clean()
 	for _, column := range columns {
 		// Current we doesn't output defaultValue but reserve defaultValue length byte to make mariadb client happy.
 		// https://dev.mysql.com/doc/internals/en/com-query-response.html#column-definition
@@ -1923,7 +1948,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 		column.DefaultValue = []byte{}
 
 		data = data[0:4]
-		data = column.Dump(data)
+		data = column.Dump(data, cc.rsEncoder)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
@@ -1958,6 +1983,8 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		buf = buf[:stackSize]
 		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.String("stack", string(buf)))
 	}()
+	cc.initResultEncoder(ctx)
+	defer cc.rsEncoder.clean()
 	var err error
 	if mysql.HasCursorExistsFlag(serverStatus) {
 		err = cc.writeChunksWithFetchSize(ctx, rs, serverStatus, fetchSize)
@@ -1979,7 +2006,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 	}
 	for _, v := range columns {
 		data = data[0:4]
-		data = v.Dump(data)
+		data = v.Dump(data, cc.rsEncoder)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
@@ -2001,7 +2028,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	if stmtDetailRaw != nil {
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
-
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			switch value.(string) {
@@ -2038,9 +2064,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		for i := 0; i < rowCount; i++ {
 			data = data[0:4]
 			if binary {
-				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i))
+				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
 			} else {
-				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i))
+				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
 			}
 			if err != nil {
 				reg.End()
@@ -2115,7 +2141,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	var err error
 	for _, row := range curRows {
 		data = data[0:4]
-		data, err = dumpBinaryRow(data, rs.Columns(), row)
+		data, err = dumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
 		if err != nil {
 			return err
 		}
