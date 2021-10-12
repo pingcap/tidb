@@ -549,40 +549,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 	switch x := p.(type) {
 	case *PhysicalTableReader:
 		ts := x.TablePlans[0].(*PhysicalTableScan)
-		if ts.Table.IsCommonHandle {
-			pk := tables.FindPrimaryIndex(ts.Table)
-			pkCols := make([]*expression.Column, 0, len(pk.Columns))
-			pkColsLen := make([]int, 0, len(pk.Columns))
-			for _, colInfo := range pk.Columns {
-				if pkCol := expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]); pkCol != nil {
-					pkCols = append(pkCols, pkCol)
-					pkColsLen = append(pkColsLen, colInfo.Length)
-				}
-			}
-			if len(pkCols) > 0 {
-				res, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), ts.AccessCondition, pkCols, pkColsLen)
-				if err != nil {
-					return err
-				}
-				ts.Ranges = res.Ranges
-			} else {
-				ts.Ranges = ranger.FullRange()
-			}
-		} else {
-			var pkCol *expression.Column
-			if ts.Table.PKIsHandle {
-				if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-					pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
-				}
-			}
-			if pkCol != nil {
-				ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
-				if err != nil {
-					return err
-				}
-			} else {
-				ts.Ranges = ranger.FullIntRange(false)
-			}
+		ts.Ranges, err = e.buildRangeForTableScan(sctx, ts)
+		if err != nil {
+			return err
 		}
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
@@ -695,6 +664,31 @@ func (e *Execute) rebuildRange(p Plan) error {
 				}
 			}
 		}
+	case *PhysicalIndexMergeReader:
+		indexMerge := p.(*PhysicalIndexMergeReader)
+		for _, partialPlans := range indexMerge.PartialPlans {
+			partialPlan := partialPlans[0]
+			switch partialPlan.(type) {
+			case *PhysicalTableScan:
+				ts := partialPlan.(*PhysicalTableScan)
+				ts.Ranges, err = e.buildRangeForTableScan(sctx, ts)
+				if err != nil {
+					return err
+				}
+			default:
+				is := partialPlan.(*PhysicalIndexScan)
+				is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		for _, tablePlan := range indexMerge.TablePlans {
+			err = e.rebuildRange(tablePlan)
+			if err != nil {
+				return err
+			}
+		}
 	case PhysicalPlan:
 		for _, child := range x.Children() {
 			err = e.rebuildRange(child)
@@ -716,6 +710,49 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 	}
 	return nil
+}
+
+func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) ([]*ranger.Range, error) {
+	var (
+		err error
+		res *ranger.DetachRangeResult
+	)
+	if ts.Table.IsCommonHandle {
+		pk := tables.FindPrimaryIndex(ts.Table)
+		pkCols := make([]*expression.Column, 0, len(pk.Columns))
+		pkColsLen := make([]int, 0, len(pk.Columns))
+		for _, colInfo := range pk.Columns {
+			if pkCol := expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]); pkCol != nil {
+				pkCols = append(pkCols, pkCol)
+				pkColsLen = append(pkColsLen, colInfo.Length)
+			}
+		}
+		if len(pkCols) > 0 {
+			res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, ts.AccessCondition, pkCols, pkColsLen)
+			if err != nil {
+				return nil, err
+			}
+			ts.Ranges = res.Ranges
+		} else {
+			ts.Ranges = ranger.FullRange()
+		}
+	} else {
+		var pkCol *expression.Column
+		if ts.Table.PKIsHandle {
+			if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
+				pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
+			}
+		}
+		if pkCol != nil {
+			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sctx.GetSessionVars().StmtCtx, pkCol.RetType)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			ts.Ranges = ranger.FullIntRange(false)
+		}
+	}
+	return res.Ranges, nil
 }
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
