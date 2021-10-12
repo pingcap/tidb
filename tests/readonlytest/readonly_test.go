@@ -29,7 +29,7 @@ import (
 var (
 	tidbRootPassword = flag.String("passwd", "", "tidb root password")
 	tidbStartPort    = flag.Int("tidb_start_port", 4000, "first tidb server listening port")
-	ReadOnlyErrMsg = "Error 1836: Running in read-only mode"
+	ReadOnlyErrMsg   = "Error 1836: Running in read-only mode"
 )
 
 type ReadOnlySuite struct {
