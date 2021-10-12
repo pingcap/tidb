@@ -788,9 +788,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			authPlugin = spec.AuthOpt.AuthPlugin
 		}
 		if s.IsCreateRole {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, authPlugin, "Y")
+			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, strings.ToLower(spec.User.Hostname), spec.User.Username, pwd, authPlugin, "Y")
 		} else {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, authPlugin)
+			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, strings.ToLower(spec.User.Hostname), spec.User.Username, pwd, authPlugin)
 		}
 		users = append(users, spec.User)
 	}
