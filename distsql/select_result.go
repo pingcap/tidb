@@ -23,7 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+<<<<<<< HEAD
 	"github.com/pingcap/parser/terror"
+=======
+	"github.com/pingcap/failpoint"
+>>>>>>> d53f9f55a... executor,distsql: fix analyze version 2 memory leak (#28729)
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -272,6 +276,12 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // NextRaw returns the next raw partial result.
 func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
+	failpoint.Inject("mockNextRawError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("mockNextRawError"))
+		}
+	})
+
 	resultSubset, err := r.resp.Next(ctx)
 	r.partialCount++
 	r.feedback.Invalidate()
