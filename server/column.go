@@ -15,7 +15,7 @@
 package server
 
 import (
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 )
 
 const maxColumnNameSize = 256

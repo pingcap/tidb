@@ -5,14 +5,16 @@ package restore
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/model"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -254,6 +256,13 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 		}
 		close(next)
 	}()
+
+	start := time.Now()
+	defer func() {
+		elapsed := time.Since(start)
+		summary.CollectDuration("split region", elapsed)
+	}()
+
 	pool := utils.NewWorkerPool(concurrency, "split")
 	for {
 		select {
