@@ -2482,6 +2482,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			ast.TableOptionStatsSampleRate:
 			if tbInfo.StatsOptions == nil {
 				tbInfo.StatsOptions = &model.StatsOptions{}
+				tbInfo.StatsOptions.AutoRecalc = true
 			}
 			err := SetStatsOption(tbInfo.StatsOptions, ast.StatsOptionType(op.Tp), op.StrValue, op.UintValue)
 			if err != nil {
@@ -2810,6 +2811,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 					err = d.AlterTableCharsetAndCollate(sctx, ident, toCharset, toCollate, needsOverwriteCols)
 					handledCharsetOrCollate = true
 				case ast.TableOptionEngine:
+				// TODO
 				default:
 					err = errUnsupportedAlterTableOption
 				}

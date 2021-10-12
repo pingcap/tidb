@@ -573,11 +573,6 @@ import (
 	statsAutoRecalc       "STATS_AUTO_RECALC"
 	statsPersistent       "STATS_PERSISTENT"
 	statsSamplePages      "STATS_SAMPLE_PAGES"
-	statsBuckets          "STATS_BUCKETS_NUM"
-	statsTopN             "STATS_TOPN_NUM"
-	statsColChoice        "STATS_COLUMNS_CHOICE"
-	statsColList          "STATS_COLUMN_LIST"
-	statsSampleRate       "STATS_SAMPLE_RATE"
 	status                "STATUS"
 	storage               "STORAGE"
 	strictFormat          "STRICT_FORMAT"
@@ -6092,8 +6087,6 @@ UnReservedKeyword:
 |	"CLUSTERED"
 |	"NONCLUSTERED"
 |	"PRESERVE"
-|   "STATS_BUCKETS_NUM"
-|   "STATS_TOPN_NUM"
 
 TiDBKeyword:
 	"ADMIN"
@@ -11225,11 +11218,11 @@ TableOption:
 		yylex.AppendError(yylex.Errorf("The STATS_SAMPLE_PAGES is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
 	}
-	"STATS_BUCKETS_NUM" EqOpt LengthNum
+|	"STATS_BUCKETS" EqOpt LengthNum
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsBuckets, UintValue: $3.(uint64)}
 	}
-	"STATS_TOPN_NUM" EqOpt LengthNum
+|	"STATS_TOPN" EqOpt LengthNum
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsTopN, UintValue: $3.(uint64)}
 	}

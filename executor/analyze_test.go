@@ -1148,34 +1148,46 @@ func (s *testSuite10) TestAutoAnalyzeWithSavedOptions(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 
-	s.domain.StatsHandle().HandleAutoAnalyze(is)
-	tbl := s.domain.StatsHandle().GetTableStats(tableInfo)
+	tk.MustExec("analyze table t")
+	tk.MustExec("insert into t values (20)")
+	h := s.domain.StatsHandle()
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	h.HandleAutoAnalyze(is)
+	tbl := h.GetTableStats(tableInfo)
 	col := tbl.Columns[1]
 	c.Assert(len(col.TopN.TopN), Equals, 10)
 
 	tk.MustExec("analyze table t with 20 topn")
-	tbl = s.domain.StatsHandle().GetTableStats(tableInfo)
+	tbl = h.GetTableStats(tableInfo)
 	col = tbl.Columns[1]
 	c.Assert(len(col.TopN.TopN), Equals, 20)
 
-	tk.MustExec("analyze table t")
-	tbl = s.domain.StatsHandle().GetTableStats(tableInfo)
-	col = tbl.Columns[1]
-	c.Assert(len(col.TopN.TopN), Equals, 10)
+	// TODO should manual analyze without options use the table-level options?
+	//tk.MustExec("analyze table t")
+	//tbl = h.GetTableStats(tableInfo)
+	//col = tbl.Columns[1]
+	//c.Assert(len(col.TopN.TopN), Equals, 10)
 
-	tk.MustExec("alter table t(a int) SET STATS_TOPN=15")
-	s.domain.StatsHandle().HandleAutoAnalyze(is)
-	tbl = s.domain.StatsHandle().GetTableStats(tableInfo)
-	col = tbl.Columns[1]
-	c.Assert(len(col.TopN.TopN), Equals, 15)
+	// TODO alter table
+	//tk.MustExec("alter table t(a int) STATS_TOPN_NUM=15")
+	//tk.MustExec("insert into t values (21)")
+	//c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	//c.Assert(h.Update(is), IsNil)
+	//h.HandleAutoAnalyze(is)
+	//tbl = h.GetTableStats(tableInfo)
+	//col = tbl.Columns[1]
+	//c.Assert(len(col.TopN.TopN), Equals, 15)
+	//
+	//tk.MustExec("analyze table t with 20 topn")
+	//tbl = h.GetTableStats(tableInfo)
+	//col = tbl.Columns[1]
+	//c.Assert(len(col.TopN.TopN), Equals, 20)
+	//
+	//tk.MustExec("analyze table t")
+	//tbl = h.GetTableStats(tableInfo)
+	//col = tbl.Columns[1]
+	//c.Assert(len(col.TopN.TopN), Equals, 15)
 
-	tk.MustExec("analyze table t with 20 topn")
-	tbl = s.domain.StatsHandle().GetTableStats(tableInfo)
-	col = tbl.Columns[1]
-	c.Assert(len(col.TopN.TopN), Equals, 20)
-
-	tk.MustExec("analyze table t")
-	tbl = s.domain.StatsHandle().GetTableStats(tableInfo)
-	col = tbl.Columns[1]
-	c.Assert(len(col.TopN.TopN), Equals, 15)
+	// TODO partition table
 }
