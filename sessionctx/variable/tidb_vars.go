@@ -584,6 +584,9 @@ const (
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
+	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
 )
 
 // TiDB vars that have only global scope
@@ -744,6 +747,7 @@ const (
 	DefTMPTableSize                       = 16777216
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBEnableOrderedResultMode        = false
+	DefTiDBEnablePseudoForOutdatedStats   = true
 )
 
 // Process global variables.

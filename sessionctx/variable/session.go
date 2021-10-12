@@ -934,6 +934,9 @@ type SessionVars struct {
 	// EnableStableResultMode if stabilize query results.
 	EnableStableResultMode bool
 
+	// EnablePseudoForOutdatedStats if using psuedo for outdated stats
+	EnablePseudoForOutdatedStats bool
+
 	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
 	// It's nil if there is no local temporary table.
 	LocalTemporaryTables interface{}
@@ -1306,6 +1309,16 @@ func (s *SessionVars) GetEnableIndexMerge() bool {
 // SetEnableIndexMerge set SessionVars.enableIndexMerge.
 func (s *SessionVars) SetEnableIndexMerge(val bool) {
 	s.enableIndexMerge = val
+}
+
+// GetEnablePseudoForOutdatedStats get EnablePseudoForOutdatedStats from SessionVars.EnablePseudoForOutdatedStats.
+func (s *SessionVars) GetEnablePseudoForOutdatedStats() bool {
+	return s.EnablePseudoForOutdatedStats
+}
+
+// SetEnablePseudoForOutdatedStats set SessionVars.EnablePseudoForOutdatedStats.
+func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
+	s.EnablePseudoForOutdatedStats = val
 }
 
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
