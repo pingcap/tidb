@@ -2057,23 +2057,14 @@ func (d *ddl) createTableWithInfoJob(
 		}
 	}
 
-	_, exists := is.TableByID(tbInfo.ID)
-	if !tryRetainID || exists {
-		if err := d.assignTableID(tbInfo); err != nil {
-			return nil, errors.Trace(err)
-		}
+	// FIXME: Implement `tryRetainID`
+	if err := d.assignTableID(tbInfo); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if tbInfo.Partition != nil {
-		// NOTE: does not check if partition ID exists.
-		// it assumes that:
-		// 1. the final transaction will detect if there is a duplication
-		// 2. if table id is not duplicated, so do partition IDs
-		// since partition search is slow, it is avoided.
-		if !tryRetainID || exists {
-			if err := d.assignPartitionIDs(tbInfo.Partition.Definitions); err != nil {
-				return nil, errors.Trace(err)
-			}
+		if err := d.assignPartitionIDs(tbInfo.Partition.Definitions); err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 
@@ -2154,46 +2145,6 @@ func (d *ddl) CreateTableWithInfo(
 		err = d.createTableWithInfoPost(ctx, tbInfo, job.SchemaID)
 	}
 
-	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
-}
-
-func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
-	dbName model.CIStr,
-	infos []*model.TableInfo,
-	onExist OnExist) error {
-	jobs := &model.Job{
-		BinlogInfo: &model.HistoryInfo{},
-	}
-	args := make([]*model.TableInfo, 0, len(infos))
-
-	var err error
-
-	// 1. counts how many IDs are there
-	// 2. if there is any duplicated table name
-	totalID := 0
-	duplication := make(map[string]struct{})
-	for _, info := range infos {
-		if _, ok := duplication[info.Name.L]; ok {
-			err = infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
-			if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
-				ctx.GetSessionVars().StmtCtx.AppendNote(err)
-				err = nil
-			}
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		duplication[info.Name.L] = struct{}{}
-
-		totalID += 1
-		parts := info.GetPartitionInfo()
-		if parts != nil {
-			totalID += len(parts.Definitions)
-		}
-	}
-
 	genIDs, err := d.genGlobalIDs(totalID)
 	if err != nil {
 		return errors.Trace(err)
@@ -2250,6 +2201,66 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	}
 
 	for j := range infos {
+		if err = d.createTableWithInfoPost(ctx, infos[j], jobs.SchemaID); err != nil {
+			return errors.Trace(d.callHookOnChanged(err))
+		}
+	}
+
+	return nil
+}
+
+func (d *ddl) CreateTablesWithInfo(ctx sessionctx.Context,
+	dbName model.CIStr,
+	infos []*model.TableInfo,
+	onExist OnExist,
+	tryRetainID bool) error {
+	jobs := &model.Job{
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       make([]interface{}, 0, 2),
+	}
+	ids := make([]int64, 0, len(infos))
+	args := make([]interface{}, 0, len(infos))
+	idx := make([]int, 0, len(infos))
+	for i, info := range infos {
+		job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, tryRetainID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if job == nil {
+			continue
+		}
+
+		if jobs.Type != model.ActionCreateTables {
+			jobs.Type = model.ActionCreateTables
+			jobs.SchemaID = job.SchemaID
+			jobs.SchemaName = job.SchemaName
+		}
+
+		// store index to table info
+		idx = append(idx, i)
+
+		// append table id
+		ids = append(ids, job.TableID)
+
+		// append table job args
+		args = append(args, job.Args)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	jobs.Args = append(jobs.Args, ids, args)
+
+	err := d.doDDLJob(ctx, jobs)
+	if err != nil {
+		// table exists, but if_not_exists flags is true, so we ignore this error.
+		if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			err = nil
+		}
+		return errors.Trace(d.callHookOnChanged(err))
+	}
+
+	for _, j := range idx {
 		if err = d.createTableWithInfoPost(ctx, infos[j], jobs.SchemaID); err != nil {
 			return errors.Trace(d.callHookOnChanged(err))
 		}

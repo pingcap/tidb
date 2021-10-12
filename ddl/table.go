@@ -59,6 +59,28 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, err
 		}
 		return tbInfo, errors.Trace(err)
 	}
+	// placement rules meta inheritance.
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
+	if err != nil {
+		return tbInfo, errors.Trace(err)
+	}
+	err = inheritPlacementRuleFromDB(tbInfo, dbInfo)
+	if err != nil {
+		return tbInfo, errors.Trace(err)
+	}
+
+	// build table & partition bundles if any.
+	tableBundle, err := newBundleFromTblInfo(t, job, tbInfo)
+	if err != nil {
+		return tbInfo, errors.Trace(err)
+	}
+	partitionBundles, err := newBundleFromPartition(t, job, tbInfo.Partition)
+	if err != nil {
+		return tbInfo, errors.Trace(err)
+	}
+	bundles := make([]*placement.Bundle, 0, 1+len(partitionBundles))
+	bundles = append(bundles, tableBundle)
+	bundles = append(bundles, partitionBundles...)
 
 	switch tbInfo.State {
 	case model.StateNone:
@@ -98,6 +120,80 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, err
 	default:
 		return tbInfo, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
+}
+
+func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("mock do job error"))
+		}
+	})
+
+	// just decode, createTable will use it as Args[0]
+	tbInfo := &model.TableInfo{}
+	if err := job.DecodeArgs(tbInfo); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tbInfo, err := createTable(d, t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Finish this job.
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+	asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
+	return ver, errors.Trace(err)
+}
+
+func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
+	var ver int64
+
+	ids := []int64{}
+	args := []*model.TableInfo{}
+	err := job.DecodeArgs(&ids, &args)
+	if err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	stubJob := &*job
+	stubJob.Args = make([]interface{}, 1)
+	for i := range ids {
+		stubJob.TableID = ids[i]
+		stubJob.Args[0] = args[i]
+		tbInfo, err := createTable(d, t, stubJob)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		args[i] = tbInfo
+	}
+
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.State = model.JobStateDone
+	job.SchemaState = model.StatePublic
+	for i := range ids {
+		job.BinlogInfo.AddTableInfo(ver, args[i])
+	}
+
+	for i := range ids {
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: args[i]})
+	}
+
+	return ver, errors.Trace(err)
 }
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {

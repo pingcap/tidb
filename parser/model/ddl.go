@@ -90,11 +90,7 @@ const (
 	ActionDropPlacementPolicy           ActionType = 53
 	ActionAlterTablePartitionPlacement  ActionType = 54
 	ActionModifySchemaDefaultPlacement  ActionType = 55
-	ActionAlterTablePlacement           ActionType = 56
-	ActionAlterCacheTable               ActionType = 57
-	ActionAlterTableStatsOptions        ActionType = 58
-	ActionAlterNoCacheTable             ActionType = 59
-	ActionCreateTables                  ActionType = 60
+	ActionCreateTables                  ActionType = 56
 )
 
 var actionMap = map[ActionType]string{
