@@ -84,7 +84,7 @@ func (e *jsonObjectAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	return nil
 }
 
-func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	for _, row := range rowsInGroup {
 		key, err := e.args[0].Eval(row)

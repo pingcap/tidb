@@ -53,7 +53,7 @@ func (n *ntile) ResetPartialResult(pr PartialResult) {
 	p.numRows = 0
 }
 
-func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (n *ntile) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4Ntile)(pr)
 	p.numRows += uint64(len(rowsInGroup))
 	// Update the quotient and remainder.

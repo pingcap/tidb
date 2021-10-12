@@ -50,8 +50,48 @@ const (
 	DefPartialResult4ApproxCountDistinctSize = int64(unsafe.Sizeof(partialResult4ApproxCountDistinct{}))
 )
 
+func newSpillTool(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *spillTool {
+	return &spillTool{
+		listInDisk: chunk.NewListInDisk(fieldTypes),
+		tmpChk:     chunk.New(fieldTypes, initChunkSize, maxChunkSize),
+	}
+}
+
+type spillTool struct {
+	listInDisk *chunk.ListInDisk
+	tmpChk     *chunk.Chunk
+}
+
+func (t *spillTool) appendRow(row chunk.Row) (err error) {
+	t.tmpChk.AppendRow(row)
+	if t.tmpChk.IsFull() {
+		err = t.listInDisk.Add(t.tmpChk)
+		if err != nil {
+			return
+		}
+		t.tmpChk.Reset()
+	}
+
+	return
+}
+
+func (t *spillTool) flush() (err error) {
+	if t.tmpChk.NumRows() == 0 {
+		return
+	}
+
+	err = t.listInDisk.Add(t.tmpChk)
+	if err != nil {
+		return
+	}
+	t.tmpChk.Reset()
+
+	return
+}
+
 type partialResult4CountDistinctInt struct {
-	valSet set.Int64SetWithMemoryUsage
+	valSet    set.Int64SetWithMemoryUsage
+	spillTool *spillTool
 }
 
 type countOriginalWithDistinct4Int struct {
@@ -68,16 +108,82 @@ func (e *countOriginalWithDistinct4Int) AllocPartialResult() (pr PartialResult, 
 func (e *countOriginalWithDistinct4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctInt)(pr)
 	p.valSet, _ = set.NewInt64SetWithMemoryUsage()
+
+	if p.spillTool != nil {
+		_ = p.spillTool.listInDisk.Close()
+	}
+	p.spillTool = nil
 }
 
-func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) (err error) {
 	p := (*partialResult4CountDistinctInt)(pr)
-	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
+	count := int64(p.valSet.Count())
+	defer func() {
+		chk.AppendInt64(e.ordinal, count)
+	}()
+
+	if p.spillTool == nil || p.spillTool.listInDisk.NumChunks() == 0 {
+		return nil
+	}
+
+	countLimit := int(count)
+	if countLimit == 0 {
+		countLimit = 1
+	}
+	var st *spillTool
+	var c *chunk.Chunk
+	var inSpillMode bool
+	for {
+		st, p.spillTool = p.spillTool, nil
+		if st == nil || st.listInDisk.NumChunks() == 0 {
+			break
+		}
+
+		//reset params
+		p.valSet, _ = set.NewInt64SetWithMemoryUsage()
+		inSpillMode = false
+
+		listInDisk := st.listInDisk
+		numChunks := listInDisk.NumChunks()
+		for idx := 0; idx < numChunks; idx++ {
+			c, err = listInDisk.GetChunk(idx)
+			if err != nil {
+				return
+			}
+			numRows := c.NumRows()
+			rows := make([]chunk.Row, 0, numRows)
+			for i := 0; i < numRows; i++ {
+				rows = append(rows, c.GetRow(i))
+			}
+			_, err = e.UpdatePartialResult(sctx, rows, pr, inSpillMode)
+			if err != nil {
+				return err
+			}
+			if p.valSet.Count() >= countLimit {
+				inSpillMode = true
+			}
+		}
+		count += int64(p.valSet.Count())
+
+		err = listInDisk.Close()
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4CountDistinctInt)(pr)
+
+	if inSpillMode && p.spillTool == nil {
+		p.spillTool = newSpillTool(
+			[]*types.FieldType{e.baseAggFunc.args[0].GetType()},
+			sctx.GetSessionVars().InitChunkSize,
+			sctx.GetSessionVars().MaxChunkSize,
+		)
+	}
 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, row)
@@ -90,7 +196,23 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 		if p.valSet.Exist(input) {
 			continue
 		}
-		memDelta += p.valSet.Insert(input)
+
+		if !inSpillMode {
+			memDelta += p.valSet.Insert(input)
+			continue
+		}
+
+		err = p.spillTool.appendRow(row)
+		if err != nil {
+			return memDelta, err
+		}
+	}
+
+	if p.spillTool != nil {
+		err = p.spillTool.flush()
+		if err != nil {
+			return memDelta, err
+		}
 	}
 
 	return memDelta, nil
@@ -122,7 +244,7 @@ func (e *countOriginalWithDistinct4Real) AppendFinalResult2Chunk(sctx sessionctx
 	return nil
 }
 
-func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4CountDistinctReal)(pr)
 
 	for _, row := range rowsInGroup {
@@ -168,7 +290,7 @@ func (e *countOriginalWithDistinct4Decimal) AppendFinalResult2Chunk(sctx session
 	return nil
 }
 
-func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4CountDistinctDecimal)(pr)
 
 	for _, row := range rowsInGroup {
@@ -219,7 +341,7 @@ func (e *countOriginalWithDistinct4Duration) AppendFinalResult2Chunk(sctx sessio
 	return nil
 }
 
-func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4CountDistinctDuration)(pr)
 
 	for _, row := range rowsInGroup {
@@ -266,7 +388,7 @@ func (e *countOriginalWithDistinct4String) AppendFinalResult2Chunk(sctx sessionc
 	return nil
 }
 
-func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4CountDistinctString)(pr)
 	collator := collate.GetCollator(e.args[0].GetType().Collate)
 
@@ -316,7 +438,7 @@ func (e *countOriginalWithDistinct) AppendFinalResult2Chunk(sctx sessionctx.Cont
 	return nil
 }
 
-func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4CountWithDistinct)(pr)
 
 	encodedBytes := make([]byte, 0)
@@ -784,7 +906,7 @@ type approxCountDistinctOriginal struct {
 	baseApproxCountDistinct
 }
 
-func (e *approxCountDistinctOriginal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *approxCountDistinctOriginal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4ApproxCountDistinct)(pr)
 	encodedBytes := make([]byte, 0)
 	// Decimal struct is the biggest type we will use.
@@ -836,7 +958,7 @@ type approxCountDistinctPartial2 struct {
 	approxCountDistinctPartial1
 }
 
-func (e *approxCountDistinctPartial2) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *approxCountDistinctPartial2) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4ApproxCountDistinct)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)

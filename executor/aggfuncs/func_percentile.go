@@ -59,7 +59,7 @@ func (e *basePercentile) AllocPartialResult() (pr PartialResult, memDelta int64)
 
 func (e *basePercentile) ResetPartialResult(pr PartialResult) {}
 
-func (e *basePercentile) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *basePercentile) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	return
 }
 
@@ -140,7 +140,7 @@ func (e *percentileOriginal4Int) ResetPartialResult(pr PartialResult) {
 	*p = partialResult4PercentileInt{}
 }
 
-func (e *percentileOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4PercentileInt)(pr)
 	startMem := p.MemSize()
 	for _, row := range rowsInGroup {
@@ -193,7 +193,7 @@ func (e *percentileOriginal4Real) ResetPartialResult(pr PartialResult) {
 	*p = partialResult4PercentileReal{}
 }
 
-func (e *percentileOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4PercentileReal)(pr)
 	startMem := p.MemSize()
 	for _, row := range rowsInGroup {
@@ -246,7 +246,7 @@ func (e *percentileOriginal4Decimal) ResetPartialResult(pr PartialResult) {
 	*p = partialResult4PercentileDecimal{}
 }
 
-func (e *percentileOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4PercentileDecimal)(pr)
 	startMem := p.MemSize()
 	for _, row := range rowsInGroup {
@@ -299,7 +299,7 @@ func (e *percentileOriginal4Time) ResetPartialResult(pr PartialResult) {
 	*p = partialResult4PercentileTime{}
 }
 
-func (e *percentileOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4PercentileTime)(pr)
 	startMem := p.MemSize()
 	for _, row := range rowsInGroup {
@@ -352,7 +352,7 @@ func (e *percentileOriginal4Duration) ResetPartialResult(pr PartialResult) {
 	*p = partialResult4PercentileDuration{}
 }
 
-func (e *percentileOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4PercentileDuration)(pr)
 	startMem := p.MemSize()
 	for _, row := range rowsInGroup {

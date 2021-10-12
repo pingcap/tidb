@@ -43,7 +43,7 @@ func (rn *rowNumber) ResetPartialResult(pr PartialResult) {
 	p.curIdx = 0
 }
 
-func (rn *rowNumber) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (rn *rowNumber) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	return 0, nil
 }
 

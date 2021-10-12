@@ -77,7 +77,7 @@ func (e *jsonArrayagg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Parti
 	return nil
 }
 
-func (e *jsonArrayagg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *jsonArrayagg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4JsonArrayagg)(pr)
 	for _, row := range rowsInGroup {
 		item, err := e.args[0].Eval(row)

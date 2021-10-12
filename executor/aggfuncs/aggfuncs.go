@@ -162,7 +162,7 @@ type AggFunc interface {
 	// partial result according to the functionality and the state of the
 	// aggregate function. The returned value is the memDelta used to trace memory
 	// usage.
-	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
+	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error)
 
 	// MergePartialResult will be called in the final phase when parallelly
 	// executing. It converts the PartialResult `src`, `dst` to the same specific

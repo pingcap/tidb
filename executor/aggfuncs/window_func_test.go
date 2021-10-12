@@ -65,7 +65,7 @@ func (s *testSuite) testWindowFunc(c *C, p windowTest) {
 
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr, false)
 		c.Assert(err, IsNil)
 	}
 
@@ -97,7 +97,7 @@ func (s *testSuite) testWindowAggMemFunc(c *C, p windowMemTest) {
 	i := 0
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		memDelta, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		memDelta, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr, false)
 		c.Assert(err, IsNil)
 		c.Assert(memDelta, Equals, updateMemDeltas[i])
 		i++

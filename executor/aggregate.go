@@ -525,7 +525,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 	for i := 0; i < numRows; i++ {
 		for j, af := range w.aggFuncs {
 			rows[0] = chk.GetRow(i)
-			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j])
+			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j], false)
 			if err != nil {
 				return err
 			}
@@ -1008,8 +1008,9 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 				e.groupKeys = append(e.groupKeys, groupKey)
 			}
 			partialResults := e.getPartialResults(groupKey)
+			inSpillMode := atomic.LoadUint32(&e.inSpillMode) == 1
 			for i, af := range e.PartialAggFuncs {
-				memDelta, err := af.UpdatePartialResult(e.ctx, []chunk.Row{e.childResult.GetRow(j)}, partialResults[i])
+				memDelta, err := af.UpdatePartialResult(e.ctx, []chunk.Row{e.childResult.GetRow(j)}, partialResults[i], inSpillMode)
 				if err != nil {
 					return err
 				}
@@ -1344,7 +1345,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 
 	allMemDelta := int64(0)
 	for i, aggFunc := range e.aggFuncs {
-		memDelta, err := aggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i])
+		memDelta, err := aggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i], false)
 		if err != nil {
 			return err
 		}

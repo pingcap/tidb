@@ -129,7 +129,7 @@ func (e *firstRow4Int) ResetPartialResult(pr PartialResult) {
 	p.val, p.isNull, p.gotFirstRow = 0, false, false
 }
 
-func (e *firstRow4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowInt)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil
@@ -175,7 +175,7 @@ func (e *firstRow4Float32) ResetPartialResult(pr PartialResult) {
 	p.isNull, p.gotFirstRow = false, false
 }
 
-func (e *firstRow4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowFloat32)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil
@@ -221,7 +221,7 @@ func (e *firstRow4Float64) ResetPartialResult(pr PartialResult) {
 	p.isNull, p.gotFirstRow = false, false
 }
 
-func (e *firstRow4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowFloat64)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil
@@ -267,7 +267,7 @@ func (e *firstRow4String) ResetPartialResult(pr PartialResult) {
 	p.isNull, p.gotFirstRow = false, false
 }
 
-func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowString)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil
@@ -314,7 +314,7 @@ func (e *firstRow4Time) ResetPartialResult(pr PartialResult) {
 	p.isNull, p.gotFirstRow = false, false
 }
 
-func (e *firstRow4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowTime)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil
@@ -360,7 +360,7 @@ func (e *firstRow4Duration) ResetPartialResult(pr PartialResult) {
 	p.isNull, p.gotFirstRow = false, false
 }
 
-func (e *firstRow4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowDuration)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil
@@ -406,7 +406,7 @@ func (e *firstRow4JSON) ResetPartialResult(pr PartialResult) {
 	p.isNull, p.gotFirstRow = false, false
 }
 
-func (e *firstRow4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowJSON)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil
@@ -452,7 +452,7 @@ func (e *firstRow4Decimal) ResetPartialResult(pr PartialResult) {
 	p.isNull, p.gotFirstRow = false, false
 }
 
-func (e *firstRow4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowDecimal)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil
@@ -505,7 +505,7 @@ func (e *firstRow4Enum) ResetPartialResult(pr PartialResult) {
 	p.isNull, p.gotFirstRow = false, false
 }
 
-func (e *firstRow4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowEnum)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil
@@ -552,7 +552,7 @@ func (e *firstRow4Set) ResetPartialResult(pr PartialResult) {
 	p.isNull, p.gotFirstRow = false, false
 }
 
-func (e *firstRow4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *firstRow4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowSet)(pr)
 	if p.gotFirstRow {
 		return memDelta, nil

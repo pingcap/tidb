@@ -262,7 +262,7 @@ func (e *maxMin4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partial
 	return nil
 }
 
-func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinInt)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, row)
@@ -317,7 +317,7 @@ func (e *maxMin4IntSliding) AllocPartialResult() (pr PartialResult, memDelta int
 	return p, memDelta + DefMaxMinDequeSize
 }
 
-func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinInt)(pr)
 	for i, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, row)
@@ -403,7 +403,7 @@ func (e *maxMin4Uint) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 	return nil
 }
 
-func (e *maxMin4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinUint)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, row)
@@ -459,7 +459,7 @@ func (e *maxMin4UintSliding) ResetPartialResult(pr PartialResult) {
 	(*partialResult4MaxMinUint)(pr).deque.Reset()
 }
 
-func (e *maxMin4UintSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4UintSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinUint)(pr)
 	for i, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, row)
@@ -542,7 +542,7 @@ func (e *maxMin4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	return nil
 }
 
-func (e *maxMin4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinFloat32)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
@@ -598,7 +598,7 @@ func (e *maxMin4Float32Sliding) ResetPartialResult(pr PartialResult) {
 	(*partialResult4MaxMinFloat32)(pr).deque.Reset()
 }
 
-func (e *maxMin4Float32Sliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Float32Sliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinFloat32)(pr)
 	for i, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
@@ -680,7 +680,7 @@ func (e *maxMin4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	return nil
 }
 
-func (e *maxMin4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
@@ -735,7 +735,7 @@ func (e *maxMin4Float64Sliding) ResetPartialResult(pr PartialResult) {
 	(*partialResult4MaxMinFloat64)(pr).deque.Reset()
 }
 
-func (e *maxMin4Float64Sliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Float64Sliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinFloat64)(pr)
 	for i, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
@@ -820,7 +820,7 @@ func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	return nil
 }
 
-func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinDecimal)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
@@ -889,7 +889,7 @@ func (e *maxMin4DecimalSliding) ResetPartialResult(pr PartialResult) {
 	(*partialResult4MaxMinDecimal)(pr).deque.Reset()
 }
 
-func (e *maxMin4DecimalSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4DecimalSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinDecimal)(pr)
 	for i, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
@@ -971,7 +971,7 @@ func (e *maxMin4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	return nil
 }
 
-func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinString)(pr)
 	tp := e.args[0].GetType()
 	for _, row := range rowsInGroup {
@@ -1039,7 +1039,7 @@ func (e *maxMin4StringSliding) ResetPartialResult(pr PartialResult) {
 	(*partialResult4MaxMinString)(pr).deque.Reset()
 }
 
-func (e *maxMin4StringSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4StringSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinString)(pr)
 	for i, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
@@ -1120,7 +1120,7 @@ func (e *maxMin4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 	return nil
 }
 
-func (e *maxMin4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinTime)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalTime(sctx, row)
@@ -1179,7 +1179,7 @@ func (e *maxMin4TimeSliding) ResetPartialResult(pr PartialResult) {
 	(*partialResult4MaxMinTime)(pr).deque.Reset()
 }
 
-func (e *maxMin4TimeSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4TimeSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinTime)(pr)
 	for i, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalTime(sctx, row)
@@ -1260,7 +1260,7 @@ func (e *maxMin4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Pa
 	return nil
 }
 
-func (e *maxMin4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinDuration)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDuration(sctx, row)
@@ -1319,7 +1319,7 @@ func (e *maxMin4DurationSliding) ResetPartialResult(pr PartialResult) {
 	(*partialResult4MaxMinDuration)(pr).deque.Reset()
 }
 
-func (e *maxMin4DurationSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4DurationSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinDuration)(pr)
 	for i, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDuration(sctx, row)
@@ -1400,7 +1400,7 @@ func (e *maxMin4JSON) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 	return nil
 }
 
-func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinJSON)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalJSON(sctx, row)
@@ -1469,7 +1469,7 @@ func (e *maxMin4Enum) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 	return nil
 }
 
-func (e *maxMin4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinEnum)(pr)
 	for _, row := range rowsInGroup {
 		d, err := e.args[0].Eval(row)
@@ -1536,7 +1536,7 @@ func (e *maxMin4Set) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partial
 	return nil
 }
 
-func (e *maxMin4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinSet)(pr)
 	for _, row := range rowsInGroup {
 		d, err := e.args[0].Eval(row)

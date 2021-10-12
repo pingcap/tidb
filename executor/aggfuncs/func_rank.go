@@ -50,7 +50,7 @@ func (r *rank) ResetPartialResult(pr PartialResult) {
 	p.rows = p.rows[:0]
 }
 
-func (r *rank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (r *rank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4Rank)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
 	memDelta += int64(len(rowsInGroup)) * DefRowSize

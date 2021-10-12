@@ -396,7 +396,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		_, err = partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
+		_, err = partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult, false)
 		c.Assert(err, IsNil)
 	}
 	p.messUpChunk(srcChk)
@@ -422,7 +422,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	iter.Begin()
 	iter.Next()
 	for row := iter.Next(); row != iter.End(); row = iter.Next() {
-		_, err = partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
+		_, err = partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult, false)
 		c.Assert(err, IsNil)
 	}
 	p.messUpChunk(srcChk)
@@ -511,7 +511,7 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		// FIXME: cannot assert error since there are cases of error, e.g. JSON documents may not contain NULL member
-		_, _ = partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
+		_, _ = partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult, false)
 	}
 	p.messUpChunk(srcChk)
 	err = partialFunc.AppendFinalResult2Chunk(s.ctx, partialResult, resultChk)
@@ -531,7 +531,7 @@ func (s *testSuite) testMultiArgsMergePartialResult(c *C, p multiArgsAggTest) {
 	iter.Next()
 	for row := iter.Next(); row != iter.End(); row = iter.Next() {
 		// FIXME: cannot check error
-		_, _ = partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult)
+		_, _ = partialFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialResult, false)
 	}
 	p.messUpChunk(srcChk)
 	resultChk.Reset()
@@ -638,7 +638,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr, false)
 		c.Assert(err, IsNil)
 	}
 	p.messUpChunk(srcChk)
@@ -674,14 +674,14 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr, false)
 		c.Assert(err, IsNil)
 	}
 	p.messUpChunk(srcChk)
 	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr, false)
 		c.Assert(err, IsNil)
 	}
 	p.messUpChunk(srcChk)
@@ -726,7 +726,7 @@ func (s *testSuite) testAggFuncWithoutDistinct(c *C, p aggTest) {
 
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr, false)
 		c.Assert(err, IsNil)
 	}
 	p.messUpChunk(srcChk)
@@ -771,7 +771,7 @@ func (s *testSuite) testAggMemFunc(c *C, p aggMemTest) {
 	iter := chunk.NewIterator4Chunk(srcChk)
 	i := 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		memDelta, err := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		memDelta, err := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr, false)
 		c.Assert(err, IsNil)
 		c.Assert(memDelta, Equals, updateMemDeltas[i])
 		i++
@@ -803,7 +803,7 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		// FIXME: cannot assert error since there are cases of error, e.g. rows were cut by GROUPCONCAT
-		_, _ = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		_, _ = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr, false)
 	}
 	p.messUpChunk(srcChk)
 	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
@@ -839,14 +839,14 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		// FIXME: cannot check error
-		_, _ = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		_, _ = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr, false)
 	}
 	p.messUpChunk(srcChk)
 	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		// FIXME: cannot check error
-		_, _ = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		_, _ = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr, false)
 	}
 	p.messUpChunk(srcChk)
 	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
@@ -894,7 +894,7 @@ func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
 	iter := chunk.NewIterator4Chunk(srcChk)
 	i := 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr, false)
 		c.Assert(memDelta, Equals, updateMemDeltas[i])
 		i++
 	}
@@ -1008,7 +1008,7 @@ func (s *testSuite) baseBenchmarkAggFunc(b *testing.B,
 	output.Reset()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := finalFunc.UpdatePartialResult(s.ctx, input, finalPr)
+		_, err := finalFunc.UpdatePartialResult(s.ctx, input, finalPr, false)
 		if err != nil {
 			b.Fatal(err)
 		}

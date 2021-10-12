@@ -52,7 +52,7 @@ type bitOrUint64 struct {
 	baseBitAggFunc
 }
 
-func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
@@ -77,7 +77,7 @@ type bitXorUint64 struct {
 	baseBitAggFunc
 }
 
-func (e *bitXorUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *bitXorUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
@@ -140,7 +140,7 @@ func (e *bitAndUint64) ResetPartialResult(pr PartialResult) {
 	*p = math.MaxUint64
 }
 
-func (e *bitAndUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *bitAndUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult, inSpillMode bool) (memDelta int64, err error) {
 	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
 		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)

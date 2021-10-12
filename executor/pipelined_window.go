@@ -393,7 +393,7 @@ func (e *PipelinedWindowExec) produce(ctx sessionctx.Context, chk *chunk.Chunk, 
 						}
 						// TODO(zhifeng): track memory usage here
 						wf.ResetPartialResult(e.partialResults[i])
-						_, err = wf.UpdatePartialResult(ctx, e.getRows(start, end), e.partialResults[i])
+						_, err = wf.UpdatePartialResult(ctx, e.getRows(start, end), e.partialResults[i], false)
 					}
 				}
 				if err != nil {
