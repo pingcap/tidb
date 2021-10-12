@@ -17,8 +17,9 @@ package statistics
 import (
 	"testing"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testbridge"
@@ -26,20 +27,33 @@ import (
 	"go.uber.org/goleak"
 )
 
+var _ = check.Suite(&testStatisticsSuite{})
+
+func TestT(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+	check.TestingT(t)
+}
+
 func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	testbridge.WorkaroundGoCheckFlags()
 	goleak.VerifyTestMain(m, opts...)
 }
 
+// TestStatistics batches tests sharing a test suite to reduce the setups
+// overheads.
 func TestStatistics(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
+
 	s := createTestStatisticsSuite(t)
 
 	// fmsketch_test.go
@@ -55,7 +69,6 @@ func TestStatistics(t *testing.T) {
 	t.Run("SubTestBuild", SubTestBuild(s))
 	t.Run("SubTestHistogramProtoConversion", SubTestHistogramProtoConversion(s))
 	t.Run("SubTestIndexRanges", SubTestIndexRanges(s))
-
 }
 
 func createTestStatisticsSuite(t *testing.T) *testStatisticsSuite {

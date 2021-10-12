@@ -20,9 +20,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -32,8 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
-
-// var _ = Suite(&testStatisticsSuite{})
 
 type testStatisticsSuite struct {
 	count   int
@@ -77,7 +75,7 @@ func (r *recordSet) getNext() []types.Datum {
 	return row
 }
 
-func (r *recordSet) Next(ctx context.Context, req *chunk.Chunk) error {
+func (r *recordSet) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	row := r.getNext()
 	if row != nil {
