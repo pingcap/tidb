@@ -203,19 +203,26 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 		return nil, errors.Trace(err)
 	}
 
+	tidbPswProvided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "tidb-password" {
+			tidbPswProvided = true
+		}
+	})
+
 	if *readPsw {
+		if tidbPswProvided {
+			fmt.Fprintln(os.Stderr, "Warning: Both -tidb-password and -p are provided. "+
+				"For security reasons, the plaintext password provided by -tidb-password will be ignored.")
+		}
 		psw, err := readPassword("Enter password: ")
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		*tidbPsw = psw
-	} else {
-		fs.Visit(func(f *flag.Flag) {
-			if f.Name == "tidb-password" {
-				fmt.Fprintln(os.Stderr, "Warning: The direct use of plaintext password on the command line"+
-					" is insecure and will be removed in subsequent releases! Use \"-p\" instead.")
-			}
-		})
+	} else if tidbPswProvided {
+		fmt.Fprintln(os.Stderr, "Warning: The direct use of plaintext password on the command line"+
+			" is insecure and will be removed in subsequent releases! Use \"-p\" instead.")
 	}
 
 	if *printVersion {
