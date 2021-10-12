@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -192,11 +193,8 @@ func TestExpBackoffEstimation(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	var testDataMap = make(testdata.BookKeeper, 1)
-	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
-	defer testDataMap.GenerateOutputIfNeeded()
-	testData := testDataMap["integration_suite"]
-	testData.GetTestCases(t, &input, &output)
+	integrationSuiteData := statistics.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
 	inputLen := len(input)
 	// The test cases are:
 	// Query a = 1, b = 1, c = 1, d >= 3 and d <= 5 separately. We got 5, 3, 2, 3.
@@ -340,11 +338,8 @@ func TestNULLOnFullSampling(t *testing.T) {
 	for _, col := range statsTblT.Columns {
 		require.Equal(t, int64(3), col.NullCount)
 	}
-	var testDataMap = make(testdata.BookKeeper, 1)
-	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
-	defer testDataMap.GenerateOutputIfNeeded()
-	testData := testDataMap["integration_suite"]
-	testData.GetTestCases(t, &input, &output)
+	integrationSuiteData := statistics.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
 	// Check the topn and buckets contains no null values.
 	for i := 0; i < len(input); i++ {
 		testdata.OnRecord(func() {
