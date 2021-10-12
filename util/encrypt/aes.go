@@ -191,7 +191,7 @@ func AESEncryptWithOFB(plainStr []byte, key []byte, iv []byte) ([]byte, error) {
 
 // AESDecryptWithOFB decrypts data using AES with OFB mode.
 func AESDecryptWithOFB(cipherStr []byte, key []byte, iv []byte) ([]byte, error) {
-	return aesCryptWithCTR(cipherStr, key, iv)
+	return aesCryptWithOFB(cipherStr, key, iv)
 }
 
 func aesCryptWithCTR(str, key []byte, iv []byte) ([]byte, error) {
@@ -205,7 +205,7 @@ func aesCryptWithCTR(str, key []byte, iv []byte) ([]byte, error) {
 	return cryptStr, nil
 }
 
-// AESEncryptWithCTR decrypts data using AES with CTR mode.
+// AESEncryptWithCTR encrypts data using AES with CTR mode.
 func AESEncryptWithCTR(plainStr, key []byte, iv []byte) ([]byte, error) {
 	return aesCryptWithCTR(plainStr, key, iv)
 }
@@ -215,7 +215,7 @@ func AESDecryptWithCTR(cryptedStr, key []byte, iv []byte) ([]byte, error) {
 	return aesCryptWithCTR(cryptedStr, key, iv)
 }
 
-// AESEncryptWithCFB decrypts data using AES with CFB mode.
+// AESEncryptWithCFB encrypts data using AES with CFB mode.
 func AESEncryptWithCFB(cryptStr, key []byte, iv []byte) ([]byte, error) {
 	cb, err := aes.NewCipher(key)
 	if err != nil {
