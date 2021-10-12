@@ -570,24 +570,3 @@ func (s *pkgTestSuite) TestFilterTemporaryTableKeys(c *C) {
 	res := filterTemporaryTableKeys(vars, []kv.Key{tablecodec.EncodeTablePrefix(tableID), tablecodec.EncodeTablePrefix(42)})
 	c.Assert(res, HasLen, 1)
 }
-
-func (s *pkgTestSuite) TestDumpSingle(c *C) {
-	stmt, err := parser.New().ParseOneStmt("plan recreator dump explain select * from t", "", "")
-	c.Assert(err, IsNil)
-	pr, ok := stmt.(*ast.PlanRecreatorStmt)
-	c.Assert(ok, IsTrue)
-	info := PlanRecreatorSingleInfo{
-		ExecStmt: pr.Stmt,
-		Ctx:      mock.NewContext(),
-	}
-	path := filepath.Join(filepath.Join(domain.GetPlanReplayerDirName(), fmt.Sprintf("%v", os.Getpid())))
-	token, err := info.dumpSingle(path)
-	c.Assert(ok, IsNil)
-
-	reader, err := zip.OpenReader(filepath.Join(path, token))
-	c.Assert(err, IsNil)
-	defer reader.Close()
-	for _, file := range reader.File {
-		fmt.Println("[filename]", file.Name)
-	}
-}
