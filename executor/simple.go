@@ -1140,7 +1140,7 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET %n = %?, %n = %? WHERE %n = %? and %n = %?;`,
 		mysql.SystemDB, tableName,
-		usernameColumn, users.NewUser.Username, hostColumn, users.NewUser.Hostname,
+		usernameColumn, users.NewUser.Username, hostColumn, strings.ToLower(users.NewUser.Hostname),
 		usernameColumn, users.OldUser.Username, hostColumn, users.OldUser.Hostname)
 	_, err := sqlExecutor.ExecuteInternal(context.TODO(), sql.String())
 	return err

@@ -489,6 +489,13 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.MustExec(createUserSQL)
 	querySQL = `select user,host from mysql.user where user = 'userB';`
 	tk.MustQuery(querySQL).Check(testkit.Rows("userB demo.com"))
+
+	createUserSQL = `create user userC@localhost;`
+	tk.MustExec(createUserSQL)
+	renameUserSQL := `rename user 'userC'@'localhost' to 'userD'@'Demo.com';`
+	tk.MustExec(renameUserSQL)
+	querySQL = `select user,host from mysql.user where user = 'userD';`
+	tk.MustQuery(querySQL).Check(testkit.Rows("userD demo.com"))
 }
 
 func (s *testSuite3) TestSetPwd(c *C) {
