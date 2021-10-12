@@ -58,22 +58,31 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 13)) // 34 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
-	require.False(t, tk.HasPseudoStats("select * from t where a = 1"))
+	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 
 	tk.MustExec("insert into t values (1)") // 35 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
-	require.True(t, tk.HasPseudoStats("select * from t where a = 1"))
+	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 
 	tk.MustExec("analyze table t")
 
 	tk.MustExec("delete from t limit 24") // 11 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
-	require.False(t, tk.HasPseudoStats("select * from t where a = 1"))
+	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 
 	tk.MustExec("delete from t limit 1") // 10 rows
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
-	require.True(t, tk.HasPseudoStats("select * from t where a = 1"))
+	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
+}
+
+func hasPseudoStats(rows [][]interface{}) bool {
+	for i := range rows {
+		if strings.Contains(rows[i][4].(string), "stats:pseudo") {
+			return true
+		}
+	}
+	return false
 }
