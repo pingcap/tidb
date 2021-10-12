@@ -13,3 +13,5 @@ require (
 )
 
 replace github.com/pingcap/tidb => ../../
+
+replace github.com/pingcap/tidb/parser => ../../parser
