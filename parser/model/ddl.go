@@ -171,6 +171,11 @@ func (action ActionType) String() string {
 	return "none"
 }
 
+type HistoryInfoAffected struct {
+	DBInfo    *DBInfo
+	TableInfo *TableInfo
+}
+
 // HistoryInfo is used for binlog.
 type HistoryInfo struct {
 	SchemaVersion int64
@@ -194,6 +199,15 @@ func (h *HistoryInfo) AddDBInfo(schemaVer int64, dbInfo *DBInfo) {
 func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
 	h.SchemaVersion = schemaVer
 	h.TableInfo = tblInfo
+}
+
+// SetTableInfos is like AddTableInfo, but will add multiple table infos to the binlog.
+func (h *HistoryInfo) SetTableInfos(schemaVer int64, tblInfos []*TableInfo) {
+	h.SchemaVersion = schemaVer
+	h.MultipleTableInfos = make([]*TableInfo, len(tblInfos))
+	for i, info := range tblInfos {
+		h.MultipleTableInfos[i] = info
+	}
 }
 
 // Clean cleans history information.

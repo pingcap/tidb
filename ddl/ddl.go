@@ -150,6 +150,13 @@ type DDL interface {
 		onExist OnExist,
 		tryRetainID bool) error
 
+	// CreateTablesWithInfo is like CreateTablesWithInfo, but can handle multiple tables.
+	CreateTablesWithInfo(ctx sessionctx.Context,
+		schema model.CIStr,
+		info []*model.TableInfo,
+		onExist OnExist,
+		tryRetainID bool) error
+
 	// Start campaigns the owner and starts workers.
 	// ctxPool is used for the worker's delRangeManager and creates sessions.
 	Start(ctxPool *pools.ResourcePool) error
