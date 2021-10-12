@@ -16,6 +16,7 @@ package expression
 
 import (
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -317,6 +318,15 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 		if col.GetType().Hybrid() {
 			continue
 		}
+
+		// if code runs here after validEqualCond, the cond must be an eq ScalarFunction.
+		// only deterministic expression can propagation. e.g. [a = 'A'] if it use non-binary collation compare, a could be 'a', 'A' or 'a  '.
+		// we should forbid it propagation.
+		_, coll := cond.(*ScalarFunction).CharsetAndCollation(s.ctx)
+		if coll != charset.CollationBin {
+			continue
+		}
+
 		visited[i] = true
 		updated, foreverFalse := s.tryToUpdateEQList(col, con)
 		if foreverFalse {

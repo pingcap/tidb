@@ -234,21 +234,8 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		substituted := false
-		_, coll := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
 		for idx, arg := range v.GetArgs() {
 			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
-			if collate.NewCollationEnabled() {
-				// Make sure the collation used by the ScalarFunction isn't changed and its result collation is not weaker than the collation used by the ScalarFunction.
-				if changed {
-					changed = false
-					tmpArgs := make([]Expression, 0, len(v.GetArgs()))
-					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
-					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
-					if coll == newColl {
-						changed = checkCollationStrictness(coll, newFuncExpr.GetType().Collate)
-					}
-				}
-			}
 			refExprArr.Set(idx, changed, newFuncExpr)
 			if changed {
 				substituted = true
