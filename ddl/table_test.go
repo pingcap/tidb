@@ -355,6 +355,43 @@ func TestCreateTables(t *testing.T) {
 	c.Assert(t3, NotNil)
 }
 
+func (s *testTableSuite) TestCreateTables(c *C) {
+	d := s.d
+	ctx := testNewContext(d)
+
+	infos := []*model.TableInfo{}
+	genIDs, err := d.genGlobalIDs(3)
+	c.Assert(err, IsNil)
+	infos = append(infos, &model.TableInfo{
+		ID: genIDs[0],
+		Name: model.NewCIStr("s1"),
+	})
+	infos = append(infos, &model.TableInfo{
+		ID: genIDs[1],
+		Name: model.NewCIStr("s2"),
+	})
+	infos = append(infos, &model.TableInfo{
+		ID: genIDs[2],
+		Name: model.NewCIStr("s3"),
+	})
+
+	job := &model.Job{
+		SchemaID:   s.dbInfo.ID,
+		Type:       model.ActionCreateTables,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{infos},
+	}
+	err = d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+
+	t1 := testGetTable(c, d, s.dbInfo.ID, genIDs[0])
+	c.Assert(t1, NotNil)
+	t2 := testGetTable(c, d, s.dbInfo.ID, genIDs[1])
+	c.Assert(t2, NotNil)
+	t3 := testGetTable(c, d, s.dbInfo.ID, genIDs[2])
+	c.Assert(t3, NotNil)
+}
+
 func (s *testTableSuite) TestTable(c *C) {
 	d := s.d
 

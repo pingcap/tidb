@@ -156,9 +156,8 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
 
-	ids := []int64{}
 	args := []*model.TableInfo{}
-	err := job.DecodeArgs(&ids, &args)
+	err := job.DecodeArgs(&args)
 	if err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
@@ -167,8 +166,8 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 
 	stubJob := &*job
 	stubJob.Args = make([]interface{}, 1)
-	for i := range ids {
-		stubJob.TableID = ids[i]
+	for i := range args {
+		stubJob.TableID = args[i].ID
 		stubJob.Args[0] = args[i]
 		tbInfo, err := createTable(d, t, stubJob)
 		if err != nil {
@@ -185,11 +184,9 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
-	for i := range ids {
-		job.BinlogInfo.AddTableInfo(ver, args[i])
-	}
+	job.BinlogInfo.SetTableInfos(ver, args)
 
-	for i := range ids {
+	for i := range args {
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: args[i]})
 	}
 

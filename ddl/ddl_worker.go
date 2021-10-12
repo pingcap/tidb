@@ -989,19 +989,18 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	}
 	switch job.Type {
 	case model.ActionCreateTables:
-		tableIDs := []int64{}
 		tableInfos := []*model.TableInfo{}
-		err = job.DecodeArgs(&tableIDs, &tableInfos)
+		err = job.DecodeArgs(&tableInfos)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		diff.AffectedOpts = make([]*model.AffectedOption, len(tableIDs))
-		for i := range tableIDs {
+		diff.AffectedOpts = make([]*model.AffectedOption, len(tableInfos))
+		for i := range tableInfos {
 			diff.AffectedOpts[i] = &model.AffectedOption{
 				SchemaID:    job.SchemaID,
 				OldSchemaID: job.SchemaID,
-				TableID:     tableIDs[i],
-				OldTableID:  tableIDs[i],
+				TableID:     tableInfos[i].ID,
+				OldTableID:  tableInfos[i].ID,
 			}
 		}
 	case model.ActionTruncateTable:
