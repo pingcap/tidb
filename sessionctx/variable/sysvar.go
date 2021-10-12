@@ -355,6 +355,7 @@ func (sv *SysVar) checkDurationSystemVar(value string, vars *SessionVars) (strin
 		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
 	}
 	// Check for min/max violations
+	// Add test
 	if int64(d) < sv.MinValue {
 		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
 	}
