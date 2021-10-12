@@ -17,9 +17,10 @@ package executor
 import (
 	"archive/zip"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,16 +40,16 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// PlanRecreatorSingleExec represents a plan recreator executor.
-type PlanRecreatorSingleExec struct {
+// PlanReplayerSingleExec represents a plan replayer executor.
+type PlanReplayerSingleExec struct {
 	baseExecutor
-	info *PlanRecreatorSingleInfo
+	info *PlanReplayerSingleInfo
 
 	endFlag bool
 }
 
-// PlanRecreatorSingleInfo saves the information of plan recreator operation for single SQL statement.
-type PlanRecreatorSingleInfo struct {
+// PlanReplayerSingleInfo saves the information of plan replayer operation for single SQL statement.
+type PlanReplayerSingleInfo struct {
 	ExecStmt ast.StmtNode
 	Analyze  bool
 	Load     bool
@@ -87,13 +88,13 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 }
 
 // Next implements the Executor Next interface.
-func (e *PlanRecreatorSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.endFlag {
 		return nil
 	}
 	if e.info.ExecStmt == nil {
-		return errors.New("plan Recreator: sql is empty")
+		return errors.New("plan Replayer: sql is empty")
 	}
 	res, err := e.info.dumpSingle(filepath.Join(domain.GetPlanReplayerDirName(), fmt.Sprintf("%v", os.Getpid())))
 	if err != nil {
@@ -105,30 +106,35 @@ func (e *PlanRecreatorSingleExec) Next(ctx context.Context, req *chunk.Chunk) er
 }
 
 // Close implements the Executor Close interface.
-func (e *PlanRecreatorSingleExec) Close() error {
+func (e *PlanReplayerSingleExec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (e *PlanRecreatorSingleExec) Open(ctx context.Context) error {
+func (e *PlanReplayerSingleExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *PlanRecreatorSingleInfo) dumpSingle(path string) (string, error) {
+func (e *PlanReplayerSingleInfo) dumpSingle(path string) (string, error) {
 	// Create path
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
-		return "", errors.New("Plan Recreator: cannot create plan recreator path")
+		return "", errors.New("Plan Replayer: cannot create plan replayer path")
 	}
 
-	// Generate token and create zip file
+	// Generate key and create zip file
 	startTime := time.Now()
 	time := startTime.UnixNano()
-	key := rand.Int63()
-	fileName := fmt.Sprintf("recreator_single_%x_%v.zip", key, time)
+	b := make([]byte, 16)
+	_, err = rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+	key := base64.URLEncoding.EncodeToString(b)
+	fileName := fmt.Sprintf("replayer_single_%v_%v.zip", key, time)
 	zf, err := os.Create(filepath.Join(path, fileName))
 	if err != nil {
-		return "", errors.New("Plan Recreator: cannot create zip file")
+		return "", errors.New("Plan Replayer: cannot create zip file")
 	}
 
 	// Create zip writer
@@ -171,7 +177,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle(path string) (string, error) {
 	// Retrieve all tables
 	pairs, err := extractTableNames(e.ExecStmt, dbName.L)
 	if err != nil {
-		return "", errors.New(fmt.Sprintf("Plan Recreator: invalid SQL text, err: %v", err))
+		return "", errors.New(fmt.Sprintf("Plan Replayer: invalid SQL text, err: %v", err))
 	}
 
 	// Dump stats

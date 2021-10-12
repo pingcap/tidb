@@ -282,7 +282,7 @@ func (s *testSuiteP1) TestLoadStats(c *C) {
 	c.Assert(tk.ExecToErr("load stats ./xxx.json"), NotNil)
 }
 
-func (s *testSuiteP1) TestPlanRecreator(c *C) {
+func (s *testSuiteP1) TestPlanReplayer(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -9069,7 +9069,7 @@ func checkFileName(s string) bool {
 	return false
 }
 
-func (s *testSuiteWithData) TestPlanRecreatorDumpSingle(c *C) {
+func (s *testSuiteWithData) TestPlanReplayerDumpSingle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_dump_single")
