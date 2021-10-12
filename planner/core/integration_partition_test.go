@@ -21,9 +21,9 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"

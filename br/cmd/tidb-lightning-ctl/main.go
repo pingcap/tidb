@@ -116,7 +116,7 @@ func run() error {
 	}
 
 	if len(*cpRemove) != 0 {
-		return errors.Trace(checkpointRemove(ctx, cfg, *cpRemove))
+		return errors.Trace(CheckpointRemove(ctx, cfg, *cpRemove))
 	}
 	if len(*cpErrIgnore) != 0 {
 		return errors.Trace(checkpointErrorIgnore(ctx, cfg, *cpErrIgnore))
@@ -184,7 +184,7 @@ func fetchMode(ctx context.Context, cfg *config.Config, tls *common.TLS) error {
 	)
 }
 
-func checkpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
+func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
 	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)

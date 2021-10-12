@@ -22,10 +22,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"

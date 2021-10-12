@@ -18,8 +18,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
