@@ -86,12 +86,14 @@ const (
 	ActionDropPlacementPolicy           ActionType = 53
 	ActionAlterTablePartitionPolicy     ActionType = 54
 	ActionModifySchemaDefaultPlacement  ActionType = 55
+	ActionCreateTables                  ActionType = 56
 )
 
 var actionMap = map[ActionType]string{
 	ActionCreateSchema:                  "create schema",
 	ActionDropSchema:                    "drop schema",
 	ActionCreateTable:                   "create table",
+	ActionCreateTables:                  "create tables",
 	ActionDropTable:                     "drop table",
 	ActionAddColumn:                     "add column",
 	ActionDropColumn:                    "drop column",
