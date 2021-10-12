@@ -33,12 +33,12 @@ import (
 	"github.com/docker/go-units"
 	gomysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidbcfg "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/tikv/pd/server/api"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -129,10 +129,11 @@ type DBStore struct {
 	SQLMode          mysql.SQLMode `toml:"-" json:"-"`
 	MaxAllowedPacket uint64        `toml:"max-allowed-packet" json:"max-allowed-packet"`
 
-	DistSQLScanConcurrency     int `toml:"distsql-scan-concurrency" json:"distsql-scan-concurrency"`
-	BuildStatsConcurrency      int `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
-	IndexSerialScanConcurrency int `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
-	ChecksumTableConcurrency   int `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
+	DistSQLScanConcurrency     int               `toml:"distsql-scan-concurrency" json:"distsql-scan-concurrency"`
+	BuildStatsConcurrency      int               `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
+	IndexSerialScanConcurrency int               `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
+	ChecksumTableConcurrency   int               `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
+	Vars                       map[string]string `toml:"-" json:"vars"`
 }
 
 type Config struct {
