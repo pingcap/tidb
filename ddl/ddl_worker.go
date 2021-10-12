@@ -754,6 +754,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onModifySchemaDefaultPlacement(t, job)
 	case model.ActionCreateTable:
 		ver, err = onCreateTable(d, t, job)
+	case model.ActionCreateTables:
+		ver, err = onCreateTables(d, t, job)
 	case model.ActionRepairTable:
 		ver, err = onRepairTable(d, t, job)
 	case model.ActionCreateView:
@@ -978,6 +980,22 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		SchemaID: job.SchemaID,
 	}
 	switch job.Type {
+	case model.ActionCreateTables:
+		tableIDs := []int64{}
+		tableInfos := []*model.TableInfo{}
+		err = job.DecodeArgs(&tableIDs, &tableInfos)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.AffectedOpts = make([]*model.AffectedOption, len(tableIDs))
+		for i := range tableIDs {
+			diff.AffectedOpts[i] = &model.AffectedOption{
+				SchemaID:    job.SchemaID,
+				OldSchemaID: job.SchemaID,
+				TableID:     tableIDs[i],
+				OldTableID:  tableIDs[i],
+			}
+		}
 	case model.ActionTruncateTable:
 		// Truncate table has two table ID, should be handled differently.
 		err = job.DecodeArgs(&diff.TableID)
