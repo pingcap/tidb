@@ -118,31 +118,6 @@ const (
 	CoercibilityIgnorable Coercibility = 6
 )
 
-var (
-	// CollationStrictnessGroup group collation by strictness
-	CollationStrictnessGroup = map[string]int{
-		"utf8_general_ci":        1,
-		"utf8mb4_general_ci":     1,
-		"utf8_unicode_ci":        2,
-		"utf8mb4_unicode_ci":     2,
-		charset.CollationASCII:   3,
-		charset.CollationLatin1:  3,
-		charset.CollationUTF8:    3,
-		charset.CollationUTF8MB4: 3,
-		charset.CollationBin:     4,
-	}
-
-	// CollationStrictness indicates the strictness of comparison of the collation. The unequal order in a weak collation also holds in a strict collation.
-	// For example, if a != b in a weak collation(e.g. general_ci), then there must be a != b in a strict collation(e.g. _bin).
-	// collation group id in value is stricter than collation group id in key
-	CollationStrictness = map[int][]int{
-		1: {3, 4},
-		2: {3, 4},
-		3: {4},
-		4: {},
-	}
-)
-
 // The Repertoire of a character set is the collection of characters in the set.
 // See https://dev.mysql.com/doc/refman/8.0/en/charset-repertoire.html.
 // Only String expression has Repertoire, for non-string expression, it does not matter what the value it is.
