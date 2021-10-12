@@ -98,6 +98,7 @@ func TestT(t *testing.T) {
 		conf.Log.SlowThreshold = 30000 // 30s
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
 	tmpDir := config.GetGlobalConfig().TempStoragePath
@@ -8981,4 +8982,16 @@ func (s *testSuite) TestIssue25447(c *C) {
 	tk.MustExec("create table t2(a int , b varchar(8) GENERATED ALWAYS AS (c) VIRTUAL, c varchar(8), PRIMARY KEY (a))")
 	tk.MustExec("insert into t2(a) values(1)")
 	tk.MustQuery("select /*+ tidb_inlj(t2) */ t2.b, t1.b from t1 join t2 ON t2.a=t1.a").Check(testkit.Rows("<nil> 1"))
+}
+
+func (s *testSuite) TestCTEWithIndexLookupJoinDeadLock(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int(11) default null,b int(11) default null,key b (b),key ba (b))")
+	tk.MustExec("create table t1 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
+	tk.MustExec("create table t2 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
+	// It's easy to reproduce this problem in 30 times execution of IndexLookUpJoin.
+	for i := 0; i < 30; i++ {
+		tk.MustExec("with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;")
+	}
 }

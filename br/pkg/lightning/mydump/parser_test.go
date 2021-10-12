@@ -44,7 +44,8 @@ func (s *testMydumpParserSuite) runTestCases(c *C, mode mysql.SQLMode, blockBufS
 			e := parser.ReadRow()
 			comment := Commentf("input = %q, row = %d, err = %s", tc.input, i+1, errors.ErrorStack(e))
 			c.Assert(e, IsNil, comment)
-			c.Assert(parser.LastRow(), DeepEquals, mydump.Row{RowID: int64(i) + 1, Row: row}, comment)
+			c.Assert(parser.LastRow().RowID, DeepEquals, int64(i)+1)
+			c.Assert(parser.LastRow().Row, DeepEquals, row)
 		}
 		c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF, Commentf("input = %q", tc.input))
 	}
@@ -75,6 +76,7 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 			types.NewIntDatum(-2),
 			types.NewUintDatum(3),
 		},
+		Length: 62,
 	})
 	c.Assert(parser.Columns(), DeepEquals, []string{"columns", "more", "columns"})
 	offset, rowID := parser.Pos()
@@ -89,6 +91,7 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 			types.NewStringDatum("5."),
 			types.NewUintDatum(6),
 		},
+		Length: 6,
 	})
 	c.Assert(parser.Columns(), DeepEquals, []string{"columns", "more", "columns"})
 	offset, rowID = parser.Pos()
@@ -103,6 +106,7 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 			types.NewUintDatum(8),
 			types.NewUintDatum(9),
 		},
+		Length: 42,
 	})
 	c.Assert(parser.Columns(), DeepEquals, []string{"x", "y", "z"})
 	offset, rowID = parser.Pos()
@@ -121,6 +125,7 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 			types.NewUintDatum(14),
 			types.NewStringDatum(")"),
 		},
+		Length: 49,
 	})
 	c.Assert(parser.Columns(), IsNil)
 	offset, rowID = parser.Pos()

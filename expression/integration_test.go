@@ -7026,6 +7026,22 @@ func (s *testIntegrationSerialSuite) TestIssue16668(c *C) {
 	tk.MustQuery("select count(distinct(b)) from tx").Check(testkit.Rows("4"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue27091(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tx")
+	tk.MustExec("CREATE TABLE `tx` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL, `c` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL)")
+	tk.MustExec("insert into tx values (1, 'a', 'a'), (2, 'A ', 'a '), (3, 'A', 'A'), (4, 'a ', 'A ')")
+	tk.MustQuery("select count(distinct b) from tx").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(distinct c) from tx").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(distinct b, c) from tx where a < 3").Check(testkit.Rows("1"))
+	tk.MustQuery("select approx_count_distinct(b) from tx").Check(testkit.Rows("1"))
+	tk.MustQuery("select approx_count_distinct(c) from tx").Check(testkit.Rows("2"))
+	tk.MustQuery("select approx_count_distinct(b, c) from tx where a < 3").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -10111,4 +10127,42 @@ func (s *testIntegrationSuite) TestIssue26958(c *C) {
 	tk.MustExec("insert into t2 values (1), (2), (3),(1),(2),(3);")
 	tk.MustQuery("select \n(select count(distinct c_int) from t2 where c_int >= t1.c_int) c1, \n(select count(distinct c_int) from t2 where c_int >= t1.c_int) c2\nfrom t1 group by c_int;\n").
 		Check(testkit.Rows("3 3", "2 2", "1 1"))
+}
+
+func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a integer)")
+	tk.MustExec("insert into t1 values (0), (1), (2), (3)")
+	tk.MustExec("create table t2 (a integer, b integer)")
+	tk.MustExec("insert into t2 values (0,1), (1,1), (2,1), (3,1)")
+	tk.MustQuery("select t1.* from t1 left join t2 on t2.a = t1.a where t1.a = ifnull(t2.b, 0)").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (i1 integer, c1 char)")
+	tk.MustExec("insert into t1 values (2, 'a'), (1, 'b'), (3, 'c'), (0, null);")
+	tk.MustExec("create table t2 (i2 integer, c2 char, f2 float)")
+	tk.MustExec("insert into t2 values (0, 'c', null), (1, null, 0.1), (3, 'b', 0.01), (2, 'q', 0.12), (null, 'a', -0.1), (null, null, null)")
+	tk.MustQuery("select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2))").Check(testkit.Rows("1 <nil> 0.1"))
+}
+
+func (s *testIntegrationSuite) TestIssue27233(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (\n  `COL1` tinyint(45) NOT NULL,\n  `COL2` tinyint(45) NOT NULL,\n  PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into t values(122,100),(124,-22),(124,34),(127,103);")
+	tk.MustQuery("SELECT col2 FROM t AS T1 WHERE ( SELECT count(DISTINCT COL1, COL2) FROM t AS T2 WHERE T2.COL1 > T1.COL1  ) > 2 ;").
+		Check(testkit.Rows("100"))
+}
+
+func (s *testIntegrationSuite) TestIssue27610(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists PK_TCOLLATION3966STROBJSTROBJ;`)
+	tk.MustExec("CREATE TABLE `PK_TCOLLATION3966STROBJSTROBJ` (\n  `COL1` enum('ll','aa','bb','cc','dd','ee') COLLATE utf8_general_ci NOT NULL,\n  `COL2` varchar(20) COLLATE utf8_general_ci DEFAULT NULL,\n  PRIMARY KEY (`COL1`) /*T![clustered_index] CLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
+	tk.MustExec(`insert into PK_TCOLLATION3966STROBJSTROBJ values("ee", "tttt");`)
+	tk.MustQuery("SELECT col1, COL2 FROM PK_TCOLLATION3966STROBJSTROBJ WHERE COL1 IN ('notexist','6') and col2 not in (\"abcd\");").
+		Check(testkit.Rows())
 }
