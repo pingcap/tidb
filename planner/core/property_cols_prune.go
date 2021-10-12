@@ -167,18 +167,6 @@ func (p *LogicalProjection) PreparePossibleProperties(schema *expression.Schema,
 	return newProperties
 }
 
-func clonePossibleProperties(props [][]*expression.Column) [][]*expression.Column {
-	res := make([][]*expression.Column, len(props))
-	for i, prop := range props {
-		clonedProp := make([]*expression.Column, len(prop))
-		for j, col := range prop {
-			clonedProp[j] = col.Clone().(*expression.Column)
-		}
-		res[i] = clonedProp
-	}
-	return res
-}
-
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalJoin) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	leftProperties := childrenProperties[0]
