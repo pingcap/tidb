@@ -1532,14 +1532,21 @@ func (s *testSerialSuite) TestPartitionSpillingAgg(c *C) {
 	partition3 := generatePartN(3, 10000)
 	partitions := make([]string, 0, len(partition0)+len(partition1)+len(partition2)+len(partition3))
 	partitions = append(partitions, "0.0000")
+	m := make(map[int64]bool)
 	// Test only some partitions may be spilled.
 	for _, i := range partition1 {
-		sql += fmt.Sprintf(",(%v)", i)
-		partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
+		if _, ok := m[i]; !ok {
+			sql += fmt.Sprintf(",(%v)", i)
+			partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
+			m[i] = true
+		}
 	}
 	for _, i := range partition3 {
-		sql += fmt.Sprintf(",(%v)", i)
-		partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
+		if _, ok := m[i]; !ok {
+			sql += fmt.Sprintf(",(%v)", i)
+			partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
+			m[i] = true
+		}
 	}
 	sort.Strings(partitions)
 	sql += ";"
@@ -1569,19 +1576,32 @@ func (s *testSerialSuite) TestPartitionSpillingAgg(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	sql = "insert into t values (0)"
+	m = make(map[int64]bool)
 	for _, i := range partition1 {
-		sql += fmt.Sprintf(",(%v)", i)
+		if _, ok := m[i]; !ok {
+			sql += fmt.Sprintf(",(%v)", i)
+			m[i] = true
+		}
 	}
 	for _, i := range partition3 {
-		sql += fmt.Sprintf(",(%v)", i)
+		if _, ok := m[i]; !ok {
+			sql += fmt.Sprintf(",(%v)", i)
+			m[i] = true
+		}
 	}
 	for _, i := range partition0 {
-		sql += fmt.Sprintf(",(%v)", i)
-		partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
+		if _, ok := m[i]; !ok {
+			sql += fmt.Sprintf(",(%v)", i)
+			partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
+			m[i] = true
+		}
 	}
 	for _, i := range partition2 {
-		sql += fmt.Sprintf(",(%v)", i)
-		partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
+		if _, ok := m[i]; !ok {
+			sql += fmt.Sprintf(",(%v)", i)
+			partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
+			m[i] = true
+		}
 	}
 	sort.Strings(partitions)
 	sql += ";"
