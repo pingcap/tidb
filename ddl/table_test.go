@@ -415,15 +415,15 @@ func TestCreateTables(t *testing.T) {
 	require.NoError(t, err)
 
 	infos = append(infos, &model.TableInfo{
-		ID: genIDs[0],
+		ID:   genIDs[0],
 		Name: model.NewCIStr("s1"),
 	})
 	infos = append(infos, &model.TableInfo{
-		ID: genIDs[1],
+		ID:   genIDs[1],
 		Name: model.NewCIStr("s2"),
 	})
 	infos = append(infos, &model.TableInfo{
-		ID: genIDs[2],
+		ID:   genIDs[2],
 		Name: model.NewCIStr("s3"),
 	})
 
