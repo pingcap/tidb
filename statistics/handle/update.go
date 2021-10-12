@@ -26,18 +26,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -901,32 +899,6 @@ func (h *Handle) getAutoAnalyzeParameters() map[string]string {
 	return parameters
 }
 
-func (h *Handle) getAutoAnalyzeOpts(tid int64) (string, error) {
-	ctx := context.Background()
-	var optBuilder strings.Builder
-	for _, optName := range ast.AnalyzeOptionString {
-		rows, _, err := h.execRestrictedSQL(ctx, "select opt_val from mysql.analyze_opt where tid=%? and opt_key=%?", tid, optName)
-		if err != nil {
-			return "", err
-		}
-		if len(rows) > 0 {
-			optVal := rows[0].GetString(0)
-			if len(optVal) > 0 {
-				if optBuilder.Len() == 0 {
-					optBuilder.WriteString(" WITH ")
-				} else {
-					optBuilder.WriteString(", ")
-				}
-				optBuilder.WriteString(optVal)
-				optBuilder.WriteString(" ")
-				optBuilder.WriteString(optName)
-				optBuilder.WriteString(" ")
-			}
-		}
-	}
-	return optBuilder.String(), nil
-}
-
 func parseAutoAnalyzeRatio(ratio string) float64 {
 	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
 	if err != nil {
@@ -970,15 +942,8 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	}
 	pruneMode := h.CurrentPruneMode()
 	for _, db := range dbs {
-		if util.IsMemOrSysDB(strings.ToLower(db)) {
-			continue
-		}
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
-			analyzeOpts, err := h.getAutoAnalyzeOpts(tbl.Meta().ID)
-			if err != nil {
-				logutil.BgLogger().Error("Fail to load analyze options and fallback to global variables.", zap.Error(err))
-			}
 			tblInfo := tbl.Meta()
 			if tblInfo.IsView() {
 				continue
@@ -987,7 +952,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
 				sql := "analyze table %n.%n"
-				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, analyzeOpts, db, tblInfo.Name.O)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
 					// analyze one table at a time to let it get the freshest parameters.
 					// others will be analyzed next round which is just 3s later.
@@ -1005,7 +970,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			for _, def := range pi.Definitions {
 				sql := "analyze table %n.%n partition %n"
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, analyzeOpts, db, tblInfo.Name.O, def.Name.O)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
 					return true
 				}
@@ -1015,7 +980,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	return false
 }
 
-func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string, analyzeOpts string, params ...interface{}) bool {
+func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string, params ...interface{}) bool {
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 		return false
 	}
@@ -1027,12 +992,12 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", escaped), zap.String("reason", reason))
 		tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		h.execAutoAnalyze(tableStatsVer, sql+analyzeOpts, params...)
+		h.execAutoAnalyze(tableStatsVer, sql, params...)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
-			sqlWithIdx := sql + "index %n" + analyzeOpts
+			sqlWithIdx := sql + "index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlexec.EscapeSQL(sql, params...)
 			if err != nil {
