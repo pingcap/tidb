@@ -220,17 +220,24 @@ func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 	if g.Prop.Stats != nil {
 		return nil
 	}
+	// 1. Recursively fill the stats of all the child groups.
+	for iter := g.Equivalents.Front(); iter != nil; iter = iter.Next() {
+		expr := iter.Value.(*memo.GroupExpr)
+		for _, childGroup := range expr.Children {
+			err = opt.fillGroupStats(childGroup)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	// 2. Set the stats of the current Group.
 	// All GroupExpr in a Group should share same LogicalProperty, so just use
 	// first one to compute Stats property.
-	elem := g.Equivalents.Front()
-	expr := elem.Value.(*memo.GroupExpr)
+	expr := g.GetFirstGroupExpr()
 	childStats := make([]*property.StatsInfo, len(expr.Children))
 	childSchema := make([]*expression.Schema, len(expr.Children))
 	for i, childGroup := range expr.Children {
-		err = opt.fillGroupStats(childGroup)
-		if err != nil {
-			return err
-		}
 		childStats[i] = childGroup.Prop.Stats
 		childSchema[i] = childGroup.Prop.Schema
 	}
@@ -243,6 +250,10 @@ func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 func (opt *Optimizer) onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.PhysicalPlan, float64, error) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
+	}
+	err := opt.fillGroupStats(g)
+	if err != nil {
+		return nil, 0, err
 	}
 	preparePossibleProperties(g, make(map[*memo.Group][][]*expression.Column))
 	// TODO replace MaxFloat64 costLimit by variable from sctx, or other sources.

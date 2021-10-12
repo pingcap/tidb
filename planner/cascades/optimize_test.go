@@ -49,7 +49,10 @@ func TestImplGroupZeroCost(t *testing.T) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
-	impl, err := NewOptimizer().implGroup(rootGroup, prop, 0.0)
+	opt := NewOptimizer()
+	err = opt.fillGroupStats(rootGroup)
+	require.Nil(t, err)
+	impl, err := opt.implGroup(rootGroup, prop, 0.0)
 	require.NoError(t, err)
 	require.Nil(t, impl)
 }
