@@ -80,7 +80,7 @@ func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo
 // GetEnforceCost calculates cost of sort operator.
 func (e *OrderEnforcer) GetEnforceCost(g *memo.Group) float64 {
 	// We need a SessionCtx to calculate the cost of a sort.
-	sctx := g.Equivalents.Front().Value.(*memo.GroupExpr).ExprNode.SCtx()
+	sctx := g.GetFirstGroupExpr().ExprNode.SCtx()
 	sort := plannercore.PhysicalSort{}.Init(sctx, g.Prop.Stats, 0, nil)
 	cost := sort.GetCost(g.Prop.Stats.RowCount, g.Prop.Schema)
 	return cost

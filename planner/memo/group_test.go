@@ -35,7 +35,7 @@ func TestNewGroup(t *testing.T) {
 	g := NewGroupWithSchema(expr, expression.NewSchema())
 
 	require.Equal(t, 1, g.Equivalents.Len())
-	require.Equal(t, expr, g.Equivalents.Front().Value.(*GroupExpr))
+	require.Equal(t, expr, g.GetFirstGroupExpr())
 	require.Len(t, g.Fingerprints, 1)
 	require.False(t, g.Explored(0))
 }
