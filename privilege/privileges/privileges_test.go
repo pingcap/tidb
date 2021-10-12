@@ -26,11 +26,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -2461,7 +2461,7 @@ func TestPlacementPolicyStmt(t *testing.T) {
 	defer clean()
 	se := newSession(t, store, dbName)
 	mustExec(t, se, "drop placement policy if exists x")
-	createStmt := "create placement policy x PRIMARY_REGION=\"cn-east-1\" "
+	createStmt := "create placement policy x PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1\""
 	dropStmt := "drop placement policy if exists x"
 
 	// high privileged user setting password for other user (passes)
@@ -2499,6 +2499,7 @@ func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+
 	defer func() {
 		require.True(t, tk.Session().Auth(&auth.UserIdentity{
 			Username: "root",
@@ -2510,11 +2511,11 @@ func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
 	}()
 	tk.MustExec("CREATE DATABASE placement_rule_db")
 	tk.MustExec("USE placement_rule_db")
-	tk.MustExec(`CREATE TABLE placement_rule_table_se (a int) PRIMARY_REGION="se"`)
-	tk.MustExec(`CREATE TABLE placement_rule_table_nl (a int) PRIMARY_REGION="nl"`)
+	tk.MustExec(`CREATE TABLE placement_rule_table_se (a int) PRIMARY_REGION="se" REGIONS="se,nl"`)
+	tk.MustExec(`CREATE TABLE placement_rule_table_nl (a int) PRIMARY_REGION="nl" REGIONS="se,nl"`)
 	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
-		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl       0 0",
-		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se       0 0"))
+		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl se,nl      0 0",
+		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
 	tk.MustExec("CREATE USER placement_rule_user_schema")
 	tk.MustExec("CREATE USER placement_rule_user_table")
 	tk.MustExec("GRANT SELECT ON placement_rule_db.placement_rule_table_se TO placement_rule_user_table")
@@ -2529,7 +2530,7 @@ func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
 		Username: "placement_rule_user_table",
 		Hostname: "somehost",
 	}, nil, nil))
-	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows("<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se       0 0"))
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows("<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
 
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{
 		Username: "root",
@@ -2541,6 +2542,30 @@ func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
 		Hostname: "somehost",
 	}, nil, nil))
 	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
-		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl       0 0",
-		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se       0 0"))
+		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl se,nl      0 0",
+		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
+}
+
+func TestGrantCreateTmpTables(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE create_tmp_table_db")
+	tk.MustExec("USE create_tmp_table_db")
+	tk.MustExec("CREATE USER u1")
+	tk.MustExec("CREATE TABLE create_tmp_table_table (a int)")
+	tk.MustExec("GRANT CREATE TEMPORARY TABLES on create_tmp_table_db.* to u1")
+	tk.MustExec("GRANT CREATE TEMPORARY TABLES on *.* to u1")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
+		`GRANT CREATE TEMPORARY TABLES ON *.* TO 'u1'@'%'`,
+		`GRANT CREATE TEMPORARY TABLES ON create_tmp_table_db.* TO 'u1'@'%'`))
+	tk.MustExec("DROP USER u1")
+	tk.MustExec("DROP DATABASE create_tmp_table_db")
 }

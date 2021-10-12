@@ -22,10 +22,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -58,12 +58,10 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 			},
 		}
 	}
-	failpoint.Inject("assertRequestBuilderStalenessOption", func(val failpoint.Value) {
+	failpoint.Inject("assertRequestBuilderReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
-		if len(assertScope) > 0 {
-			if builder.IsStaleness && assertScope != builder.ReadReplicaScope {
-				panic("request builder get staleness option fail")
-			}
+		if builder.ReplicaRead.IsClosestRead() && assertScope != builder.ReadReplicaScope {
+			panic("request builder get staleness option fail")
 		}
 	})
 	err := builder.verifyTxnScope()

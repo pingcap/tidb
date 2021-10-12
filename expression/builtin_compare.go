@@ -18,10 +18,10 @@ import (
 	"math"
 	"strings"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -1210,8 +1210,8 @@ func GetCmpFunction(ctx sessionctx.Context, lhs, rhs Expression) CompareFunc {
 	case types.ETDecimal:
 		return CompareDecimal
 	case types.ETString:
-		_, dstCollation, _ := CheckAndDeriveCollationFromExprs(ctx, "", types.ETInt, lhs, rhs)
-		return genCompareString(dstCollation)
+		coll, _ := CheckAndDeriveCollationFromExprs(ctx, "", types.ETInt, lhs, rhs)
+		return genCompareString(coll.Collation)
 	case types.ETDuration:
 		return CompareDuration
 	case types.ETDatetime, types.ETTimestamp:
@@ -1369,7 +1369,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 // `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`. It also handles comparing year type
 // with int constant if the int constant falls into a sensible year representation.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
-	if ContainMutableConst(ctx, args) {
+	if MaybeOverOptimized4PlanCache(ctx, args) {
 		return args
 	}
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()

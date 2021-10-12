@@ -30,17 +30,17 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -761,8 +761,8 @@ type SessionVars struct {
 	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
 	ConnectionInfo *ConnectionInfo
 
-	// use noop funcs or not
-	EnableNoopFuncs bool
+	// NoopFuncsMode allows OFF/ON/WARN values as 0/1/2.
+	NoopFuncsMode int
 
 	// StartTime is the start time of the last query.
 	StartTime time.Time
@@ -1149,7 +1149,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		enableIndexMerge:            false,
-		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
+		NoopFuncsMode:               TiDBOptOnOffWarn(DefTiDBEnableNoopFuncs),
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
@@ -1976,6 +1976,8 @@ const (
 	SlowLogExecRetryTime = "Exec_retry_time"
 	// SlowLogBackoffDetail is the detail of backoff.
 	SlowLogBackoffDetail = "Backoff_Detail"
+	// SlowLogResultRows is the row count of the SQL result.
+	SlowLogResultRows = "Result_rows"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -2010,6 +2012,7 @@ type SlowQueryLogItems struct {
 	WriteSQLRespTotal time.Duration
 	ExecRetryCount    uint
 	ExecRetryTime     time.Duration
+	ResultRows        int64
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -2172,6 +2175,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(logItems.PDTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(logItems.BackoffTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogWriteSQLRespTotal, strconv.FormatFloat(logItems.WriteSQLRespTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)

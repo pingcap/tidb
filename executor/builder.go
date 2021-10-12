@@ -28,9 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -39,6 +36,9 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1644,8 +1644,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &stmtSummaryTableRetriever{
-					table:   v.Table,
-					columns: v.Columns,
+					table:     v.Table,
+					columns:   v.Columns,
+					extractor: v.Extractor.(*plannercore.StatementsSummaryExtractor),
 				},
 			}
 		case strings.ToLower(infoschema.TableColumns):
@@ -4397,8 +4398,14 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 		startTS:      startTS,
 	}
 
-	if v.TableInfo.Meta().TempTableType != model.TempTableNone {
-		e.sampler = &emptySampler{}
+	tblInfo := v.TableInfo.Meta()
+	if tblInfo.TempTableType != model.TempTableNone {
+		if tblInfo.TempTableType == model.TempTableGlobal {
+			e.sampler = &emptySampler{}
+		} else {
+			b.err = errors.New("TABLESAMPLE clause can not be applied to local temporary tables")
+			return nil
+		}
 	} else if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
 		e.sampler = newTableRegionSampler(
 			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),
