@@ -17,7 +17,7 @@ package label
 import (
 	"testing"
 
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
