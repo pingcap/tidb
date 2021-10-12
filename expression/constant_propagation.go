@@ -433,6 +433,15 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 		if !s.outerSchema.Contains(col) {
 			continue
 		}
+
+		// if code runs here after validEqualCond, the cond must be an eq ScalarFunction.
+		// only deterministic expression can propagation. e.g. [a = 'A'] if it use non-binary collation compare, a could be 'a', 'A' or 'a  '.
+		// we should forbid it propagation.
+		_, coll := cond.(*ScalarFunction).CharsetAndCollation(s.ctx)
+		if coll != charset.CollationBin {
+			continue
+		}
+
 		visited[i+condsOffset] = true
 		updated, foreverFalse := s.tryToUpdateEQList(col, con)
 		if foreverFalse {
