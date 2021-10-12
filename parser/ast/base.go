@@ -14,7 +14,7 @@
 package ast
 
 import (
-	"github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/parser/types"
 )
 
 // node is the struct implements Node interface except for Accept method.
