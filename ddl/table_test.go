@@ -363,15 +363,15 @@ func (s *testTableSuite) TestCreateTables(c *C) {
 	genIDs, err := d.genGlobalIDs(3)
 	c.Assert(err, IsNil)
 	infos = append(infos, &model.TableInfo{
-		ID: genIDs[0],
+		ID:   genIDs[0],
 		Name: model.NewCIStr("s1"),
 	})
 	infos = append(infos, &model.TableInfo{
-		ID: genIDs[1],
+		ID:   genIDs[1],
 		Name: model.NewCIStr("s2"),
 	})
 	infos = append(infos, &model.TableInfo{
-		ID: genIDs[2],
+		ID:   genIDs[2],
 		Name: model.NewCIStr("s3"),
 	})
 
