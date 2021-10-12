@@ -398,7 +398,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		_, err = partialFunc.UpdatePartialResult(ctx, []chunk.Row{row}, partialResult)
+		_, err = partialFunc.UpdatePartialResult(ctx, []chunk.Row{row}, partialResult, false)
 		require.NoError(t, err)
 	}
 	p.messUpChunk(srcChk)
@@ -424,7 +424,7 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	iter.Begin()
 	iter.Next()
 	for row := iter.Next(); row != iter.End(); row = iter.Next() {
-		_, err = partialFunc.UpdatePartialResult(ctx, []chunk.Row{row}, partialResult)
+		_, err = partialFunc.UpdatePartialResult(ctx, []chunk.Row{row}, partialResult, false)
 		require.NoError(t, err)
 	}
 	p.messUpChunk(srcChk)
@@ -744,7 +744,7 @@ func testAggFunc(t *testing.T, p aggTest) {
 
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		_, err = finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr)
+		_, err = finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr, false)
 		require.NoError(t, err)
 	}
 	p.messUpChunk(srcChk)
@@ -780,14 +780,14 @@ func testAggFunc(t *testing.T, p aggTest) {
 	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		_, err = finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr)
+		_, err = finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr, false)
 		require.NoError(t, err)
 	}
 	p.messUpChunk(srcChk)
 	srcChk = p.genSrcChk()
 	iter = chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		_, err = finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr)
+		_, err = finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr, false)
 		require.NoError(t, err)
 	}
 	p.messUpChunk(srcChk)
