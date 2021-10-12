@@ -223,7 +223,8 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagSnapshot, "", "Snapshot position (uint64 or MySQL style string timestamp). Valid only when consistency=snapshot")
 	flags.BoolP(flagNoViews, "W", true, "Do not dump views")
 	flags.String(flagStatusAddr, ":8281", "dumpling API server and pprof addr")
-	flags.Uint64P(flagRows, "r", UnspecifiedSize, "Split table into chunks of this many rows, default unlimited")
+	flags.Uint64P(flagRows, "r", UnspecifiedSize, "If specified, dumpling will split table into chunks and concurrently dump them to different files to improve efficiency. For TiDB v3.0+, specify this will make dumpling split table with each file one TiDB region(no matter how many rows is).\n"+
+		"If not specified, dumpling will dump table without inner-concurrency which could be relatively slow. default unlimited")
 	flags.String(flagWhere, "", "Dump only selected records")
 	flags.Bool(flagEscapeBackslash, true, "use backslash to escape special characters")
 	flags.String(flagFiletype, "", "The type of export file (sql/csv)")
