@@ -162,7 +162,7 @@ func TestCMSketchCoding(t *testing.T) {
 	}
 	bytes, err := EncodeCMSketchWithoutTopN(lSketch)
 	require.NoError(t, err)
-	require.Equal(t, 61457, len(bytes))
+	require.Len(t, bytes, 61457)
 	rSketch, _, err := DecodeCMSketchAndTopN(bytes, nil)
 	require.NoError(t, err)
 	require.True(t, lSketch.Equal(rSketch))
@@ -304,7 +304,7 @@ func TestCMSketchCodingTopN(t *testing.T) {
 
 	bytes, err := EncodeCMSketchWithoutTopN(lSketch)
 	require.NoError(t, err)
-	require.Equal(t, 61457, len(bytes))
+	require.Len(t, bytes, 61457)
 	rSketch, _, err := DecodeCMSketchAndTopN(bytes, rows)
 	require.NoError(t, err)
 	require.True(t, lSketch.Equal(rSketch))
