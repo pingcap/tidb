@@ -319,6 +319,15 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 		if col.GetType().Hybrid() {
 			continue
 		}
+
+		// The cond must be eq ScalarFunction if the program run here.
+		// Only the deterministic expression can propagation. e.g. [a = 'A'] if it use non-binary collation to compare, a could be 'a' or 'A', or 'a  ',
+		// we should forbid its propagation.
+		_, coll := cond.(*ScalarFunction).CharsetAndCollation(s.ctx)
+		if !isBinCollation(coll) && coll != charset.CollationBin {
+			continue
+		}
+
 		visited[i] = true
 		updated, foreverFalse := s.tryToUpdateEQList(col, con)
 		if foreverFalse {
@@ -426,6 +435,15 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 		if !s.outerSchema.Contains(col) {
 			continue
 		}
+
+		// The cond must be eq ScalarFunction if the program run here.
+		// Only the deterministic expression can propagation. e.g. [a = 'A'] if it use non-binary collation to compare, a could be 'a' or 'A', or 'a  ',
+		// we should forbid its propagation.
+		_, coll := cond.(*ScalarFunction).CharsetAndCollation(s.ctx)
+		if !isBinCollation(coll) && coll != charset.CollationBin {
+			continue
+		}
+
 		visited[i+condsOffset] = true
 		updated, foreverFalse := s.tryToUpdateEQList(col, con)
 		if foreverFalse {

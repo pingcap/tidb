@@ -45,10 +45,10 @@
         "SQL": "select * from t t1 join t t2 on t1.a = t2.a where t1.a = '4' and (t2.b, t2.c) in ((1,1),(2,2))",
         "Plan": [
           "Projection 0.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.a, test.t.b, test.t.c, test.t.d",
-          "└─HashJoin 0.00 root  CARTESIAN inner join",
-          "  ├─Selection(Build) 0.00 root  or(and(eq(test.t.b, 1), eq(test.t.c, 1)), and(eq(test.t.b, 2), eq(test.t.c, 2)))",
-          "  │ └─Point_Get 1.00 root table:t, index:PRIMARY(a) ",
-          "  └─Point_Get(Probe) 1.00 root table:t, index:PRIMARY(a) "
+          "└─MergeJoin 0.00 root  inner join, left key:test.t.a, right key:test.t.a",
+          "  ├─Point_Get(Build) 1.00 root table:t, index:PRIMARY(a) ",
+          "  └─Selection(Probe) 0.00 root  or(and(eq(test.t.b, 1), eq(test.t.c, 1)), and(eq(test.t.b, 2), eq(test.t.c, 2)))",
+          "    └─Point_Get 1.00 root table:t, index:PRIMARY(a) "
         ],
         "Res": [
           "4 1 1 4 4 1 1 4"
