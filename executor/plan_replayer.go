@@ -18,7 +18,6 @@ import (
 	"archive/zip"
 	"context"
 	"crypto/md5" // #nosec G501
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/rand"
