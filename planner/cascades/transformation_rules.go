@@ -1662,11 +1662,9 @@ func NewRuleEliminateAgg() Transformation {
 }
 
 func (r *EliminateAgg) Match(expr *memo.ExprIter) bool {
-	// Use appliedRuleSet in GroupExpr to avoid re-apply rules.
-	if expr.GetExpr().HasAppliedRule(r) {
-		return false
+	if expr.Children != nil && len(expr.Children) > 0 {
+		expr.Children[0].Group.BuildKeyInfo()
 	}
-
 	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 	for _, af := range agg.AggFuncs {
 		// TODO(issue #9968): same with `tryToEliminateAggregation()`
@@ -1680,44 +1678,24 @@ func (r *EliminateAgg) Match(expr *memo.ExprIter) bool {
 	}
 
 	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
-	coveredByUniqueKey := false
-
-	if agg.Children() == nil || len(agg.Children()) == 0 {
-		return false
-	}
-	// TODO: there is problem that how to get the schema?
-	for _, key := range agg.Children()[0].Schema().Keys {
+	for _, key := range expr.Children[0].Group.Prop.Schema.Keys {
 		if schemaByGroupby.ColumnsIndices(key) != nil {
-			coveredByUniqueKey = true
-			break
+			return true
 		}
 	}
 
-	// GroupByCols has unique key, so this aggregation can be removed.
-	if coveredByUniqueKey {
-		for _, fun := range agg.AggFuncs {
-			switch fun.Name {
-			// ensure agg call RewriteExpr return true
-			case ast.AggFuncCount, ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncGroupConcat, ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
-			default:
-				return false
-			}
-		}
-	}
-
-	return true
+	return false
 }
 
 func (r *EliminateAgg) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	if ok, proj := plannercore.ConvertAggToProj(agg, old.GetExpr().Schema()); ok {
+		newProjExpr := memo.NewGroupExpr(proj)
+		newProjExpr.SetChildren(old.GetExpr().Children...)
+		return []*memo.GroupExpr{newProjExpr}, true, false, nil
+	}
 
-	// Match ensured RewriteExpr return true
-	_, proj := plannercore.ConvertAggToProj(agg, agg.Schema())
-	proj.SetChildren(agg.Children()[0])
-
-	newAggExpr := memo.NewGroupExpr(proj)
-	newAggExpr.SetChildren(old.Children[0].GetExpr().Children...)
-	return []*memo.GroupExpr{newAggExpr}, true, false, nil
+	return nil, false, false, nil
 }
 
 // MergeAdjacentSelection merge adjacent selection.
