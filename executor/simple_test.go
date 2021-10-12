@@ -20,13 +20,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -888,4 +888,19 @@ func (s *testSuite3) TestIssue23649(c *C) {
 	c.Assert(err.Error(), Equals, "[executor:3523]Unknown authorization ID `bogusrole`@`%`")
 	_, err = tk.Exec("GRANT bogusrole to nonexisting;")
 	c.Assert(err.Error(), Equals, "[executor:3523]Unknown authorization ID `bogusrole`@`%`")
+}
+
+func (s *testSuite3) TestSetCurrentUserPwd(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER issue28534;")
+	defer func() {
+		tk.MustExec("DROP USER IF EXISTS issue28534;")
+	}()
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "issue28534", Hostname: "localhost", CurrentUser: true, AuthUsername: "issue28534", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec(`SET PASSWORD FOR CURRENT_USER() = "43582eussi"`)
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="issue28534"`)
+	result.Check(testkit.Rows(auth.EncodePassword("43582eussi")))
 }
