@@ -173,10 +173,12 @@ func GetIndexUsageSyncLease() time.Duration {
 	return time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
 }
 
+// SetPlanReplayerGCLease changes the default plan repalyer gc lease time.
 func SetPlanReplayerGCLease(lease time.Duration) {
 	atomic.StoreInt64(&planReplayerGCLease, int64(lease))
 }
 
+// GetPlanReplayerGCLease returns the plan replayer gc lease time.
 func GetPlanReplayerGCLease() time.Duration {
 	return time.Duration(atomic.LoadInt64(&planReplayerGCLease))
 }

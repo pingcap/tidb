@@ -1142,10 +1142,12 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	}()
 }
 
+// PlanReplayerGC4Test is only used for test.
 func (do *Domain) PlanReplayerGC4Test() {
 	do.planReplayer.planReplayerGC(0)
 }
 
+// PlanReplayerLoop creates a goroutine that handles `exit` and `gc`.
 func (do *Domain) PlanReplayerLoop(ctx sessionctx.Context) {
 	do.wg.Add(1)
 	go func() {
@@ -1153,7 +1155,7 @@ func (do *Domain) PlanReplayerLoop(ctx sessionctx.Context) {
 		defer func() {
 			gcTicker.Stop()
 			do.wg.Done()
-			logutil.BgLogger().Info("PlanRecreatorLoop exited.")
+			logutil.BgLogger().Info("PlanReplayerLoop exited.")
 		}()
 		for {
 			select {

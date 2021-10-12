@@ -34,6 +34,8 @@ type planReplayer struct {
 	planReplayerGCLease time.Duration
 }
 
+// GetPlanReplayerDirName returns plan replayer directory path. 
+// The path is related to the process id.
 func GetPlanReplayerDirName() string {
 	return filepath.Join(os.TempDir(), "replayer", strconv.Itoa(os.Getpid()))
 }

@@ -1226,7 +1226,8 @@ func ExtractCorColumnsBySchema4PhysicalPlan(p PhysicalPlan, schema *expression.S
 	return ExtractCorColumnsBySchema(corCols, schema, true)
 }
 
-type PlanRecreatorContents struct {
+// PlanReplayerContent stores the contents for `PLAN REPALYER` statement.
+type PlanReplayerContent struct {
 	baseSchemaProducer
 	ExecStmt ast.StmtNode
 	Analyze  bool
@@ -1234,10 +1235,11 @@ type PlanRecreatorContents struct {
 	File     string
 }
 
-type LogicalPlanRecreator struct {
+// LogicalPlanReplayer represents a plan replayer plan.
+type LogicalPlanReplayer struct {
 	logicalSchemaProducer
 
-	PlanRecreatorContents
+	PlanReplayerContent
 }
 
 // ShowContents stores the contents for the `SHOW` statement.

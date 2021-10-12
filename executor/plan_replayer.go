@@ -365,7 +365,7 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 }
 
 func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet) ([][]string, error) {
-	rows, err := getRows4Test(ctx, rs)
+	rows, err := getRows(ctx, rs)
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +392,7 @@ func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet) ([][]stri
 	return sRows, nil
 }
 
-func getRows4Test(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
+func getRows(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}
@@ -414,14 +414,4 @@ func getRows4Test(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error
 		}
 	}
 	return rows, nil
-}
-
-func GetFile4Test(token string) string {
-	b, err := hex.DecodeString(token)
-	if err != nil {
-		return ""
-	}
-	var tb [16]byte
-	copy(tb[:], b)
-	return filepath.Join()
 }
