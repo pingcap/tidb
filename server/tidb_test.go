@@ -320,8 +320,9 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 
 	// but plain http connection should fail.
 	cli.statusScheme = "http"
-	_, err = cli.fetchStatus("/status")
+	resp, err := cli.fetchStatus("/status")
 	c.Assert(err, NotNil)
+	c.Assert(resp.Body.Close(), IsNil)
 
 	server.Close()
 }
@@ -372,15 +373,17 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 		client1CertPath,
 		client1KeyPath,
 	)
-	_, err = hc.Get(cli.statusURL("/status"))
+	resp, err := hc.Get(cli.statusURL("/status"))
 	c.Assert(err, NotNil)
+	c.Assert(resp.Body.Close(), IsNil)
 
 	hc = newTLSHttpClient(c, caPath,
 		client2CertPath,
 		client2KeyPath,
 	)
-	_, err = hc.Get(cli.statusURL("/status"))
+	resp, err = hc.Get(cli.statusURL("/status"))
 	c.Assert(err, IsNil)
+	c.Assert(resp.Body.Close(), IsNil)
 }
 
 func newTLSHttpClient(c *C, caFile, certFile, keyFile string) *http.Client {
@@ -1515,19 +1518,22 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	}()
 	time.Sleep(time.Millisecond * 100)
 
-	_, err = cli.fetchStatus("/status") // server is up
+	resp, err := cli.fetchStatus("/status") // server is up
 	c.Assert(err, IsNil)
+	c.Assert(resp.Body.Close(), IsNil)
 
 	go server.Close()
 	time.Sleep(time.Millisecond * 500)
 
-	resp, _ := cli.fetchStatus("/status") // should return 5xx code
+	resp, _ = cli.fetchStatus("/status") // should return 5xx code
 	c.Assert(resp.StatusCode, Equals, 500)
+	c.Assert(resp.Body.Close(), IsNil)
 
 	time.Sleep(time.Second * 2)
 
-	_, err = cli.fetchStatus("/status") // status is gone
+	resp, err = cli.fetchStatus("/status") // status is gone
 	c.Assert(err, ErrorMatches, ".*connect: connection refused")
+	c.Assert(resp.Body.Close(), IsNil)
 }
 
 func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
