@@ -1851,15 +1851,9 @@
           "      └─Projection 8000.00 batchCop[tiflash]  div(Column#5, cast(case(eq(Column#20, 0), 1, Column#20), decimal(20,0) BINARY))->Column#5, test.t.id",
           "        └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#21)->Column#20, funcs:sum(Column#22)->Column#5, funcs:firstrow(test.t.id)->test.t.id",
           "          └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
-<<<<<<< HEAD
           "            └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
-          "              └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#25, funcs:count(Column#23)->Column#20, funcs:sum(Column#24)->Column#21",
-          "                └─Projection 10000.00 batchCop[tiflash]  plus(test.t.value, 2)->Column#23, plus(test.t.value, 2)->Column#24, test.t.id",
-=======
-          "            └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: N/A]",
           "              └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#26, funcs:count(Column#24)->Column#21, funcs:sum(Column#25)->Column#22",
           "                └─Projection 10000.00 batchCop[tiflash]  plus(test.t.value, 2)->Column#24, plus(test.t.value, 2)->Column#25, test.t.id",
->>>>>>> a18e05d2f... expression: limit valid decimal length (#28466)
           "                  └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
