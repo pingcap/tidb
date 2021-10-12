@@ -393,3 +393,50 @@ func TestRenameTables(t *testing.T) {
 	require.Equal(t, wantTblInfos[0].Name.L, "tt1")
 	require.Equal(t, wantTblInfos[1].Name.L, "tt2")
 }
+
+func TestCreateTables(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	ddl, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
+	require.NoError(t, err)
+
+	dbInfo, err := testSchemaInfo(ddl, "test_table")
+	require.NoError(t, err)
+	testCreateSchemaT(t, testNewContext(ddl), ddl, dbInfo)
+
+	ctx := testNewContext(ddl)
+
+	infos := []*model.TableInfo{}
+	genIDs, err := ddl.genGlobalIDs(3)
+	require.NoError(t, err)
+
+	infos = append(infos, &model.TableInfo{
+		ID: genIDs[0],
+		Name: model.NewCIStr("s1"),
+	})
+	infos = append(infos, &model.TableInfo{
+		ID: genIDs[1],
+		Name: model.NewCIStr("s2"),
+	})
+	infos = append(infos, &model.TableInfo{
+		ID: genIDs[2],
+		Name: model.NewCIStr("s3"),
+	})
+
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionCreateTables,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{infos},
+	}
+	err = ddl.doDDLJob(ctx, job)
+	require.NoError(t, err)
+
+	testGetTableT(t, ddl, dbInfo.ID, genIDs[0])
+	testGetTableT(t, ddl, dbInfo.ID, genIDs[1])
+	testGetTableT(t, ddl, dbInfo.ID, genIDs[2])
+}

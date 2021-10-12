@@ -7641,3 +7641,35 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table if exists t")
 }
+
+func (s *testDBSuite2) TestCreateTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists s1")
+	tk.MustExec("drop table if exists s2")
+	tk.MustExec("drop table if exists s3")
+
+	d := s.dom.DDL()
+	infos := []*model.TableInfo{}
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("s1"),
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("s2"),
+	})
+	infos = append(infos, &model.TableInfo{
+		Name: model.NewCIStr("s3"),
+	})
+
+	err := d.CreateTablesWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError, false)
+	c.Check(err, IsNil)
+
+	tk.MustQuery("show tables").Check(testkit.Rows("s1", "s2", "s3"))
+	job := tk.MustQuery("admin show ddl jobs").Rows()[0]
+	c.Assert(job[1], Equals, "test")
+	c.Assert(job[2], Equals, "s1,s2,s3")
+	c.Assert(job[3], Equals, "create tables")
+	c.Assert(job[4], Equals, "public")
+	// FIXME: we must change column type to give multiple id
+	// c.Assert(job[6], Matches, "[^,]+,[^,]+,[^,]+")
+}
