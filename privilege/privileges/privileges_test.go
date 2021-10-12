@@ -2516,3 +2516,20 @@ func TestGrantCreateTmpTables(t *testing.T) {
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE create_tmp_table_db")
 }
+
+func TestRevokeSecondSyntax(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	tk.MustExec(`drop user if exists ss1;`)
+	tk.MustExec(`create user ss1;`)
+	tk.MustExec(`revoke all privileges, grant option from ss1;`)
+	tk.MustQuery("show grants for ss1").Check(testkit.Rows("GRANT USAGE ON *.* TO 'ss1'@'%'"))
+}
