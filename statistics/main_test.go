@@ -49,11 +49,6 @@ func TestMain(m *testing.M) {
 // TestStatistics batches tests sharing a test suite to reduce the setups
 // overheads.
 func TestStatistics(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
-
 	s := createTestStatisticsSuite(t)
 
 	// fmsketch_test.go
