@@ -2882,7 +2882,30 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 				continue
 			}
 			anyTablePriv = true
-			// TODO: get DIRECT PLACEMENT from partitions
+			if partInfo := table.GetPartitionInfo(); partInfo != nil {
+				for _, pi := range partInfo.Definitions {
+					if pi.DirectPlacementOpts != nil {
+						record := types.MakeDatums(
+							nil,                   // PLACEMENT POLICY ID, null since direct placement
+							infoschema.CatalogVal, // CATALOG
+							nil,                   // PLACEMENT POLICY, null since direct placement
+							schema.Name.O,         // SCHEMA
+							table.Name.O,          // TABLE
+							pi.Name.O,             // PARTITION
+							pi.DirectPlacementOpts.PrimaryRegion,
+							pi.DirectPlacementOpts.Regions,
+							pi.DirectPlacementOpts.Constraints,
+							pi.DirectPlacementOpts.LeaderConstraints,
+							pi.DirectPlacementOpts.FollowerConstraints,
+							pi.DirectPlacementOpts.LearnerConstraints,
+							pi.DirectPlacementOpts.Schedule,
+							pi.DirectPlacementOpts.Followers,
+							pi.DirectPlacementOpts.Learners,
+						)
+						rows = append(rows, record)
+					}
+				}
+			}
 			if table.DirectPlacementOpts == nil {
 				continue
 			}

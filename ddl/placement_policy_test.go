@@ -525,6 +525,11 @@ func (s *testDBSuite6) TestAlterTablePartitionWithPlacementPolicy(c *C) {
 		"PARTITION p1 VALUES LESS THAN (11)," +
 		"PARTITION p2 VALUES LESS THAN (16)," +
 		"PARTITION p3 VALUES LESS THAN (21));")
+	tk.MustQuery("SELECT " +
+		"CATALOG_NAME,POLICY_NAME,SCHEMA_NAME,TABLE_NAME,PARTITION_NAME," +
+		"PRIMARY_REGION,REGIONS,CONSTRAINTS,LEADER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,LEARNER_CONSTRAINTS," +
+		"SCHEDULE,FOLLOWERS,LEARNERS FROM INFORMATION_SCHEMA.placement_rules WHERE table_NAME='t1'").Check(
+		testkit.Rows())
 
 	tk.MustExec("alter table t1 partition p0 " +
 		"PRIMARY_REGION=\"cn-east-1\" " +
@@ -550,6 +555,11 @@ func (s *testDBSuite6) TestAlterTablePartitionWithPlacementPolicy(c *C) {
 		c.Assert(policySetting.Schedule, Equals, "")
 	}
 	checkFunc(ptDef.DirectPlacementOpts)
+	tk.MustQuery("SELECT " +
+		"CATALOG_NAME,POLICY_NAME,SCHEMA_NAME,TABLE_NAME,PARTITION_NAME," +
+		"PRIMARY_REGION,REGIONS,CONSTRAINTS,LEADER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,LEARNER_CONSTRAINTS," +
+		"SCHEDULE,FOLLOWERS,LEARNERS FROM INFORMATION_SCHEMA.placement_rules WHERE TABLE_NAME='t1'").Check(
+		testkit.Rows("def <nil> test t1 p0 cn-east-1 cn-east-1, cn-east-2      2 0"))
 
 	//Direct placement option and placement policy can't co-exist.
 	_, err := tk.Exec("alter table t1 partition p0 " +
