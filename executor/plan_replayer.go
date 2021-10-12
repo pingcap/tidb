@@ -17,7 +17,6 @@ package executor
 import (
 	"archive/zip"
 	"context"
-	"crypto/md5" // #nosec G501
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -39,9 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
-
-// TTL of plan recreator files
-const remainedInterval float64 = 3
 
 // PlanRecreatorSingleExec represents a plan recreator executor.
 type PlanRecreatorSingleExec struct {
@@ -128,8 +124,8 @@ func (e *PlanRecreatorSingleInfo) dumpSingle(path string) (string, error) {
 	// Generate token and create zip file
 	startTime := time.Now()
 	time := startTime.UnixNano()
-	token := md5.Sum([]byte(fmt.Sprintf("%v%d", time, rand.Int63())))
-	fileName := fmt.Sprintf("recreator_single_%x_%v.zip", token, time)
+	key := rand.Int63()
+	fileName := fmt.Sprintf("recreator_single_%x_%v.zip", key, time)
 	zf, err := os.Create(filepath.Join(path, fileName))
 	if err != nil {
 		return "", errors.New("Plan Recreator: cannot create zip file")

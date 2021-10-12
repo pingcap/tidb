@@ -16,7 +16,6 @@ package domain
 
 import (
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -60,7 +59,6 @@ func (p *planReplayer) planReplayerGC(t time.Duration) {
 	p.Lock()
 	defer p.Unlock()
 	path := GetPlanReplayerDirName()
-	fmt.Println("[gc path]", path)
 	files, err := ioutil.ReadDir(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -70,11 +68,8 @@ func (p *planReplayer) planReplayerGC(t time.Duration) {
 	}
 
 	gcTime := time.Now().Add(-t)
-	fmt.Println("[gcTime]", gcTime)
 	for _, f := range files {
-		fmt.Println("[f]", f.Name())
 		createTime, err := parseTime(f.Name())
-		fmt.Println("[createTime]", createTime)
 		if err != nil {
 			logutil.BgLogger().Warn("PlanReplayerGC faild", zap.Error(err))
 		}
