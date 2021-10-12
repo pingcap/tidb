@@ -13,9 +13,9 @@ import (
 
 	gomock "github.com/golang/mock/gomock"
 	uuid "github.com/google/uuid"
-	model "github.com/pingcap/parser/model"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
 	kv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	model "github.com/pingcap/tidb/parser/model"
 	table "github.com/pingcap/tidb/table"
 )
 
@@ -97,11 +97,12 @@ func (mr *MockBackendMockRecorder) CloseEngine(arg0, arg1, arg2 interface{}) *go
 }
 
 // CollectLocalDuplicateRows mocks base method
-func (m *MockBackend) CollectLocalDuplicateRows(arg0 context.Context, arg1 table.Table) error {
+func (m *MockBackend) CollectLocalDuplicateRows(arg0 context.Context, arg1 table.Table) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CollectLocalDuplicateRows", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // CollectLocalDuplicateRows indicates an expected call of CollectLocalDuplicateRows
@@ -111,11 +112,12 @@ func (mr *MockBackendMockRecorder) CollectLocalDuplicateRows(arg0, arg1 interfac
 }
 
 // CollectRemoteDuplicateRows mocks base method
-func (m *MockBackend) CollectRemoteDuplicateRows(arg0 context.Context, arg1 table.Table) error {
+func (m *MockBackend) CollectRemoteDuplicateRows(arg0 context.Context, arg1 table.Table) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CollectRemoteDuplicateRows", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // CollectRemoteDuplicateRows indicates an expected call of CollectRemoteDuplicateRows
@@ -182,17 +184,17 @@ func (mr *MockBackendMockRecorder) FlushEngine(arg0, arg1 interface{}) *gomock.C
 }
 
 // ImportEngine mocks base method
-func (m *MockBackend) ImportEngine(arg0 context.Context, arg1 uuid.UUID) error {
+func (m *MockBackend) ImportEngine(arg0 context.Context, arg1 uuid.UUID, arg2 int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ImportEngine", arg0, arg1)
+	ret := m.ctrl.Call(m, "ImportEngine", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ImportEngine indicates an expected call of ImportEngine
-func (mr *MockBackendMockRecorder) ImportEngine(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) ImportEngine(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportEngine", reflect.TypeOf((*MockBackend)(nil).ImportEngine), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportEngine", reflect.TypeOf((*MockBackend)(nil).ImportEngine), arg0, arg1, arg2)
 }
 
 // LocalWriter mocks base method

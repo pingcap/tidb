@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -170,5 +170,8 @@ func (r *streamResult) Close() error {
 		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
+	if r.resp != nil {
+		return r.resp.Close()
+	}
 	return nil
 }

@@ -23,19 +23,19 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
@@ -1004,24 +1005,13 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[i
 	if dom == nil {
 		return nil, false, errors.New("domain not found for ctx")
 	}
-	is := dom.InfoSchema()
+	is := temptable.AttachLocalTemporaryTableInfoSchema(ctx, dom.InfoSchema())
 	if is.SchemaMetaVersion() == startVer {
 		return nil, false, nil
 	}
 	latestIndexes := make(map[int64]*model.IndexInfo)
 
-	var latestTbl table.Table
-	latestTblExist := false
-
-	localTemporaryTables := ctx.GetSessionVars().LocalTemporaryTables
-	if localTemporaryTables != nil {
-		latestTbl, latestTblExist = localTemporaryTables.(*infoschema.LocalTemporaryTables).TableByID(id)
-	}
-
-	if !latestTblExist {
-		latestTbl, latestTblExist = is.TableByID(id)
-	}
-
+	latestTbl, latestTblExist := is.TableByID(id)
 	if latestTblExist {
 		latestTblInfo := latestTbl.Meta()
 		for _, index := range latestTblInfo.Indices {
@@ -2385,7 +2375,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if p.DBName == "" {
 			return nil, ErrNoDB
 		}
-	case ast.ShowCreateTable, ast.ShowCreateSequence:
+	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable:
 		user := b.ctx.GetSessionVars().User
 		var err error
 		if user != nil {
@@ -2598,6 +2588,16 @@ func calculateTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint6
 		return 0, err
 	}
 	return oracle.GoTimeToTS(tsTime), nil
+}
+
+func calculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Duration) (uint64, error) {
+	nowVal, err := expression.GetStmtTimestamp(sctx)
+	if err != nil {
+		return 0, err
+	}
+	tsVal := nowVal.Add(readStaleness)
+	minTsVal := expression.GetMinSafeTime(sctx)
+	return oracle.GoTimeToTS(expression.CalAppropriateTime(tsVal, nowVal, minTsVal)), nil
 }
 
 func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
@@ -3828,6 +3828,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 	case *ast.RepairTableStmt:
 		// Repair table command can only be executed by administrator.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+	case *ast.DropPlacementPolicyStmt, *ast.CreatePlacementPolicyStmt, *ast.AlterPlacementPolicyStmt:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or PLACEMENT_ADMIN")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "PLACEMENT_ADMIN", false, err)
 	}
 	p := &DDL{Statement: node}
 	return p, nil
@@ -4146,6 +4149,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowPlacementLabels:
 		names = []string{"Key", "Values"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeJSON}
+	case ast.ShowPlacement, ast.ShowPlacementForDatabase, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
+		names = []string{"Target", "Placement"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)

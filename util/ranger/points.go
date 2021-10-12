@@ -20,10 +20,10 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -571,7 +571,20 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 			dt.SetString(dt.GetString(), colCollate)
 		}
 		if expr.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
-			dt, err = dt.ConvertTo(r.sc, expr.GetArgs()[0].GetType())
+			switch dt.Kind() {
+			case types.KindString, types.KindBytes, types.KindBinaryLiteral:
+				// Can't use ConvertTo directly, since we shouldn't convert numerical string to Enum in select stmt.
+				targetType := expr.GetArgs()[0].GetType()
+				enum, parseErr := types.ParseEnumName(targetType.Elems, dt.GetString(), targetType.Collate)
+				if parseErr == nil {
+					dt.SetMysqlEnum(enum, targetType.Collate)
+				} else {
+					err = parseErr
+				}
+			default:
+				dt, err = dt.ConvertTo(r.sc, expr.GetArgs()[0].GetType())
+			}
+
 			if err != nil {
 				// in (..., an impossible value (not valid enum), ...), the range is empty, so skip it.
 				continue

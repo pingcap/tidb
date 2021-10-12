@@ -15,8 +15,8 @@
 package expression
 
 import (
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -38,8 +38,10 @@ func init() {
 // FoldConstant does constant folding optimization on an expression excluding deferred ones.
 func FoldConstant(expr Expression) Expression {
 	e, _ := foldConstant(expr)
-	// keep the original coercibility values after folding
+	// keep the original coercibility, charset, collation and repertoire values after folding
 	e.SetCoercibility(expr.Coercibility())
+	e.GetType().Charset, e.GetType().Collate = expr.GetType().Charset, expr.GetType().Collate
+	e.SetRepertoire(expr.Repertoire())
 	return e
 }
 

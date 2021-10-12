@@ -25,14 +25,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -228,14 +228,11 @@ func asyncNotify(ch chan struct{}) {
 func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
 	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
-	var jobs []*model.Job
-	var err error
-	switch curJob.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		jobs, err = t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
-	default:
-		jobs, err = t.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
+	jobListKey := meta.DefaultJobListKey
+	if !admin.MayNeedBackfill(curJob.Type) {
+		jobListKey = meta.AddIndexJobListKey
 	}
+	jobs, err := t.GetAllDDLJobsInQueue(jobListKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -296,14 +293,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			if err = buildJobDependence(t, job); err != nil {
 				return errors.Trace(err)
 			}
-
-			if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-				jobKey := meta.AddIndexJobListKey
-				err = t.EnQueueDDLJob(job, jobKey)
-			} else {
-				err = t.EnQueueDDLJob(job)
+			jobListKey := meta.DefaultJobListKey
+			if admin.MayNeedBackfill(job.Type) {
+				jobListKey = meta.AddIndexJobListKey
 			}
-			if err != nil {
+			if err = t.EnQueueDDLJob(job, jobListKey); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -404,7 +398,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(w.ddlJobCtx, job)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn:
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
 			err = w.deleteRange(w.ddlJobCtx, job)
 		}
 	}
@@ -514,6 +508,12 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			if job == nil || err != nil {
 				return errors.Trace(err)
 			}
+
+			// only general ddls allowed to be executed when TiKV is disk full.
+			if w.tp == addIdxWorker && job.IsRunning() {
+				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+			}
+
 			w.setDDLLabelForTopSQL(job)
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
 				return errors.Trace(err1)
@@ -536,16 +536,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.RLock()
 			d.mu.hook.OnJobRunBefore(job)
 			d.mu.RUnlock()
-
-			// Meta releated txn default is DiskFullOpt_AllowedOnAlmostFull to support
-			// all the ddl job queue operations or other meta change. But we only want
-			// to support the Drop Table like ddls to be executed when TiKV is disk full.
-			switch job.Type {
-			case model.ActionDropSchema, model.ActionDropTable, model.ActionDropIndex, model.ActionTruncateTable, model.ActionDropTablePartition, model.ActionDropView, model.ActionDropSequence, model.ActionDropIndexes, model.ActionTruncateTablePartition:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			default:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
-			}
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
@@ -754,6 +744,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onModifySchemaCharsetAndCollate(t, job)
 	case model.ActionDropSchema:
 		ver, err = onDropSchema(d, t, job)
+	case model.ActionModifySchemaDefaultPlacement:
+		ver, err = onModifySchemaDefaultPlacement(t, job)
 	case model.ActionCreateTable:
 		ver, err = onCreateTable(d, t, job)
 	case model.ActionRepairTable:
@@ -761,7 +753,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionCreateView:
 		ver, err = onCreateView(d, t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		ver, err = onDropTableOrView(t, job)
+		ver, err = onDropTableOrView(d, t, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(d, t, job)
 	case model.ActionTruncateTablePartition:
@@ -786,6 +778,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onCreateIndex(d, t, job, true)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = onDropIndex(t, job)
+	case model.ActionDropIndexes:
+		ver, err = onDropIndexes(t, job)
 	case model.ActionRenameIndex:
 		ver, err = onRenameIndex(t, job)
 	case model.ActionAddForeignKey:
@@ -834,6 +828,14 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onAlterTableAttributes(t, job)
 	case model.ActionAlterTablePartitionAttributes:
 		ver, err = onAlterTablePartitionAttributes(t, job)
+	case model.ActionCreatePlacementPolicy:
+		ver, err = onCreatePlacementPolicy(d, t, job)
+	case model.ActionDropPlacementPolicy:
+		ver, err = onDropPlacementPolicy(d, t, job)
+	case model.ActionAlterPlacementPolicy:
+		ver, err = onAlterPlacementPolicy(d, t, job)
+	case model.ActionAlterTablePartitionPolicy:
+		ver, err = onAlterTablePartitionOptions(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -1004,7 +1006,8 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		newSchemaIDs := []int64{}
 		tableNames := []*model.CIStr{}
 		tableIDs := []int64{}
-		err = job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs)
+		oldSchemaNames := []*model.CIStr{}
+		err = job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

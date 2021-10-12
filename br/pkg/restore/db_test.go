@@ -12,7 +12,6 @@ import (
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -20,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/tikv/client-go/v2/oracle"
@@ -77,8 +77,8 @@ func (s *testRestoreSchemaSuite) TestRestoreAutoIncID(c *C) {
 		DB:   dbInfo,
 	}
 	// Get the next AutoIncID
-	idAlloc := autoid.NewAllocator(s.mock.Storage, dbInfo.ID, false, autoid.RowIDAllocType)
-	globalAutoID, err := idAlloc.NextGlobalAutoID(table.Info.ID)
+	idAlloc := autoid.NewAllocator(s.mock.Storage, dbInfo.ID, table.Info.ID, false, autoid.RowIDAllocType)
+	globalAutoID, err := idAlloc.NextGlobalAutoID()
 	c.Assert(err, IsNil, Commentf("Error allocate next auto id"))
 	c.Assert(autoIncID, Equals, uint64(globalAutoID))
 	// Alter AutoIncID to the next AutoIncID + 100

@@ -26,14 +26,14 @@ import (
 	. "github.com/pingcap/check"
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	parser_mysql "github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	parser_mysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/helper"
@@ -802,13 +802,13 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	// binary
 	reset(tk)
 	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
-	tk.MustGetErrCode("alter table t modify d binary(10)", mysql.ErrDataTooLong)
+	tk.MustGetErrCode("alter table t modify d binary(10)", mysql.WarnDataTruncated)
 	tk.MustExec("alter table t modify n binary(10)")
-	tk.MustGetErrCode("alter table t modify r binary(10)", mysql.ErrDataTooLong)
-	tk.MustGetErrCode("alter table t modify db binary(10)", mysql.ErrDataTooLong)
+	tk.MustGetErrCode("alter table t modify r binary(10)", mysql.WarnDataTruncated)
+	tk.MustGetErrCode("alter table t modify db binary(10)", mysql.WarnDataTruncated)
 	// MySQL will run with no error.
-	tk.MustGetErrCode("alter table t modify f32 binary(10)", mysql.ErrDataTooLong)
-	tk.MustGetErrCode("alter table t modify f64 binary(10)", mysql.ErrDataTooLong)
+	tk.MustGetErrCode("alter table t modify f32 binary(10)", mysql.WarnDataTruncated)
+	tk.MustGetErrCode("alter table t modify f64 binary(10)", mysql.WarnDataTruncated)
 	tk.MustExec("alter table t modify b binary(10)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33\x00\x00\x00\x00 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21\x00\x00\x00\x00\x00\x00\x00\x00"))
 
@@ -1620,7 +1620,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
+		if (job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization) && i < 3 {
 			if !once {
 				once = true
 				tbl := testGetTableByName(c, tk1.Se, "test", "t")
@@ -1689,7 +1689,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 		once     bool
 		checkErr error
 	)
-	i := 0
+	i, stableTimes := 0, 0
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
 			return
@@ -1697,7 +1697,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
+		if (job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization) && stableTimes < 3 {
 			if !once {
 				once = true
 				tbl := testGetTableByName(c, tk1.Se, "test", "t")
@@ -1738,6 +1738,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 					return
 				}
 			}
+			stableTimes++
 		}
 		i++
 	}

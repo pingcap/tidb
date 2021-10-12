@@ -38,12 +38,12 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -265,13 +265,14 @@ func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 }
 
 func (ts *tidbTestSuite) TestStatusPort(c *C) {
-	var err error
-	ts.store, err = mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
 	session.DisableStats4Test()
+	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	ts.domain, err = session.BootstrapSession(ts.store)
-	c.Assert(err, IsNil)
-	ts.tidbdrv = NewTiDBDriver(ts.store)
+	defer dom.Close()
+	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := newTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
@@ -364,6 +365,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 		err := server.Run()
 		c.Assert(err, IsNil)
 	}()
+	defer server.Close()
 	time.Sleep(time.Millisecond * 100)
 
 	hc := newTLSHttpClient(c, caPath,
@@ -668,18 +670,20 @@ func (ts *tidbTestSuite) TestOnlySocket(c *C) {
 			dbt.mustQuery("GRANT SELECT ON test.* TO user1@'%'")
 		})
 	// Test with Network interface connection with all hosts, should fail since server not configured
-	_, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "root"
 		config.DBName = "test"
 		config.Addr = "127.0.0.1"
 	}))
 	c.Assert(err, IsNil, Commentf("Connect succeeded when not configured!?!"))
-	_, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	defer db.Close()
+	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "user1"
 		config.DBName = "test"
 		config.Addr = "127.0.0.1"
 	}))
 	c.Assert(err, IsNil, Commentf("Connect succeeded when not configured!?!"))
+	defer db.Close()
 	// Test with unix domain socket file connection with all hosts
 	cli.runTests(c, func(config *mysql.Config) {
 		config.Net = "unix"
@@ -881,6 +885,9 @@ func (ts *tidbTestSerialSuite) TestTLSAuto(c *C) {
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
+	cfg.Security.RSAKeySize = 528 // Reduces unittest runtime
+	err := os.MkdirAll(cfg.TempStoragePath, 0700)
+	c.Assert(err, IsNil)
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
@@ -1028,9 +1035,9 @@ func (ts *tidbTestSerialSuite) TestTLSVerify(c *C) {
 	c.Assert(util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}), IsFalse)
 	c.Assert(util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}), IsTrue)
 
-	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true)
+	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true, 528)
 	c.Assert(err, NotNil)
-	_, _, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem", true)
+	_, _, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem", true, 528)
 	c.Assert(err, NotNil)
 }
 
@@ -1183,6 +1190,7 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 		err := server.Run()
 		c.Assert(err, IsNil)
 	}()
+	defer server.Close()
 	time.Sleep(time.Millisecond * 100)
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-cert-rollback-test"
@@ -1396,17 +1404,68 @@ func (ts *tidbTestSuite) TestSumAvg(c *C) {
 }
 
 func (ts *tidbTestSuite) TestNullFlag(c *C) {
-	// issue #9689
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	rs, err := Execute(ctx, qctx, "select 1")
-	c.Assert(err, IsNil)
-	cols := rs.Columns()
-	c.Assert(len(cols), Equals, 1)
-	expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
-	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	{
+		// issue #9689
+		rs, err := Execute(ctx, qctx, "select 1")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
+
+	{
+		// issue #19025
+		rs, err := Execute(ctx, qctx, "select convert('{}', JSON)")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
+
+	{
+		// issue #18488
+		_, err := Execute(ctx, qctx, "use test")
+		c.Assert(err, IsNil)
+		_, err = Execute(ctx, qctx, "CREATE TABLE `test` (`iD` bigint(20) NOT NULL, `INT_TEST` int(11) DEFAULT NULL);")
+		c.Assert(err, IsNil)
+		rs, err := Execute(ctx, qctx, `SELECT id + int_test as res FROM test  GROUP BY res ORDER BY res;`)
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
+	{
+
+		rs, err := Execute(ctx, qctx, "select if(1, null, 1) ;")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
+	{
+		rs, err := Execute(ctx, qctx, "select CASE 1 WHEN 2 THEN 1 END ;")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
+	{
+		rs, err := Execute(ctx, qctx, "select NULL;")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
 }
 
 func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
@@ -1430,12 +1489,13 @@ func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
 }
 
 func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
-	var err error
-	ts.store, err = mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
 	session.DisableStats4Test()
+	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	ts.domain, err = session.BootstrapSession(ts.store)
-	c.Assert(err, IsNil)
+	defer dom.Close()
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cli := newTestServerClient()
 	cfg := newTestConfig()
@@ -1496,6 +1556,7 @@ func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
 func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
+	defer qctx.Close()
 	ctx := context.Background()
 	_, err = Execute(ctx, qctx, "use test;")
 	c.Assert(err, IsNil)
@@ -1566,7 +1627,9 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	dbt.mustExec("create table t1 (a int auto_increment, b int, unique index idx(a));")
 	dbt.mustExec("create table t2 (a int auto_increment, b int, unique index idx(a));")
 	dbt.mustExec("set @@global.tidb_enable_top_sql='On';")
-	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:4001';")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.ReceiverAddress = "127.0.0.1:4001"
+	})
 	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
 	dbt.mustExec("set @@global.tidb_txn_mode = 'pessimistic'")
 
@@ -1795,8 +1858,13 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 			dbt.mustExec(fmt.Sprintf("insert into t%v (b) values (%v);", i, j))
 		}
 	}
+	setTopSQLReceiverAddress := func(addr string) {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TopSQL.ReceiverAddress = addr
+		})
+	}
 	dbt.mustExec("set @@global.tidb_enable_top_sql='On';")
-	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
+	setTopSQLReceiverAddress("")
 	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
 	dbt.mustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
@@ -1839,21 +1907,22 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// case 1: dynamically change agent endpoint
 	cancel := runWorkload(0, 10)
 	// Test with null agent address, the agent server can't receive any record.
-	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
+	setTopSQLReceiverAddress("")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
-	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	setTopSQLReceiverAddress(agentServer.Address())
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(5)
 	// Test with wrong agent address, the agent server can't receive any record.
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=8;")
-	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:65530';")
+	setTopSQLReceiverAddress("127.0.0.1:65530")
+
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
-	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	setTopSQLReceiverAddress(agentServer.Address())
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(8)
 	cancel() // cancel case 1
@@ -1862,11 +1931,11 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	cancel2 := runWorkload(0, 10)
 	// empty agent address, should not collect records
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
-	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
+	setTopSQLReceiverAddress("")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// set correct address, should collect records
-	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	setTopSQLReceiverAddress(agentServer.Address())
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(5)
 	// agent server hangs for a while
@@ -1882,11 +1951,11 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// case 3: agent restart
 	cancel4 := runWorkload(0, 10)
 	// empty agent address, should not collect records
-	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
+	setTopSQLReceiverAddress("")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// set correct address, should collect records
-	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	setTopSQLReceiverAddress(agentServer.Address())
 	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
 	// run another set of SQL queries
@@ -1898,7 +1967,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// agent server restart
 	agentServer, err = mockTopSQLReporter.StartMockAgentServer()
 	c.Assert(err, IsNil)
-	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	setTopSQLReceiverAddress(agentServer.Address())
 	// check result
 	agentServer.WaitCollectCnt(2, time.Second*8)
 	checkFn(5)

@@ -23,7 +23,7 @@ type tikvScanner struct {
 	*txnsnapshot.Scanner
 }
 
-// Next return next element.
+// Next returns the next element.
 func (s *tikvScanner) Next() error {
 	err := s.Scanner.Next()
 	return extractKeyErr(err)

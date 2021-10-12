@@ -19,34 +19,37 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 )
 
 // stmtSummaryReader uses to read the statement summaries data and convert to []datum row.
 type stmtSummaryReader struct {
-	user                 *auth.UserIdentity
-	isSuper              bool
+	user *auth.UserIdentity
+	// If the user has the 'PROCESS' privilege, he can read all the statements.
+	hasProcessPriv       bool
 	columns              []*model.ColumnInfo
 	instanceAddr         string
 	ssMap                *stmtSummaryByDigestMap
 	columnValueFactories []columnValueFactory
+	checker              *stmtSummaryChecker
 }
 
 // NewStmtSummaryReader return a new statement summaries reader.
-func NewStmtSummaryReader(user *auth.UserIdentity, isSuper bool, cols []*model.ColumnInfo, instanceAddr string) *stmtSummaryReader {
+func NewStmtSummaryReader(user *auth.UserIdentity, hasProcessPriv bool, cols []*model.ColumnInfo, instanceAddr string) *stmtSummaryReader {
 	reader := &stmtSummaryReader{
-		user:         user,
-		isSuper:      isSuper,
-		columns:      cols,
-		instanceAddr: instanceAddr,
-		ssMap:        StmtSummaryByDigestMap,
+		user:           user,
+		hasProcessPriv: hasProcessPriv,
+		columns:        cols,
+		instanceAddr:   instanceAddr,
+		ssMap:          StmtSummaryByDigestMap,
 	}
 	// initialize column value factories.
 	reader.columnValueFactories = make([]columnValueFactory, len(reader.columns))
@@ -77,13 +80,19 @@ func (ssr *stmtSummaryReader) GetStmtSummaryCurrentRows() [][]types.Datum {
 
 	rows := make([][]types.Datum, 0, len(values))
 	for _, value := range values {
-		record := ssr.getStmtByDigestRow(value.(*stmtSummaryByDigest), beginTime)
+		ssbd := value.(*stmtSummaryByDigest)
+		if ssr.checker != nil && !ssr.checker.isDigestValid(ssbd.digest) {
+			continue
+		}
+		record := ssr.getStmtByDigestRow(ssbd, beginTime)
 		if record != nil {
 			rows = append(rows, record)
 		}
 	}
-	if otherDatum := ssr.getStmtEvictedOtherRow(other); otherDatum != nil {
-		rows = append(rows, otherDatum)
+	if ssr.checker == nil {
+		if otherDatum := ssr.getStmtEvictedOtherRow(other); otherDatum != nil {
+			rows = append(rows, otherDatum)
+		}
 	}
 	return rows
 }
@@ -99,13 +108,23 @@ func (ssr *stmtSummaryReader) GetStmtSummaryHistoryRows() [][]types.Datum {
 	historySize := ssMap.historySize()
 	rows := make([][]types.Datum, 0, len(values)*historySize)
 	for _, value := range values {
-		records := ssr.getStmtByDigestHistoryRow(value.(*stmtSummaryByDigest), historySize)
+		ssbd := value.(*stmtSummaryByDigest)
+		if ssr.checker != nil && !ssr.checker.isDigestValid(ssbd.digest) {
+			continue
+		}
+		records := ssr.getStmtByDigestHistoryRow(ssbd, historySize)
 		rows = append(rows, records...)
 	}
 
-	otherDatum := ssr.getStmtEvictedOtherHistoryRow(other, historySize)
-	rows = append(rows, otherDatum...)
+	if ssr.checker == nil {
+		otherDatum := ssr.getStmtEvictedOtherHistoryRow(other, historySize)
+		rows = append(rows, otherDatum...)
+	}
 	return rows
+}
+
+func (ssr *stmtSummaryReader) SetChecker(checker *stmtSummaryChecker) {
+	ssr.checker = checker
 }
 
 func (ssr *stmtSummaryReader) getStmtByDigestRow(ssbd *stmtSummaryByDigest, beginTimeForCurInterval int64) []types.Datum {
@@ -120,7 +139,7 @@ func (ssr *stmtSummaryReader) getStmtByDigestRow(ssbd *stmtSummaryByDigest, begi
 	// `ssElement` is lazy expired, so expired elements could also be read.
 	// `beginTime` won't change since `ssElement` is created, so locking is not needed here.
 	isAuthed := true
-	if ssr.user != nil && !ssr.isSuper {
+	if ssr.user != nil && !ssr.hasProcessPriv && ssElement != nil {
 		_, isAuthed = ssElement.authUsers[ssr.user.Username]
 	}
 	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval || !isAuthed {
@@ -146,7 +165,7 @@ func (ssr *stmtSummaryReader) getStmtByDigestHistoryRow(ssbd *stmtSummaryByDiges
 	rows := make([][]types.Datum, 0, len(ssElements))
 	for _, ssElement := range ssElements {
 		isAuthed := true
-		if ssr.user != nil && !ssr.isSuper {
+		if ssr.user != nil && !ssr.hasProcessPriv {
 			_, isAuthed = ssElement.authUsers[ssr.user.Username]
 		}
 		if isAuthed {
@@ -184,6 +203,21 @@ func (ssr *stmtSummaryReader) getStmtEvictedOtherHistoryRow(ssbde *stmtSummaryBy
 		rows = append(rows, ssr.getStmtByDigestElementRow(seElement.otherSummary, ssbd))
 	}
 	return rows
+}
+
+type stmtSummaryChecker struct {
+	digests set.StringSet
+}
+
+// NewStmtSummaryChecker return a new statement summaries checker.
+func NewStmtSummaryChecker(digests set.StringSet) *stmtSummaryChecker {
+	return &stmtSummaryChecker{
+		digests: digests,
+	}
+}
+
+func (ssc *stmtSummaryChecker) isDigestValid(digest string) bool {
+	return ssc.digests.Exist(digest)
 }
 
 // Statements summary table column name.

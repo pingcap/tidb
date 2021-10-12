@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -424,7 +424,7 @@ func (s *localSuite) doTestBatchSplitRegionByRanges(ctx context.Context, c *C, h
 		start = end
 	}
 
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true)
+	err = local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
 	if len(errPat) == 0 {
 		c.Assert(err, IsNil)
 	} else {
@@ -643,7 +643,7 @@ func (s *localSuite) doTestBatchSplitByRangesWithClusteredIndex(c *C, hook clien
 		start = e
 	}
 
-	err := local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true)
+	err := local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
 	c.Assert(err, IsNil)
 
 	startKey := codec.EncodeBytes([]byte{}, rangeKeys[0])

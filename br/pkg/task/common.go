@@ -5,7 +5,6 @@ package task
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"net/url"
 	"path"
 	"strings"
@@ -398,15 +397,9 @@ func NewMgr(ctx context.Context,
 		}
 	}
 
-	// Disable GC because TiDB enables GC already.
-	store, err := g.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddress), securityOption)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	// Is it necessary to remove `StoreBehavior`?
 	return conn.NewMgr(
-		ctx, g, pdAddress, store, tlsConf, securityOption, keepalive, conn.SkipTiFlash,
+		ctx, g, pdAddress, tlsConf, securityOption, keepalive, conn.SkipTiFlash,
 		checkRequirements, needDomain,
 	)
 }

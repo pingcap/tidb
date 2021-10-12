@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 //go:generate go run generator/compare_vec.go
 //go:generate go run generator/control_vec.go
@@ -31,10 +31,10 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -91,10 +91,11 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
-	if err := CheckIllegalMixCollation(funcName, args, retType); err != nil {
+	ec, err := deriveCollation(ctx, funcName, args, retType, retType)
+	if err != nil {
 		return baseBuiltinFunc{}, err
 	}
-	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
+
 	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
@@ -104,41 +105,11 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 		ctx:  ctx,
 		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
-	bf.SetCharsetAndCollation(derivedCharset, derivedCollate)
-	bf.setCollator(collate.GetCollator(derivedCollate))
+	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
+	bf.setCollator(collate.GetCollator(ec.Collation))
+	bf.SetCoercibility(ec.Coer)
+	bf.SetRepertoire(ec.Repe)
 	return bf, nil
-}
-
-var (
-	coerString = []string{"EXPLICIT", "NONE", "IMPLICIT", "SYSCONST", "COERCIBLE", "NUMERIC", "IGNORABLE"}
-)
-
-// CheckIllegalMixCollation checks illegal mix collation with expressions
-func CheckIllegalMixCollation(funcName string, args []Expression, evalType types.EvalType) error {
-	if len(args) < 2 {
-		return nil
-	}
-	_, _, coercibility, legal := inferCollation(args...)
-	if !legal {
-		return illegalMixCollationErr(funcName, args)
-	}
-	if coercibility == CoercibilityNone && evalType != types.ETString {
-		return illegalMixCollationErr(funcName, args)
-	}
-	return nil
-}
-
-func illegalMixCollationErr(funcName string, args []Expression) error {
-	funcName = GetDisplayName(funcName)
-
-	switch len(args) {
-	case 2:
-		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], funcName)
-	case 3:
-		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], args[0].GetType().Collate, coerString[args[2].Coercibility()], funcName)
-	default:
-		return collate.ErrIllegalMixCollation.GenWithStackByArgs(funcName)
-	}
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
@@ -150,6 +121,13 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	}
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
+	}
+
+	// derive collation information for string function, and we must do it
+	// before doing implicit cast.
+	ec, err := deriveCollation(ctx, funcName, args, retType, argTps...)
+	if err != nil {
+		return
 	}
 
 	for i := range args {
@@ -173,13 +151,6 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		}
 	}
 
-	if err = CheckIllegalMixCollation(funcName, args, retType); err != nil {
-		return
-	}
-
-	// derive collation information for string function, and we must do it
-	// before doing implicit cast.
-	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:
@@ -207,8 +178,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeVarString,
 			Decimal: types.UnspecifiedLength,
-			Charset: derivedCharset,
-			Collate: derivedCollate,
+			Charset: ec.Charset,
+			Collate: ec.Collation,
 			Flen:    types.UnspecifiedLength,
 		}
 	case types.ETDatetime:
@@ -257,8 +228,10 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		ctx:  ctx,
 		tp:   fieldType,
 	}
-	bf.SetCharsetAndCollation(derivedCharset, derivedCollate)
-	bf.setCollator(collate.GetCollator(derivedCollate))
+	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
+	bf.setCollator(collate.GetCollator(ec.Collation))
+	bf.SetCoercibility(ec.Coer)
+	bf.SetRepertoire(ec.Repe)
 	return bf, nil
 }
 
@@ -950,4 +923,28 @@ func GetBuiltinList() []string {
 	}
 	sort.Strings(res)
 	return res
+}
+
+func (b *baseBuiltinFunc) setDecimalAndFlenForDatetime(fsp int) {
+	b.tp.Decimal = fsp
+	b.tp.Flen = mysql.MaxDatetimeWidthNoFsp + fsp
+	if fsp > 0 {
+		// Add the length for `.`.
+		b.tp.Flen++
+	}
+}
+
+func (b *baseBuiltinFunc) setDecimalAndFlenForDate() {
+	b.tp.Decimal = 0
+	b.tp.Flen = mysql.MaxDateWidth
+	b.tp.Tp = mysql.TypeDate
+}
+
+func (b *baseBuiltinFunc) setDecimalAndFlenForTime(fsp int) {
+	b.tp.Decimal = fsp
+	b.tp.Flen = mysql.MaxDurationWidthNoFsp + fsp
+	if fsp > 0 {
+		// Add the length for `.`.
+		b.tp.Flen++
+	}
 }

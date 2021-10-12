@@ -31,16 +31,16 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -1866,8 +1866,9 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	snapshot.SetOption(kv.IsolationLevel, kv.SI)
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
 	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
-	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
+	if readReplicaType.IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, readReplicaType)
 	}
 
 	rander := rand.New(rand.NewSource(e.randSeed)) // #nosec G404

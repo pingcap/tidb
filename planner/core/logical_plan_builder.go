@@ -27,13 +27,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -41,6 +34,13 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
@@ -49,10 +49,12 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 )
@@ -985,7 +987,10 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
 				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
-				if err != nil || ret {
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if ret {
 					continue
 				}
 				// If there is condition which is always false, return dual plan directly.
@@ -1372,10 +1377,11 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			childTp := u.children[j].Schema().Columns[i].RetType
 			resultTp = unionJoinFieldType(resultTp, childTp)
 		}
-		if err := expression.CheckIllegalMixCollation("UNION", tmpExprs, types.ETInt); err != nil {
-			return err
+		collation, err := expression.CheckAndDeriveCollationFromExprs(b.ctx, "UNION", resultTp.EvalType(), tmpExprs...)
+		if err != nil || collation.Coer == expression.CoercibilityNone {
+			return collate.ErrIllegalMixCollation.GenWithStackByArgs("UNION")
 		}
-		resultTp.Charset, resultTp.Collate = expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
+		resultTp.Charset, resultTp.Collate = collation.Charset, collation.Collation
 		names = append(names, &types.FieldName{ColName: u.children[0].OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
@@ -3455,11 +3461,15 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
 		}
 	}
-	enableNoopFuncs := b.ctx.GetSessionVars().EnableNoopFuncs
+	noopFuncsMode := b.ctx.GetSessionVars().NoopFuncsMode
 	if sel.SelectStmtOpts != nil {
-		if sel.SelectStmtOpts.CalcFoundRows && !enableNoopFuncs {
+		if sel.SelectStmtOpts.CalcFoundRows && noopFuncsMode != variable.OnInt {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
-			return nil, err
+			if noopFuncsMode == variable.OffInt {
+				return nil, err
+			}
+			// NoopFuncsMode is Warn, append an error
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
@@ -3574,9 +3584,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
-		if sel.LockInfo.LockType == ast.SelectLockForShare && !enableNoopFuncs {
+		if sel.LockInfo.LockType == ast.SelectLockForShare && noopFuncsMode != variable.OnInt {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
-			return nil, err
+			if noopFuncsMode == variable.OffInt {
+				return nil, err
+			}
+			// NoopFuncsMode is Warn, append an error
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		p, err = b.buildSelectLock(p, sel.LockInfo)
 		if err != nil {
@@ -3872,12 +3886,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	is := b.is
 	if len(b.buildingViewStack) > 0 {
-		if tempIs, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
-			// For tables in view, always ignore local temporary table, considering the below case:
-			// If a user created a normal table `t1` and a view `v1` referring `t1`, and then a local temporary table with a same name `t1` is created.
-			// At this time, executing 'select * from v1' should still return all records from normal table `t1` instead of temporary table `t1`.
-			is = tempIs.InfoSchema
-		}
+		// For tables in view, always ignore local temporary table, considering the below case:
+		// If a user created a normal table `t1` and a view `v1` referring `t1`, and then a local temporary table with a same name `t1` is created.
+		// At this time, executing 'select * from v1' should still return all records from normal table `t1` instead of temporary table `t1`.
+		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
 	tbl, err := is.TableByName(dbName, tn.Name)
@@ -4235,6 +4247,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &ClusterTableExtractor{}
 		case infoschema.TableClusterLog:
 			p.Extractor = &ClusterLogTableExtractor{}
+		case infoschema.TableTiDBHotRegionsHistory:
+			p.Extractor = &HotRegionsHistoryTableExtractor{}
 		case infoschema.TableInspectionResult:
 			p.Extractor = &InspectionResultTableExtractor{}
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
@@ -4252,6 +4266,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &TableStorageStatsExtractor{}
 		case infoschema.TableTiFlashTables, infoschema.TableTiFlashSegments:
 			p.Extractor = &TiFlashSystemTableExtractor{}
+		case infoschema.TableStatementsSummary, infoschema.TableStatementsSummaryHistory:
+			p.Extractor = &StatementsSummaryExtractor{}
 		}
 	}
 	return p, nil
@@ -5875,11 +5891,89 @@ func buildWindowSpecs(specs []ast.WindowSpec) (map[string]*ast.WindowSpec, error
 	return specsMap, nil
 }
 
+func unfoldSelectList(list *ast.SetOprSelectList, unfoldList *ast.SetOprSelectList) {
+	for _, sel := range list.Selects {
+		switch s := sel.(type) {
+		case *ast.SelectStmt:
+			unfoldList.Selects = append(unfoldList.Selects, s)
+		case *ast.SetOprSelectList:
+			unfoldSelectList(s, unfoldList)
+		}
+	}
+}
+
 // extractTableList extracts all the TableNames from node.
 // If asName is true, extract AsName prior to OrigName.
 // Privilege check should use OrigName, while expression may use AsName.
-func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName bool) []*ast.TableName {
+// TODO: extracting all tables by vistor model maybe a better way
+func extractTableList(node ast.Node, input []*ast.TableName, asName bool) []*ast.TableName {
 	switch x := node.(type) {
+	case *ast.SelectStmt:
+		input = extractTableList(x.From.TableRefs, input, asName)
+		if x.Where != nil {
+			input = extractTableList(x.Where, input, asName)
+		}
+		if x.With != nil {
+			for _, cte := range x.With.CTEs {
+				input = extractTableList(cte.Query, input, asName)
+			}
+		}
+		for _, f := range x.Fields.Fields {
+			if s, ok := f.Expr.(*ast.SubqueryExpr); ok {
+				input = extractTableList(s, input, asName)
+			}
+		}
+	case *ast.DeleteStmt:
+		input = extractTableList(x.TableRefs.TableRefs, input, asName)
+		if x.IsMultiTable {
+			for _, t := range x.Tables.Tables {
+				input = extractTableList(t, input, asName)
+			}
+		}
+		if x.Where != nil {
+			input = extractTableList(x.Where, input, asName)
+		}
+		if x.With != nil {
+			for _, cte := range x.With.CTEs {
+				input = extractTableList(cte.Query, input, asName)
+			}
+		}
+	case *ast.UpdateStmt:
+		input = extractTableList(x.TableRefs.TableRefs, input, asName)
+		for _, e := range x.List {
+			input = extractTableList(e.Expr, input, asName)
+		}
+		if x.Where != nil {
+			input = extractTableList(x.Where, input, asName)
+		}
+		if x.With != nil {
+			for _, cte := range x.With.CTEs {
+				input = extractTableList(cte.Query, input, asName)
+			}
+		}
+	case *ast.InsertStmt:
+		input = extractTableList(x.Table.TableRefs, input, asName)
+		input = extractTableList(x.Select, input, asName)
+	case *ast.SetOprStmt:
+		l := &ast.SetOprSelectList{}
+		unfoldSelectList(x.SelectList, l)
+		for _, s := range l.Selects {
+			input = extractTableList(s.(ast.ResultSetNode), input, asName)
+		}
+	case *ast.PatternInExpr:
+		if s, ok := x.Sel.(*ast.SubqueryExpr); ok {
+			input = extractTableList(s, input, asName)
+		}
+	case *ast.ExistsSubqueryExpr:
+		if s, ok := x.Sel.(*ast.SubqueryExpr); ok {
+			input = extractTableList(s, input, asName)
+		}
+	case *ast.BinaryOperationExpr:
+		if s, ok := x.R.(*ast.SubqueryExpr); ok {
+			input = extractTableList(s, input, asName)
+		}
+	case *ast.SubqueryExpr:
+		input = extractTableList(x.Query, input, asName)
 	case *ast.Join:
 		input = extractTableList(x.Left, input, asName)
 		input = extractTableList(x.Right, input, asName)

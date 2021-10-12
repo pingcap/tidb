@@ -18,10 +18,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -193,7 +193,7 @@ func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, sysLoc *
 		if err != nil {
 			return nil, err
 		}
-		val, err = table.CastValue(ctx, val, col.Col.ColumnInfo, false, true)
+		val, err = table.CastValue(ctx, *val.Clone(), col.Col.ColumnInfo, false, true)
 		if err != nil {
 			return nil, err
 		}

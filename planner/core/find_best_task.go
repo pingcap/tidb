@@ -20,13 +20,14 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -565,6 +566,10 @@ func (ds *DataSource) getIndexMergeCandidate(path *util.AccessPath) *candidatePa
 func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candidatePath {
 	candidates := make([]*candidatePath, 0, 4)
 	for _, path := range ds.possibleAccessPaths {
+		// We should check whether the possible access path is valid first.
+		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
+			continue
+		}
 		if path.PartialIndexPaths != nil {
 			candidates = append(candidates, ds.getIndexMergeCandidate(path))
 			continue
@@ -572,9 +577,6 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		// if we already know the range of the scan is empty, just return a TableDual
 		if len(path.Ranges) == 0 {
 			return []*candidatePath{{path: path}}
-		}
-		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
-			continue
 		}
 		var currentCandidate *candidatePath
 		if path.IsTablePath() {
@@ -625,14 +627,28 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 	}
 
 	if ds.ctx.GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {
-		// remove the table/index full scan path
-		for i, c := range candidates {
-			for _, ran := range c.path.Ranges {
-				if ran.IsFullRange() {
-					candidates = append(candidates[:i], candidates[i+1:]...)
-					return candidates
+		// If a candidate path is TiFlash-path or forced-path, we just keep them. For other candidate paths, if there exists
+		// any range scan path, we remove full scan paths and keep range scan paths.
+		preferredPaths := make([]*candidatePath, 0, len(candidates))
+		var hasRangeScanPath bool
+		for _, c := range candidates {
+			if c.path.Forced || c.path.StoreType == kv.TiFlash {
+				preferredPaths = append(preferredPaths, c)
+				continue
+			}
+			var unsignedIntHandle bool
+			if c.path.IsIntHandlePath && ds.tableInfo.PKIsHandle {
+				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.Flag)
 				}
 			}
+			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
+				preferredPaths = append(preferredPaths, c)
+				hasRangeScanPath = true
+			}
+		}
+		if hasRangeScanPath {
+			return preferredPaths
 		}
 	}
 
@@ -797,7 +813,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				p: dual,
 			}, cntPlan, nil
 		}
-		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
+		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema() &&
+			// to avoid the over-optimized risk, do not generate PointGet for plan cache, for example,
+			// `pk>=$a and pk<=$b` can be optimized to a PointGet when `$a==$b`, but it can cause wrong results when `$a!=$b`.
+			!ds.ctx.GetSessionVars().StmtCtx.UseCache
 		if canConvertPointGet && !path.IsIntHandlePath {
 			// We simply do not build [batch] point get for prefix indexes. This can be optimized.
 			canConvertPointGet = path.Index.Unique && !path.Index.HasPrefixIndex()
@@ -1194,6 +1213,10 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
 		ts.SetCost(cost)
+		// We set `StatsVersion` here and fill other fields in `(*copTask).finishIndexPlan`. Since `copTask.indexPlan` may
+		// change before calling `(*copTask).finishIndexPlan`, we don't know the stats information of `ts` currently and on
+		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
+		ts.stats = &property.StatsInfo{StatsVersion: ds.tableStats.StatsVersion}
 		cop.tablePlan = ts
 	}
 	cop.cst = cost
@@ -1324,6 +1347,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *util.AccessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
+	indexConds = keepAccessCondsAsFilter4PlanCache(is.ctx, path.AccessConds, indexConds)
 
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
 
@@ -1351,6 +1375,14 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats, is.blockOffset)
+		if len(copTask.rootTaskConds) != 0 {
+			selectivity, _, err := copTask.tblColHists.Selectivity(is.ctx, tableConds, nil)
+			if err != nil {
+				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+				selectivity = SelectionFactor
+			}
+			tableSel.stats = copTask.plan().statsInfo().Scale(selectivity)
+		}
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
@@ -1603,6 +1635,30 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 	return nil, corr
 }
 
+// keepAccessCondsAsFilter4PlanCache is used to keep the access conditions as
+// filter conditions when the following conditions are met:
+// 1. Access conditions contains the lazy constant, see the MaybeOverOptimized4PlanCache
+// function for more details.
+// For example: if we have an table schema like `t(col1 int, col2 int, key idx(col1)),
+// and a prepare stmt like 'select col1 from t where (col1 between $a and $b or col1 < $c) and col2 < 1;`.
+// The normal plan will be `IndexReader -> Selection[col2 < 1] -> IndexRangeScan`
+// when `$a < $b`, the conditions related to col1 in `Selection` will be eliminated.
+// But when the `$a > $b`, we will get `IndexReader -> Selection[col2 < 1] -> IndexFullScan`.
+// And the result will be wrong without conditions related to col1 in `Selection`.
+// So we need to keep the `accessConditions` in `DataSource` to `Selection` when
+// the `accessConditions` in `DataSource` contains the lazy constant. After use
+// this function the `Selection` will be `((col1 > $a and col1 < $b) or col1 < $c))
+// and col2 < 1`.
+func keepAccessCondsAsFilter4PlanCache(ctx sessionctx.Context, accessConds []expression.Expression, filterConds []expression.Expression) []expression.Expression {
+	if expression.MaybeOverOptimized4PlanCache(ctx, accessConds) {
+		additionFilterConds := make([]expression.Expression, len(accessConds))
+		copy(additionFilterConds, accessConds)
+		filterConds = append(filterConds, additionFilterConds...)
+		filterConds = expression.RemoveDupExprs(ctx, filterConds)
+	}
+	return filterConds
+}
+
 // GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
 func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
 	ds := s.Source
@@ -1733,6 +1789,12 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty, cand
 	}
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
+	}
+	if candidate.isMatchProp {
+		// TableSample on partition table can't keep order.
+		if ds.tableInfo.GetPartitionInfo() != nil {
+			return invalidTask, nil
+		}
 	}
 	p := PhysicalTableSample{
 		TableSampleInfo: ds.SampleInfo,
@@ -1924,6 +1986,7 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
+	ts.filterCondition = keepAccessCondsAsFilter4PlanCache(ts.ctx, ts.AccessCondition, ts.filterCondition)
 	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
 	ts.filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ts.ctx.GetClient(), ts.StoreType)
@@ -1934,6 +1997,14 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *pro
 	if len(ts.filterCondition) > 0 {
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
+		if len(copTask.rootTaskConds) != 0 {
+			selectivity, _, err := copTask.tblColHists.Selectivity(ts.ctx, ts.filterCondition, nil)
+			if err != nil {
+				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+				selectivity = SelectionFactor
+			}
+			sel.stats = ts.stats.Scale(selectivity)
+		}
 		sel.SetChildren(ts)
 		sel.cost = copTask.cst
 		copTask.tablePlan = sel

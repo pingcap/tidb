@@ -17,13 +17,13 @@ package parser
 import (
 	"strings"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
-// GetDefaultDB checks if all columns in the AST have explicit DBName. If not, return specified DBName.
+// GetDefaultDB checks if all tables in the AST have explicit DBName. If not, return specified DBName.
 func GetDefaultDB(sel ast.StmtNode, dbName string) string {
 	implicitDB := &implicitDatabase{}
 	sel.Accept(implicitDB)

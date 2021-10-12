@@ -23,9 +23,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -746,6 +746,12 @@ func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chu
 			continue
 		}
 
+		// when count > MaxInt64, returns whole string.
+		if count < 0 && mysql.HasUnsignedFlag(b.args[2].GetType().Flag) {
+			result.AppendString(str)
+			continue
+		}
+
 		strs := strings.Split(str, delim)
 		start, end := int64(0), int64(len(strs))
 		if count > 0 {
@@ -757,8 +763,8 @@ func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chu
 			// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
 			count = -count
 			if count < 0 {
-				// -count overflows max int64, returns an empty string.
-				result.AppendString("")
+				// -count overflows max int64, returns whole string.
+				result.AppendString(str)
 				continue
 			}
 

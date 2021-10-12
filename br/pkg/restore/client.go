@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -300,7 +300,7 @@ func (rc *Client) ResetTS(ctx context.Context, pdAddrs []string) error {
 		idx := i % len(pdAddrs)
 		i++
 		return pdutil.ResetTS(ctx, pdAddrs[idx], restoreTS, rc.tlsConf)
-	}, newPDReqBackoffer())
+	}, utils.NewPDReqBackoffer())
 }
 
 // GetPlacementRules return the current placement rules.
@@ -313,7 +313,7 @@ func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]pl
 		i++
 		placementRules, err = pdutil.GetPlacementRules(ctx, pdAddrs[idx], rc.tlsConf)
 		return errors.Trace(err)
-	}, newPDReqBackoffer())
+	}, utils.NewPDReqBackoffer())
 	return placementRules, errors.Trace(errRetry)
 }
 

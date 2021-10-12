@@ -20,12 +20,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -185,7 +185,7 @@ func (p *PhysicalIndexScan) isFullScan() bool {
 		return false
 	}
 	for _, ran := range p.Ranges {
-		if !ran.IsFullRange() {
+		if !ran.IsFullRange(false) {
 			return false
 		}
 	}
@@ -322,8 +322,14 @@ func (p *PhysicalTableScan) isFullScan() bool {
 	if len(p.rangeDecidedBy) > 0 || p.haveCorCol() {
 		return false
 	}
+	var unsignedIntHandle bool
+	if p.Table.PKIsHandle {
+		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.Flag)
+		}
+	}
 	for _, ran := range p.Ranges {
-		if !ran.IsFullRange() {
+		if !ran.IsFullRange(unsignedIntHandle) {
 			return false
 		}
 	}

@@ -30,9 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	parsertypes "github.com/pingcap/parser/types"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -41,6 +38,9 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	parsertypes "github.com/pingcap/tidb/parser/types"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -190,6 +190,11 @@ func main() {
 
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
+
+	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
+	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
+	// For regression of issue like https://github.com/pingcap/tidb/issues/28190
+	terror.RegisterFinish()
 
 	exited := make(chan struct{})
 	signal.SetupSignalHandler(func(graceful bool) {
@@ -542,6 +547,11 @@ func setGlobalVars() {
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
 
+	if len(cfg.ServerVersion) > 0 {
+		mysql.ServerVersion = cfg.ServerVersion
+		variable.SetSysVar(variable.Version, cfg.ServerVersion)
+	}
+
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
@@ -675,7 +685,8 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 
 func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
 	if graceful {
-		svr.GracefulDown(context.Background(), nil)
+		done := make(chan struct{})
+		svr.GracefulDown(context.Background(), done)
 	} else {
 		svr.TryGracefulDown()
 	}

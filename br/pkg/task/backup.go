@@ -16,7 +16,6 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
@@ -345,7 +345,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		pdAddress := strings.Join(cfg.PD, ",")
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
-		return metawriter.FlushBackupMeta(ctx)
+
+		err = metawriter.FlushBackupMeta(ctx)
+		if err == nil {
+			summary.SetSuccessStatus(true)
+		}
+		return err
 	}
 
 	if isIncrementalBackup {
@@ -466,8 +471,10 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			return errors.Trace(err)
 		}
 	}
-
-	g.Record(summary.BackupDataSize, metawriter.ArchiveSize())
+	archiveSize := metawriter.ArchiveSize()
+	g.Record(summary.BackupDataSize, archiveSize)
+	//backup from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
+	g.Record("Size", archiveSize)
 	failpoint.Inject("s3-outage-during-writing-file", func(v failpoint.Value) {
 		log.Info("failpoint s3-outage-during-writing-file injected, " +
 			"process will sleep for 3s and notify the shell to kill s3 service.")

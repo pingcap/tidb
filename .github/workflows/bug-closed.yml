@@ -1,0 +1,28 @@
+name: Bug Closed
+
+on:
+  issues:
+    types:
+      - closed
+
+jobs:
+  label_issues:
+    if: |
+      contains(github.event.issue.labels.*.name, 'type/bug') &&
+      !(contains(join(github.event.issue.labels.*.name, ', '), 'affects-') &&
+        contains(join(github.event.issue.labels.*.name, ', '), 'fixes-'))
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Label issues
+        uses: andymckay/labeler@1.0.3
+        with:
+          add-labels: "needs-more-info"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Add comment
+        uses: peter-evans/create-or-update-comment@v1.4.5
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            Please check whether the issue should be labeled with 'affects-x.y' or 'fixes-x.y.z', and then remove 'needs-more-info' label.

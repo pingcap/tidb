@@ -19,13 +19,13 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -453,6 +453,41 @@ func (s *testPlanSuite) TestAggEliminator(c *C) {
 			output[i].Best = core.ToString(p)
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, Commentf("for %s", tt))
+	}
+}
+
+func (s *testPlanSuite) TestINMJHint(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int primary key, b int not null)")
+	tk.MustExec("create table t2(a int primary key, b int not null)")
+	tk.MustExec("insert into t1 values(1,1),(2,2)")
+	tk.MustExec("insert into t2 values(1,1),(2,1)")
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
 	}
 }
 
@@ -1543,6 +1578,20 @@ func (s *testPlanSuite) TestDAGPlanBuilderWindowParallel(c *C) {
 	s.doTestDAGPlanBuilderWindow(c, vars, input, output)
 }
 
+func (s *testPlanSuite) TestTopNPushDownEmpty(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_a(a))")
+	tk.MustQuery("select extract(day_hour from 'ziy') as res from t order by res limit 1").Check(testkit.Rows())
+}
+
 func (s *testPlanSuite) doTestDAGPlanBuilderWindow(c *C, vars, input []string, output []struct {
 	SQL  string
 	Best string
@@ -1790,4 +1839,34 @@ func (s *testPlanSuite) TestPossibleProperties(c *C) {
 	tk.MustQuery("select /*+ stream_agg() */ a.id, avg(b.score) as afs from student a join sc b on a.id = b.student_id where b.score < 60 group by a.id having count(b.course_id) >= 2").Check(testkit.Rows(
 		"1 58.0000",
 	))
+}
+
+func (s *testPlanSuite) TestSelectionPartialPushDown(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL  string
+			Plan []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int as (a+1) virtual)")
+	tk.MustExec("create table t2(a int, b int as (a+1) virtual, c int, key idx_a(a))")
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
+		})
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
 }
