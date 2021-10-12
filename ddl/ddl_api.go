@@ -2158,8 +2158,7 @@ func (d *ddl) CreateTablesWithInfo(ctx sessionctx.Context,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       make([]interface{}, 0, 2),
 	}
-	ids := make([]int64, 0, len(infos))
-	args := make([]interface{}, 0, len(infos))
+	args := make([]*model.TableInfo, 0, len(infos))
 	idx := make([]int, 0, len(infos))
 	for i, info := range infos {
 		job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, tryRetainID)
@@ -2179,16 +2178,20 @@ func (d *ddl) CreateTablesWithInfo(ctx sessionctx.Context,
 		// store index to table info
 		idx = append(idx, i)
 
-		// append table id
-		ids = append(ids, job.TableID)
-
 		// append table job args
-		args = append(args, job.Args)
+		if len(job.Args) != 1 {
+			return fmt.Errorf("except only one argument")
+		}
+		info, ok := job.Args[0].(*model.TableInfo)
+		if !ok {
+			return fmt.Errorf("except table info")
+		}
+		args = append(args, info)
 	}
-	if len(ids) == 0 {
+	if len(args) == 0 {
 		return nil
 	}
-	jobs.Args = append(jobs.Args, ids, args)
+	jobs.Args = append(jobs.Args, args)
 
 	err := d.doDDLJob(ctx, jobs)
 	if err != nil {
