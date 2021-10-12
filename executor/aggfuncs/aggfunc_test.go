@@ -967,7 +967,7 @@ func testAggMemFunc(t *testing.T, p aggMemTest) {
 	iter := chunk.NewIterator4Chunk(srcChk)
 	i := 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		memDelta, err := finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr)
+		memDelta, err := finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr, false)
 		require.NoError(t, err)
 		require.Equal(t, updateMemDeltas[i], memDelta)
 		i++
