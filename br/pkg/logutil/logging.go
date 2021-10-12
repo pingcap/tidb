@@ -139,6 +139,10 @@ func Leader(peer *metapb.Peer) zap.Field {
 	return zap.String("leader", peer.String())
 }
 
+func Peer(peer *metapb.Peer) zap.Field {
+	return zap.String("peer", peer.String())
+}
+
 type zapSSTMetaMarshaler struct{ *import_sstpb.SSTMeta }
 
 func (sstMeta zapSSTMetaMarshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
