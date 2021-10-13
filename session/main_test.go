@@ -36,6 +36,8 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	testmain.ShortCircuitForBench(m)
+
 	testbridge.WorkaroundGoCheckFlags()
 	SetSchemaLease(20 * time.Millisecond)
 	config.UpdateGlobal(func(conf *config.Config) {
