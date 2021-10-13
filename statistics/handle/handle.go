@@ -1801,9 +1801,18 @@ func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsUsage, 
 	}
 	colStatsMap := make(map[model.TableColumnID]colStatsUsage, len(rows))
 	for _, row := range rows {
-		key := model.TableColumnID{TableID: row.GetInt64(0), ColumnID: row.GetInt64(1)}
-		value := colStatsUsage{LastUsedAt: row.GetTime(2), LastAnalyzedAt: row.GetTime(3)}
-		colStatsMap[key] = value
+		if row.IsNull(0) || row.IsNull(1) {
+			continue
+		}
+		tblColID := model.TableColumnID{TableID: row.GetInt64(0), ColumnID: row.GetInt64(1)}
+		var lastUsedAt, lastAnalyzedAt types.Time
+		if !row.IsNull(2) {
+			lastUsedAt = row.GetTime(2)
+		}
+		if !row.IsNull(3) {
+			lastAnalyzedAt = row.GetTime(3)
+		}
+		colStatsMap[tblColID] = colStatsUsage{LastUsedAt: lastUsedAt, LastAnalyzedAt: lastAnalyzedAt}
 	}
 	return colStatsMap, nil
 }
@@ -1816,7 +1825,9 @@ func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
 	}
 	columnIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
-		columnIDs = append(columnIDs, row.GetInt64(0))
+		if !row.IsNull(0) {
+			columnIDs = append(columnIDs, row.GetInt64(0))
+		}
 	}
 	return columnIDs, nil
 }
