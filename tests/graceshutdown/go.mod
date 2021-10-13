@@ -12,6 +12,9 @@ require (
 	go.uber.org/zap v1.19.1
 )
 
+// update pongo2 version to v4.0.2, remove dependency on juju/errors, this module import by cockroachdb/pebble
+replace github.com/flosch/pongo2 => github.com/flosch/pongo2/v4 v4.0.2
+
 replace github.com/pingcap/tidb => ../../
 
 replace github.com/pingcap/tidb/parser => ../../parser

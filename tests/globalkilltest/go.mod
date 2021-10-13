@@ -17,6 +17,9 @@ require (
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
+// update pongo2 version to v4.0.2, remove dependency on juju/errors, this module import by cockroachdb/pebble
+replace github.com/flosch/pongo2 => github.com/flosch/pongo2/v4 v4.0.2
+
 replace github.com/pingcap/tidb => ../../
 
 replace github.com/pingcap/tidb/parser => ../../parser

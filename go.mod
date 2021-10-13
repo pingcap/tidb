@@ -98,6 +98,9 @@ require (
 // we need keep the replacement until go.etcd.io supports the higher version of grpc.
 replace google.golang.org/grpc => google.golang.org/grpc v1.29.1
 
+// update pongo2 version to v4.0.2, remove dependency on juju/errors, this module import by cockroachdb/pebble
+replace github.com/flosch/pongo2 => github.com/flosch/pongo2/v4 v4.0.2
+
 replace github.com/pingcap/tidb/parser => ./parser
 
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
