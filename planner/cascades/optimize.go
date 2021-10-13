@@ -186,7 +186,7 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, round int
 			}
 
 			newExprs, eraseOld, eraseAll, err := rule.OnTransform(iter)
-			if err != nil {
+			if err != nil || newExprs == nil {
 				return false, err
 			}
 
