@@ -1011,8 +1011,8 @@ func isValidTiFlashDecimalType(tp *types.FieldType) bool {
 	return tp.Flen > 0 && tp.Flen <= 65 && tp.Decimal >= 0 && tp.Decimal <= 30 && tp.Flen >= tp.Decimal
 }
 
-func canEnumPushdownPreliminarily(function *ScalarFunction) bool {
-	switch function.FuncName.L {
+func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {
+	switch scalarFunc.FuncName.L {
 	case ast.Cast:
 		return scalarFunc.RetType.EvalType() == types.ETInt || scalarFunc.RetType.EvalType() == types.ETReal || scalarFunc.RetType.EvalType() == types.ETDecimal
 	default:
