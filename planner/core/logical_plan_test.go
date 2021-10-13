@@ -22,14 +22,14 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1073,6 +1073,9 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.ReferencesPriv, "test", "", "", nil, false, "", false},
 				{mysql.LockTablesPriv, "test", "", "", nil, false, "", false},
 				{mysql.CreateTMPTablePriv, "test", "", "", nil, false, "", false},
+				{mysql.EventPriv, "test", "", "", nil, false, "", false},
+				{mysql.CreateRoutinePriv, "test", "", "", nil, false, "", false},
+				{mysql.AlterRoutinePriv, "test", "", "", nil, false, "", false},
 				{mysql.AlterPriv, "test", "", "", nil, false, "", false},
 				{mysql.ExecutePriv, "test", "", "", nil, false, "", false},
 				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
@@ -1144,6 +1147,9 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.ReferencesPriv, "test", "", "", nil, false, "", false},
 				{mysql.LockTablesPriv, "test", "", "", nil, false, "", false},
 				{mysql.CreateTMPTablePriv, "test", "", "", nil, false, "", false},
+				{mysql.EventPriv, "test", "", "", nil, false, "", false},
+				{mysql.CreateRoutinePriv, "test", "", "", nil, false, "", false},
+				{mysql.AlterRoutinePriv, "test", "", "", nil, false, "", false},
 				{mysql.AlterPriv, "test", "", "", nil, false, "", false},
 				{mysql.ExecutePriv, "test", "", "", nil, false, "", false},
 				{mysql.IndexPriv, "test", "", "", nil, false, "", false},

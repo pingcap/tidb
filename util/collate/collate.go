@@ -19,9 +19,9 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -310,10 +310,10 @@ func IsCICollation(collate string) bool {
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci"
 }
 
-// IsBinCollation returns if the collation is 'xx_bin'
+// IsBinCollation returns if the collation is 'xx_bin'.
 func IsBinCollation(collate string) bool {
-	return collate == "ascii_bin" || collate == "latin1_bin" ||
-		collate == "utf8_bin" || collate == "utf8mb4_bin"
+	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
+		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4
 }
 
 func init() {
