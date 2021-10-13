@@ -2059,7 +2059,7 @@ func (b *executorBuilder) refreshForUpdateTSForRC() error {
 	return UpdateForUpdateTS(b.ctx, newForUpdateTS)
 }
 
-func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]interface{}, autoAnalyze string) *analyzeTask {
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -2090,11 +2090,11 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		idxInfo:         task.IndexInfo,
 	}
 	topNSize := new(int32)
-	*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
+	*topNSize = int32(opts[ast.AnalyzeOptNumTopN].(uint64))
 	statsVersion := new(int32)
 	*statsVersion = int32(task.StatsVersion)
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
-		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
+		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets].(uint64)),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
 		TopNSize:   topNSize,
 		Version:    statsVersion,
@@ -2103,14 +2103,14 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	if e.isCommonHandle && e.idxInfo.Primary {
 		e.analyzePB.Tp = tipb.AnalyzeType_TypeCommonHandle
 	}
-	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
-	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
+	depth := int32(opts[ast.AnalyzeOptCMSketchDepth].(uint64))
+	width := int32(opts[ast.AnalyzeOptCMSketchWidth].(uint64))
 	e.analyzePB.IdxReq.CmsketchDepth = &depth
 	e.analyzePB.IdxReq.CmsketchWidth = &width
 	return &analyzeTask{taskType: idxTask, idxExec: e, job: job}
 }
 
-func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]interface{}) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
 	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.GetStatisticsID())
 	analyzeTask := b.buildAnalyzeIndexPushdown(task, opts, "")
@@ -2152,7 +2152,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
-func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]interface{}, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze table"}
 	availableIdx := make([]*model.IndexInfo, 0, len(task.Indexes))
 	colGroups := make([]*tipb.AnalyzeColumnGroup, 0, len(task.Indexes))
@@ -2216,14 +2216,14 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		baseModifyCnt:           modifyCount,
 	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
-		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
-		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
-		SampleRate:   new(int32),
+		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets].(uint64)),
+		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples].(uint64)),
+		SampleRate:   new(float64),
 		SketchSize:   maxSketchSize,
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle),
 		ColumnGroups: colGroups,
 	}
-	*e.analyzePB.ColReq.SampleRate = int32(opts[ast.AnalyzeOptSampleRate])
+	*e.analyzePB.ColReq.SampleRate = opts[ast.AnalyzeOptSampleRate].(float64)
 
 	if task.TblInfo != nil {
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
@@ -2235,7 +2235,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
 }
 
-func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]interface{}, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
 	if task.StatsVersion == statistics.Version2 {
 		return b.buildAnalyzeSamplingPushdown(task, opts, autoAnalyze, schemaForVirtualColEval)
 	}
@@ -2282,10 +2282,10 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		handleCols:      task.HandleCols,
 		AnalyzeInfo:     task.AnalyzeInfo,
 	}
-	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
-	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
+	depth := int32(opts[ast.AnalyzeOptCMSketchDepth].(uint64))
+	width := int32(opts[ast.AnalyzeOptCMSketchWidth].(uint64))
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
-		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
+		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets].(uint64)),
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
 		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt()),
@@ -2300,17 +2300,17 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	}
 	if task.CommonHandleInfo != nil {
 		topNSize := new(int32)
-		*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
+		*topNSize = int32(opts[ast.AnalyzeOptNumTopN].(uint64))
 		statsVersion := new(int32)
 		*statsVersion = int32(task.StatsVersion)
 		e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
-			BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
+			BucketSize: int64(opts[ast.AnalyzeOptNumBuckets].(uint64)),
 			NumColumns: int32(len(task.CommonHandleInfo.Columns)),
 			TopNSize:   topNSize,
 			Version:    statsVersion,
 		}
-		depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
-		width := int32(opts[ast.AnalyzeOptCMSketchWidth])
+		depth := int32(opts[ast.AnalyzeOptCMSketchDepth].(uint64))
+		width := int32(opts[ast.AnalyzeOptCMSketchWidth].(uint64))
 		e.analyzePB.IdxReq.CmsketchDepth = &depth
 		e.analyzePB.IdxReq.CmsketchWidth = &width
 		e.analyzePB.IdxReq.SketchSize = maxSketchSize
@@ -2322,7 +2322,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
 }
 
-func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
+func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]interface{}) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
 	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.GetStatisticsID())
 	analyzeTask := b.buildAnalyzeColumnsPushdown(task, opts, "", nil)
@@ -2361,7 +2361,7 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 	return analyzeTask
 }
 
-func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) {
+func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]interface{}) {
 	findTask := false
 	for _, eTask := range e.tasks {
 		if eTask.fastExec != nil && eTask.fastExec.tableID.Equals(&task.TableID) {
@@ -2409,7 +2409,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 	}
 }
 
-func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64) {
+func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]interface{}) {
 	findTask := false
 	for _, eTask := range e.tasks {
 		if eTask.fastExec != nil && eTask.fastExec.tableID.Equals(&task.TableID) {

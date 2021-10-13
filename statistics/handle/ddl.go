@@ -66,7 +66,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 // analyzeOptionDefault saves the default values of NumBuckets and NumTopN.
 // These values will be used in dynamic mode when we drop table partition and then need to merge global-stats.
 // These values originally came from the analyzeOptionDefault structure in the planner/core/planbuilder.go file.
-var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
+var analyzeOptionDefault = map[ast.AnalyzeOptionType]interface{}{
 	ast.AnalyzeOptNumBuckets: 256,
 	ast.AnalyzeOptNumTopN:    20,
 }
@@ -84,7 +84,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	if globalStats == nil {
 		return nil
 	}
-	opts := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	opts := make(map[ast.AnalyzeOptionType]interface{}, len(analyzeOptionDefault))
 	for key, val := range analyzeOptionDefault {
 		opts[key] = val
 	}

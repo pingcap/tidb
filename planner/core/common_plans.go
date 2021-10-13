@@ -909,7 +909,7 @@ type Analyze struct {
 
 	ColTasks []AnalyzeColumnsTask
 	IdxTasks []AnalyzeIndexTask
-	Opts     map[ast.AnalyzeOptionType]uint64
+	Opts     map[ast.AnalyzeOptionType]interface{}
 }
 
 // LoadData represents a loaddata plan.

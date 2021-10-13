@@ -93,7 +93,7 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/pingcap/tipb => github.com/winoros/tipb v0.0.0-20210817165920-1790364d2411
+replace github.com/pingcap/tipb => github.com/winoros/tipb v0.0.0-20211013061641-faa265605b59
 
 // cloud.google.com/go/storage will upgrade grpc to v1.40.0
 // we need keep the replacement until go.etcd.io supports the higher version of grpc.

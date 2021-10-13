@@ -1842,7 +1842,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	return taskSlice
 }
 
-func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
+func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]interface{}, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
@@ -1925,7 +1925,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 	return p, nil
 }
 
-func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
+func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]interface{}, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
@@ -1990,7 +1990,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	return p, nil
 }
 
-func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
+func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]interface{}, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
@@ -2053,35 +2053,35 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 // CMSketchSizeLimit indicates the size limit of CMSketch.
 var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
 
-var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    1024,
-	ast.AnalyzeOptNumTopN:       1024,
+var analyzeOptionLimit = map[ast.AnalyzeOptionType]interface{}{
+	ast.AnalyzeOptNumBuckets:    uint64(1024),
+	ast.AnalyzeOptNumTopN:       uint64(1024),
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
-	ast.AnalyzeOptNumSamples:    500000,
-	ast.AnalyzeOptSampleRate:    100,
+	ast.AnalyzeOptNumSamples:    uint64(500000),
+	ast.AnalyzeOptSampleRate:    float64(1),
 }
 
-var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    256,
-	ast.AnalyzeOptNumTopN:       20,
-	ast.AnalyzeOptCMSketchWidth: 2048,
-	ast.AnalyzeOptCMSketchDepth: 5,
-	ast.AnalyzeOptNumSamples:    10000,
-	ast.AnalyzeOptSampleRate:    0,
+var analyzeOptionDefault = map[ast.AnalyzeOptionType]interface{}{
+	ast.AnalyzeOptNumBuckets:    uint64(256),
+	ast.AnalyzeOptNumTopN:       uint64(20),
+	ast.AnalyzeOptCMSketchWidth: uint64(2048),
+	ast.AnalyzeOptCMSketchDepth: uint64(5),
+	ast.AnalyzeOptNumSamples:    uint64(10000),
+	ast.AnalyzeOptSampleRate:    float64(0),
 }
 
-var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    256,
-	ast.AnalyzeOptNumTopN:       500,
-	ast.AnalyzeOptCMSketchWidth: 2048,
-	ast.AnalyzeOptCMSketchDepth: 5,
-	ast.AnalyzeOptNumSamples:    0,
-	ast.AnalyzeOptSampleRate:    1,
+var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]interface{}{
+	ast.AnalyzeOptNumBuckets:    uint64(256),
+	ast.AnalyzeOptNumTopN:       uint64(500),
+	ast.AnalyzeOptCMSketchWidth: uint64(2048),
+	ast.AnalyzeOptCMSketchDepth: uint64(5),
+	ast.AnalyzeOptNumSamples:    uint64(0),
+	ast.AnalyzeOptSampleRate:    0.01,
 }
 
-func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]interface{}, error) {
+	optMap := make(map[ast.AnalyzeOptionType]interface{}, len(analyzeOptionDefault))
 	if statsVer == statistics.Version1 {
 		for key, val := range analyzeOptionDefault {
 			optMap[key] = val
@@ -2091,37 +2091,47 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 			optMap[key] = val
 		}
 	}
-	sampleNum, sampleRate := 0, 0
+	sampleNum, sampleRate := 0, 0.0
 	for _, opt := range opts {
+		datumValue := opt.Value.(*driver.ValueExpr).Datum
 		switch opt.Type {
 		case ast.AnalyzeOptNumTopN:
-			if opt.Value > analyzeOptionLimit[opt.Type] {
+			if datumValue.GetUint64() > analyzeOptionLimit[opt.Type].(uint64) {
 				return nil, errors.Errorf("value of analyze option %s should not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
+			optMap[opt.Type] = datumValue.GetUint64()
 		case ast.AnalyzeOptSampleRate:
-			if statsVer == statistics.Version1 && opt.Value > 0 {
+			v, err := datumValue.ToFloat64(nil)
+			if err != nil {
+				return nil, err
+			}
+			if statsVer == statistics.Version1 && v > 0 {
 				return nil, errors.Errorf("Version 1's statistics doesn't support the SAMPLE RATE option, please set tidb_analyze_version to 2")
 			}
-			if opt.Value > analyzeOptionLimit[opt.Type] {
-				return nil, errors.Errorf("value of analyze option %s should not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
+			if v > analyzeOptionLimit[opt.Type].(float64) || v <= 0 {
+				return nil, errors.Errorf("value of analyze option %s should not larger than %f", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
-			sampleRate = int(opt.Value)
+			optMap[opt.Type] = v
+			sampleRate = v
 		default:
-			if opt.Value == 0 || opt.Value > analyzeOptionLimit[opt.Type] {
+			v := datumValue.GetUint64()
+			if v == 0 || v > analyzeOptionLimit[opt.Type].(uint64) {
 				return nil, errors.Errorf("value of analyze option %s should be positive and not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
+			optMap[opt.Type] = v
 			if opt.Type == ast.AnalyzeOptNumSamples {
-				sampleNum = int(opt.Value)
+				sampleNum = int(v)
 			}
 		}
-		optMap[opt.Type] = opt.Value
 	}
 	if sampleNum > 0 && sampleRate > 0 {
 		return nil, errors.Errorf("You can only either set the value of the sample num of set the value of the sample rate. Don't set both of them")
 	}
-	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > CMSketchSizeLimit {
+	cWidth, cDepth := optMap[ast.AnalyzeOptCMSketchWidth].(uint64), optMap[ast.AnalyzeOptCMSketchDepth].(uint64)
+	if cWidth*cDepth > CMSketchSizeLimit {
 		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", CMSketchSizeLimit)
 	}
+	logutil.BgLogger().Warn("build analyze plan", zap.String("opt map", fmt.Sprintf("%v", optMap)))
 	return optMap, nil
 }
 

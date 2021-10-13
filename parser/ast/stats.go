@@ -90,7 +90,7 @@ func (hot HistogramOperationType) String() string {
 // AnalyzeOpt stores the analyze option type and value.
 type AnalyzeOpt struct {
 	Type  AnalyzeOptionType
-	Value uint64
+	Value ValueExpr
 }
 
 // Restore implements Node interface.

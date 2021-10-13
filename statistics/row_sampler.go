@@ -37,7 +37,7 @@ type RowSampleCollector interface {
 	MergeCollector(collector RowSampleCollector)
 	FromProto(pbCollector *tipb.RowSampleCollector)
 	ToProto() *tipb.RowSampleCollector
-	sampleZippedRow(sample *ReservoirRowSampleItem)
+	sampleRow(row []types.Datum, rng *rand.Rand)
 	Base() *baseCollector
 }
 
@@ -109,13 +109,13 @@ type RowSampleBuilder struct {
 	Collators       []collate.Collator
 	ColGroups       [][]int64
 	MaxSampleSize   int
-	SampleRate      int
+	SampleRate      float64
 	MaxFMSketchSize int
 	Rng             *rand.Rand
 }
 
-func NewRowSampleCollector(maxSampleSize int, sampleRate int, totalLen int) RowSampleCollector {
-	logutil.BgLogger().Warn("new collector", zap.Int("size", maxSampleSize), zap.Int("rate", sampleRate))
+func NewRowSampleCollector(maxSampleSize int, sampleRate float64, totalLen int) RowSampleCollector {
+	logutil.BgLogger().Warn("new collector", zap.Int("size", maxSampleSize), zap.Float64("rate", sampleRate))
 	if maxSampleSize > 0 {
 		return NewReservoirRowSampleCollector(maxSampleSize, totalLen)
 	}
@@ -193,17 +193,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 			if err != nil {
 				return nil, err
 			}
-			var weight int64
-			if s.MaxSampleSize > 0 {
-				weight = s.Rng.Int63()
-			} else {
-				weight = s.Rng.Int63n(100)
-			}
-			item := &ReservoirRowSampleItem{
-				Columns: newCols,
-				Weight:  weight,
-			}
-			collector.sampleZippedRow(item)
+			collector.sampleRow(newCols, s.Rng)
 		}
 	}
 }
@@ -262,6 +252,27 @@ func (s *ReservoirRowSampleCollector) sampleZippedRow(sample *ReservoirRowSample
 	}
 	if s.Samples[0].Weight < sample.Weight {
 		s.Samples[0] = sample
+		heap.Fix(&s.Samples, 0)
+	}
+}
+
+func (s *ReservoirRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Rand) {
+	weight := rng.Int63()
+	if len(s.Samples) < s.MaxSampleSize {
+		s.Samples = append(s.Samples, &ReservoirRowSampleItem{
+			Columns: row,
+			Weight:  weight,
+		})
+		if len(s.Samples) == s.MaxSampleSize {
+			heap.Init(&s.Samples)
+		}
+		return
+	}
+	if s.Samples[0].Weight < weight {
+		s.Samples[0] = &ReservoirRowSampleItem{
+			Columns: row,
+			Weight:  weight,
+		}
 		heap.Fix(&s.Samples, 0)
 	}
 }
@@ -360,11 +371,11 @@ func RowSamplesToProto(samples WeightedRowSampleHeap) []*tipb.RowSample {
 // It uses the bernoulli sampling to collect the data.
 type BernoulliRowSampleCollector struct {
 	*baseCollector
-	SampleRate int64
+	SampleRate float64
 }
 
 // NewBernoulliRowSampleCollector creates the new collector by the given inputs.
-func NewBernoulliRowSampleCollector(sampleRate int, totalLen int) *BernoulliRowSampleCollector {
+func NewBernoulliRowSampleCollector(sampleRate float64, totalLen int) *BernoulliRowSampleCollector {
 	base := &baseCollector{
 		Samples:    make(WeightedRowSampleHeap, 0, 8),
 		NullCount:  make([]int64, totalLen),
@@ -373,15 +384,18 @@ func NewBernoulliRowSampleCollector(sampleRate int, totalLen int) *BernoulliRowS
 	}
 	return &BernoulliRowSampleCollector{
 		baseCollector: base,
-		SampleRate:    int64(sampleRate),
+		SampleRate:    sampleRate,
 	}
 }
 
-func (s *BernoulliRowSampleCollector) sampleZippedRow(item *ReservoirRowSampleItem) {
-	if item.Weight >= s.SampleRate {
+func (s *BernoulliRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Rand) {
+	if rng.Float64() > s.SampleRate {
 		return
 	}
-	s.Samples = append(s.Samples, item)
+	s.baseCollector.Samples = append(s.baseCollector.Samples, &ReservoirRowSampleItem{
+		Columns: row,
+		Weight:  0,
+	})
 }
 
 // MergeCollector merges the collectors to a final one.
@@ -397,7 +411,7 @@ func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleColle
 		s.TotalSizes[i] += subCollector.Base().TotalSizes[i]
 	}
 	for _, sample := range subCollector.Base().Samples {
-		s.sampleZippedRow(sample)
+		s.baseCollector.Samples = append(s.baseCollector.Samples, sample)
 	}
 }
 
