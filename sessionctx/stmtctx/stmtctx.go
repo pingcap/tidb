@@ -443,7 +443,7 @@ func (sc *StatementContext) GetWarnings() []SQLWarn {
 	return warns
 }
 
-// TruncateWarnings truncates wanrings begin from start and returns the truncated warnings.
+// TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
 func (sc *StatementContext) TruncateWarnings(start int) []SQLWarn {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
