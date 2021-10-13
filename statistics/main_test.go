@@ -80,11 +80,12 @@ func TestStatistics(t *testing.T) {
 	// statistics_test.go
 	t.Run("SubTestColumnRange", SubTestColumnRange(s))
 	t.Run("SubTestIntColumnRanges", SubTestIntColumnRanges(s))
+	t.Run("SubTestIndexRanges", SubTestIndexRanges(s))
 
 	// statistics_serial_test.go
 	t.Run("SubTestBuild", SubTestBuild(s))
 	t.Run("SubTestHistogramProtoConversion", SubTestHistogramProtoConversion(s))
-	t.Run("SubTestIndexRanges", SubTestIndexRanges(s))
+
 }
 
 func createTestStatisticsSuite(t *testing.T) *testStatisticsSuite {

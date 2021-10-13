@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -221,78 +219,5 @@ func SubTestHistogramProtoConversion(s *testStatisticsSuite) func(*testing.T) {
 		p := HistogramToProto(col)
 		h := HistogramFromProto(p)
 		require.True(t, HistogramEqual(col, h, true))
-	}
-}
-
-func SubTestIndexRanges(s *testStatisticsSuite) func(*testing.T) {
-	return func(t *testing.T) {
-		bucketCount := int64(256)
-		ctx := mock.NewContext()
-		sc := ctx.GetSessionVars().StmtCtx
-
-		s.rc.(*recordSet).cursor = 0
-		rowCount, hg, cms, err := buildIndex(ctx, bucketCount, 0, s.rc)
-		hg.PreCalculateScalar()
-		require.NoError(t, err)
-		require.Equal(t, int64(100000), rowCount)
-		idxInfo := &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}}
-		idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
-		tbl := &Table{
-			HistColl: HistColl{
-				Count:   int64(idx.TotalRowCount()),
-				Indices: make(map[int64]*Index),
-			},
-		}
-		ran := []*ranger.Range{{
-			LowVal:  []types.Datum{types.MinNotNullDatum()},
-			HighVal: []types.Datum{types.MaxValueDatum()},
-		}}
-		count, err := tbl.GetRowCountByIndexRanges(sc, 0, ran)
-		require.NoError(t, err)
-		require.Equal(t, 99900, int(count))
-		ran[0].LowVal[0] = types.NewIntDatum(1000)
-		ran[0].HighVal[0] = types.NewIntDatum(2000)
-		count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
-		require.NoError(t, err)
-		require.Equal(t, 2500, int(count))
-		ran[0].LowVal[0] = types.NewIntDatum(1001)
-		ran[0].HighVal[0] = types.NewIntDatum(1999)
-		count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
-		require.NoError(t, err)
-		require.Equal(t, 2500, int(count))
-		ran[0].LowVal[0] = types.NewIntDatum(1000)
-		ran[0].HighVal[0] = types.NewIntDatum(1000)
-		count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
-		require.NoError(t, err)
-		require.Equal(t, 100, int(count))
-
-		tbl.Indices[0] = &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}, Unique: true}}
-		ran[0].LowVal[0] = types.NewIntDatum(1000)
-		ran[0].HighVal[0] = types.NewIntDatum(1000)
-		count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
-		require.NoError(t, err)
-		require.Equal(t, 1, int(count))
-
-		tbl.Indices[0] = idx
-		ran[0].LowVal[0] = types.MinNotNullDatum()
-		ran[0].HighVal[0] = types.MaxValueDatum()
-		count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
-		require.NoError(t, err)
-		require.Equal(t, 100000, int(count))
-		ran[0].LowVal[0] = types.NewIntDatum(1000)
-		ran[0].HighVal[0] = types.NewIntDatum(2000)
-		count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
-		require.NoError(t, err)
-		require.Equal(t, 1000, int(count))
-		ran[0].LowVal[0] = types.NewIntDatum(1001)
-		ran[0].HighVal[0] = types.NewIntDatum(1990)
-		count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
-		require.NoError(t, err)
-		require.Equal(t, 989, int(count))
-		ran[0].LowVal[0] = types.NewIntDatum(1000)
-		ran[0].HighVal[0] = types.NewIntDatum(1000)
-		count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
-		require.NoError(t, err)
-		require.Equal(t, 0, int(count))
 	}
 }
