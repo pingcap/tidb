@@ -37,13 +37,7 @@ func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return nil
-	}
 
-	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(strings.ToLower(result.GetString(i))))
-	}
 	return nil
 }
 
@@ -55,13 +49,11 @@ func (b *builtinLowerUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return nil
-	}
 
 	for i := 0; i < input.NumRows(); i++ {
 		result.SetRaw(i, []byte(strings.ToLower(result.GetString(i))))
 	}
+
 	return nil
 }
 
