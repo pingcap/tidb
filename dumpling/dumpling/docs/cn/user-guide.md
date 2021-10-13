@@ -1,6 +1,6 @@
 # Dumpling 使用手册
 
-[Dumpling](https://github.com/pingcap/dumpling) 是支持以 SQL 文本或者 CSV 格式将 MySQL/TiDB 数据导出的工具。
+[Dumpling](https://github.com/pingcap/tidb/dumpling) 是支持以 SQL 文本或者 CSV 格式将 MySQL/TiDB 数据导出的工具。
 
 设计初衷是为了替代 [Mydumper](https://github.com/pingcap/mydumper), 所以基本用法可以参考 Mydumper,
 当然在实现中没有完全照搬 Mydumper, 因此存在与 Mydumper 不同的用法。
