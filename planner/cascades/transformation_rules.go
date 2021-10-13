@@ -1647,10 +1647,13 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	return []*memo.GroupExpr{newAggExpr}, false, false, nil
 }
 
+// EliminateAgg tries to convert a aggregation to projection operators.
 type EliminateAgg struct {
 	baseRule
 }
 
+// NewRuleEliminateAgg creates a new Transformation EliminateAgg.
+// The pattern of this rule is `aggregation->projection`.
 func NewRuleEliminateAgg() Transformation {
 	rule := &EliminateAgg{}
 	rule.pattern = memo.BuildPattern(
@@ -1661,6 +1664,7 @@ func NewRuleEliminateAgg() Transformation {
 	return rule
 }
 
+// Match implements Transformation interface.
 func (r *EliminateAgg) Match(expr *memo.ExprIter) bool {
 	if expr.Children != nil && len(expr.Children) > 0 {
 		expr.Children[0].Group.BuildKeyInfo()
@@ -1687,6 +1691,8 @@ func (r *EliminateAgg) Match(expr *memo.ExprIter) bool {
 	return false
 }
 
+// OnTransform implements Transformation interface.
+// It will transform `aggregation group by unique key` to `projection`.
 func (r *EliminateAgg) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 	if ok, proj := plannercore.ConvertAggToProj(agg, old.GetExpr().Schema()); ok {
