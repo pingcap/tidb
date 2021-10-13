@@ -3275,7 +3275,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(increase(tidb_server_handshake_error_total{tidb_cluster=\"$tidb_cluster\"}[1m])) by (instance)",
+              "expr": "sum(rate(tidb_server_handshake_error_total{tidb_cluster=\"$tidb_cluster\"}[1m])) by (instance)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{instance}}",
