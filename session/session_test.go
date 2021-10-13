@@ -4035,11 +4035,15 @@ func (s *testSessionSuite2) TestMemoryUsageAlarmVariable(c *C) {
 	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=0.7")
 	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0.7"))
-	err := tk.ExecToErr("set @@session.tidb_memory_usage_alarm_ratio=1.1")
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_memory_usage_alarm_ratio' can't be set to the value of '1.1'")
-	err = tk.ExecToErr("set @@session.tidb_memory_usage_alarm_ratio=-1")
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_memory_usage_alarm_ratio' can't be set to the value of '-1'")
-	err = tk.ExecToErr("set @@global.tidb_memory_usage_alarm_ratio=0.8")
+	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=1.1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_ratio value: '1.1'"))
+	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=-1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_ratio value: '-1'"))
+	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0"))
+
+	err := tk.ExecToErr("set @@global.tidb_memory_usage_alarm_ratio=0.8")
 	c.Assert(err.Error(), Equals, "[variable:1228]Variable 'tidb_memory_usage_alarm_ratio' is a SESSION variable and can't be used with SET GLOBAL")
 }
 
@@ -4293,14 +4297,15 @@ func (s *testSessionSerialSuite) TestTiKVSystemVars(c *C) {
 	result = tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_gc_run_interval'")
 	result.Check(testkit.Rows("tidb_gc_run_interval 15m0s"))
 
-	_, err := tk.Exec("SET GLOBAL tidb_gc_run_interval = '9m'") // too small
-	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_gc_run_interval'")
+	tk.MustExec("SET GLOBAL tidb_gc_run_interval = '9m'") // too small
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_gc_run_interval value: '9m'"))
+	result = tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_gc_run_interval'")
+	result.Check(testkit.Rows("tidb_gc_run_interval 10m0s"))
 
 	tk.MustExec("SET GLOBAL tidb_gc_run_interval = '700000000000ns'") // specified in ns, also valid
 
-	_, err = tk.Exec("SET GLOBAL tidb_gc_run_interval = '11mins'")
+	_, err := tk.Exec("SET GLOBAL tidb_gc_run_interval = '11mins'")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_gc_run_interval'") // wrong format
-
 }
 
 func (s *testSessionSerialSuite) TestGlobalVarCollationServer(c *C) {
