@@ -82,7 +82,6 @@ const (
 
 // Global config name list.
 const (
-	GlobalConfigRedactLog    = "redact_log"
 	GlobalConfigEnableTopSQL = "enable_resource_metering"
 )
 
@@ -1656,7 +1655,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableRedactLog = TiDBOptOn(val)
 		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 		return nil
-	}, GlobalConfigName: GlobalConfigRedactLog},
+	}},
 	{Scope: ScopeGlobal, Name: TiDBRestrictedReadOnly, Value: BoolToOnOff(DefTiDBRestrictedReadOnly), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), SetSession: func(s *SessionVars, val string) error {
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
