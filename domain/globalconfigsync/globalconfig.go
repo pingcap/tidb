@@ -17,7 +17,6 @@ package globalconfigsync
 import (
 	"context"
 	"path"
-	"sync"
 
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -32,8 +31,6 @@ const (
 
 // GlobalConfigSyncer stores global config into etcd.
 type GlobalConfigSyncer struct {
-	sync.Mutex
-	cache    map[string]string
 	etcdCli  *clientv3.Client
 	NotifyCh chan ConfigEntry
 }
@@ -41,7 +38,6 @@ type GlobalConfigSyncer struct {
 // NewGlobalConfigSyncer returns a new GlobalConfigSyncer.
 func NewGlobalConfigSyncer(etcdCli *clientv3.Client) *GlobalConfigSyncer {
 	return &GlobalConfigSyncer{
-		cache:    map[string]string{},
 		etcdCli:  etcdCli,
 		NotifyCh: make(chan ConfigEntry, 8),
 	}
@@ -60,7 +56,7 @@ func (c *GlobalConfigSyncer) Notify(name, value string) {
 
 // StoreGlobalConfig stores the global config into etcd.
 func (c *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, entry ConfigEntry) error {
-	if c.etcdCli == nil || !c.needUpdate(entry) {
+	if c.etcdCli == nil {
 		return nil
 	}
 
@@ -69,20 +65,6 @@ func (c *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, entry Config
 	if err != nil {
 		return err
 	}
-	c.updateCache(entry)
-	logutil.BgLogger().Info("global config store", zap.String("name", entry.name), zap.String("value", entry.value))
+	logutil.BgLogger().Info("store global config", zap.String("name", entry.name), zap.String("value", entry.value))
 	return nil
-}
-
-func (c *GlobalConfigSyncer) needUpdate(entry ConfigEntry) bool {
-	c.Lock()
-	oldValue, exist := c.cache[entry.name]
-	c.Unlock()
-	return !exist || oldValue != entry.value
-}
-
-func (c *GlobalConfigSyncer) updateCache(entry ConfigEntry) {
-	c.Lock()
-	c.cache[entry.name] = entry.value
-	c.Unlock()
 }
