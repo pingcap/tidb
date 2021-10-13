@@ -4838,7 +4838,7 @@ func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
 	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsFalse)
 	tk.MustGetErrMsg(
 		"create global temporary table temp_test(id int primary key auto_increment) on commit delete rows",
-		"It is switched off by tidb_enable_global_temporary_table",
+		"SET tidb_enable_global_temporary_table=1 to enable temporary tables",
 	)
 }
 
