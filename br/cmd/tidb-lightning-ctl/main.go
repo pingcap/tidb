@@ -18,14 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
-
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/lightning"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
@@ -35,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
+	"os"
+	"path/filepath"
 )
 
 func main() {
@@ -106,14 +101,14 @@ func run() error {
 	if *flagFetchMode {
 		return errors.Trace(fetchMode(ctx, cfg, tls))
 	}
-	if len(*mode) != 0 {
-		return errors.Trace(switchMode(ctx, cfg, tls, *mode))
-	}
 	if len(*flagImportEngine) != 0 {
 		return errors.Trace(importEngine(ctx, cfg, tls, *flagImportEngine))
 	}
+	if len(*mode) != 0 {
+		return errors.Trace(lightning.SwitchMode(ctx, cfg, tls, *mode))
+	}
 	if len(*flagCleanupEngine) != 0 {
-		return errors.Trace(cleanupEngine(ctx, cfg, tls, *flagCleanupEngine))
+		return errors.Trace(lightning.CleanupEngine(ctx, cfg, tls, *flagCleanupEngine))
 	}
 
 	if len(*cpRemove) != 0 {
@@ -143,27 +138,6 @@ func compactCluster(ctx context.Context, cfg *config.Config, tls *common.TLS) er
 		tikv.StoreStateDisconnected,
 		func(c context.Context, store *tikv.Store) error {
 			return tikv.Compact(c, tls, store.Address, restore.FullLevelCompact)
-		},
-	)
-}
-
-func switchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
-	var m import_sstpb.SwitchMode
-	switch mode {
-	case config.ImportMode:
-		m = import_sstpb.SwitchMode_Import
-	case config.NormalMode:
-		m = import_sstpb.SwitchMode_Normal
-	default:
-		return errors.Errorf("invalid mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
-	}
-
-	return tikv.ForAllStores(
-		ctx,
-		tls.WithHost(cfg.TiDB.PdAddr),
-		tikv.StoreStateDisconnected,
-		func(c context.Context, store *tikv.Store) error {
-			return tikv.SwitchMode(c, tls, store.Address, m)
 		},
 	)
 }
@@ -358,33 +332,13 @@ func getLocalStoringTables(ctx context.Context, cfg *config.Config) (err2 error)
 	return nil
 }
 
-func unsafeCloseEngine(ctx context.Context, importer backend.Backend, engine string) (*backend.ClosedEngine, error) {
-	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
-		tableName := engine[:index]
-		engineID, err := strconv.Atoi(engine[index+1:])
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ce, err := importer.UnsafeCloseEngine(ctx, nil, tableName, int32(engineID))
-		return ce, errors.Trace(err)
-	}
-
-	engineUUID, err := uuid.Parse(engine)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	ce, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "<tidb-lightning-ctl>", engineUUID)
-	return ce, errors.Trace(err)
-}
-
 func importEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {
 	importer, err := importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	ce, err := unsafeCloseEngine(ctx, importer, engine)
+	ce, err := lightning.UnsafeCloseEngine(ctx, importer, engine)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -396,16 +350,3 @@ func importEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engi
 	return errors.Trace(ce.Import(ctx, regionSplitSize))
 }
 
-func cleanupEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {
-	importer, err := importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	ce, err := unsafeCloseEngine(ctx, importer, engine)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return errors.Trace(ce.Cleanup(ctx))
-}
