@@ -744,7 +744,7 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 			ts.Ranges = ranger.FullIntRange(false)
 		}
 	}
-	return nil
+	return
 }
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err error) {
