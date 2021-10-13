@@ -259,7 +259,7 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 	if sessionVars.GlobalVarsAccessor != nil {
 		opt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
 		if err != nil {
-			logutil.BgLogger().Warn("Failed to get server collation", zap.Error(err))
+			return err
 		}
 		opt.Chs, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CharacterSetServer)
 		if err != nil {
@@ -314,7 +314,7 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 				}
 			}
 		} else {
-			logutil.BgLogger().Warn("Failed to get collation details", zap.String("collation", opt.Col), zap.Error(err))
+			return errors.Errorf("failed to get collation details for %s", opt.Col)
 		}
 	}
 
