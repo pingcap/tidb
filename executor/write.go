@@ -20,14 +20,14 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -111,14 +111,14 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				if err != nil {
 					return false, err
 				}
-				if err = t.Allocators(sctx).Get(autoid.RowIDAllocType).Rebase(recordID, true); err != nil {
+				if err = t.Allocators(sctx).Get(autoid.RowIDAllocType).Rebase(ctx, recordID, true); err != nil {
 					return false, err
 				}
 			}
 			if col.IsPKHandleColumn(t.Meta()) {
 				handleChanged = true
 				// Rebase auto random id if the field is changed.
-				if err := rebaseAutoRandomValue(sctx, t, &newData[i], col); err != nil {
+				if err := rebaseAutoRandomValue(ctx, sctx, t, &newData[i], col); err != nil {
 					return false, err
 				}
 			}
@@ -222,7 +222,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	return true, nil
 }
 
-func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *types.Datum, col *table.Column) error {
+func rebaseAutoRandomValue(ctx context.Context, sctx sessionctx.Context, t table.Table, newData *types.Datum, col *table.Column) error {
 	tableInfo := t.Meta()
 	if !tableInfo.ContainsAutoRandomBits() {
 		return nil
@@ -237,7 +237,7 @@ func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *type
 	layout := autoid.NewShardIDLayout(&col.FieldType, tableInfo.AutoRandomBits)
 	// Set bits except incremental_bits to zero.
 	recordID = recordID & (1<<layout.IncrementalBits - 1)
-	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(recordID, true)
+	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.

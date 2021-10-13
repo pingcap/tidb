@@ -30,12 +30,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	parsertypes "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
@@ -46,6 +40,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	parsertypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -2860,58 +2860,6 @@ func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 	c.Assert(t1.Meta().TiFlashReplica, NotNil)
 	c.Assert(t1.Meta().TiFlashReplica.Available, IsTrue)
 	c.Assert(t1.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID})
-}
-
-func (s *testSerialDBSuite) TestCreateTableWithSpecialComment(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	// case for direct options
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("CREATE TABLE `t` (\n" +
-		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
-		"/*T![placement] PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"CONSTRAINTS=\"[+disk=ssd]\" */",
-	)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PRIMARY_REGION=\"cn-east-1\" "+
-			"REGIONS=\"cn-east-1, cn-east-2\" "+
-			"FOLLOWERS=2 "+
-			"CONSTRAINTS=\"[+disk=ssd]\" */",
-	))
-
-	// case for policy
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("create placement policy x " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"CONSTRAINTS=\"[+disk=ssd]\" ")
-	tk.MustExec("create table t(a int)" +
-		"/*T![placement] PLACEMENT POLICY=`x` */")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PLACEMENT POLICY=`x` */",
-	))
-
-	// case for policy with quotes
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("create table t(a int)" +
-		"/*T![placement] PLACEMENT POLICY=\"x\" */")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
-		"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PLACEMENT POLICY=`x` */",
-	))
 }
 
 func (s *testSerialDBSuite) TestCreateTable(c *C) {

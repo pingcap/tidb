@@ -33,11 +33,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -49,6 +44,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/server"
@@ -5669,8 +5669,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
 	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_bin"))
 
-	// TODO: it will fail if update parser, comment it to prevent block CI. Will fix after https://github.com/pingcap/tidb/pull/27875 merged.
-	//tk.MustQuery("select _gbk 'a'").Check(testkit.Rows("a"))
+	tk.MustGetErrCode("select _gbk 'a';", errno.ErrUnknownCharacterSet)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a char(10) charset gbk);")
@@ -5697,6 +5696,31 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 		"  `a` char(10) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin",
 	))
+}
+
+func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t" +
+		"(ascii_char char(10) character set ascii," +
+		"gbk_char char(10) character set gbk collate gbk_bin," +
+		"latin_char char(10) character set latin1," +
+		"utf8mb4_char char(10) character set utf8mb4)",
+	)
+	tk.MustExec("insert into t values ('a', 'a', 'a', 'a'), ('a', '啊', '€', 'ㅂ');")
+	tk.MustQuery("select collation(concat(ascii_char, gbk_char)) from t;").Check(testkit.Rows("gbk_bin", "gbk_bin"))
+	tk.MustQuery("select collation(concat(gbk_char, ascii_char)) from t;").Check(testkit.Rows("gbk_bin", "gbk_bin"))
+	tk.MustQuery("select collation(concat(utf8mb4_char, gbk_char)) from t;").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
+	tk.MustQuery("select collation(concat(gbk_char, utf8mb4_char)) from t;").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
+	tk.MustQuery("select collation(concat('啊', convert('啊' using gbk) collate gbk_bin));").Check(testkit.Rows("gbk_bin"))
+	tk.MustQuery("select collation(concat(_latin1 'a', convert('啊' using gbk) collate gbk_bin));").Check(testkit.Rows("gbk_bin"))
+
+	tk.MustGetErrCode("select collation(concat(latin_char, gbk_char)) from t;", mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select collation(concat(convert('€' using latin1), convert('啊' using gbk) collate gbk_bin));", mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select collation(concat(utf8mb4_char, gbk_char collate gbk_bin)) from t;", mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select collation(concat('ㅂ', convert('啊' using gbk) collate gbk_bin));", mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select collation(concat(ascii_char collate ascii_bin, gbk_char)) from t;", mysql.ErrCantAggregate2collations)
 }
 
 func (s *testSerialSuite2) TestIssue23567(c *C) {
@@ -8917,7 +8941,7 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	}
 }
 
-func (s *testSuite) TestEmptyTableSampleTemporaryTable(c *C) {
+func (s *testSuite) TestTableSampleTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -8942,26 +8966,31 @@ func (s *testSuite) TestEmptyTableSampleTemporaryTable(c *C) {
 	// sleep 1us to make test stale
 	time.Sleep(time.Microsecond)
 
-	// test tablesample return empty
+	// test tablesample return empty for global temporary table
 	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
-	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 
 	tk.MustExec("begin")
 	tk.MustExec("insert into tmp1 values (1, 1, 1)")
-	tk.MustExec("insert into tmp2 values (1, 1, 1)")
 	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
-	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 	tk.MustExec("commit")
 
-	// tablesample should not return error for compatibility of tools like dumpling
+	// tablesample for global temporary table should not return error for compatibility of tools like dumpling
 	tk.MustExec("set @@tidb_snapshot=NOW(6)")
 	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
-	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 
 	tk.MustExec("begin")
 	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
-	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 	tk.MustExec("commit")
+	tk.MustExec("set @@tidb_snapshot=''")
+
+	// test tablesample returns error for local temporary table
+	tk.MustGetErrMsg("select * from tmp2 tablesample regions()", "TABLESAMPLE clause can not be applied to local temporary tables")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into tmp2 values (1, 1, 1)")
+	tk.MustGetErrMsg("select * from tmp2 tablesample regions()", "TABLESAMPLE clause can not be applied to local temporary tables")
+	tk.MustExec("commit")
+	tk.MustGetErrMsg("select * from tmp2 tablesample regions()", "TABLESAMPLE clause can not be applied to local temporary tables")
 }
 
 func (s *testSuite) TestIssue25506(c *C) {
@@ -9043,5 +9072,40 @@ func (s *testSuite) TestCTEWithIndexLookupJoinDeadLock(c *C) {
 	// It's easy to reproduce this problem in 30 times execution of IndexLookUpJoin.
 	for i := 0; i < 30; i++ {
 		tk.MustExec("with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;")
+	}
+}
+
+func (s *testSuite) TestGetResultRowsCount(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	for i := 1; i <= 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%v)", i))
+	}
+	cases := []struct {
+		sql string
+		row int64
+	}{
+		{"select * from t", 10},
+		{"select * from t where a < 0", 0},
+		{"select * from t where a <= 3", 3},
+		{"insert into t values (11)", 0},
+		{"replace into t values (12)", 0},
+		{"update t set a=13 where a=12", 0},
+	}
+
+	for _, ca := range cases {
+		if strings.HasPrefix(ca.sql, "select") {
+			tk.MustQuery(ca.sql)
+		} else {
+			tk.MustExec(ca.sql)
+		}
+		info := tk.Se.ShowProcess()
+		c.Assert(info, NotNil)
+		p, ok := info.Plan.(plannercore.Plan)
+		c.Assert(ok, IsTrue)
+		cnt := executor.GetResultRowsCount(tk.Se, p)
+		c.Assert(ca.row, Equals, cnt, Commentf("sql: %v", ca.sql))
 	}
 }

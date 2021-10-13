@@ -32,12 +32,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
@@ -46,6 +40,12 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
@@ -4033,11 +4033,15 @@ func (s *testSessionSuite2) TestMemoryUsageAlarmVariable(c *C) {
 	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=0.7")
 	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0.7"))
-	err := tk.ExecToErr("set @@session.tidb_memory_usage_alarm_ratio=1.1")
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_memory_usage_alarm_ratio' can't be set to the value of '1.1'")
-	err = tk.ExecToErr("set @@session.tidb_memory_usage_alarm_ratio=-1")
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_memory_usage_alarm_ratio' can't be set to the value of '-1'")
-	err = tk.ExecToErr("set @@global.tidb_memory_usage_alarm_ratio=0.8")
+	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=1.1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_ratio value: '1.1'"))
+	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=-1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_ratio value: '-1'"))
+	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0"))
+
+	err := tk.ExecToErr("set @@global.tidb_memory_usage_alarm_ratio=0.8")
 	c.Assert(err.Error(), Equals, "[variable:1228]Variable 'tidb_memory_usage_alarm_ratio' is a SESSION variable and can't be used with SET GLOBAL")
 }
 
@@ -4291,14 +4295,15 @@ func (s *testSessionSerialSuite) TestTiKVSystemVars(c *C) {
 	result = tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_gc_run_interval'")
 	result.Check(testkit.Rows("tidb_gc_run_interval 15m0s"))
 
-	_, err := tk.Exec("SET GLOBAL tidb_gc_run_interval = '9m'") // too small
-	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_gc_run_interval'")
+	tk.MustExec("SET GLOBAL tidb_gc_run_interval = '9m'") // too small
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_gc_run_interval value: '9m'"))
+	result = tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_gc_run_interval'")
+	result.Check(testkit.Rows("tidb_gc_run_interval 10m0s"))
 
 	tk.MustExec("SET GLOBAL tidb_gc_run_interval = '700000000000ns'") // specified in ns, also valid
 
-	_, err = tk.Exec("SET GLOBAL tidb_gc_run_interval = '11mins'")
+	_, err := tk.Exec("SET GLOBAL tidb_gc_run_interval = '11mins'")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_gc_run_interval'") // wrong format
-
 }
 
 func (s *testSessionSerialSuite) TestGlobalVarCollationServer(c *C) {
@@ -5737,4 +5742,28 @@ func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("set @@tidb_read_staleness=''")
 	tk.MustExec("set @@tidb_read_staleness='0'")
+}
+
+func (s *testSessionSuite) TestFixSetTiDBSnapshotTS(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	tk.MustExec("create database t123")
+	time.Sleep(time.Second)
+	ts := time.Now().Format("2006-1-2 15:04:05")
+	time.Sleep(time.Second)
+	tk.MustExec("drop database t123")
+	err := tk.ExecToErr("use t123")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*Unknown database.*")
+	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot='%s'", ts))
+	tk.MustExec("use t123")
+	// update any session variable and assert whether infoschema is changed
+	tk.MustExec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER';")
+	tk.MustExec("use t123")
 }
