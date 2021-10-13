@@ -549,19 +549,19 @@ func (e *Execute) rebuildRange(p Plan) error {
 	switch x := p.(type) {
 	case *PhysicalTableReader:
 		ts := x.TablePlans[0].(*PhysicalTableScan)
-		ts.Ranges, err = e.buildRangeForTableScan(sctx, ts)
+		err = e.buildRangeForTableScan(sctx, ts)
 		if err != nil {
 			return err
 		}
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
+		err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return err
 		}
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
+		err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return err
 		}
@@ -671,13 +671,13 @@ func (e *Execute) rebuildRange(p Plan) error {
 			switch partialPlan.(type) {
 			case *PhysicalTableScan:
 				ts := partialPlan.(*PhysicalTableScan)
-				ts.Ranges, err = e.buildRangeForTableScan(sctx, ts)
+				err = e.buildRangeForTableScan(sctx, ts)
 				if err != nil {
 					return err
 				}
 			default:
 				is := partialPlan.(*PhysicalIndexScan)
-				is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
+				err = e.buildRangeForIndexScan(sctx, is)
 				if err != nil {
 					return err
 				}
@@ -712,11 +712,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 	return nil
 }
 
-func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) ([]*ranger.Range, error) {
-	var (
-		err error
-		res *ranger.DetachRangeResult
-	)
+func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err error) {
 	if ts.Table.IsCommonHandle {
 		pk := tables.FindPrimaryIndex(ts.Table)
 		pkCols := make([]*expression.Column, 0, len(pk.Columns))
@@ -728,9 +724,9 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 			}
 		}
 		if len(pkCols) > 0 {
-			res, err = ranger.DetachCondAndBuildRangeForIndex(sctx, ts.AccessCondition, pkCols, pkColsLen)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, ts.AccessCondition, pkCols, pkColsLen)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			ts.Ranges = res.Ranges
 		} else {
@@ -746,24 +742,26 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 		if pkCol != nil {
 			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sctx.GetSessionVars().StmtCtx, pkCol.RetType)
 			if err != nil {
-				return nil, err
+				return err
 			}
 		} else {
 			ts.Ranges = ranger.FullIntRange(false)
 		}
 	}
-	return res.Ranges, nil
+	return nil
 }
 
-func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
+func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err error) {
 	if len(is.IdxCols) == 0 {
-		return ranger.FullRange(), nil
+		is.Ranges = ranger.FullRange()
+		return
 	}
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return res.Ranges, nil
+	is.Ranges = res.Ranges
+	return
 }
 
 // Deallocate represents deallocate plan.
