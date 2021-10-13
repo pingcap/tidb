@@ -138,6 +138,7 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	TopSQL              TopSQL      `toml:"top-sql" json:"top-sql"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
@@ -533,6 +534,12 @@ type StmtSummary struct {
 	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
 	// The maximum history size of statement summary.
 	HistorySize int `toml:"history-size" json:"history-size"`
+}
+
+// TopSQL is the config for TopSQL.
+type TopSQL struct {
+	// The TopSQL's data receiver address.
+	ReceiverAddress string `toml:"receiver-address" json:"receiver-address"`
 }
 
 // IsolationRead is the config for isolation read.
