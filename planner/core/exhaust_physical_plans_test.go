@@ -16,6 +16,9 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/stretchr/testify/require"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
@@ -29,11 +32,11 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-func (s *testUnitTestSuit) rewriteSimpleExpr(str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
+func rewriteSimpleExpr(ctx sessionctx.Context, str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
 	if str == "" {
 		return nil, nil
 	}
-	filters, err := expression.ParseSimpleExprsWithNames(s.ctx, str, schema, names)
+	filters, err := expression.ParseSimpleExprsWithNames(ctx, str, schema, names)
 	if err != nil {
 		return nil, err
 	}
@@ -43,14 +46,17 @@ func (s *testUnitTestSuit) rewriteSimpleExpr(str string, schema *expression.Sche
 	return filters, nil
 }
 
-func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
-	s.ctx.GetSessionVars().PlanID = -1
-	joinNode := LogicalJoin{}.Init(s.ctx, 0)
-	dataSourceNode := DataSource{}.Init(s.ctx, 0)
+func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
+	t.Parallel()
+	ctx := MockContext()
+
+	ctx.GetSessionVars().PlanID = -1
+	joinNode := LogicalJoin{}.Init(ctx, 0)
+	dataSourceNode := DataSource{}.Init(ctx, 0)
 	dsSchema := expression.NewSchema()
 	var dsNames types.NameSlice
 	dsSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	dsNames = append(dsNames, &types.FieldName{
@@ -59,7 +65,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	dsSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	dsNames = append(dsNames, &types.FieldName{
@@ -68,7 +74,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	dsSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, mysql.DefaultCollationName, types.UnspecifiedLength),
 	})
 	dsNames = append(dsNames, &types.FieldName{
@@ -77,7 +83,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	dsSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	dsNames = append(dsNames, &types.FieldName{
@@ -86,7 +92,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	dsSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, charset.CollationASCII, types.UnspecifiedLength),
 	})
 	dsNames = append(dsNames, &types.FieldName{
@@ -99,7 +105,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 	outerChildSchema := expression.NewSchema()
 	var outerChildNames types.NameSlice
 	outerChildSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
@@ -108,7 +114,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	outerChildSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
@@ -117,7 +123,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	outerChildSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldTypeWithCollation(mysql.TypeVarchar, mysql.DefaultCollationName, types.UnspecifiedLength),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
@@ -126,7 +132,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	outerChildSchema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	outerChildNames = append(outerChildNames, &types.FieldName{
@@ -272,19 +278,19 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		},
 	}
 	for i, tt := range tests {
-		pushed, err := s.rewriteSimpleExpr(tt.pushedDownConds, dsSchema, dsNames)
-		c.Assert(err, IsNil)
+		pushed, err := rewriteSimpleExpr(ctx, tt.pushedDownConds, dsSchema, dsNames)
+		require.NoError(t, err)
 		dataSourceNode.pushedDownConds = pushed
-		others, err := s.rewriteSimpleExpr(tt.otherConds, joinNode.schema, joinColNames)
-		c.Assert(err, IsNil)
+		others, err := rewriteSimpleExpr(ctx, tt.otherConds, joinNode.schema, joinColNames)
+		require.NoError(t, err)
 		joinNode.OtherConditions = others
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
 		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys)
-		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%v", helper.chosenAccess), Equals, tt.accesses)
-		c.Assert(fmt.Sprintf("%v", helper.chosenRanges), Equals, tt.ranges, Commentf("test case: #%v", i))
-		c.Assert(fmt.Sprintf("%v", helper.idxOff2KeyOff), Equals, tt.idxOff2KeyOff)
-		c.Assert(fmt.Sprintf("%v", helper.chosenRemained), Equals, tt.remained)
-		c.Assert(fmt.Sprintf("%v", helper.lastColManager), Equals, tt.compareFilters)
+		require.NoError(t, err)
+		require.Equal(t, fmt.Sprintf("%v", helper.chosenAccess), tt.accesses)
+		require.Equal(t, fmt.Sprintf("%v", helper.chosenRanges), tt.ranges, Commentf("test case: #%v", i))
+		require.Equal(t, fmt.Sprintf("%v", helper.idxOff2KeyOff), tt.idxOff2KeyOff)
+		require.Equal(t, fmt.Sprintf("%v", helper.chosenRemained), tt.remained)
+		require.Equal(t, fmt.Sprintf("%v", helper.lastColManager), tt.compareFilters)
 	}
 }
