@@ -2,7 +2,7 @@
 
 - Author(s): [okJiang](http://github.com/okJiang)
 - Discussion: [Merge Dumpling repo into TiDB](https://internals.tidb.io/t/topic/434)
-- Tracking Issue: [Tracking issue for merge Dumpling repo into TiDB]()
+- Tracking Issue: [Tracking issue for merge Dumpling repo into TiDB](https://github.com/pingcap/tidb/issues/28775)
 
 ## Table of Contents
 
