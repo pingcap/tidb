@@ -139,6 +139,9 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	// Length must be specified and non-zero for BLOB and TEXT column indexes.
 	if types.IsTypeBlob(col.FieldType.Tp) {
 		if indexColumnLen == types.UnspecifiedLength {
+			if col.Hidden {
+				return errFunctionalIndexOnBlob
+			}
 			return errors.Trace(errBlobKeyWithoutLength.GenWithStackByArgs(col.Name.O))
 		}
 		if indexColumnLen == types.ErrorLength {
