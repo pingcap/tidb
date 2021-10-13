@@ -80,6 +80,12 @@ const (
 	IntOnly = "INT_ONLY"
 )
 
+// Global config name list.
+const (
+	GlobalConfigRedactLog    = "redact_log"
+	GlobalConfigEnableTopSQL = "enable_resource_metering"
+)
+
 // SysVar is for system variable.
 // All the fields of SysVar should be READ ONLY after created.
 type SysVar struct {
@@ -132,6 +138,10 @@ type SysVar struct {
 	skipInit bool
 	// IsNoop defines if the sysvar is a noop included for MySQL compatibility
 	IsNoop bool
+	// GlobalConfigName is the global config name of this global variable.
+	// If the global variable has the global config name,
+	// it should store the global config into PD(etcd) too when set global variable.
+	GlobalConfigName string
 }
 
 // GetGlobalFromHook calls the GetSession func if it exists.
@@ -294,6 +304,21 @@ func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeF
 		return sv.checkDurationSystemVar(value, vars)
 	}
 	return value, nil // typeString
+}
+
+// NormalizeGlobalConfigValue uses to normalize the config value. such as:
+// ON -> true
+// 1  -> true
+// OFF -> false
+func (sv *SysVar) NormalizeGlobalConfigValue(value string) string {
+	switch sv.Type {
+	case TypeBool:
+		if value == On || value == "1" {
+			return "true"
+		}
+		return "false"
+	}
+	return value
 }
 
 func (sv *SysVar) validateScope(scope ScopeFlag) error {
@@ -1631,7 +1656,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableRedactLog = TiDBOptOn(val)
 		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 		return nil
-	}},
+	}, GlobalConfigName: GlobalConfigRedactLog},
 	{Scope: ScopeGlobal, Name: TiDBRestrictedReadOnly, Value: BoolToOnOff(DefTiDBRestrictedReadOnly), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), SetSession: func(s *SessionVars, val string) error {
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
@@ -1747,7 +1772,7 @@ var defaultSysVars = []*SysVar{
 	}, SetGlobal: func(vars *SessionVars, s string) error {
 		TopSQLVariable.Enable.Store(TiDBOptOn(s))
 		return nil
-	}},
+	}, GlobalConfigName: GlobalConfigEnableTopSQL},
 	{Scope: ScopeGlobal, Name: TiDBTopSQLPrecisionSeconds, Value: strconv.Itoa(DefTiDBTopSQLPrecisionSeconds), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: math.MaxInt64, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatInt(TopSQLVariable.PrecisionSeconds.Load(), 10), nil
 	}, SetGlobal: func(vars *SessionVars, s string) error {
