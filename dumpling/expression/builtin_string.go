@@ -1591,10 +1591,10 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		if err != nil {
 			return nil, err
 		}
-		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+		argFieldTp := args[0].GetType()
 		// Use UTF8MB4 as default.
-		bf.tp.Flen = args[0].GetType().Flen * 4 * 2
-		sig := &builtinHexStrArgSig{bf}
+		bf.tp.Flen = argFieldTp.Flen * 4 * 2
+		sig := &builtinHexStrArgSig{bf, charset.NewEncoding(argFieldTp.Charset)}
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
 	case types.ETInt, types.ETReal, types.ETDecimal:
@@ -1614,11 +1614,15 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 
 type builtinHexStrArgSig struct {
 	baseBuiltinFunc
+	encoding *charset.Encoding
 }
 
 func (b *builtinHexStrArgSig) Clone() builtinFunc {
 	newSig := &builtinHexStrArgSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	if b.encoding != nil {
+		newSig.encoding = charset.NewEncoding(b.encoding.Name())
+	}
 	return newSig
 }
 
@@ -1629,7 +1633,14 @@ func (b *builtinHexStrArgSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-	return strings.ToUpper(hex.EncodeToString(hack.Slice(d))), false, nil
+	dBytes := hack.Slice(d)
+	if b.encoding.Enabled() {
+		dBytes, err = b.encoding.Encode(nil, dBytes)
+		if err != nil {
+			return d, false, err
+		}
+	}
+	return strings.ToUpper(hex.EncodeToString(dBytes)), false, nil
 }
 
 type builtinHexIntArgSig struct {
