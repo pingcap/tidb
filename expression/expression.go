@@ -1011,6 +1011,15 @@ func isValidTiFlashDecimalType(tp *types.FieldType) bool {
 	return tp.Flen > 0 && tp.Flen <= 65 && tp.Decimal >= 0 && tp.Decimal <= 30 && tp.Flen >= tp.Decimal
 }
 
+func canEnumPushdownPreliminarily(function *ScalarFunction) bool {
+	switch function.FuncName.L {
+	case ast.Cast:
+		return scalarFunc.RetType.EvalType() == types.ETInt || scalarFunc.RetType.EvalType() == types.ETReal || scalarFunc.RetType.EvalType() == types.ETDecimal
+	default:
+		return false
+	}
+}
+
 func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	switch function.FuncName.L {
 	case ast.Floor, ast.Ceil, ast.Ceiling:
@@ -1188,7 +1197,6 @@ func init() {
 
 func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
 	pbCode := scalarFunc.Function.PbCode()
-	canEnumPush := scalarFunc.FuncName.String() == ast.Cast && (scalarFunc.RetType.EvalType() == types.ETInt || scalarFunc.RetType.EvalType() == types.ETReal || scalarFunc.RetType.EvalType() == types.ETDecimal)
 	// Check whether this function can be pushed.
 	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(scalarFunc, storeType) {
 		if unspecified {
@@ -1205,7 +1213,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 		}
 		return false
 	}
-
+	canEnumPush := canEnumPushdownPreliminarily(scalarFunc)
 	// Check whether all of its parameters can be pushed.
 	for _, arg := range scalarFunc.GetArgs() {
 		if !canExprPushDown(arg, pc, storeType, canEnumPush) {
