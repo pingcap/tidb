@@ -1620,7 +1620,9 @@ type builtinHexStrArgSig struct {
 func (b *builtinHexStrArgSig) Clone() builtinFunc {
 	newSig := &builtinHexStrArgSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.encoding = charset.NewEncoding(b.encoding.Name())
+	if b.encoding != nil {
+		newSig.encoding = charset.NewEncoding(b.encoding.Name())
+	}
 	return newSig
 }
 

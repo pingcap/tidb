@@ -1174,9 +1174,9 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 	}
 
 	strCases := []struct {
-		arg string
-		chs string
-		res string
+		arg     string
+		chs     string
+		res     string
 		errCode int
 	}{
 		{"你好", "", "E4BDA0E5A5BD", 0},
