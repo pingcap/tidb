@@ -22,10 +22,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -523,14 +523,14 @@ func TestPreparedInsert(t *testing.T) {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(2), hit)
+			require.Equal(t, float64(3), hit)
 		}
 		tk.MustExec(`set @a=3; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
 			require.NoError(t, err)
 			hit := pb.GetCounter().GetValue()
-			require.Equal(t, float64(2), hit)
+			require.Equal(t, float64(4), hit)
 		}
 
 		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 101)

@@ -9,7 +9,7 @@ import (
 	reflect "reflect"
 
 	gomock "github.com/golang/mock/gomock"
-	ast "github.com/pingcap/parser/ast"
+	ast "github.com/pingcap/tidb/parser/ast"
 	types "github.com/pingcap/tidb/types"
 	sqlexec "github.com/pingcap/tidb/util/sqlexec"
 )
