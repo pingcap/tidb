@@ -683,12 +683,8 @@ func (e *Execute) rebuildRange(p Plan) error {
 				}
 			}
 		}
-		for _, tablePlan := range indexMerge.TablePlans {
-			err = e.rebuildRange(tablePlan)
-			if err != nil {
-				return err
-			}
-		}
+		// We don't need to handle the indexMerge.TablePlans, because the tablePlans
+		// only can be (Selection) + TableRowIDScan. There have no range need to rebuild.
 	case PhysicalPlan:
 		for _, child := range x.Children() {
 			err = e.rebuildRange(child)
