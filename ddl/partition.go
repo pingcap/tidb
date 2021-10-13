@@ -26,11 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -40,6 +35,11 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -487,13 +487,44 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 			}
 		}
 		comment, _ := def.Comment()
+		var directPlacementOpts *model.PlacementSettings
+		var placementPolicyRef *model.PolicyRefInfo
+		// the partition inheritance of placement rules don't have to copy the placement elements to themselves.
+		// For example:
+		// t placement policy x (p1 placement policy y, p2)
+		// p2 will share the same rule as table t does, but it won't copy the meta to itself. we will
+		// append p2 range to the coverage of table t's rules. This mechanism is good for cascading change
+		// when policy x is altered.
+		for _, opt := range def.Options {
+			switch opt.Tp {
+			case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
+				ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
+				ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
+				ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
+				ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
+				ast.TableOptionPlacementVoterConstraints:
+				if directPlacementOpts == nil {
+					directPlacementOpts = &model.PlacementSettings{}
+				}
+				err := SetDirectPlacementOpt(directPlacementOpts, ast.PlacementOptionType(opt.Tp), opt.StrValue, opt.UintValue)
+				if err != nil {
+					return nil, err
+				}
+			case ast.TableOptionPlacementPolicy:
+				placementPolicyRef = &model.PolicyRefInfo{
+					Name: model.NewCIStr(opt.StrValue),
+				}
+			}
+		}
 		err := checkTooLongTable(def.Name)
 		if err != nil {
 			return nil, err
 		}
 		piDef := model.PartitionDefinition{
-			Name:    def.Name,
-			Comment: comment,
+			Name:                def.Name,
+			Comment:             comment,
+			DirectPlacementOpts: directPlacementOpts,
+			PlacementPolicyRef:  placementPolicyRef,
 		}
 
 		buf := new(bytes.Buffer)
@@ -932,7 +963,7 @@ func dropLabelRules(d *ddlCtx, schemaName, tableName string, partNames []string)
 		deleteRules = append(deleteRules, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, schemaName, tableName, partName))
 	}
 	// delete batch rules
-	patch := label.NewRulePatch(nil, deleteRules)
+	patch := label.NewRulePatch([]*label.Rule{}, deleteRules)
 	return infosync.UpdateLabelRules(context.TODO(), patch)
 }
 
@@ -1124,7 +1155,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(oldID))
 		if ok && !oldBundle.IsEmpty() {
 			bundles = append(bundles, placement.NewBundle(oldID))
-			bundles = append(bundles, oldBundle.Clone().Reset(newPartitions[i].ID))
+			bundles = append(bundles, oldBundle.Clone().Reset(placement.RuleIndexPartition, []int64{newPartitions[i].ID}))
 		}
 	}
 
@@ -1134,26 +1165,32 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
-	oldRules := make([]string, 0, len(oldIDs))
-	newRules := make([]*label.Rule, 0, len(oldIDs))
+	tableID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L)
+	oldPartRules := make([]string, 0, len(oldIDs))
 	for _, newPartition := range newPartitions {
-		oldRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, newPartition.Name.L)
-		oldRules = append(oldRules, oldRuleID)
+		oldPartRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, newPartition.Name.L)
+		oldPartRules = append(oldPartRules, oldPartRuleID)
 	}
 
-	rules, err := infosync.GetLabelRules(context.TODO(), oldRules)
+	rules, err := infosync.GetLabelRules(context.TODO(), append(oldPartRules, tableID))
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to get label rules from PD")
 	}
 
+	newPartIDs := getPartitionIDs(tblInfo)
+	newRules := make([]*label.Rule, 0, len(oldIDs)+1)
+	if tr, ok := rules[tableID]; ok {
+		newRules = append(newRules, tr.Clone().Reset(job.SchemaName, tblInfo.Name.L, "", append(newPartIDs, tblInfo.ID)...))
+	}
+
 	for idx, newPartition := range newPartitions {
-		if r, ok := rules[oldRules[idx]]; ok {
-			newRules = append(newRules, r.Clone().Reset(newPartition.ID, job.SchemaName, tblInfo.Name.L, newPartition.Name.L))
+		if pr, ok := rules[oldPartRules[idx]]; ok {
+			newRules = append(newRules, pr.Clone().Reset(job.SchemaName, tblInfo.Name.L, newPartition.Name.L, newPartition.ID))
 		}
 	}
 
-	patch := label.NewRulePatch(newRules, nil)
+	patch := label.NewRulePatch(newRules, []string{})
 	err = infosync.UpdateLabelRules(context.TODO(), patch)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -1325,14 +1362,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	ntBundle, ntOK := d.infoCache.GetLatest().BundleByName(placement.GroupID(nt.ID))
 	ntOK = ntOK && !ntBundle.IsEmpty()
 	if ptOK && ntOK {
-		bundles = append(bundles, ptBundle.Clone().Reset(nt.ID))
-		bundles = append(bundles, ntBundle.Clone().Reset(partDef.ID))
+		bundles = append(bundles, ptBundle.Clone().Reset(placement.RuleIndexPartition, []int64{nt.ID}))
+		bundles = append(bundles, ntBundle.Clone().Reset(placement.RuleIndexPartition, []int64{partDef.ID}))
 	} else if ptOK {
 		bundles = append(bundles, placement.NewBundle(partDef.ID))
-		bundles = append(bundles, ptBundle.Clone().Reset(nt.ID))
+		bundles = append(bundles, ptBundle.Clone().Reset(placement.RuleIndexPartition, []int64{nt.ID}))
 	} else if ntOK {
 		bundles = append(bundles, placement.NewBundle(nt.ID))
-		bundles = append(bundles, ntBundle.Clone().Reset(partDef.ID))
+		bundles = append(bundles, ntBundle.Clone().Reset(placement.RuleIndexPartition, []int64{partDef.ID}))
 	}
 	err = infosync.PutRuleBundles(context.TODO(), bundles)
 	if err != nil {
@@ -1352,17 +1389,19 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	ntr := rules[ntrID]
 	ptr := rules[ptrID]
 
+	partIDs := getPartitionIDs(nt)
+
 	var setRules []*label.Rule
 	var deleteRules []string
 	if ntr != nil && ptr != nil {
-		setRules = append(setRules, ntr.Clone().Reset(partDef.ID, job.SchemaName, pt.Name.L, partDef.Name.L))
-		setRules = append(setRules, ptr.Clone().Reset(nt.ID, job.SchemaName, nt.Name.L))
+		setRules = append(setRules, ntr.Clone().Reset(job.SchemaName, pt.Name.L, partDef.Name.L, partDef.ID))
+		setRules = append(setRules, ptr.Clone().Reset(job.SchemaName, nt.Name.L, "", append(partIDs, nt.ID)...))
 	} else if ptr != nil {
-		setRules = append(setRules, ptr.Clone().Reset(nt.ID, job.SchemaName, nt.Name.L))
+		setRules = append(setRules, ptr.Clone().Reset(job.SchemaName, nt.Name.L, "", append(partIDs, nt.ID)...))
 		// delete ptr
 		deleteRules = append(deleteRules, ptrID)
 	} else if ntr != nil {
-		setRules = append(setRules, ntr.Clone().Reset(partDef.ID, job.SchemaName, pt.Name.L, partDef.Name.L))
+		setRules = append(setRules, ntr.Clone().Reset(job.SchemaName, pt.Name.L, partDef.Name.L, partDef.ID))
 		// delete ntr
 		deleteRules = append(deleteRules, ntrID)
 	}
