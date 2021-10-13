@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/tidb/br/pkg/lightning"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
@@ -116,7 +117,7 @@ func run() error {
 	}
 
 	if len(*cpRemove) != 0 {
-		return errors.Trace(CheckpointRemove(ctx, cfg, *cpRemove))
+		return errors.Trace(lightning.CheckpointRemove(ctx, cfg, *cpRemove))
 	}
 	if len(*cpErrIgnore) != 0 {
 		return errors.Trace(checkpointErrorIgnore(ctx, cfg, *cpErrIgnore))
@@ -184,56 +185,6 @@ func fetchMode(ctx context.Context, cfg *config.Config, tls *common.TLS) error {
 	)
 }
 
-func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
-	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer cpdb.Close()
-
-	// try to remove the metadata first.
-	taskCp, err := cpdb.TaskCheckpoint(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// a empty id means this task is not inited, we needn't further check metas.
-	if taskCp != nil && taskCp.TaskID != 0 {
-		// try to clean up table metas if exists
-		if err = cleanupMetas(ctx, cfg, tableName); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	return errors.Trace(cpdb.RemoveCheckpoint(ctx, tableName))
-}
-
-func cleanupMetas(ctx context.Context, cfg *config.Config, tableName string) error {
-	if tableName == "all" {
-		tableName = ""
-	}
-	// try to clean up table metas if exists
-	db, err := restore.DBFromConfig(ctx, cfg.TiDB)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	tableMetaExist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, restore.TableMetaTableName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if tableMetaExist {
-		metaTableName := common.UniqueTable(cfg.App.MetaSchemaName, restore.TableMetaTableName)
-		if err = restore.RemoveTableMetaByTableName(ctx, db, metaTableName, tableName); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	exist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, restore.TaskMetaTableName)
-	if err != nil || !exist {
-		return errors.Trace(err)
-	}
-	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, db, cfg.App.MetaSchemaName, tableMetaExist))
-}
 
 func checkpointErrorIgnore(ctx context.Context, cfg *config.Config, tableName string) error {
 	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
@@ -316,7 +267,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 
 	// try clean up metas
 	if lastErr == nil {
-		lastErr = cleanupMetas(ctx, cfg, tableName)
+		lastErr = lightning.CleanupMetas(ctx, cfg, tableName)
 	}
 
 	return errors.Trace(lastErr)
