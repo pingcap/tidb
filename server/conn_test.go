@@ -879,3 +879,38 @@ func (ts *ConnTestSuite) TestShowErrors(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustQuery("show errors").Check(testkit.Rows("Error 1051 Unknown table 'test.idontexist'"))
 }
+
+func (ts *ConnTestSuite) TestHandleAuthPlugin(c *C) {
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	c.Assert(err, IsNil)
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+	}
+	ctx := context.Background()
+	resp := handshakeResponse41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+	}
+	err = cc.handleAuthPlugin(ctx, &resp)
+	c.Assert(err, IsNil)
+
+	resp.Capability = mysql.ClientProtocol41
+	err = cc.handleAuthPlugin(ctx, &resp)
+	c.Assert(err, IsNil)
+}
