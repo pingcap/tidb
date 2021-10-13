@@ -30,6 +30,7 @@ const (
 	keyOpDefaultRetryCnt = 5
 )
 
+// GlobalConfigSyncer stores global config into etcd.
 type GlobalConfigSyncer struct {
 	sync.Mutex
 	cache    map[string]string
@@ -37,6 +38,7 @@ type GlobalConfigSyncer struct {
 	NotifyCh chan ConfigEntry
 }
 
+// NewGlobalConfigSyncer returns a new GlobalConfigSyncer.
 func NewGlobalConfigSyncer(etcdCli *clientv3.Client) *GlobalConfigSyncer {
 	return &GlobalConfigSyncer{
 		cache:    map[string]string{},
@@ -45,15 +47,18 @@ func NewGlobalConfigSyncer(etcdCli *clientv3.Client) *GlobalConfigSyncer {
 	}
 }
 
+// ConfigEntry contain the global config name and value.
 type ConfigEntry struct {
 	name  string
 	value string
 }
 
+// Notify sends the config entry into notify channel.
 func (c *GlobalConfigSyncer) Notify(name, value string) {
 	c.NotifyCh <- ConfigEntry{name: name, value: value}
 }
 
+// StoreGlobalConfig stores the global config into etcd.
 func (c *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, entry ConfigEntry) error {
 	if c.etcdCli == nil || !c.needUpdate(entry) {
 		return nil
