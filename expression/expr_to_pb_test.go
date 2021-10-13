@@ -1059,11 +1059,9 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
-
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	c.Assert(len(pushed), Equals, len(exprs))
 	c.Assert(len(remained), Equals, 0)
-
 
 	pushed, remained = PushDownExprsWithExtraInfo(sc, exprs, client, kv.TiFlash, true)
 	c.Assert(len(pushed), Equals, len(exprs))
