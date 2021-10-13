@@ -320,9 +320,8 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 
 	// but plain http connection should fail.
 	cli.statusScheme = "http"
-	resp, err := cli.fetchStatus("/status")
+	_, err = cli.fetchStatus("/status") // nolint: bodyclose
 	c.Assert(err, NotNil)
-	c.Assert(resp.Body.Close(), IsNil)
 
 	server.Close()
 }
@@ -373,15 +372,14 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 		client1CertPath,
 		client1KeyPath,
 	)
-	resp, err := hc.Get(cli.statusURL("/status"))
+	_, err = hc.Get(cli.statusURL("/status")) // nolint: bodyclose
 	c.Assert(err, NotNil)
-	c.Assert(resp.Body.Close(), IsNil)
 
 	hc = newTLSHttpClient(c, caPath,
 		client2CertPath,
 		client2KeyPath,
 	)
-	resp, err = hc.Get(cli.statusURL("/status"))
+	resp, err := hc.Get(cli.statusURL("/status"))
 	c.Assert(err, IsNil)
 	c.Assert(resp.Body.Close(), IsNil)
 }
@@ -1531,9 +1529,9 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 
 	time.Sleep(time.Second * 2)
 
-	resp, err = cli.fetchStatus("/status") // status is gone
+	// nolint: bodyclose
+	_, err = cli.fetchStatus("/status") // status is gone
 	c.Assert(err, ErrorMatches, ".*connect: connection refused")
-	c.Assert(resp.Body.Close(), IsNil)
 }
 
 func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
