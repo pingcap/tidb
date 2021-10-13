@@ -672,17 +672,18 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (a int, b int, index idx(a));")
 	tk.MustExec("insert into t values(1, 0);")
-	tk.MustExec(`prepare stmt from 'select a from t where (a between ? and ? or a < ?) and b < 1;'`)
+	tk.MustExec(`prepare stmt from 'select /*+ USE_INDEX(t, idx) */ a from t where (a between ? and ? or a < ?) and b < 1;'`)
 	tk.MustExec("set @a=0, @b=2, @c=2;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("1"))
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 6)
+	c.Assert(len(res.Rows()), Equals, 5)
 	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
+	c.Assert(res.Rows()[3][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[4][0], Matches, ".*TableRowIDScan.*")
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
@@ -692,17 +693,18 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 6)
+	c.Assert(len(res.Rows()), Equals, 5)
 	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[3][0], Matches, ".*IndexFullScan.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexFullScan.*")
+	c.Assert(res.Rows()[3][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[4][0], Matches, ".*TableRowIDScan.*")
 
-	res = tk.MustQuery("explain format = 'brief' select a from t use index(idx) " +
+	res = tk.MustQuery("explain format = 'brief' select /*+ USE_INDEX(t, idx) */ a from t use index(idx) " +
 		"where (a between 0 and 2 or a < 2) and b < 1;")
 	c.Assert(len(res.Rows()), Equals, 5)
 	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
 	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
-	res = tk.MustQuery("explain format = 'brief' select a from t use index(idx) " +
+	res = tk.MustQuery("explain format = 'brief' select /*+ USE_INDEX(t, idx) */ a from t use index(idx) " +
 		"where (a between 2 and 1 or a < 1) and b < 1;")
 	c.Assert(len(res.Rows()), Equals, 5)
 	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
@@ -770,4 +772,47 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	// So this may be a bad case in some situations.
 	c.Assert(res.Rows()[1][4], Equals, "eq(test.t.d, 5), or(and(gt(test.t.a, 1), and(lt(test.t.a, 5), gt(test.t.b, 2))), and(gt(test.t.a, 8), and(lt(test.t.a, 10), gt(test.t.c, 3)))), or(and(gt(test.t.a, 1), lt(test.t.a, 5)), and(gt(test.t.a, 8), lt(test.t.a, 10)))")
 	c.Assert(res.Rows()[2][0], Matches, ".*TableRangeScan.*")
+}
+
+func (s *testPrepareSerialSuite) TestIssue28696(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int primary key, b varchar(255), c int);")
+	tk.MustExec("create unique index b on t1(b(3));")
+	tk.MustExec("insert into t1 values(1,'abcdfsafd',1),(2,'addfdsafd',2),(3,'ddcdsaf',3),(4,'bbcsa',4);")
+	tk.MustExec(`prepare stmt from "select a from t1 where b = ?";`)
+	tk.MustExec("set @a='bbcsa';")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("4"))
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 5)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
+	c.Assert(res.Rows()[3][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[4][0], Matches, ".*TableRowIDScan.*")
+
+	res = tk.MustQuery("explain format = 'brief' select a from t1 where b = 'bbcsa';")
+	c.Assert(len(res.Rows()), Equals, 5)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
+	c.Assert(res.Rows()[3][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[4][0], Matches, ".*TableRowIDScan.*")
 }
