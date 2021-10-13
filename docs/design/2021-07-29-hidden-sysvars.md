@@ -14,7 +14,7 @@
 * [Test Design](#test-design)
 * [Implementation Plan](#implementation-plan)
   * [Appendix #1 - tidb_experimental_feature_switch documentation](#appendix-1---tidb_experimental_feature_switch-documentation)
-  * [Appendix #2 - Deleted system variables](#appendix-2---deleted-system-variables)
+  * [Appendix #2 - Removed system variables](#appendix-2---removed-system-variables)
 * [Impacts & Risks](#impacts--risks)
 * [Investigation & Alternatives](#investigation--alternatives)
 * [Unresolved Questions](#unresolved-questions)
@@ -155,11 +155,11 @@ Individual values can be changed by specifying a comma separated list. For examp
 > Be careful when enabling experimental features. Your TiDB server installation may include additional experimental features not listed here, and enabling them may result in data loss.
 > The experimental feature switch is settable on both a SESSION and GLOBAL basis, but some experiments might only be available globally. In which case changes to the session have no effect.
 
-#### Appendix #2 - Deleted system variables
+#### Appendix #2 - Removed system variables
 
 For existing experimental flags, the procedure to remove the flag once the feature is GA is problematic since here could be users that have applications that explicitly enable the feature which now break.
 
-This proposes that we support "deleted system variables" by the sysvar framework. A deleted sysvar:
+This proposes that we support "removed system variables" by the sysvar framework. A removed sysvar:
 
 * Is settable via a `SET` statement
 * Returns an error for `SELECT @@var` queries
