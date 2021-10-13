@@ -976,6 +976,16 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// upper string
+	function, err = NewFunction(mock.NewContext(), ast.Upper, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ucase string
+	function, err = NewFunction(mock.NewContext(), ast.Ucase, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	// lower string
 	function, err = NewFunction(mock.NewContext(), ast.Lower, types.NewFieldType(mysql.TypeString), stringColumn)
 	c.Assert(err, IsNil)
