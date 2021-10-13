@@ -403,6 +403,17 @@ func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) 
 	return data, nil
 }
 
+// DeleteFile delete the file in s3 storage
+func (rs *S3Storage) DeleteFile(ctx context.Context, file string) error {
+	input := &s3.DeleteObjectInput{
+		Bucket: aws.String(rs.options.Bucket),
+		Key:    aws.String(rs.options.Prefix + file),
+	}
+
+	_, err := rs.svc.DeleteObjectWithContext(ctx, input)
+	return errors.Trace(err)
+}
+
 // FileExists check if file exists on s3 storage.
 func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, error) {
 	input := &s3.HeadObjectInput{
