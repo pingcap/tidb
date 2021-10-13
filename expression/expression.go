@@ -1188,7 +1188,7 @@ func init() {
 
 func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
 	pbCode := scalarFunc.Function.PbCode()
-	canEnumPush = canEnumPush && scalarFunc.FuncName.String() == ast.Cast && (scalarFunc.RetType.EvalType() == types.ETInt || scalarFunc.RetType.EvalType() ==types.ETReal || scalarFunc.RetType.EvalType() ==types.ETDecimal)
+	canEnumPush = canEnumPush && scalarFunc.FuncName.String() == ast.Cast && (scalarFunc.RetType.EvalType() == types.ETInt || scalarFunc.RetType.EvalType() == types.ETReal || scalarFunc.RetType.EvalType() == types.ETDecimal)
 	// Check whether this function can be pushed.
 	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(scalarFunc, storeType) {
 		if unspecified {
@@ -1268,7 +1268,6 @@ func PushDownExprsWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression
 	return
 }
 
-
 // PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
 func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
 	return PushDownExprsWithExtraInfo(sc, exprs, client, storeType, false)
@@ -1282,7 +1281,7 @@ func CanExprsPushDownWithExtraInfo(sc *stmtctx.StatementContext, exprs []Express
 
 // CanExprsPushDown return true if all the expr in exprs can be pushed down
 func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
-	return CanExprsPushDownWithExtraInfo(sc, exprs, client, storeType, false);
+	return CanExprsPushDownWithExtraInfo(sc, exprs, client, storeType, false)
 }
 
 // wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not

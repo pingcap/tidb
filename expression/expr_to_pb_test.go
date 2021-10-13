@@ -1038,7 +1038,7 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 
 	exprs = exprs[:0]
 	// cast Enum as UInt : supported
-	unsignedInt:= types.NewFieldType(mysql.TypeLonglong)
+	unsignedInt := types.NewFieldType(mysql.TypeLonglong)
 	unsignedInt.Flag = mysql.UnsignedFlag
 	function, err = NewFunction(mock.NewContext(), ast.Cast, unsignedInt, enumColumn)
 	c.Assert(err, IsNil)
