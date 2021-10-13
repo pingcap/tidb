@@ -34,11 +34,8 @@ import (
 )
 
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
-		return err
-	}
-
-	return nil
+	// if error is not nil return error, or builtinLowerSig is for binary strings (do nothing)
+	return b.args[0].VecEvalString(b.ctx, input, result)
 }
 
 func (b *builtinLowerSig) vectorized() bool {
