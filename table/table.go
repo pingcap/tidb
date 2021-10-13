@@ -22,10 +22,10 @@ import (
 	"context"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/parser/model"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -184,11 +184,6 @@ type Table interface {
 
 	// Allocators returns all allocators.
 	Allocators(ctx sessionctx.Context) autoid.Allocators
-
-	// RebaseAutoID rebases the auto_increment ID base.
-	// If allocIDs is true, it will allocate some IDs and save to the cache.
-	// If allocIDs is false, it will not allocate IDs.
-	RebaseAutoID(ctx sessionctx.Context, newBase int64, allocIDs bool, tp autoid.AllocatorType) error
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo

@@ -21,10 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/fastrand"
@@ -192,4 +192,15 @@ func TestToPB(t *testing.T) {
 
 	assert.Equal(t, "column_id:1 collation:45 columnLen:-1 decimal:-1 ", ColumnToProto(column).String())
 	assert.Equal(t, "column_id:1 collation:45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false)[0].String())
+}
+
+func TestComposeURL(t *testing.T) {
+	t.Parallel()
+	// TODO Setup config for TLS and verify https protocol output
+	assert.Equal(t, ComposeURL("server.example.com", ""), "http://server.example.com")
+	assert.Equal(t, ComposeURL("httpserver.example.com", ""), "http://httpserver.example.com")
+	assert.Equal(t, ComposeURL("http://httpserver.example.com", "/"), "http://httpserver.example.com/")
+	assert.Equal(t, ComposeURL("https://httpserver.example.com", "/api/test"), "https://httpserver.example.com/api/test")
+	assert.Equal(t, ComposeURL("http://server.example.com", ""), "http://server.example.com")
+	assert.Equal(t, ComposeURL("https://server.example.com", ""), "https://server.example.com")
 }
