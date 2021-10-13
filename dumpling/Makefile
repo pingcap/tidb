@@ -1,13 +1,13 @@
-PACKAGES := go list ./... | sed '/github.com\/pingcap\/dumpling\/bin/d'
-PACKAGE_DIRECTORIES := $(PACKAGES) | sed 's/github.com\/pingcap\/dumpling\/*//'
-DUMPLING_PKG := github.com/pingcap/dumpling
+PACKAGES := go list ./... | sed '/github.com\/pingcap\/tidb\/dumpling\/bin/d'
+PACKAGE_DIRECTORIES := $(PACKAGES) | sed 's/github.com\/pingcap\/tidb\/dumpling\/*//'
+DUMPLING_PKG := github.com/pingcap/tidb/dumpling
 CHECKER := awk '{ print } END { if (NR > 0) { exit 1 } }'
 
-LDFLAGS += -X "github.com/pingcap/dumpling/v4/cli.ReleaseVersion=$(shell git describe --tags --dirty='-dev')"
-LDFLAGS += -X "github.com/pingcap/dumpling/v4/cli.BuildTimestamp=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
-LDFLAGS += -X "github.com/pingcap/dumpling/v4/cli.GitHash=$(shell git rev-parse HEAD)"
-LDFLAGS += -X "github.com/pingcap/dumpling/v4/cli.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
-LDFLAGS += -X "github.com/pingcap/dumpling/v4/cli.GoVersion=$(shell go version)"
+LDFLAGS += -X "github.com/pingcap/tidb/dumpling/v4/cli.ReleaseVersion=$(shell git describe --tags --dirty='-dev')"
+LDFLAGS += -X "github.com/pingcap/tidb/dumpling/v4/cli.BuildTimestamp=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
+LDFLAGS += -X "github.com/pingcap/tidb/dumpling/v4/cli.GitHash=$(shell git rev-parse HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb/dumpling/v4/cli.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb/dumpling/v4/cli.GoVersion=$(shell go version)"
 
 GOBUILD := CGO_ENABLED=0 GO111MODULE=on go build -trimpath -ldflags '$(LDFLAGS)'
 GOTEST  := CGO_ENABLED=1 GO111MODULE=on go test -ldflags '$(LDFLAGS)'

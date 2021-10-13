@@ -1,4 +1,4 @@
-module github.com/pingcap/dumpling
+module github.com/pingcap/tidb/dumpling
 
 go 1.16
 
