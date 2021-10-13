@@ -1186,9 +1186,9 @@ func init() {
 	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
 }
 
-func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
+func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
 	pbCode := scalarFunc.Function.PbCode()
-	canEnumPush = canEnumPush && scalarFunc.FuncName.String() == ast.Cast && (scalarFunc.RetType.EvalType() == types.ETInt || scalarFunc.RetType.EvalType() == types.ETReal || scalarFunc.RetType.EvalType() == types.ETDecimal)
+	canEnumPush := scalarFunc.FuncName.String() == ast.Cast && (scalarFunc.RetType.EvalType() == types.ETInt || scalarFunc.RetType.EvalType() == types.ETReal || scalarFunc.RetType.EvalType() == types.ETDecimal)
 	// Check whether this function can be pushed.
 	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(scalarFunc, storeType) {
 		if unspecified {
@@ -1250,7 +1250,7 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 	case *Column:
 		return pc.columnToPBExpr(x) != nil
 	case *ScalarFunction:
-		return canScalarFuncPushDown(x, pc, storeType, canEnumPush)
+		return canScalarFuncPushDown(x, pc, storeType)
 	}
 	return false
 }

@@ -1044,27 +1044,27 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
-	// cast Enum as Int : supported for sum()
+	// cast Enum as Int : supported
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), enumColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
-	// cast Enum as Double : supported for sum()
+	// cast Enum as Double : supported
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDouble), enumColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
-	// cast Enum as Decimal : supported for sum()
+	// cast Enum as Decimal : supported
 	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, enumColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
-	//enum-pushdown will be disable when canEnumPush is false.
+
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	c.Assert(len(pushed), Equals, 0)
 	c.Assert(len(remained), Equals, len(exprs))
 
-	//enum-pushdown will be enable when canEnumPush is true.
+
 	pushed, remained = PushDownExprsWithExtraInfo(sc, exprs, client, kv.TiFlash, true)
 	c.Assert(len(pushed), Equals, len(exprs))
 	c.Assert(len(remained), Equals, 0)
