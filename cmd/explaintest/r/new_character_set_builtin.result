@@ -1,0 +1,11 @@
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select hex(a), hex(b), hex(c) from t;
+hex(a)	hex(b)	hex(c)
+E4B880E4BA8CE4B889	D2BBB6FEC8FD	E4B880E4BA8CE4B8890000000000000000000000
+set @@tidb_enable_vectorized_expression = true;
+select hex(a), hex(b), hex(c) from t;
+hex(a)	hex(b)	hex(c)
+E4B880E4BA8CE4B889	D2BBB6FEC8FD	E4B880E4BA8CE4B8890000000000000000000000
+set @@tidb_enable_vectorized_expression = false;
