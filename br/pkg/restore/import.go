@@ -15,6 +15,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -230,6 +231,9 @@ func (importer *FileImporter) CheckMultiIngestSupport(ctx context.Context, pdCli
 	}
 	storeIDs := make([]uint64, 0, len(allStores))
 	for _, s := range allStores {
+		if s.State != metapb.StoreState_Up {
+			continue
+		}
 		storeIDs = append(storeIDs, s.Id)
 	}
 
@@ -316,6 +320,10 @@ func (importer *FileImporter) Import(
 						msg := val.(string)
 						log.Debug("failpoint restore-storage-error injected.", zap.String("msg", msg))
 						e = errors.Annotate(e, msg)
+					})
+					failpoint.Inject("restore-gRPC-error", func(_ failpoint.Value) {
+						log.Warn("the connection to TiKV has been cut by a neko, meow :3")
+						e = status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
 					})
 					if e != nil {
 						remainFiles = remainFiles[i:]
