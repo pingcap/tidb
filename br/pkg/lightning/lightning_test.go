@@ -19,6 +19,7 @@
 // lightningSuite.SetUpTest sets up global logger but the gocheck framework calls this method
 // multi times, hence data race may happen. However, the operation setting up the global logger is idempotent.
 // Hence in real life the race is harmless. Disable this when race enabled till this get fixed.
+//go:build !race
 // +build !race
 
 package lightning
