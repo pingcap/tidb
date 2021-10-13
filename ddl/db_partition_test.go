@@ -2153,29 +2153,47 @@ func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	tk.MustGetErrCode(sql3, tmysql.ErrTooManyPartitions)
 }
 
-func checkPartitionDelRangeDone(c *C, s *testIntegrationSuite, partitionPrefix kv.Key) bool {
-	hasOldPartitionData := true
-	for i := 0; i < waitForCleanDataRound; i++ {
-		err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-			it, err := txn.Iter(partitionPrefix, nil)
-			if err != nil {
-				return err
-			}
-			if !it.Valid() {
-				hasOldPartitionData = false
-			} else {
-				hasOldPartitionData = it.Key().HasPrefix(partitionPrefix)
-			}
-			it.Close()
-			return nil
-		})
+func checkPartitionDelRangeDone(c *C, tk *testkit.TestKit, s *testIntegrationSuite, oldPID int64) {
+	startTime := time.Now()
+	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
+	var i int
+	for i = 0; i < waitForCleanDataRound; i++ {
+		rs, err := tk.Exec("select count(1) from mysql.gc_delete_range_done where element_id = ?", oldPID)
 		c.Assert(err, IsNil)
-		if !hasOldPartitionData {
+		rows, err := session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
+		c.Assert(err, IsNil)
+		val := rows[0][0]
+		if val != "0" {
 			break
 		}
 		time.Sleep(waitForCleanDataInterval)
 	}
-	return hasOldPartitionData
+
+	if i == waitForCleanDataRound {
+		// Takes too long, give up the check.
+		logutil.BgLogger().Info("truncate partition table",
+			zap.Int64("id", oldPID),
+			zap.Stringer("duration", time.Since(startTime)),
+		)
+		return
+	}
+
+	hasOldPartitionData := true
+	err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		it, err := txn.Iter(partitionPrefix, nil)
+		if err != nil {
+			return err
+		}
+		if !it.Valid() {
+			hasOldPartitionData = false
+		} else {
+			hasOldPartitionData = it.Key().HasPrefix(partitionPrefix)
+		}
+		it.Close()
+		return nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(hasOldPartitionData, IsFalse)
 }
 
 func (s *testIntegrationSuite5) TestTruncatePartitionAndDropTable(c *C) {
@@ -2236,13 +2254,9 @@ func (s *testIntegrationSuite5) TestTruncatePartitionAndDropTable(c *C) {
 	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
 	c.Assert(err, IsNil)
 	// Only one partition id test is taken here.
-	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
-	startTime := time.Now()
 	tk.MustExec("truncate table t3;")
-	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
-	logutil.BgLogger().Info("truncate partition table", zap.Stringer("key", partitionPrefix))
-	hasOldPartitionData := checkPartitionDelRangeDone(c, s.testIntegrationSuite, partitionPrefix)
-	c.Assert(hasOldPartitionData, IsFalse, Commentf("take time %v", time.Since(startTime)))
+	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
+	checkPartitionDelRangeDone(c, tk, s.testIntegrationSuite, oldPID)
 
 	// Test drop table partition.
 	tk.MustExec("drop table if exists t4;")
@@ -2277,9 +2291,7 @@ func (s *testIntegrationSuite5) TestTruncatePartitionAndDropTable(c *C) {
 	// Only one partition id test is taken here.
 	oldPID = oldTblInfo.Meta().Partition.Definitions[1].ID
 	tk.MustExec("drop table t4;")
-	partitionPrefix = tablecodec.EncodeTablePrefix(oldPID)
-	hasOldPartitionData = checkPartitionDelRangeDone(c, s.testIntegrationSuite, partitionPrefix)
-	c.Assert(hasOldPartitionData, IsFalse)
+	checkPartitionDelRangeDone(c, tk, s.testIntegrationSuite, oldPID)
 	tk.MustGetErrCode("select * from t4;", tmysql.ErrNoSuchTable)
 
 	// Test truncate table partition reassigns new partitionIDs.
