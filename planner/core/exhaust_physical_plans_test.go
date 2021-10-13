@@ -16,8 +16,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/stretchr/testify/require"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -28,8 +26,10 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
 func rewriteSimpleExpr(ctx sessionctx.Context, str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
