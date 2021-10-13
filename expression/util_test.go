@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -607,6 +607,8 @@ func (m *MockExpr) SupportReverseEval() bool                                    
 func (m *MockExpr) HasCoercibility() bool                                         { return false }
 func (m *MockExpr) Coercibility() Coercibility                                    { return 0 }
 func (m *MockExpr) SetCoercibility(Coercibility)                                  {}
+func (m *MockExpr) Repertoire() Repertoire                                        { return UNICODE }
+func (m *MockExpr) SetRepertoire(Repertoire)                                      {}
 
 func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
 	return "", ""
