@@ -21,8 +21,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -32,22 +30,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func SetUpTest(t *testing.T) (kv.Storage, *domain.Domain) {
-	var err error
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
-	return store, dom
-}
-
-func TearDownTest(t *testing.T, store kv.Storage, dom *domain.Domain) {
-	dom.Close()
-	err := store.Close()
-	require.NoError(t, err)
-}
-
 func TestListPartitionPushDown(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_push_down")
 	tk.MustExec("use list_push_down")
@@ -78,8 +64,9 @@ func TestListPartitionPushDown(t *testing.T) {
 }
 
 func TestListColVariousTypes(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_col_partition_types")
@@ -118,8 +105,9 @@ func TestListColVariousTypes(t *testing.T) {
 }
 
 func TestListPartitionPruning(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_pruning")
@@ -161,8 +149,9 @@ func TestListPartitionPruning(t *testing.T) {
 }
 
 func TestListPartitionFunctions(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_pruning")
@@ -199,8 +188,9 @@ func TestListPartitionOrderLimit(t *testing.T) {
 		t.Skip("skip race test")
 	}
 
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_order_limit")
@@ -262,8 +252,9 @@ func TestListPartitionAgg(t *testing.T) {
 		t.Skip("skip race test")
 	}
 
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_agg")
@@ -321,8 +312,9 @@ func TestListPartitionAgg(t *testing.T) {
 }
 
 func TestListPartitionDML(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_dml")
@@ -378,8 +370,9 @@ func TestListPartitionDML(t *testing.T) {
 }
 
 func TestListPartitionCreation(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_cre")
@@ -434,8 +427,9 @@ func TestListPartitionCreation(t *testing.T) {
 }
 
 func TestListPartitionDDL(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_ddl")
@@ -484,8 +478,9 @@ func TestListPartitionDDL(t *testing.T) {
 }
 
 func TestListPartitionOperations(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_op")
@@ -563,8 +558,9 @@ func TestListPartitionOperations(t *testing.T) {
 }
 
 func TestListPartitionPrivilege(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -598,8 +594,9 @@ func TestListPartitionPrivilege(t *testing.T) {
 }
 
 func TestListPartitionShardBits(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_shard_bits")
@@ -629,8 +626,9 @@ func TestListPartitionShardBits(t *testing.T) {
 }
 
 func TestListPartitionSplitRegion(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_split_region")
@@ -662,8 +660,9 @@ func TestListPartitionSplitRegion(t *testing.T) {
 }
 
 func TestListPartitionView(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_view")
@@ -706,8 +705,9 @@ func TestListPartitionView(t *testing.T) {
 }
 
 func TestListPartitionAutoIncre(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_auto_incre")
@@ -749,8 +749,9 @@ func TestListPartitionAutoIncre(t *testing.T) {
 }
 
 func TestListPartitionAutoRandom(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_auto_rand")
@@ -782,8 +783,9 @@ func TestListPartitionAutoRandom(t *testing.T) {
 }
 
 func TestListPartitionInvisibleIdx(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_invisible_idx")
@@ -801,8 +803,9 @@ func TestListPartitionInvisibleIdx(t *testing.T) {
 }
 
 func TestListPartitionCTE(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_cte")
@@ -828,8 +831,9 @@ func TestListPartitionCTE(t *testing.T) {
 }
 
 func TestListPartitionTempTable(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_temp_table")
@@ -844,8 +848,9 @@ func TestListPartitionTempTable(t *testing.T) {
 }
 
 func TestListPartitionAlterPK(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_alter_pk")
@@ -876,8 +881,9 @@ func TestListPartitionRandomTransaction(t *testing.T) {
 		t.Skip("skip race test")
 	}
 
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database list_partition_random_tran")
@@ -929,8 +935,9 @@ func TestListPartitionRandomTransaction(t *testing.T) {
 }
 
 func TestIssue27018(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27018")
@@ -956,8 +963,9 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27017(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27017")
@@ -985,8 +993,9 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27544(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27544")
@@ -1002,8 +1011,9 @@ func TestIssue27544(t *testing.T) {
 }
 
 func TestIssue27012(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27012")
@@ -1032,8 +1042,9 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27030(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27030")
@@ -1054,8 +1065,9 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27070(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27070")
@@ -1065,8 +1077,9 @@ func TestIssue27070(t *testing.T) {
 }
 
 func TestIssue27031(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27031")
@@ -1083,8 +1096,9 @@ PARTITION BY LIST COLUMNS(col1) (
 }
 
 func TestIssue27493(t *testing.T) {
-	store, dom := SetUpTest(t)
-	defer TearDownTest(t, store, dom)
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27493")

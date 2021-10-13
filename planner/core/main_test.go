@@ -15,41 +15,37 @@
 package core
 
 import (
-	"fmt"
-	"os"
+	"flag"
 	"testing"
 
 	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
 
 var testDataMap = make(testdata.BookKeeper, 1)
 
-const IntegrationPartitionSuiteDataKey = "integration_partition_suite"
-
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
 
-	testDataMap.LoadTestSuiteData("testdata", IntegrationPartitionSuiteDataKey)
+	flag.Parse()
 
-	if exitCode := m.Run(); exitCode != 0 {
-		os.Exit(exitCode)
-	}
-
-	testDataMap.GenerateOutputIfNeeded()
+	testDataMap.LoadTestSuiteData("testdata", "integration_partition_suite")
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 
-	if err := goleak.Find(opts...); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "goleak: Errors on successful test run: %v\n", err)
-		os.Exit(1)
+	callback := func(i int) int {
+		testDataMap.GenerateOutputIfNeeded()
+		return i
 	}
+
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
 func GetIntegrationPartitionSuiteData() testdata.TestData {
-	return testDataMap[IntegrationPartitionSuiteDataKey]
+	return testDataMap["integration_partition_suite"]
 }
