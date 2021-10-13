@@ -151,7 +151,7 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 func foldConstant(expr Expression) (Expression, bool) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
-		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
+		if _, ok := unFoldableFunctions[x.FuncName.L]; ok || MaybeOverOptimized4PlanCache(x.GetCtx(), []Expression{expr}) {
 			return expr, false
 		}
 		if function := specialFoldHandler[x.FuncName.L]; function != nil {
