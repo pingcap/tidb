@@ -138,6 +138,14 @@ func (s *Scanner) AppendError(err error) {
 	s.errs = append(s.errs, err)
 }
 
+// AppendWarn sets warning into scanner.
+func (s *Scanner) AppendWarn(err error) {
+	if err == nil {
+		return
+	}
+	s.warns = append(s.warns, err)
+}
+
 func (s *Scanner) tryDecodeToUTF8String(sql string) string {
 	if !s.encoding.Enabled() {
 		name := s.encoding.Name()

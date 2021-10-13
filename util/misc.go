@@ -166,6 +166,16 @@ func SyntaxWarn(err error) error {
 	if err == nil {
 		return nil
 	}
+	logutil.BgLogger().Debug("syntax error", zap.Error(err))
+
+	// If the warn is already a terror with stack, pass it through.
+	if errors.HasStack(err) {
+		cause := errors.Cause(err)
+		if _, ok := cause.(*terror.Error); ok {
+			return err
+		}
+	}
+
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }
 
