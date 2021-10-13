@@ -2666,12 +2666,10 @@
     ]
   },
   {
-    "Name": "TestIssue28317",
+    "Name": "TestIssue28316",
     "Cases": [
       {
-        "SQL": [
-          "explain format = 'brief' select * from t where t.a < 3 and t.a < 3"
-        ],
+        "SQL": "select * from t where t.a < 3 and t.a < 3",
         "Plan": [
           "TableReader 3323.33 root  data:Selection",
           "└─Selection 3323.33 cop[tikv]  lt(test.t.a, 3)",

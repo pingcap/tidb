@@ -742,11 +742,9 @@
     ]
   },
   {
-    "name": "TestIssue28317",
+    "name": "TestIssue28316",
     "cases": [
-      [
-        "explain format = 'brief' select * from t where t.a < 3 and t.a < 3"
-      ]
+        "select * from t where t.a < 3 and t.a < 3"
     ]
   }
 ]
