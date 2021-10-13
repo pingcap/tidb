@@ -667,10 +667,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 	case *PhysicalIndexMergeReader:
 		indexMerge := p.(*PhysicalIndexMergeReader)
 		for _, partialPlans := range indexMerge.PartialPlans {
-			partialPlan := partialPlans[0]
-			switch partialPlan.(type) {
+			switch partialPlan := partialPlans[0].(type) {
 			case *PhysicalTableScan:
-				ts := partialPlan.(*PhysicalTableScan)
+				ts := partialPlan
 				err = e.buildRangeForTableScan(sctx, ts)
 				if err != nil {
 					return err
