@@ -18,9 +18,9 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -38,7 +38,7 @@ type mockAggFuncSuite struct {
 func createAggFuncSuite() (s *mockAggFuncSuite) {
 	s = new(mockAggFuncSuite)
 	s.ctx = mock.NewContext()
-	s.ctx.GetSessionVars().GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	s.ctx.GetSessionVars().GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	s.rows = make([]chunk.Row, 0, 5050)
 	for i := 1; i <= 100; i++ {
 		for j := 0; j < i; j++ {

@@ -32,11 +32,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/deadlock"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
@@ -46,6 +41,11 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -2094,11 +2094,12 @@ type stmtSummaryTableRetriever struct {
 	table     *model.TableInfo
 	columns   []*model.ColumnInfo
 	retrieved bool
+	extractor *plannercore.StatementsSummaryExtractor
 }
 
 // retrieve implements the infoschemaRetriever interface
 func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if e.retrieved {
+	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
 	e.retrieved = true
@@ -2115,6 +2116,10 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 	}
 	user := sctx.GetSessionVars().User
 	reader := stmtsummary.NewStmtSummaryReader(user, hasPriv(sctx, mysql.ProcessPriv), e.columns, instanceAddr)
+	if e.extractor.Enable {
+		checker := stmtsummary.NewStmtSummaryChecker(e.extractor.Digests)
+		reader.SetChecker(checker)
+	}
 	var rows [][]types.Datum
 	switch e.table.Name.O {
 	case infoschema.TableStatementsSummary,

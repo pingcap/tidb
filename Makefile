@@ -28,7 +28,8 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check test
+dev: checklist check explaintest devgotest gogenerate br_unit_test test_part_parser_dev
+	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
@@ -82,7 +83,20 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: gotest gogenerate br_unit_test
+test_part_2: test_part_parser gotest gogenerate br_unit_test
+
+test_part_parser: parser_yacc test_part_parser_dev
+
+test_part_parser_dev: parser_fmt parser_unit_test
+
+parser_yacc:
+	@cd parser && mv parser.go parser.go.committed && make parser && diff -u parser.go.committed parser.go && rm parser.go.committed
+
+parser_fmt:
+	@cd parser && make fmt
+
+parser_unit_test:
+	@cd parser && make test
 
 test_part_br: br_unit_test br_integration_test
 
@@ -98,6 +112,29 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	mv overalls.coverprofile coverage.txt
 	bash <(curl -s https://codecov.io/bash)
 endif
+
+devgotest: failpoint-enable
+ifeq ("$(TRAVIS_COVERAGE)", "1")
+	@echo "Running in TRAVIS_COVERAGE mode."
+	$(GO) get github.com/go-playground/overalls
+	@export log_level=info; \
+	$(OVERALLS) -project=github.com/pingcap/tidb \
+			-covermode=count \
+			-ignore='.git,br,vendor,cmd,docs,tests,LICENSES' \
+			-concurrency=4 \
+			-- -coverpkg=./... \
+			|| { $(FAILPOINT_DISABLE); exit 1; }
+else
+# grep regex: Filter out all tidb logs starting with:
+# - '[20' (like [2021/09/15 ...] [INFO]..)
+# - 'PASS:' to ignore passed tests
+# - 'ok ' to ignore passed directories
+	@echo "Running in native mode."
+	@export log_level=info; export TZ='Asia/Shanghai'; \
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
+endif
+	@$(FAILPOINT_DISABLE)
+
 
 gotest: failpoint-enable
 ifeq ("$(TRAVIS_COVERAGE)", "1")
@@ -293,6 +330,7 @@ build_for_br_integration_test:
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
+	@export TZ='Asia/Shanghai';
 	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -tags leak $(ARGS) || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 

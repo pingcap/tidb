@@ -24,11 +24,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	driver "github.com/pingcap/tidb/store/driver/txn"
@@ -131,12 +131,10 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
 	snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
 	snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
-	failpoint.Inject("assertBatchPointStalenessOption", func(val failpoint.Value) {
+	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
-		if len(assertScope) > 0 {
-			if e.isStaleness && assertScope != e.readReplicaScope {
-				panic("batch point get staleness option fail")
-			}
+		if replicaReadType.IsClosestRead() && assertScope != e.readReplicaScope {
+			panic("batch point get replica option fail")
 		}
 	})
 
