@@ -15,12 +15,15 @@
 package statistics
 
 import (
+	"flag"
 	"testing"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
@@ -28,6 +31,8 @@ import (
 )
 
 var _ = check.Suite(&testStatisticsSuite{})
+
+var testDataMap = make(testdata.BookKeeper, 1)
 
 func TestT(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -39,11 +44,27 @@ func TestT(t *testing.T) {
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
+
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+
+	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
+
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	goleak.VerifyTestMain(m, opts...)
+
+	callback := func(i int) int {
+		testDataMap.GenerateOutputIfNeeded()
+		return i
+	}
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func GetIntegrationSuiteData() testdata.TestData {
+	return testDataMap["integration_suite"]
 }
 
 // TestStatistics batches tests sharing a test suite to reduce the setups
