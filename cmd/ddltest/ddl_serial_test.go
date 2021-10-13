@@ -833,8 +833,7 @@ func TestSimpleInsert(t *testing.T) {
 
 						for j := 0; j < batch; j++ {
 							k := randomNum(rowCount)
-							_, err := s.exec(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-							require.NoError(t, err)
+							_, _ = s.exec(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 							mu.Lock()
 							keysMap[int64(k)] = int64(k)
 							mu.Unlock()
