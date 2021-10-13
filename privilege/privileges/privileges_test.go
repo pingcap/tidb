@@ -84,7 +84,6 @@ func TestCheckPointGetDBPrivilege(t *testing.T) {
 	rootSe := newSession(t, store, dbName)
 	mustExec(t, rootSe, `CREATE USER 'tester'@'localhost';`)
 	mustExec(t, rootSe, `GRANT SELECT,UPDATE ON test.* TO  'tester'@'localhost';`)
-	mustExec(t, rootSe, `flush privileges;`)
 	mustExec(t, rootSe, `create database test2`)
 	mustExec(t, rootSe, `create table test2.t(id int, v int, primary key(id))`)
 	mustExec(t, rootSe, `insert into test2.t(id, v) values(1, 1)`)
@@ -115,7 +114,6 @@ func TestIssue22946(t *testing.T) {
 	mustExec(t, rootSe, "grant all on db1.* to delTest@'localhost';")
 	mustExec(t, rootSe, "grant all on db2.* to delTest@'localhost';")
 	mustExec(t, rootSe, "grant select on test.* to delTest@'localhost';")
-	mustExec(t, rootSe, "flush privileges;")
 
 	se := newSession(t, store, dbName)
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "delTest", Hostname: "localhost"}, nil, nil))
@@ -199,6 +197,9 @@ func TestCheckPrivilegeWithRoles(t *testing.T) {
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_role", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `SET ROLE r_1, r_2;`)
 	mustExec(t, rootSe, `SET DEFAULT ROLE r_1 TO 'test_role'@'localhost';`)
+	// test bogus role for current user.
+	_, err := se.ExecuteInternal(context.Background(), `SET DEFAULT ROLE roledoesnotexist TO 'test_role'@'localhost';`)
+	require.True(t, terror.ErrorEqual(err, executor.ErrRoleNotGranted))
 
 	mustExec(t, rootSe, `GRANT SELECT ON test.* TO r_1;`)
 	pc := privilege.GetPrivilegeManager(se)
@@ -610,7 +611,6 @@ func TestCheckCertBasedAuth(t *testing.T) {
 	mustExec(t, se, "UPDATE mysql.global_priv set priv = 'abc' where `user` = 'r13_broken_user' and `host` = 'localhost'")
 	mustExec(t, se, `CREATE USER 'r14_san_only_pass'@'localhost' require san 'URI:spiffe://mesh.pingcap.com/ns/timesh/sa/me1'`)
 	mustExec(t, se, `CREATE USER 'r15_san_only_fail'@'localhost' require san 'URI:spiffe://mesh.pingcap.com/ns/timesh/sa/me2'`)
-	mustExec(t, se, "flush privileges")
 
 	defer func() {
 		require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
@@ -1471,12 +1471,10 @@ func TestDefaultRoles(t *testing.T) {
 	require.Len(t, ret, 0)
 
 	mustExec(t, rootSe, `SET DEFAULT ROLE ALL TO 'testdefault'@'localhost';`)
-	mustExec(t, rootSe, `flush privileges;`)
 	ret = pc.GetDefaultRoles("testdefault", "localhost")
 	require.Len(t, ret, 2)
 
 	mustExec(t, rootSe, `SET DEFAULT ROLE NONE TO 'testdefault'@'localhost';`)
-	mustExec(t, rootSe, `flush privileges;`)
 	ret = pc.GetDefaultRoles("testdefault", "localhost")
 	require.Len(t, ret, 0)
 }

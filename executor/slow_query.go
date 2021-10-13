@@ -728,7 +728,7 @@ func getColumnValueFactoryByName(sctx sessionctx.Context, colName string, column
 			row[columnIdx] = types.NewStringDatum(value)
 			return true, nil
 		}, nil
-	case variable.SlowLogMemMax, variable.SlowLogDiskMax:
+	case variable.SlowLogMemMax, variable.SlowLogDiskMax, variable.SlowLogResultRows:
 		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
