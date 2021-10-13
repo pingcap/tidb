@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/reporter"
@@ -109,7 +110,9 @@ func TestTopSQLReporter(t *testing.T) {
 	require.NoError(t, err)
 	variable.TopSQLVariable.MaxStatementCount.Store(200)
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
-	variable.TopSQLVariable.AgentAddress.Store(server.Address())
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.ReceiverAddress = server.Address()
+	})
 
 	client := reporter.NewGRPCReportClient(mockPlanBinaryDecoderFunc)
 	report := reporter.NewRemoteTopSQLReporter(client)

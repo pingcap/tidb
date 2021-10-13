@@ -15,6 +15,33 @@ type testLocalSuite struct{}
 
 var _ = Suite(&testLocalSuite{})
 
+func (r *testStorageSuite) TestDeleteFile(c *C) {
+	dir := c.MkDir()
+	sb, err := ParseBackend("file://"+filepath.ToSlash(dir), &BackendOptions{})
+	c.Assert(err, IsNil)
+	store, err := Create(context.TODO(), sb, true)
+	c.Assert(err, IsNil)
+
+	name := "test_delete"
+	ret, err := store.FileExists(context.Background(), name)
+	c.Assert(err, IsNil)
+	c.Assert(ret, Equals, false)
+
+	_, err = store.Create(context.Background(), name)
+	c.Assert(err, IsNil)
+
+	ret, err = store.FileExists(context.Background(), name)
+	c.Assert(err, IsNil)
+	c.Assert(ret, Equals, true)
+
+	err = store.DeleteFile(context.Background(), name)
+	c.Assert(err, IsNil)
+
+	ret, err = store.FileExists(context.Background(), name)
+	c.Assert(err, IsNil)
+	c.Assert(ret, Equals, false)
+}
+
 func (r *testStorageSuite) TestWalkDirWithSoftLinkFile(c *C) {
 	if runtime.GOOS == "windows" {
 		// skip the test on windows. typically windows users don't have symlink permission.
@@ -26,7 +53,6 @@ func (r *testStorageSuite) TestWalkDirWithSoftLinkFile(c *C) {
 	path1 := filepath.Join(dir1, name1)
 	f1, err := os.Create(path1)
 	c.Assert(err, IsNil)
-
 	data := "/* whatever pragmas */;" +
 		"INSERT INTO `namespaced`.`table` (columns, more, columns) VALUES (1,-2, 3),\n(4,5., 6);" +
 		"INSERT `namespaced`.`table` (x,y,z) VALUES (7,8,9);" +
