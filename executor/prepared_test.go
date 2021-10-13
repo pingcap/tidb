@@ -591,6 +591,48 @@ func (s *testSerialSuite) TestIssue28087And28162(c *C) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
+func (s *testSerialSuite) TestPreparePlanCache4Function(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+
+	// Testing for non-deterministic functions
+	tk.MustExec("prepare stmt from 'select now()';")
+	res := tk.MustQuery("execute stmt;")
+	c.Assert(len(res.Rows()), Equals, 1)
+
+	res1 := tk.MustQuery("execute stmt;")
+	c.Assert(len(res1.Rows()), Equals, 1)
+	c.Assert(res.Rows()[0][0] != res1.Rows()[0][0], Equals, true)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// Testing for control functions
+	tk.MustExec("prepare stmt from 'SELECT IFNULL(?,0);';")
+	tk.MustExec("set @a = 1, @b = null;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt from 'SELECT IF(?, 1, 0);';")
+	tk.MustExec("set @a = 1, @b = null, @c = 0;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+}
+
 func (s *testSerialSuite) TestIssue28064(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
