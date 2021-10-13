@@ -2302,6 +2302,18 @@ func (s *testSerialDBSuite1) TestAddExpressionIndex(c *C) {
 	tk.MustExec("create table t(a int, key((a+1)), key((a+2)), key idx((a+3)), key((a+4)));")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (A INT, B INT, UNIQUE KEY ((A * 2)));")
+
+	// Test experiment switch.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = false
+	})
+	tk.MustGetErrMsg("create index d on t((repeat(a, 2)))", "[ddl:8200]Unsupported creating expression index containing unsafe functions without allow-expression-index in config")
+	tk.MustGetErrMsg("create table t(a char(10), key ((repeat(a, 2))));", "[ddl:8200]Unsupported creating expression index containing unsafe functions without allow-expression-index in config")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), key ((lower(a))))")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 }
 
 func (s *testSerialDBSuite1) TestCreateExpressionIndexError(c *C) {

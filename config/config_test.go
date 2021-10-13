@@ -221,6 +221,7 @@ max-sql-length=1024
 refresh-interval=100
 history-size=100
 [experimental]
+allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
 [labels]
@@ -232,6 +233,8 @@ spilled-file-encryption-method = "plaintext"
 [pessimistic-txn]
 deadlock-history-capacity = 123
 deadlock-history-collect-retryable = true
+[top-sql]
+receiver-address = "127.0.0.1:10100"
 `)
 
 	c.Assert(err, IsNil)
@@ -271,6 +274,7 @@ deadlock-history-collect-retryable = true
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
+	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.IndexLimit, Equals, 70)
@@ -287,6 +291,7 @@ deadlock-history-collect-retryable = true
 	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
 	c.Assert(conf.PessimisticTxn.DeadlockHistoryCapacity, Equals, uint(123))
 	c.Assert(conf.PessimisticTxn.DeadlockHistoryCollectRetryable, Equals, true)
+	c.Assert("127.0.0.1:10100", Equals, conf.TopSQL.ReceiverAddress)
 
 	_, err = f.WriteString(`
 [log.file]

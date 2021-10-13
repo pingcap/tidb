@@ -98,6 +98,7 @@ func TestT(t *testing.T) {
 		conf.Log.SlowThreshold = 30000 // 30s
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
 	tmpDir := config.GetGlobalConfig().TempStoragePath
@@ -8620,7 +8621,9 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 
 	// Enable Top SQL
 	variable.TopSQLVariable.Enable.Store(true)
-	variable.TopSQLVariable.AgentAddress.Store("mock-agent")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.ReceiverAddress = "mock-agent"
+	})
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
