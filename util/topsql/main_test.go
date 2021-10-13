@@ -16,6 +16,7 @@ package topsql
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
@@ -27,7 +28,9 @@ func TestMain(m *testing.M) {
 
 	// set up
 	variable.TopSQLVariable.Enable.Store(true)
-	variable.TopSQLVariable.AgentAddress.Store("mock")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.ReceiverAddress = "mock"
+	})
 	variable.TopSQLVariable.PrecisionSeconds.Store(1)
 	tracecpu.GlobalSQLCPUProfiler.Run()
 
