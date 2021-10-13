@@ -66,6 +66,9 @@ var Priv2SetStr = map[PrivilegeType]string{
 	ReferencesPriv:     "References",
 	LockTablesPriv:     "Lock Tables",
 	CreateTMPTablePriv: "Create Temporary Tables",
+	EventPriv:          "Event",
+	CreateRoutinePriv:  "Create Routine",
+	AlterRoutinePriv:   "Alter Routine",
 	AlterPriv:          "Alter",
 	ExecutePriv:        "Execute",
 	IndexPriv:          "Index",
@@ -88,6 +91,9 @@ var SetStr2Priv = map[string]PrivilegeType{
 	"References":              ReferencesPriv,
 	"Lock Tables":             LockTablesPriv,
 	"Create Temporary Tables": CreateTMPTablePriv,
+	"Event":                   EventPriv,
+	"Create Routine":          CreateRoutinePriv,
+	"Alter Routine":           AlterRoutinePriv,
 	"Alter":                   AlterPriv,
 	"Execute":                 ExecutePriv,
 	"Index":                   IndexPriv,
@@ -303,7 +309,7 @@ func (privs Privileges) Has(p PrivilegeType) bool {
 var AllGlobalPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, ReferencesPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, CreateTablespacePriv, TriggerPriv, CreateViewPriv, ShowViewPriv, CreateRolePriv, DropRolePriv, CreateTMPTablePriv, LockTablesPriv, CreateRoutinePriv, AlterRoutinePriv, EventPriv, ShutdownPriv, ReloadPriv, FilePriv, ConfigPriv, ReplicationClientPriv, ReplicationSlavePriv}
 
 // AllDBPrivs is all the privileges in database scope.
-var AllDBPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ReferencesPriv, LockTablesPriv, CreateTMPTablePriv, AlterPriv, ExecutePriv, IndexPriv, CreateViewPriv, ShowViewPriv}
+var AllDBPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ReferencesPriv, LockTablesPriv, CreateTMPTablePriv, EventPriv, CreateRoutinePriv, AlterRoutinePriv, AlterPriv, ExecutePriv, IndexPriv, CreateViewPriv, ShowViewPriv}
 
 // AllTablePrivs is all the privileges in table scope.
 var AllTablePrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, IndexPriv, ReferencesPriv, AlterPriv, CreateViewPriv, ShowViewPriv}
