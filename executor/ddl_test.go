@@ -1204,8 +1204,9 @@ func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
-	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '-1'"))
+	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("1"))
 
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	res := tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
@@ -1217,8 +1218,9 @@ func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
 
-	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = 129")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 129")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '129'"))
+	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("128"))
 }
 
 func (s *testSuite6) TestSetDDLReorgBatchSize(c *C) {
