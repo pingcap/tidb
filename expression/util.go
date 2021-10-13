@@ -827,10 +827,6 @@ func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 	exists := make(map[string]struct{}, len(exprs))
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, expr := range exprs {
-		if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-			res = append(res, expr)
-			continue
-		}
 		key := string(expr.HashCode(sc))
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
 			res = append(res, expr)
