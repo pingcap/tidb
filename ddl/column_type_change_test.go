@@ -26,14 +26,14 @@ import (
 	. "github.com/pingcap/check"
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	parser_mysql "github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	parser_mysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/helper"
@@ -1620,7 +1620,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValue(c *C) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
+		if (job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization) && i < 3 {
 			if !once {
 				once = true
 				tbl := testGetTableByName(c, tk1.Se, "test", "t")
@@ -1689,7 +1689,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 		once     bool
 		checkErr error
 	)
-	i := 0
+	i, stableTimes := 0, 0
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
 			return
@@ -1697,7 +1697,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
-		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
+		if (job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization) && stableTimes < 3 {
 			if !once {
 				once = true
 				tbl := testGetTableByName(c, tk1.Se, "test", "t")
@@ -1738,6 +1738,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 					return
 				}
 			}
+			stableTimes++
 		}
 		i++
 	}

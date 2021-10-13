@@ -21,10 +21,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -111,7 +111,6 @@ func (s *testSuite5) TestAdminCheckIndexInTemporaryMode(c *C) {
 func (s *testSuite5) TestAdminCheckIndexInLocalTemporaryMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_noop_functions = 1")
 	tk.MustExec("drop table if exists local_temporary_admin_test;")
 	tk.MustExec("create temporary table local_temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2))")
 	tk.MustExec("insert local_temporary_admin_test (c1, c2) values (1,1), (2,2), (3,3);")

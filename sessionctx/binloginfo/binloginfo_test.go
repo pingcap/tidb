@@ -26,13 +26,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -747,7 +747,6 @@ func TestTempTableBinlog(t *testing.T) {
 
 	// for local temporary table
 	latestNonLocalTemporaryTableDDL := ddlQuery
-	tk.MustExec("set tidb_enable_noop_functions=true")
 	tk.MustExec("create temporary table l_temp_table(id int)")
 	// create temporary table do not write to bin log, so the latest ddl binlog is the previous one
 	ok = mustGetDDLBinlog(s, latestNonLocalTemporaryTableDDL, t)

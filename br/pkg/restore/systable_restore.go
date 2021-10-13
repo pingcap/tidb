@@ -8,12 +8,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -140,7 +140,7 @@ func (rc *Client) afterSystemTablesReplaced(tables []string) error {
 		case table == "user":
 			// We cannot execute `rc.dom.NotifyUpdatePrivilege` here, because there isn't
 			// sessionctx.Context provided by the glue.
-			// TODO: update the glue type and allow we retrive a session context from it.
+			// TODO: update the glue type and allow we retrieve a session context from it.
 			err = multierr.Append(err, errors.Annotatef(berrors.ErrUnsupportedSystemTable,
 				"restored user info may not take effect, until you should execute `FLUSH PRIVILEGES` manually"))
 		}

@@ -17,7 +17,6 @@ package core_test
 import (
 	"fmt"
 	"math"
-	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -218,11 +217,7 @@ func (s *testRuleReorderResults) TestOrderedResultModeOnPartitionTable(c *C) {
 	s.runTestData(c, tk, "TestOrderedResultModeOnPartitionTable")
 }
 
-func (s *testRuleReorderResults) TestHideStableResultSwitch(c *C) {
+func (s *testRuleReorderResults) TestStableResultSwitch(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		c.Assert(strings.ToLower(r[0].(string)), Not(Equals), "tidb_enable_ordered_result_mode")
-	}
-	c.Assert(len(tk.MustQuery("show variables where variable_name like '%tidb_enable_ordered_result_mode%'").Rows()), Equals, 0)
+	c.Assert(len(tk.MustQuery("show variables where variable_name like 'tidb_enable_ordered_result_mode'").Rows()), Equals, 1)
 }
