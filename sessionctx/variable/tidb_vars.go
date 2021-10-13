@@ -562,9 +562,6 @@ const (
 	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
 	TiDBEnableTopSQL = "tidb_enable_top_sql"
 
-	// TiDBTopSQLAgentAddress indicates the top SQL agent address.
-	TiDBTopSQLAgentAddress = "tidb_top_sql_agent_address"
-
 	// TiDBTopSQLPrecisionSeconds indicates the top SQL precision seconds.
 	TiDBTopSQLPrecisionSeconds = "tidb_top_sql_precision_seconds"
 
@@ -735,7 +732,6 @@ const (
 	DefTiDBEnableExchangePartition        = false
 	DefCTEMaxRecursionDepth               = 1000
 	DefTiDBTopSQLEnable                   = false
-	DefTiDBTopSQLAgentAddress             = ""
 	DefTiDBTopSQLPrecisionSeconds         = 1
 	DefTiDBTopSQLMaxStatementCount        = 200
 	DefTiDBTopSQLMaxCollect               = 10000
@@ -770,7 +766,6 @@ var (
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 	TopSQLVariable                        = TopSQL{
 		Enable:                atomic.NewBool(DefTiDBTopSQLEnable),
-		AgentAddress:          atomic.NewString(DefTiDBTopSQLAgentAddress),
 		PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
 		MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
 		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
@@ -784,8 +779,6 @@ var (
 type TopSQL struct {
 	// Enable top-sql or not.
 	Enable *atomic.Bool
-	// AgentAddress indicate the collect agent address.
-	AgentAddress *atomic.String
 	// The refresh interval of top-sql.
 	PrecisionSeconds *atomic.Int64
 	// The maximum number of statements kept in memory.
@@ -798,5 +791,5 @@ type TopSQL struct {
 
 // TopSQLEnabled uses to check whether enabled the top SQL feature.
 func TopSQLEnabled() bool {
-	return TopSQLVariable.Enable.Load() && TopSQLVariable.AgentAddress.Load() != ""
+	return TopSQLVariable.Enable.Load() && config.GetGlobalConfig().TopSQL.ReceiverAddress != ""
 }
