@@ -179,6 +179,7 @@ const (
 	TableDataLockWaits = "DATA_LOCK_WAITS"
 	// TableRegionLabel is the string constant of region label table.
 	TableRegionLabel = "REGION_LABEL"
+	TableTrxSummary  = "TRX_SUMMARY"
 )
 
 const (
@@ -275,6 +276,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
 	TableRegionLabel:                        autoid.InformationSchemaDBID + 77,
 	TableTiDBHotRegionsHistory:              autoid.InformationSchemaDBID + 78,
+	TableTrxSummary:                         autoid.InformationSchemaDBID + 79,
 }
 
 type columnInfo struct {
@@ -857,7 +859,6 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogPDTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogBackoffTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogWriteSQLRespTotal, tp: mysql.TypeDouble, size: 22},
-	{name: variable.SlowLogResultRows, tp: mysql.TypeLonglong, size: 22},
 	{name: variable.SlowLogBackoffDetail, tp: mysql.TypeVarchar, size: 4096},
 	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
@@ -1252,9 +1253,6 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.AvgPdTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of PD used"},
 	{name: stmtsummary.AvgBackoffTotalTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of Backoff used"},
 	{name: stmtsummary.AvgWriteSQLRespTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of write sql resp used"},
-	{name: stmtsummary.MaxResultRowsStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag, comment: "Max count of sql result rows"},
-	{name: stmtsummary.MinResultRowsStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag, comment: "Min count of sql result rows"},
-	{name: stmtsummary.AvgResultRowsStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag, comment: "Average count of sql result rows"},
 	{name: stmtsummary.PreparedStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether prepared"},
 	{name: stmtsummary.AvgAffectedRowsStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rows affected"},
 	{name: stmtsummary.FirstSeenStr, tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the first time"},
@@ -1453,6 +1451,11 @@ var tableRegionLabelCols = []columnInfo{
 	{name: "RULE_TYPE", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag},
 	{name: "REGION_LABEL", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
 	{name: "RANGES", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
+}
+
+var tableTrxSummaryCols = []columnInfo{
+	{name: "DIGEST", tp: mysql.TypeLong, size: 32, flag: mysql.NotNullFlag, comment: "Digest of a transaction"},
+	{name: txninfo.AllSQLDigestsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1839,6 +1842,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableDeadlocks:                          tableDeadlocksCols,
 	TableDataLockWaits:                      tableDataLockWaitsCols,
 	TableRegionLabel:                        tableRegionLabelCols,
+	TableTrxSummary:                         tableTrxSummaryCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

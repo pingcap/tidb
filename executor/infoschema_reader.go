@@ -166,6 +166,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableRegionLabel:
 			err = e.setDataForRegionLabel(sctx)
+		case infoschema.TableTrxSummary:
+			_ = e.setDataForTrxSummary(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -2085,6 +2087,16 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 			}
 		}
 	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForTrxSummary(ctx sessionctx.Context) error {
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
+	if !hasProcessPriv {
+		return nil
+	}
+	rows := txninfo.Recorder.DumpTrxSummary()
 	e.rows = rows
 	return nil
 }
