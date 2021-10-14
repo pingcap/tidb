@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -126,13 +126,15 @@ func TestIntValidation(t *testing.T) {
 	_, err := sv.Validate(vars, "oN", ScopeSession)
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
 
-	_, err = sv.Validate(vars, "301", ScopeSession)
-	require.Equal(t, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '301'", err.Error())
+	val, err := sv.Validate(vars, "301", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "300", val)
 
-	_, err = sv.Validate(vars, "5", ScopeSession)
-	require.Equal(t, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '5'", err.Error())
+	val, err = sv.Validate(vars, "5", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "10", val)
 
-	val, err := sv.Validate(vars, "300", ScopeSession)
+	val, err = sv.Validate(vars, "300", ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "300", val)
 
@@ -152,19 +154,22 @@ func TestUintValidation(t *testing.T) {
 	_, err = sv.Validate(vars, "", ScopeSession)
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
 
-	_, err = sv.Validate(vars, "301", ScopeSession)
-	require.Equal(t, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '301'", err.Error())
+	val, err := sv.Validate(vars, "301", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "300", val)
 
-	_, err = sv.Validate(vars, "-301", ScopeSession)
-	require.Equal(t, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '-301'", err.Error())
+	val, err = sv.Validate(vars, "-301", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "10", val)
 
 	_, err = sv.Validate(vars, "-ERR", ScopeSession)
-	require.Equal(t, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '-ERR'", err.Error())
+	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'", err.Error())
 
-	_, err = sv.Validate(vars, "5", ScopeSession)
-	require.Equal(t, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '5'", err.Error())
+	val, err = sv.Validate(vars, "5", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "10", val)
 
-	val, err := sv.Validate(vars, "300", ScopeSession)
+	val, err = sv.Validate(vars, "300", ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "300", val)
 
