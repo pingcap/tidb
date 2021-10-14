@@ -24,7 +24,6 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -171,7 +170,7 @@ func truncateTrailingSpaces(v *types.Datum) {
 	v.SetString(str, v.Collation())
 }
 
-func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
+func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, str string, i int) (types.Datum, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 
 	var strval strings.Builder
@@ -319,59 +318,35 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		truncateTrailingSpaces(&casted)
 	}
 
-	if col.Charset == charset.CharsetASCII {
-		if ctx.GetSessionVars().SkipASCIICheck {
-			return casted, nil
-		}
-
+	if v := makeStringValidator(ctx, col); v != nil {
 		str := casted.GetString()
-		for i := 0; i < len(str); i++ {
-			if str[i] > unicode.MaxASCII {
-				casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
-				break
-			}
-		}
-		if forceIgnoreTruncate {
-			err = nil
-		}
-		return casted, err
-	}
-
-	if ctx.GetSessionVars().SkipUTF8Check {
-		return casted, nil
-	}
-
-	if !mysql.IsUTF8Charset(col.Charset) {
-		return casted, nil
-	}
-	str := casted.GetString()
-	utf8Charset := col.Charset == mysql.UTF8Charset
-	doMB4CharCheck := utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUTF8
-	fastCheck := (col.Charset == mysql.UTF8MB4Charset) && utf8.ValidString(str)
-	if !fastCheck {
-		// The following check is slow, if we fast check success, we can avoid this.
-		for i, w := 0, 0; i < len(str); i += w {
-			runeValue, width := utf8.DecodeRuneInString(str[i:])
-			if runeValue == utf8.RuneError {
-				if strings.HasPrefix(str[i:], string(utf8.RuneError)) {
-					w = width
-					continue
-				}
-				casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
-				break
-			} else if width > 3 && doMB4CharCheck {
-				// Handle non-BMP characters.
-				casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
-				break
-			}
-			w = width
+		if invalidPos := v.Validate(str); invalidPos >= 0 {
+			casted, err = handleWrongCharsetValue(ctx, col, str, invalidPos)
 		}
 	}
-
 	if forceIgnoreTruncate {
 		err = nil
 	}
 	return casted, err
+}
+
+func makeStringValidator(ctx sessionctx.Context, col *model.ColumnInfo) charset.StringValidator {
+	var validator charset.StringValidator
+	switch col.Charset {
+	case charset.CharsetASCII:
+		enabled := !ctx.GetSessionVars().SkipASCIICheck
+		validator = charset.StringValidatorASCII{Enabled: enabled}
+	case charset.CharsetUTF8:
+		enabled := !ctx.GetSessionVars().SkipUTF8Check
+		needCheckMB4 := config.GetGlobalConfig().CheckMb4ValueInUTF8
+		validator = charset.StringValidatorUTF8{Enabled: enabled, IsUTF8MB4: false, CheckMB4ValueInUTF8: needCheckMB4}
+	case charset.CharsetUTF8MB4:
+		enabled := !ctx.GetSessionVars().SkipUTF8Check
+		validator = charset.StringValidatorUTF8{Enabled: enabled, IsUTF8MB4: true}
+	case charset.CharsetGBK:
+		validator = charset.StringValidatorOther{Charset: "gbk"}
+	}
+	return validator
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.

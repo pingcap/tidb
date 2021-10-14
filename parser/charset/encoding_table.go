@@ -15,6 +15,8 @@ package charset
 
 import (
 	"strings"
+	go_unicode "unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
@@ -273,24 +275,106 @@ func FindNextCharacterLength(label string) func([]byte) int {
 
 var encodingNextCharacterLength = map[string]func([]byte) int{
 	// https://en.wikipedia.org/wiki/GBK_(character_encoding)#Layout_diagram
-	"gbk": func(bs []byte) int {
-		if len(bs) == 0 || bs[0] < 0x80 {
-			// A byte in the range 00–7F is a single byte that means the same thing as it does in ASCII.
-			return 1
-		}
-		return 2
-	},
-	"utf-8": func(bs []byte) int {
-		if len(bs) == 0 || bs[0] < 0x80 {
-			return 1
-		} else if bs[0] < 0xe0 {
-			return 2
-		} else if bs[0] < 0xf0 {
-			return 3
-		}
-		return 4
-	},
+	"gbk": characterLengthGBK,
+	"utf-8": characterLengthUTF8,
 	"binary": func(bs []byte) int {
 		return 1
 	},
+}
+
+func characterLengthGBK(bs []byte) int {
+	if len(bs) == 0 || bs[0] < 0x80 {
+		// A byte in the range 00–7F is a single byte that means the same thing as it does in ASCII.
+		return 1
+	}
+	return 2
+}
+
+func characterLengthUTF8(bs []byte) int {
+	if len(bs) == 0 || bs[0] < 0x80 {
+		return 1
+	} else if bs[0] < 0xe0 {
+		return 2
+	} else if bs[0] < 0xf0 {
+		return 3
+	}
+	return 4
+}
+
+var _ StringValidator = StringValidatorASCII{}
+var _ StringValidator = StringValidatorUTF8{}
+var _ StringValidator = StringValidatorOther{}
+
+// StringValidator is used to check if a string is valid in the specific charset.
+type StringValidator interface {
+	Validate(str string) (invalidPos int)
+}
+
+// StringValidatorASCII checks whether a string is valid ASCII string.
+type StringValidatorASCII struct {
+	Enabled bool
+}
+
+// Validate checks whether the string is valid in the given charset.
+// It returns the first invalid byte offset.
+func (s StringValidatorASCII) Validate(str string) (invalidPos int) {
+	if !s.Enabled {
+		return -1
+	}
+	for i := 0; i < len(str); i++ {
+		if str[i] > go_unicode.MaxASCII {
+			return i
+		}
+	}
+	return -1
+}
+
+// StringValidatorUTF8 checks whether a string is valid UTF8 string.
+type StringValidatorUTF8 struct {
+	Enabled bool
+	IsUTF8MB4 bool // Distinguish between "utf8" and "utf8mb4"
+	CheckMB4ValueInUTF8 bool
+}
+
+// Validate checks whether the string is valid in the given charset.
+// It returns the first invalid byte offset.
+func (s StringValidatorUTF8) Validate(str string) (invalidPos int) {
+	if !s.Enabled {
+		return -1
+	}
+	if s.IsUTF8MB4 && utf8.ValidString(str) {
+		// Quick check passed.
+		return -1
+	}
+	doMB4CharCheck := !s.IsUTF8MB4 && s.CheckMB4ValueInUTF8
+	for i, w := 0, 0; i < len(str); i += w {
+		runeValue, width := utf8.DecodeRuneInString(str[i:])
+		if runeValue == utf8.RuneError {
+			if strings.HasPrefix(str[i:], string(utf8.RuneError)) {
+				w = width
+				continue
+			}
+			return i
+		} else if width > 3 && doMB4CharCheck {
+			// Meet non-BMP characters.
+			return i
+		}
+		w = width
+	}
+	return -1
+}
+
+// StringValidatorOther checks whether a string is valid string in given charset.
+type StringValidatorOther struct {
+	Charset string
+}
+
+// Validate checks whether the string is valid in the given charset.
+// It returns the first invalid byte offset.
+func (s StringValidatorOther) Validate(str string) (invalidPos int) {
+	enc := NewEncoding(s.Charset)
+	if !enc.Enabled() {
+		return -1
+	}
+	return enc.IsValid([]byte(str))
 }

@@ -1,0 +1,14 @@
+set @@sql_mode = 'strict_trans_tables';
+drop table if exists t;
+create table t (a varchar(255) charset gbk);
+insert into t values ('中文');
+-- error 1366: Incorrect string value '\xC3\x80' for column 'a'
+insert into t values ('À');
+-- error 1366: Incorrect string value '\xC3\x80\xE4\xB8\xAD\xE6...' for column 'a'
+insert into t values ('中文À中文');
+select a from t;
+
+set @@sql_mode = '';
+insert into t values ('À');
+insert into t values ('中文À中文');
+select a from t;

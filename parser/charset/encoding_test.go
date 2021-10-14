@@ -74,3 +74,46 @@ func (s *testEncodingSuite) TestEncoding(c *C) {
 		c.Assert(string(result), Equals, tc.result, Commentf("%v", tc))
 	}
 }
+
+func (s *testEncodingSuite) TestValidatorASCII(c *C) {
+	v := charset.StringValidatorASCII{Enabled: false}
+	c.Assert(v.Validate("qwerty"), Equals, -1)
+	c.Assert(v.Validate("qwÊrty"), Equals, -1)
+	v.Enabled = true
+	c.Assert(v.Validate("qwerty"), Equals, -1)
+	c.Assert(v.Validate("qwÊrty"), Equals, 2)
+}
+
+func (s *testEncodingSuite) TestValidatorUTF8(c *C) {
+	v := charset.StringValidatorUTF8{Enabled: false}
+	c.Assert(v.Validate("qwerty"), Equals, -1)
+	// Test charset "utf8mb4".
+	v = charset.StringValidatorUTF8{Enabled: true, IsUTF8MB4: true}
+	c.Assert(v.Validate("qwerty"), Equals, -1)
+	c.Assert(v.Validate("qwÊrty"), Equals, -1)
+	c.Assert(v.Validate("qwÊ合法字符串"), Equals, -1)
+	c.Assert(v.Validate("😂"), Equals, -1)
+	invalid := string([]byte{0xff, 0xfe, 0xfd})
+	c.Assert(v.Validate(invalid), Equals, 0)
+	// Test charset "utf8" without checking mb4 value.
+	v = charset.StringValidatorUTF8{Enabled: true, IsUTF8MB4: false, CheckMB4ValueInUTF8: false}
+	c.Assert(v.Validate("qwerty"), Equals, -1)
+	c.Assert(v.Validate("qwÊrty"), Equals, -1)
+	c.Assert(v.Validate("qwÊ合法字符串"), Equals, -1)
+	c.Assert(v.Validate("qwÊ合法字符串"), Equals, -1)
+	c.Assert(v.Validate("😂"), Equals, -1)
+	c.Assert(v.Validate(invalid), Equals, 0)
+	// Test charset "utf8" with checking mb4 value.
+	v = charset.StringValidatorUTF8{Enabled: true, IsUTF8MB4: false, CheckMB4ValueInUTF8: true}
+	c.Assert(v.Validate("😂"), Equals, 0) // 4-bytes character is invalid.
+	c.Assert(v.Validate(invalid), Equals, 0)
+}
+
+func (s *testEncodingSuite) TestValidatorGBK(c *C) {
+	v := charset.StringValidatorOther{Charset: "gbk"}
+	c.Assert(v.Validate("asdf"), Equals, -1)
+	c.Assert(v.Validate("中文"), Equals, -1)
+	c.Assert(v.Validate("À"), Equals, 0)
+	c.Assert(v.Validate("asdfÀ"), Equals, 4)
+	c.Assert(v.Validate("中文À"), Equals, 6)
+}

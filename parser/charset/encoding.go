@@ -97,6 +97,35 @@ func (e *Encoding) Decode(dest, src []byte) ([]byte, error) {
 	return e.transform(e.enc.NewDecoder(), dest, src, true)
 }
 
+// IsValid checks whether src(utf8) bytes can be encode into a string with given charset.
+// Return -1 if it decodes successfully.
+func (e *Encoding) IsValid(src []byte) (invalidPos int) {
+	dec := e.enc.NewEncoder()
+	dest := [4]byte{}
+	var srcOffset int
+	for srcOffset < len(src) {
+		srcNextLen := characterLengthUTF8(src[srcOffset:])
+		srcEnd := mathutil.Min(srcOffset+srcNextLen, len(src))
+		_, nSrc, err := dec.Transform(dest[:], src[srcOffset:srcEnd], false)
+		if err != nil {
+			return srcOffset
+		}
+		srcOffset += nSrc
+	}
+	return -1
+}
+
+func nextLengthUTF8(bs []byte) int {
+	if len(bs) == 0 || bs[0] < 0x80 {
+		return 1
+	} else if bs[0] < 0xe0 {
+		return 2
+	} else if bs[0] < 0xf0 {
+		return 3
+	}
+	return 4
+}
+
 func (e *Encoding) transform(transformer transform.Transformer, dest, src []byte, isDecoding bool) ([]byte, error) {
 	if len(dest) < len(src) {
 		dest = make([]byte, len(src)*2)
