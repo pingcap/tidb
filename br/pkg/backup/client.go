@@ -891,7 +891,7 @@ backupLoop:
 			}
 		})
 		if err != nil {
-			if utils.IsRetryableError(err) {
+			if isRetryableError(err) {
 				time.Sleep(3 * time.Second)
 				client, errReset = resetFn()
 				if errReset != nil {
@@ -914,7 +914,7 @@ backupLoop:
 						zap.Int("retry-time", retry))
 					break backupLoop
 				}
-				if utils.IsRetryableError(err) {
+				if isRetryableError(err) {
 					time.Sleep(3 * time.Second)
 					// current tikv is unavailable
 					client, errReset = resetFn()
@@ -942,5 +942,5 @@ backupLoop:
 
 // isRetryableError represents whether we should retry reset grpc connection.
 func isRetryableError(err error) bool {
-	return status.Code(err) == codes.Unavailable
+	return status.Code(err) == codes.Unavailable || status.Code(err) == codes.Canceled
 }
