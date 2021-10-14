@@ -115,17 +115,6 @@ func (e *Encoding) IsValid(src []byte) (invalidPos int) {
 	return -1
 }
 
-func nextLengthUTF8(bs []byte) int {
-	if len(bs) == 0 || bs[0] < 0x80 {
-		return 1
-	} else if bs[0] < 0xe0 {
-		return 2
-	} else if bs[0] < 0xf0 {
-		return 3
-	}
-	return 4
-}
-
 func (e *Encoding) transform(transformer transform.Transformer, dest, src []byte, isDecoding bool) ([]byte, error) {
 	if len(dest) < len(src) {
 		dest = make([]byte, len(src)*2)
@@ -155,10 +144,14 @@ func (e *Encoding) transform(transformer transform.Transformer, dest, src []byte
 }
 
 func (e *Encoding) nextCharLenInSrc(srcRest []byte, isDecoding bool) int {
-	if isDecoding && e.charLength != nil {
-		return e.charLength(srcRest)
+	if isDecoding {
+		if e.charLength != nil {
+			return e.charLength(srcRest)
+		}
+		return len(srcRest)
+	} else {
+		return characterLengthUTF8(srcRest)
 	}
-	return len(srcRest)
 }
 
 func enlargeCapacity(dest []byte) []byte {
