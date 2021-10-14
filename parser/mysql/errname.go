@@ -932,7 +932,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrWindowNoGroupOrderUnused:                              Message("ASC or DESC with GROUP BY isn't allowed with window functions; put ASC or DESC in ORDER BY", nil),
 	ErrWindowExplainJson:                                     Message("To get information about window functions use EXPLAIN FORMAT=JSON", nil),
 	ErrWindowFunctionIgnoresFrame:                            Message("Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition", nil),
-	ErrRoleNotGranted:                                        Message("%s is is not granted to %s", nil),
+	ErrRoleNotGranted:                                        Message("%s is not granted to %s", nil),
 	ErrMaxExecTimeExceeded:                                   Message("Query execution was interrupted, max_execution_time exceeded.", nil),
 	ErrLockAcquireFailAndNoWaitSet:                           Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),
 	ErrDataTruncatedFunctionalIndex:                          Message("Data truncated for functional index '%s' at row %d", nil),

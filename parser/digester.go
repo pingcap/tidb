@@ -24,7 +24,7 @@ import (
 	"unicode"
 	"unsafe"
 
-	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/tidb/parser/charset"
 )
 
 type Digest struct {

@@ -21,11 +21,11 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 )
 
 var (
@@ -326,6 +326,27 @@ func getInt64FromNUM(num interface{}) (val int64, errMsg string) {
 		return v, ""
 	}
 	return -1, fmt.Sprintf("%d is out of range [–9223372036854775808,9223372036854775807]", num)
+}
+
+func isRevokeAllGrant(roleOrPrivList []*ast.RoleOrPriv) bool {
+	if len(roleOrPrivList) != 2 {
+		return false
+	}
+	priv, err := roleOrPrivList[0].ToPriv()
+	if err != nil {
+		return false
+	}
+	if priv.Priv != mysql.AllPriv {
+		return false
+	}
+	priv, err = roleOrPrivList[1].ToPriv()
+	if err != nil {
+		return false
+	}
+	if priv.Priv != mysql.GrantPriv {
+		return false
+	}
+	return true
 }
 
 // convertToRole tries to convert elements of roleOrPrivList to RoleIdentity
