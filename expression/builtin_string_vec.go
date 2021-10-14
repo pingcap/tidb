@@ -21,7 +21,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/pingcap/tidb/parser/ast"
@@ -141,15 +140,8 @@ func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 
-	var specialCase = unicode.SpecialCase(nil)
-	if b.encoding.Enabled() {
-		if b.encoding.Name() == "gbk" {
-			specialCase = charset.GBKCase
-		}
-	}
-
 	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(strings.ToUpperSpecial(specialCase, result.GetString(i))))
+		result.SetRaw(i, []byte(b.encoding.ToUpper(result.GetString(i))))
 	}
 	return nil
 }

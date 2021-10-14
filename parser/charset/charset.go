@@ -16,7 +16,6 @@ package charset
 import (
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -27,33 +26,6 @@ var (
 	ErrUnknownCollation         = terror.ClassDDL.NewStd(mysql.ErrUnknownCollation)
 	ErrCollationCharsetMismatch = terror.ClassDDL.NewStd(mysql.ErrCollationCharsetMismatch)
 )
-
-// follow https://dev.mysql.com/worklog/task/?id=4583 for GBK
-var GBKCase = unicode.SpecialCase{
-	unicode.CaseRange{0x00E0, 0x00E1, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x00E8, 0x00EA, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x00EC, 0x00ED, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x00F2, 0x00F3, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x00F9, 0x00FA, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x00FC, 0x00FC, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x0101, 0x0101, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x0113, 0x0113, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x011B, 0x011B, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x012B, 0x012B, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x0144, 0x0144, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x0148, 0x0148, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x014D, 0x014D, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x016B, 0x016B, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x01CE, 0x01CE, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x01D0, 0x01D0, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x01D2, 0x01D2, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x01D4, 0x01D4, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x01D6, 0x01D6, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x01D8, 0x01D8, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x01DA, 0x01DA, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x01DC, 0x01DC, [unicode.MaxCase]rune{0, 0, 0}},
-	unicode.CaseRange{0x216A, 0x216B, [unicode.MaxCase]rune{0, 0, 0}},
-}
 
 // Charset is a charset.
 // Now we only support MySQL.

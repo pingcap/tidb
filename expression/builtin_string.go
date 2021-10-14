@@ -26,7 +26,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -906,14 +905,7 @@ func (b *builtinUpperUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, 
 		return d, isNull, err
 	}
 
-	var specialCase = unicode.SpecialCase(nil)
-	if b.encoding.Enabled() {
-		if b.encoding.Name() == "gbk" {
-			specialCase = charset.GBKCase
-		}
-	}
-
-	return strings.ToUpperSpecial(specialCase, d), false, nil
+	return b.encoding.ToUpper(d), false, nil
 }
 
 type builtinUpperSig struct {
