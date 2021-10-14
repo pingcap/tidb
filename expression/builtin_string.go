@@ -1151,17 +1151,29 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, err
 	}
 
-	// Since charset is already validated and set from getFunction(), there's no
-	// need to get charset from args again.
-	encoding, _ := charset.Lookup(b.tp.Charset)
-	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
-	// return with error.
-	if encoding == nil {
-		return "", true, errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
+	// if expr is binary string and convert meet error, we should return NULL.
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		// Since charset is already validated and set from getFunction(), there's no
+		// need to get charset from args again.
+		encoding, _ := charset.Lookup(b.tp.Charset)
+		// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
+		// return with error.
+		if encoding == nil {
+			return "", true, errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
+		}
+
+		target, _, err := transform.String(encoding.NewEncoder(), expr)
+		if err != nil {
+			return "", true, err
+		}
+
+		// we should convert target into utf8 internal.
+		exprInternal, _, _ := transform.String(encoding.NewDecoder(), target)
+		return exprInternal, false, nil
 	}
 
-	target, _, err := transform.String(encoding.NewDecoder(), expr)
-	return target, err != nil, err
+	encoding := charset.NewEncoding(b.tp.Charset)
+	return string(encoding.EncodeInternal(nil, []byte(expr))), false, nil
 }
 
 type substringFunctionClass struct {

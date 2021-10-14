@@ -49,3 +49,29 @@ select to_base64(a), to_base64(b), to_base64(c) from t;
 to_base64(a)	to_base64(b)	to_base64(c)
 5LiA5LqM5LiJ	0ru2/sj9	5LiA5LqM5LiJAAAAAAAAAAAAAAA=
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t(a char(10));
+insert into t values ('中文'), ('啊'), ('a'), ('1'), ('ㅂ');
+set @@tidb_enable_vectorized_expression = true;
+select hex(convert(a using gbk)) from t;
+hex(convert(a using gbk))
+D6D0CEC4
+B0A1
+61
+31
+3F
+select hex(convert('中文' using gbk));
+hex(convert('中文' using gbk))
+D6D0CEC4
+select hex(convert('啊' using gbk));
+hex(convert('啊' using gbk))
+B0A1
+select hex(convert('a' using gbk));
+hex(convert('a' using gbk))
+61
+select hex(convert('1' using gbk));
+hex(convert('1' using gbk))
+31
+select hex(convert('ㅂ' using gbk));
+hex(convert('ㅂ' using gbk))
+3F

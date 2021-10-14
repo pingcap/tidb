@@ -692,6 +692,11 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	if encoding == nil {
 		return errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
 	}
+	encoder := encoding.NewEncoder()
+	decoder := encoding.NewDecoder()
+	enc := charset.NewEncoding(b.tp.Charset)
+	isBinaryStr := types.IsBinaryStr(b.args[0].GetType())
+
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if expr.IsNull(i) {
@@ -699,11 +704,17 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 			continue
 		}
 		exprI := expr.GetString(i)
-		target, _, err := transform.String(encoding.NewDecoder(), exprI)
-		if err != nil {
-			return err
+		if isBinaryStr {
+			target, _, err := transform.String(encoder, exprI)
+			if err != nil {
+				return err
+			}
+			// we should convert target into utf8 internal.
+			exprInternal, _, _ := transform.String(decoder, target)
+			result.AppendString(exprInternal)
+		} else {
+			result.AppendString(string(enc.EncodeInternal(nil, []byte(exprI))))
 		}
-		result.AppendString(target)
 	}
 	return nil
 }
