@@ -43,15 +43,15 @@ func GetPlanReplayerDirName() string {
 func parseTime(s string) (time.Time, error) {
 	startIdx := strings.LastIndex(s, "_")
 	if startIdx == -1 {
-		return time.Time{}, errors.New("PlanRepalyerGC failed to parse the file :" + s)
+		return time.Time{}, errors.New("failed to parse the file :" + s)
 	}
 	endIdx := strings.LastIndex(s, ".")
 	if endIdx == -1 || endIdx+1 <= startIdx {
-		return time.Time{}, errors.New("PlanRepalyerGC failed to parse the file :" + s)
+		return time.Time{}, errors.New("failed to parse the file :" + s)
 	}
 	i, err := strconv.ParseInt(s[startIdx+1:endIdx], 10, 64)
 	if err != nil {
-		return time.Time{}, errors.New("PlanRepalyerGC failed to parse the file :" + s)
+		return time.Time{}, errors.New("failed to parse the file :" + s)
 	}
 	return time.Unix(0, i), nil
 }
@@ -72,12 +72,12 @@ func (p *planReplayer) planReplayerGC(t time.Duration) {
 	for _, f := range files {
 		createTime, err := parseTime(f.Name())
 		if err != nil {
-			logutil.BgLogger().Warn("PlanReplayerGC faild", zap.Error(err))
+			logutil.BgLogger().Warn("[PlanReplayer] parseTime failed", zap.Error(err))
 		}
 		if !createTime.After(gcTime) {
 			err := os.Remove(filepath.Join(path, f.Name()))
 			if err != nil {
-				logutil.BgLogger().Warn("PlanReplayerGC faild", zap.Error(err))
+				logutil.BgLogger().Warn("[PlanReplayer] remove file failed", zap.Error(err))
 				continue
 			}
 			logutil.BgLogger().Info(fmt.Sprintf("PlanReplayerGC %s", f.Name()))
