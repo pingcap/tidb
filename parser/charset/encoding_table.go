@@ -275,7 +275,7 @@ func FindNextCharacterLength(label string) func([]byte) int {
 
 var encodingNextCharacterLength = map[string]func([]byte) int{
 	// https://en.wikipedia.org/wiki/GBK_(character_encoding)#Layout_diagram
-	"gbk": characterLengthGBK,
+	"gbk":   characterLengthGBK,
 	"utf-8": characterLengthUTF8,
 	"binary": func(bs []byte) int {
 		return 1
@@ -331,8 +331,8 @@ func (s StringValidatorASCII) Validate(str string) (invalidPos int) {
 
 // StringValidatorUTF8 checks whether a string is valid UTF8 string.
 type StringValidatorUTF8 struct {
-	Enabled bool
-	IsUTF8MB4 bool // Distinguish between "utf8" and "utf8mb4"
+	Enabled             bool
+	IsUTF8MB4           bool // Distinguish between "utf8" and "utf8mb4"
 	CheckMB4ValueInUTF8 bool
 }
 
