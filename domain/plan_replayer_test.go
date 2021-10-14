@@ -42,3 +42,19 @@ func TestPlanReplayerGC(t *testing.T) {
 	require.NotNil(t, err)
 	require.True(t, os.IsNotExist(err))
 }
+
+func TestPlanReplayerParseTime(t *testing.T) {
+	nowTime := time.Now()
+	name1 := fmt.Sprintf("replayer_single_xxxxxx_%v.zip", nowTime.UnixNano())
+	pt, err := parseTime(name1)
+	require.Nil(t, err)
+	require.True(t, pt.Equal(nowTime))
+
+	name2 := fmt.Sprintf("replayer_single_xxxxxx_%v1.zip", nowTime.UnixNano())
+	_, err = parseTime(name2)
+	require.NotNil(t, err)
+
+	name3 := fmt.Sprintf("replayer_single_xxxxxx_%v._zip", nowTime.UnixNano())
+	_, err = parseTime(name3)
+	require.NotNil(t, err)
+}
