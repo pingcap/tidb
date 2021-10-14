@@ -2359,6 +2359,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
+	seHotfix, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	seHotfix.SetGlobalSysVarOnly(variable.TiDBExecutorConcurrency, "4")
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
