@@ -46,7 +46,7 @@ func parseTime(s string) (time.Time, error) {
 		return time.Time{}, errors.New("failed to parse the file :" + s)
 	}
 	endIdx := strings.LastIndex(s, ".")
-	if endIdx == -1 || endIdx+1 <= startIdx {
+	if endIdx == -1 || endIdx <= startIdx+1 {
 		return time.Time{}, errors.New("failed to parse the file :" + s)
 	}
 	i, err := strconv.ParseInt(s[startIdx+1:endIdx], 10, 64)
@@ -73,6 +73,7 @@ func (p *planReplayer) planReplayerGC(t time.Duration) {
 		createTime, err := parseTime(f.Name())
 		if err != nil {
 			logutil.BgLogger().Warn("[PlanReplayer] parseTime failed", zap.Error(err))
+			continue
 		}
 		if !createTime.After(gcTime) {
 			err := os.Remove(filepath.Join(path, f.Name()))
