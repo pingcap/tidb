@@ -22,10 +22,10 @@ import (
 	"github.com/gogo/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -973,6 +973,26 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 
 	// cast float32 to float32
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeFloat), float32Column)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// upper string
+	function, err = NewFunction(mock.NewContext(), ast.Upper, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ucase string
+	function, err = NewFunction(mock.NewContext(), ast.Ucase, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// lower string
+	function, err = NewFunction(mock.NewContext(), ast.Lower, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// lcase string
+	function, err = NewFunction(mock.NewContext(), ast.Lcase, types.NewFieldType(mysql.TypeString), stringColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 

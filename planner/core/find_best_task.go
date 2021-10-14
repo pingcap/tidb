@@ -20,11 +20,11 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1347,9 +1347,16 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *util.AccessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
-	indexConds = keepAccessCondsAsFilter4PlanCache(is.ctx, path.AccessConds, indexConds)
 
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
+	if len(tableConds) > 0 {
+		// If we have table conditions, we should keep the addition filter conditions
+		// from the path's access conditions to the table filter not the index filter.
+		// The reason is when the index is the prefix index, it will get the wrong results.
+		tableConds = keepAccessCondsAsFilter4PlanCache(is.ctx, path.AccessConds, tableConds)
+	} else {
+		indexConds = keepAccessCondsAsFilter4PlanCache(is.ctx, path.AccessConds, indexConds)
+	}
 
 	var newRootConds []expression.Expression
 	indexConds, newRootConds = expression.PushDownExprs(is.ctx.GetSessionVars().StmtCtx, indexConds, is.ctx.GetClient(), kv.TiKV)
@@ -1986,8 +1993,8 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
-	ts.filterCondition = keepAccessCondsAsFilter4PlanCache(ts.ctx, ts.AccessCondition, ts.filterCondition)
 	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
+	ts.filterCondition = keepAccessCondsAsFilter4PlanCache(ts.ctx, ts.AccessCondition, ts.filterCondition)
 	var newRootConds []expression.Expression
 	ts.filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ts.ctx.GetClient(), ts.StoreType)
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)

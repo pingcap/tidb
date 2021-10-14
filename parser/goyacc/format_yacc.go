@@ -26,7 +26,7 @@ import (
 	parser "github.com/cznic/parser/yacc"
 	"github.com/cznic/strutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/format"
+	"github.com/pingcap/tidb/parser/format"
 )
 
 func Format(inputFilename string, goldenFilename string) (err error) {
