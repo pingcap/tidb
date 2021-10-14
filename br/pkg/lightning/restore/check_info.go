@@ -29,8 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -41,6 +39,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/tikv/pd/server/api"
 	pdconfig "github.com/tikv/pd/server/config"
@@ -397,12 +397,12 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 			continue
 		}
 		for _, tbl := range db.Tables {
+			originSource += tbl.TotalSize
 			tableInfo, ok := info.Tables[tbl.Name]
 			if ok {
-				originSource += tbl.TotalSize
 				// Do not sample small table because there may a large number of small table and it will take a long
 				// time to sample data for all of them.
-				if tbl.TotalSize < int64(config.SplitRegionSize) {
+				if rc.cfg.TikvImporter.Backend == config.BackendTiDB || tbl.TotalSize < int64(config.SplitRegionSize) {
 					sourceSize += tbl.TotalSize
 					tbl.IndexRatio = 1.0
 					tbl.IsRowOrdered = false
@@ -422,10 +422,10 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 			}
 		}
 	}
+
 	if rc.status != nil {
 		rc.status.TotalFileSize.Store(originSource)
 	}
-
 	// Do not import with too large concurrency because these data may be all unsorted.
 	if bigTableCount > 0 && unSortedTableCount > 0 {
 		if rc.cfg.App.TableConcurrency > rc.cfg.App.IndexConcurrency {
@@ -593,7 +593,12 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 	switch dataFileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
-		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, nil)
+		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+		charsetConvertor, err := mydump.NewCharsetConvertor(rc.cfg.Mydumper.DataCharacterSet, rc.cfg.Mydumper.DataInvalidCharReplace)
+		if err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
@@ -765,7 +770,12 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 	switch tableMeta.DataFiles[0].FileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
-		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, nil)
+		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+		charsetConvertor, err := mydump.NewCharsetConvertor(rc.cfg.Mydumper.DataCharacterSet, rc.cfg.Mydumper.DataInvalidCharReplace)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -825,7 +835,7 @@ outloop:
 		rowCount += 1
 
 		var dataChecksum, indexChecksum verification.KVChecksum
-		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, offset)
+		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
 		parser.RecycleRow(lastRow)
 		if encodeErr != nil {
 			err = errors.Annotatef(encodeErr, "in file at offset %d", offset)
