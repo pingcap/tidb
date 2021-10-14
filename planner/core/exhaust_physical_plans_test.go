@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -288,7 +287,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys)
 		require.NoError(t, err)
 		require.Equal(t, fmt.Sprintf("%v", helper.chosenAccess), tt.accesses)
-		require.Equal(t, fmt.Sprintf("%v", helper.chosenRanges), tt.ranges, Commentf("test case: #%v", i))
+		require.Equal(t, fmt.Sprintf("%v", helper.chosenRanges), tt.ranges, "test case: #%v", i)
 		require.Equal(t, fmt.Sprintf("%v", helper.idxOff2KeyOff), tt.idxOff2KeyOff)
 		require.Equal(t, fmt.Sprintf("%v", helper.chosenRemained), tt.remained)
 		require.Equal(t, fmt.Sprintf("%v", helper.lastColManager), tt.compareFilters)
