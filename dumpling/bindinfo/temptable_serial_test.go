@@ -29,7 +29,6 @@ func TestSelectBindingOnGlobalTempTableProhibited(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_temporary_table = true")
 	tk.MustExec("drop table if exists t1,tmp1")
 	tk.MustExec("create table t1(a int(11))")
 	tk.MustExec("create global temporary table tmp1(a int(11), key idx_a(a)) on commit delete rows;")
@@ -64,7 +63,6 @@ func TestDMLBindingOnGlobalTempTableProhibited(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_temporary_table = true")
 	tk.MustExec("drop table if exists t1,tmp1,tmp2")
 	tk.MustExec("create table t1(a int(11))")
 	tk.MustExec("create global temporary table tmp1(a int(11), key idx_a(a)) on commit delete rows;")
