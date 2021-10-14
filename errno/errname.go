@@ -877,7 +877,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWindowNoGroupOrderUnused:                              mysql.Message("ASC or DESC with GROUP BY isn't allowed with window functions; put ASC or DESC in ORDER BY", nil),
 	ErrWindowExplainJSON:                                     mysql.Message("To get information about window functions use EXPLAIN FORMAT=JSON", nil),
 	ErrWindowFunctionIgnoresFrame:                            mysql.Message("Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition", nil),
-	ErrRoleNotGranted:                                        mysql.Message("%s is is not granted to %s", nil),
+	ErrRoleNotGranted:                                        mysql.Message("%s is not granted to %s", nil),
 	ErrMaxExecTimeExceeded:                                   mysql.Message("Query execution was interrupted, max_execution_time exceeded.", nil),
 	ErrLockAcquireFailAndNoWaitSet:                           mysql.Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),
 	ErrNotHintUpdatable:                                      mysql.Message("Variable '%s' cannot be set using SET_VAR hint.", nil),

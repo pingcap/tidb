@@ -322,7 +322,6 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 	if user.Hostname == "" {
 		user.Hostname = "%"
 	}
-
 	restrictedCtx, err := e.getSysSession()
 	if err != nil {
 		return err
@@ -388,6 +387,9 @@ func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaul
 		u, h := s.UserList[0].Username, s.UserList[0].Hostname
 		if u == sessionVars.User.Username && h == sessionVars.User.AuthHostname {
 			err = e.setDefaultRoleForCurrentUser(s)
+			if err != nil {
+				return err
+			}
 			return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 		}
 	}
