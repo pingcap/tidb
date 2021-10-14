@@ -26,8 +26,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -38,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -416,7 +416,7 @@ rowLoop:
 			switch {
 			case err == nil:
 				continue rowLoop
-			case common.IsRetryableError(err):
+			case utils.IsRetryableError(err):
 				// retry next loop
 			default:
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
@@ -529,7 +529,7 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 					return errors.Trace(err)
 				}
 				// Retry the non-batch insert here if this is not the last retry.
-				if common.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
+				if utils.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
 					continue
 				}
 				firstRow := stmtTask.rows[0]
