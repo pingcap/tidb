@@ -547,21 +547,28 @@ func (e *Execute) rebuildRange(p Plan) error {
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
 	switch x := p.(type) {
+	case *PhysicalTableScan:
+		err = e.buildRangeForTableScan(sctx, x)
+		if err != nil {
+			return err
+		}
+	case *PhysicalIndexScan:
+		err = e.buildRangeForIndexScan(sctx, x)
+		if err != nil {
+			return err
+		}
 	case *PhysicalTableReader:
-		ts := x.TablePlans[0].(*PhysicalTableScan)
-		err = e.buildRangeForTableScan(sctx, ts)
+		err = e.rebuildRange(x.TablePlans[0])
 		if err != nil {
 			return err
 		}
 	case *PhysicalIndexReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		err = e.buildRangeForIndexScan(sctx, is)
+		err = e.rebuildRange(x.IndexPlans[0])
 		if err != nil {
 			return err
 		}
 	case *PhysicalIndexLookUpReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		err = e.buildRangeForIndexScan(sctx, is)
+		err = e.rebuildRange(x.IndexPlans[0])
 		if err != nil {
 			return err
 		}
@@ -667,19 +674,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 	case *PhysicalIndexMergeReader:
 		indexMerge := p.(*PhysicalIndexMergeReader)
 		for _, partialPlans := range indexMerge.PartialPlans {
-			switch partialPlan := partialPlans[0].(type) {
-			case *PhysicalTableScan:
-				ts := partialPlan
-				err = e.buildRangeForTableScan(sctx, ts)
-				if err != nil {
-					return err
-				}
-			default:
-				is := partialPlan.(*PhysicalIndexScan)
-				err = e.buildRangeForIndexScan(sctx, is)
-				if err != nil {
-					return err
-				}
+			err = e.rebuildRange(partialPlans[0])
+			if err != nil {
+				return err
 			}
 		}
 		// We don't need to handle the indexMerge.TablePlans, because the tablePlans
