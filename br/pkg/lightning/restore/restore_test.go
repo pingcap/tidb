@@ -947,8 +947,8 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 			s.tableInfo.DB: s.dbInfo,
 		},
 		tableWorkers:      worker.NewPool(ctx, 6, "table"),
-		indexWorkers:      worker.NewPool(ctx, 2, "index"),
 		ioWorkers:         worker.NewPool(ctx, 5, "io"),
+		indexWorkers:      worker.NewPool(ctx, 2, "index"),
 		regionWorkers:     worker.NewPool(ctx, 10, "region"),
 		checksumWorks:     worker.NewPool(ctx, 2, "region"),
 		saveCpCh:          chptCh,
@@ -1597,7 +1597,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 							"id": 2
 						},
 						"status": {
-							"available": "24"
+							"capacity": "24"
 						}
 					}
 				]
@@ -1605,7 +1605,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			[]byte(`{
 				"max-replicas": 1
 			}`),
-			"(.*)Cluster resources are rich for this import task(.*)",
+			"(.*)Cluster capacity is rich(.*)",
 			true,
 			0,
 		},
@@ -1618,7 +1618,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 							"id": 2
 						},
 						"status": {
-							"available": "23"
+							"capacity": "15"
 						}
 					}
 				]
@@ -1663,7 +1663,12 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 		url := strings.TrimPrefix(server.URL, "https://")
 		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
 		rc := &Controller{cfg: cfg, tls: tls, store: mockStore, checkTemplate: template}
-		err := rc.ClusterResource(ctx)
+		var sourceSize int64
+		err = rc.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+			sourceSize += size
+			return nil
+		})
+		err = rc.ClusterResource(ctx, sourceSize)
 		c.Assert(err, IsNil)
 
 		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCount)
@@ -2067,6 +2072,65 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
 							Type:     mydump.SourceTypeCSV,
+						},
+					},
+				},
+			},
+		},
+		// Case 4:
+		// table4 has two datafiles for table. we only check the first file.
+		// we expect the check success.
+		{
+			[]*config.IgnoreColumns{
+				{
+					DB:      "db1",
+					Table:   "table2",
+					Columns: []string{"cola"},
+				},
+			},
+			"",
+			0,
+			true,
+			map[string]*checkpoints.TidbDBInfo{
+				"db1": {
+					Name: "db1",
+					Tables: map[string]*checkpoints.TidbTableInfo{
+						"table2": {
+							ID:   1,
+							DB:   "db1",
+							Name: "table2",
+							Core: &model.TableInfo{
+								Columns: []*model.ColumnInfo{
+									{
+										// colB has the default value
+										Name:          model.NewCIStr("colB"),
+										DefaultIsExpr: true,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			&mydump.MDTableMeta{
+				DB:   "db1",
+				Name: "table2",
+				DataFiles: []mydump.FileInfo{
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+						},
+					},
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							// This type will make the check failed.
+							// but it's the second file for table.
+							// so it's unreachable so this case will success.
+							Type: mydump.SourceTypeIgnore,
 						},
 					},
 				},

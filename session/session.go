@@ -927,7 +927,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i))
 			}
+			_, digest := s.sessionVars.StmtCtx.SQLDigest()
+			s.txn.onStmtStart(digest.String())
 			_, err = st.Exec(ctx)
+			s.txn.onStmtEnd()
 			if err != nil {
 				s.StmtRollback()
 				break
@@ -1830,10 +1833,10 @@ type execStmtResult struct {
 
 func (rs *execStmtResult) Close() error {
 	se := rs.se
-	if err := resetCTEStorageMap(se); err != nil {
+	if err := rs.RecordSet.Close(); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
-	if err := rs.RecordSet.Close(); err != nil {
+	if err := resetCTEStorageMap(se); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
 	return finishStmt(context.Background(), se, nil, rs.sql)

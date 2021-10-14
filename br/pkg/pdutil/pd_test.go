@@ -18,6 +18,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/tikv/pd/pkg/typeutil"
+	"github.com/tikv/pd/server/api"
 	"github.com/tikv/pd/server/core"
 	"github.com/tikv/pd/server/statistics"
 )
@@ -199,4 +201,34 @@ func (s *testPDControllerSuite) TestPDRequestRetry(c *C) {
 	taddr = ts.URL
 	_, reqErr = pdRequest(ctx, taddr, "", cli, http.MethodGet, nil)
 	c.Assert(reqErr, NotNil)
+}
+
+func (s *testPDControllerSuite) TestStoreInfo(c *C) {
+	storeInfo := api.StoreInfo{
+		Status: &api.StoreStatus{
+			Capacity:  typeutil.ByteSize(1024),
+			Available: typeutil.ByteSize(1024),
+		},
+		Store: &api.MetaStore{
+			StateName: "Tombstone",
+		},
+	}
+	mock := func(
+		_ context.Context, addr string, prefix string, _ *http.Client, _ string, _ io.Reader,
+	) ([]byte, error) {
+		query := fmt.Sprintf("%s/%s", addr, prefix)
+		c.Assert(query, Equals, "http://mock/pd/api/v1/store/1")
+		ret, err := json.Marshal(storeInfo)
+		c.Assert(err, IsNil)
+		return ret, nil
+	}
+
+	pdController := &PdController{addrs: []string{"http://mock"}}
+	ctx := context.Background()
+	resp, err := pdController.getStoreInfoWith(ctx, mock, 1)
+	c.Assert(err, IsNil)
+	c.Assert(resp, NotNil)
+	c.Assert(resp.Status, NotNil)
+	c.Assert(resp.Store.StateName, Equals, "Tombstone")
+	c.Assert(uint64(resp.Status.Available), Equals, uint64(1024))
 }
