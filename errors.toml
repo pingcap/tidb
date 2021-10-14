@@ -1493,7 +1493,7 @@ There is no such grant defined for user '%-.48s' on host '%-.255s'
 
 ["privilege:3530"]
 error = '''
-%s is is not granted to %s
+%s is not granted to %s
 '''
 
 ["schema:1007"]

@@ -33,8 +33,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
@@ -42,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -724,13 +724,11 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
 
-		pid, err := w.doGCPlacementRules(r)
-		if err != nil {
+		if err := w.doGCPlacementRules(r); err != nil {
 			logutil.Logger(ctx).Error("[gc worker] gc placement rules failed on range",
 				zap.String("uuid", w.uuid),
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),
-				zap.Int64("pid", pid),
 				zap.Error(err))
 			continue
 		}
@@ -1858,7 +1856,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
-func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err error) {
+func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
@@ -1883,7 +1881,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 			return
 		}
 		if historyJob == nil {
-			return 0, admin.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
+			return admin.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
 		}
 	}
 
@@ -1895,18 +1893,14 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 		if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs); err != nil {
 			return
 		}
-		// If it's a partitioned table, then the element ID is the partition ID.
-		if len(physicalTableIDs) > 0 {
-			pid = dr.ElementID
+		// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
+		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
+		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+		for _, id := range physicalTableIDs {
+			bundles = append(bundles, placement.NewBundle(id))
 		}
+		err = infosync.PutRuleBundles(context.TODO(), bundles)
 	}
-	// Not drop table / truncate table or not a partitioned table, no need to GC placement rules.
-	if pid == 0 {
-		return
-	}
-	// Notify PD to drop the placement rules, even if there may be no placement rules.
-	bundles := []*placement.Bundle{placement.NewBundle(pid)}
-	err = infosync.PutRuleBundles(context.TODO(), bundles)
 	return
 }
 
