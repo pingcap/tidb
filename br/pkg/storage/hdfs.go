@@ -42,7 +42,7 @@ func (s *HDFSStorage) WriteFile(ctx context.Context, name string, data []byte) e
 	}
 	file_path := fmt.Sprintf("%s/%s", s.remote, name)
 	cmd := exec.Command(bin, "dfs", "-put", "-", file_path)
-	
+
 	buf := bytes.Buffer{}
 	buf.Write(data)
 	cmd.Stdin = &buf
