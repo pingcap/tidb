@@ -2363,7 +2363,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	seHotfix.SetGlobalSysVarOnly(variable.TiDBExecutorConcurrency, "4")
+	err = seHotfix.SetGlobalSysVarOnly(variable.TiDBExecutorConcurrency, "4")
+	if err != nil {
+		fmt.Println("set concurrency fail", err.Error())
+		return nil, err
+	}
+	fmt.Println("set concurrency success")
+
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
