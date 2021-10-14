@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -486,7 +485,7 @@ func getAvgRowSize(stats *property.StatsInfo, schema *expression.Schema) (size f
 		// Estimate using just the type info.
 		cols := schema.Columns
 		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(col.GetType()))
+			size += float64(statistics.EstimateTypeWidthForChunk(col.GetType()))
 		}
 	}
 	return

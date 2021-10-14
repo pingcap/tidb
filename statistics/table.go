@@ -864,15 +864,33 @@ func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.Range, tableRowCou
 // GetAvgRowSize computes average row size for given columns.
 func (coll *HistColl) GetAvgRowSize(ctx sessionctx.Context, cols []*expression.Column, isEncodedKey bool, isForScan bool) (size float64) {
 	sessionVars := ctx.GetSessionVars()
+	var fixedLen func(*types.FieldType) int
+	if sessionVars.EnableChunkRPC && !isForScan {
+		fixedLen = chunk.GetFixedLen
+	} else {
+		fixedLen = func(ft *types.FieldType) int {
+			switch ft.Tp {
+			case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+				return 8
+			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
+				if isEncodedKey {
+					return 8
+				}
+			}
+			return -1
+		}
+	}
 	if coll.Pseudo || len(coll.Columns) == 0 || coll.Count == 0 {
-		size = pseudoColSize * float64(len(cols))
+		for _, col := range cols {
+			size += float64(estimateTypeWidth(col.GetType(), fixedLen))
+		}
 	} else {
 		for _, col := range cols {
 			colHist, ok := coll.Columns[col.UniqueID]
 			// Normally this would not happen, it is for compatibility with old version stats which
 			// does not include TotColSize.
 			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
-				size += pseudoColSize
+				size += float64(estimateTypeWidth(col.GetType(), fixedLen))
 				continue
 			}
 			// We differentiate if the column is encoded as key or value, because the resulted size
@@ -896,7 +914,7 @@ func (coll *HistColl) GetAvgRowSize(ctx sessionctx.Context, cols []*expression.C
 func (coll *HistColl) GetAvgRowSizeListInDisk(cols []*expression.Column) (size float64) {
 	if coll.Pseudo || len(coll.Columns) == 0 || coll.Count == 0 {
 		for _, col := range cols {
-			size += float64(chunk.EstimateTypeWidth(col.GetType()))
+			size += float64(EstimateTypeWidthForChunk(col.GetType()))
 		}
 	} else {
 		for _, col := range cols {
@@ -904,7 +922,7 @@ func (coll *HistColl) GetAvgRowSizeListInDisk(cols []*expression.Column) (size f
 			// Normally this would not happen, it is for compatibility with old version stats which
 			// does not include TotColSize.
 			if !ok || (!colHist.IsHandle && colHist.TotColSize == 0 && (colHist.NullCount != coll.Count)) {
-				size += float64(chunk.EstimateTypeWidth(col.GetType()))
+				size += float64(EstimateTypeWidthForChunk(col.GetType()))
 				continue
 			}
 			size += colHist.AvgColSizeListInDisk(coll.Count)
@@ -973,4 +991,39 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 	}
 	// This table has no statistics yet. We can directly return true.
 	return true
+}
+
+// estimateTypeWidth estimates the average width of values of the type.
+// This is used by the planner, which doesn't require absolutely correct results;
+// it's OK (and expected) to guess if we don't know for sure.
+//
+// mostly study from https://github.com/postgres/postgres/blob/REL_12_STABLE/src/backend/utils/cache/lsyscache.c#L2356
+func estimateTypeWidth(colType *types.FieldType, getFixedLen func(*types.FieldType) int) int {
+	colLen := getFixedLen(colType)
+	// Easy if it's a fixed-width type
+	if colLen != -1 {
+		return colLen
+	}
+
+	colLen = colType.Flen
+	if colLen > 0 {
+		if colLen <= 32 {
+			return colLen
+		}
+		if colLen < 1000 {
+			return 32 + (colLen-32)/2 // assume 50%
+		}
+		/*
+		 * Beyond 1000, assume we're looking at something like
+		 * "varchar(10000)" where the limit isn't actually reached often, and
+		 * use a fixed estimate.
+		 */
+		return 32 + (1000-32)/2
+	}
+	// Oops, we have no idea ... wild guess time.
+	return 32
+}
+
+func EstimateTypeWidthForChunk(colType *types.FieldType) int {
+	return estimateTypeWidth(colType, chunk.GetFixedLen)
 }
