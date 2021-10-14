@@ -16,7 +16,7 @@ package auth
 import (
 	"fmt"
 
-	"github.com/pingcap/parser/format"
+	"github.com/pingcap/tidb/parser/format"
 )
 
 // UserIdentity represents username and hostname.
