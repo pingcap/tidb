@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql" // mysql driver
 	"github.com/pingcap/errors"
@@ -20,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
@@ -347,11 +345,6 @@ func SplitRanges(
 	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 ) error {
-	start := time.Now()
-	defer func() {
-		elapsed := time.Since(start)
-		summary.CollectDuration("split region", elapsed)
-	}()
 	splitter := NewRegionSplitter(NewSplitClient(client.GetPDClient(), client.GetTLSConfig()))
 
 	return splitter.Split(ctx, ranges, rewriteRules, func(keys [][]byte) {
