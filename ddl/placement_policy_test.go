@@ -363,6 +363,7 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	checkFunc(tbl.Meta().DirectPlacementOpts)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("drop placement policy if exists y")
 }
 
 func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
