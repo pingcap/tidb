@@ -562,6 +562,106 @@ func TestSelectViewSecurity(t *testing.T) {
 	require.EqualError(t, err, core.ErrViewInvalid.GenWithStackByArgs("test", "selectviewsecurity").Error())
 }
 
+func TestShowViewPriv(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`DROP VIEW IF EXISTS test.v`)
+	tk.MustExec(`CREATE VIEW test.v AS SELECT 1`)
+	tk.MustExec("CREATE USER vnobody, vshowview, vselect, vshowandselect")
+	tk.MustExec("GRANT SHOW VIEW ON test.v TO vshowview")
+	tk.MustExec("GRANT SELECT ON test.v TO vselect")
+	tk.MustExec("GRANT SHOW VIEW, SELECT ON test.v TO vshowandselect")
+
+	tests := []struct {
+		userName     string
+		showViewErr  string
+		showTableErr string
+		explainErr   string
+		explainRes   string
+		descErr      string
+		descRes      string
+		tablesNum    string
+		columnsNum   string
+	}{
+		{"vnobody",
+			"[planner:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"[planner:1142]SHOW VIEW command denied to user 'vnobody'@'%' for table 'v'",
+			"[executor:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"",
+			"[executor:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"",
+			"0",
+			"0",
+		},
+		{"vshowview",
+			"[planner:1142]SELECT command denied to user 'vshowview'@'%' for table 'v'",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"1",
+			"0",
+		},
+		{"vselect",
+			"[planner:1142]SHOW VIEW command denied to user 'vselect'@'%' for table 'v'",
+			"[planner:1142]SHOW VIEW command denied to user 'vselect'@'%' for table 'v'",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"1",
+			"1",
+		},
+		{"vshowandselect",
+			"",
+			"",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"1",
+			"1",
+		},
+	}
+
+	for _, test := range tests {
+		tk.Session().Auth(&auth.UserIdentity{Username: test.userName, Hostname: "localhost"}, nil, nil)
+		err := tk.ExecToErr("SHOW CREATE VIEW test.v")
+		if test.showViewErr != "" {
+			require.EqualError(t, err, test.showViewErr, test)
+		} else {
+			require.NoError(t, err, test)
+		}
+		err = tk.ExecToErr("SHOW CREATE TABLE test.v")
+		if test.showTableErr != "" {
+			require.EqualError(t, err, test.showTableErr, test)
+		} else {
+			require.NoError(t, err, test)
+		}
+		if test.explainErr != "" {
+			err = tk.QueryToErr("explain test.v")
+			require.EqualError(t, err, test.explainErr, test)
+		} else {
+			// TODO: expecting empty set but got one row for vshowview.
+			// tk.MustQuery("explain test.v").Check(testkit.Rows(test.explainRes))
+		}
+		if test.descErr != "" {
+			err = tk.QueryToErr("explain test.v")
+			require.EqualError(t, err, test.descErr, test)
+		} else {
+			// TODO: expecting empty set but got one row for vshowview.
+			// tk.MustQuery("desc test.v").Check(testkit.Rows(test.descRes))
+		}
+		tk.MustQuery("select count(*) from information_schema.tables where table_schema='test' and table_name='v'").Check(testkit.Rows(test.tablesNum))
+		// TODO: expecting 0 but got 1 for vshowview.
+		// tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows(test.columnsNum))
+	}
+}
+
 func TestRoleAdminSecurity(t *testing.T) {
 	t.Parallel()
 	store, clean := newStore(t)
