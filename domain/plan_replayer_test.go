@@ -15,11 +15,11 @@
 package domain
 
 import (
-	"testing"
-	"time"
 	"fmt"
 	"os"
 	"path/filepath"
+	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )

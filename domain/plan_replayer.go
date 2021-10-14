@@ -16,6 +16,7 @@ package domain
 
 import (
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -23,7 +24,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"fmt"
 
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
