@@ -52,14 +52,14 @@ function check_db_row(){
     fi
 }
 
-function test_crypter_none(){
-    echo "backup with crypter method of NONE"
-    run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB/NONE" --crypter.method "NONE"
+function test_crypter_plaintext(){
+    echo "backup with crypter method of plaintext"
+    run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB/plaintext" --crypter.method "plaintext"
 
     drop_db
 
-    echo "restore with crypter method of NONE"
-    run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/NONE" --crypter.method "NONE"
+    echo "restore with crypter method of plaintext"
+    run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/plaintext" --crypter.method "PLAINTEXT"
 
     check_db_row
 }
@@ -97,22 +97,22 @@ function test_crypter(){
 
     echo "backup crypter method of $CRYPTER_METHOD with the key-file of $CRYPTER_KEY_FILE"
     run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
-        --crypter.method $CRYPTER_METHOD  --crypter.key-filepath $CRYPTER_KEY_FILE
+        --use-backupmeta-v2=true --crypter.method $CRYPTER_METHOD  --crypter.key-file $CRYPTER_KEY_FILE
 
     drop_db
 
     echo "backup crypter method of $CRYPTER_METHOD with the wrong key-file of $CRYPTER_WRONG_KEY_FILE"
     restore_fail=0
     run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
-        --crypter.method $CRYPTER_METHOD  --crypter.key-filepath $CRYPTER_WRONG_KEY_FILE || backup_fail=1
+        --crypter.method $CRYPTER_METHOD  --crypter.key-file $CRYPTER_WRONG_KEY_FILE || backup_fail=1
     if [ $backup_fail -ne 1 ]; then
-        echo "TEST: [$TEST_NAME] test restore with wrong key-filepath failed!"
+        echo "TEST: [$TEST_NAME] test restore with wrong key-file failed!"
         exit 1
     fi
 
     echo "restore crypter method of $CRYPTER_METHOD with the key-file of $CRYPTER_KEY_FILE"
     run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
-        --crypter.method $CRYPTER_METHOD --crypter.key-filepath $CRYPTER_KEY_FILE
+        --crypter.method $CRYPTER_METHOD --crypter.key-file $CRYPTER_KEY_FILE
 
     check_db_row
 }
@@ -125,23 +125,23 @@ for i in $(seq $DB_COUNT); do
     row_count_ori[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
 done
 
-# Test crypter.method=NONE for br
-test_crypter_none
+# Test crypter.method=plaintext for br
+test_crypter_plaintext
 
 # Test crypter.method=AESXXX for br
-METHOD=AES128
-KEY="0123456789012345"
-WRONG_KEY="0123456789012346"
+METHOD=aes128-ctr
+KEY="0123456789abcdef0123456789abcdef"
+WRONG_KEY="0123456789abcdef0123456789abcdee"
 test_crypter $METHOD $KEY $WRONG_KEY
 
-METHOD=AES192
-KEY="012345678901234567890123"
-WRONG_KEY="01234567890123456789012"
+METHOD=AES192-CTR
+KEY="0123456789abcdef0123456789abcdef0123456789abcdef"
+WRONG_KEY="0123456789abcdef0123456789abcdef0123456789abcde"
 test_crypter $METHOD $KEY $WRONG_KEY
 
-METHOD=AES256
-KEY="01234567890123456789012345678901"
-WRONG_KEY="012345678901234567890123456789012"
+METHOD=AES256-CTR
+KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+WRONG_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeff"
 test_crypter $METHOD $KEY $WRONG_KEY
 
 # Drop dbs finally

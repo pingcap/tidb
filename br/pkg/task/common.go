@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"net/url"
 	"os"
 	"path"
@@ -76,9 +77,9 @@ const (
 	defaultGRPCKeepaliveTime    = 10 * time.Second
 	defaultGRPCKeepaliveTimeout = 3 * time.Second
 
-	flagCipherType        = "crypter.method"
-	flagCipherKey         = "crypter.key"
-	flagCipherKeyFilePath = "crypter.key-filepath"
+	flagCipherType    = "crypter.method"
+	flagCipherKey     = "crypter.key"
+	flagCipherKeyFile = "crypter.key-file"
 
 	unlimited           = 0
 	crypterAES128KeyLen = 16
@@ -215,12 +216,13 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.BoolP(flagSkipCheckPath, "", false, "Skip path verification")
 	_ = flags.MarkHidden(flagSkipCheckPath)
 
-	flags.String(flagCipherType, "NONE",
-		"Encrypt/decrypt algorithm, can be one of ‘NONE|AES128|AES192|AES256’, \"NONE\" represent no encrypt/decrypt")
+	flags.String(flagCipherType, "plaintext", "Encrypt/decrypt method, "+
+		"be one of plaintext|aes128-ctr|aes192-ctr|aes256-ctr case-insensitively, "+
+		"\"plaintext\" represents no encrypt/decrypt")
 	flags.String(flagCipherKey, "",
-		"Encrypt/decrypt key, used to encrypt/decrypt the data from backup/restore"+
-			"\nif key is lost, the data can't be decrpted")
-	flags.String(flagCipherKeyFilePath, "", "FilePath, its content is used as the cipher-key")
+		"aes-crypter key, used to encrypt/decrypt the data "+
+			"by the hexadecimal string, eg: \"0123456789abcdef0123456789abcdef\"")
+	flags.String(flagCipherKeyFile, "", "FilePath, its content is used as the cipher-key")
 
 	storage.DefineFlags(flags)
 }
@@ -265,46 +267,47 @@ func ParseTLSTripleFromFlags(flags *pflag.FlagSet) (ca, cert, key string, err er
 func parseCipherType(t string) (encryptionpb.EncryptionMethod, error) {
 	ct := encryptionpb.EncryptionMethod_UNKNOWN
 	switch t {
-	case "NONE":
+	case "plaintext", "PLAINTEXT":
 		ct = encryptionpb.EncryptionMethod_PLAINTEXT
-	case "AES128":
+	case "aes128-ctr", "AES128-CTR":
 		ct = encryptionpb.EncryptionMethod_AES128_CTR
-	case "AES192":
+	case "aes192-ctr", "AES192-CTR":
 		ct = encryptionpb.EncryptionMethod_AES192_CTR
-	case "AES256":
+	case "aes256-ctr", "AES256-CTR":
 		ct = encryptionpb.EncryptionMethod_AES256_CTR
 	default:
-		return ct, errors.Annotatef(berrors.ErrInvalidArgument, "invalid crypther type '%s'", t)
+		return ct, errors.Annotatef(berrors.ErrInvalidArgument, "invalid crypter method '%s'", t)
 	}
 
 	return ct, nil
 }
 
-func checkCipherKey(cipherKey, cipherFilePath string) error {
-	if (len(cipherKey) == 0) == (len(cipherFilePath) == 0) {
+func checkCipherKey(cipherKey, cipherKeyFile string) error {
+	if (len(cipherKey) == 0) == (len(cipherKeyFile) == 0) {
 		return errors.Annotate(berrors.ErrInvalidArgument,
-			"exactly one of --crypter.key or --crypter.key-filepath should be provided")
+			"exactly one of --crypter.key or --crypter.key-file should be provided")
 	}
 	return nil
 }
 
-func getCipherKeyContent(cipherKey, cipherFilePath string) ([]byte, error) {
-	var keyContent []byte
-	if err := checkCipherKey(cipherKey, cipherFilePath); err != nil {
-		return keyContent, errors.Trace(err)
+func getCipherKeyContent(cipherKey, cipherKeyFile string) ([]byte, error) {
+	if err := checkCipherKey(cipherKey, cipherKeyFile); err != nil {
+		return nil, errors.Trace(err)
 	}
 
+	// if cipher-key is valid, convert the hexadecimal string to bytes
 	if len(cipherKey) > 0 {
-		return []byte(cipherKey), nil
+		return hex.DecodeString(cipherKey)
 	}
 
-	content, err := os.ReadFile(cipherFilePath)
+	// convert the content(as hexadecimal string) from cipher-file to bytes
+	content, err := os.ReadFile(cipherKeyFile)
 	if err != nil {
-		return keyContent, errors.Annotate(err, "failed to read cipher file")
+		return nil, errors.Annotate(err, "failed to read cipher file")
 	}
 
 	content = bytes.TrimSuffix(content, []byte("\n"))
-	return content, nil
+	return hex.DecodeString(string(content))
 }
 
 func checkCipherKeyMatch(cipher *backuppb.CipherInfo) bool {
@@ -342,12 +345,12 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	filePath, err := flags.GetString(flagCipherKeyFilePath)
+	keyFilePath, err := flags.GetString(flagCipherKeyFile)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	cfg.CipherInfo.CipherKey, err = getCipherKeyContent(key, filePath)
+	cfg.CipherInfo.CipherKey, err = getCipherKeyContent(key, keyFilePath)
 	if err != nil {
 		return errors.Trace(err)
 	}
