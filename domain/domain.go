@@ -1151,6 +1151,7 @@ func (do *Domain) PlanReplayerLoop(ctx sessionctx.Context) {
 			gcTicker.Stop()
 			do.wg.Done()
 			logutil.BgLogger().Info("PlanReplayerLoop exited.")
+			util.Recover(metrics.LabelDomain, "PlanReplayerLoop", nil, false)
 		}()
 		for {
 			select {

@@ -78,6 +78,7 @@ func (p *planReplayer) planReplayerGC(t time.Duration) {
 			err := os.Remove(filepath.Join(path, f.Name()))
 			if err != nil {
 				logutil.BgLogger().Warn("PlanReplayerGC faild", zap.Error(err))
+				continue
 			}
 			logutil.BgLogger().Info(fmt.Sprintf("PlanReplayerGC %s", f.Name()))
 		}
