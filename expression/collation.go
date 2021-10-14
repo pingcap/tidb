@@ -406,10 +406,12 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 					continue
 				}
 			case coercibility == arg.Coercibility():
-				if (isUnicodeCollation(dstCharset) && !isUnicodeCollation(arg.GetType().Charset)) || (dstCharset == charset.CharsetUTF8MB4 && arg.GetType().Charset == charset.CharsetUTF8) {
+				if (isUnicodeCollation(dstCharset) && !isUnicodeCollation(arg.GetType().Charset))
+				|| (dstCharset == charset.CharsetUTF8MB4 && arg.GetType().Charset == charset.CharsetUTF8) {
 					repertoire |= arg.Repertoire()
 					continue
-				} else if (isUnicodeCollation(arg.GetType().Charset) && !isUnicodeCollation(dstCharset)) || (arg.GetType().Charset == charset.CharsetUTF8MB4 && dstCharset == charset.CharsetUTF8) {
+				} else if (isUnicodeCollation(arg.GetType().Charset) && !isUnicodeCollation(dstCharset))
+				|| (arg.GetType().Charset == charset.CharsetUTF8MB4 && dstCharset == charset.CharsetUTF8) {
 					coercibility, dstCharset, dstCollation = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate
 					repertoire |= arg.Repertoire()
 					continue
@@ -501,9 +503,19 @@ func illegalMixCollationErr(funcName string, args []Expression) error {
 
 	switch len(args) {
 	case 2:
-		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], funcName)
+		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(
+			args[0].GetType().Collate,
+			coerString[args[0].Coercibility()],
+			args[1].GetType().Collate,
+			coerString[args[1].Coercibility()], funcName)
 	case 3:
-		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], args[2].GetType().Collate, coerString[args[2].Coercibility()], funcName)
+		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(
+			args[0].GetType().Collate,
+			coerString[args[0].Coercibility()],
+			args[1].GetType().Collate,
+			coerString[args[1].Coercibility()],
+			args[2].GetType().Collate,
+			coerString[args[2].Coercibility()], funcName)
 	default:
 		return collate.ErrIllegalMixCollation.GenWithStackByArgs(funcName)
 	}
