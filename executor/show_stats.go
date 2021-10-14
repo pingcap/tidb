@@ -478,14 +478,18 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 			if !ok {
 				continue
 			}
-			e.appendRow([]interface{}{
-				dbName,
-				tbl.Name.O,
-				partitionName,
-				col.Name.O,
-				colStatsUsage.LastUsedAt,
-				colStatsUsage.LastAnalyzedAt,
-			})
+			row := []interface{}{dbName, tbl.Name.O, partitionName, col.Name.O}
+			if !colStatsUsage.LastUsedAt.IsZero() {
+				row = append(row, colStatsUsage.LastUsedAt)
+			} else {
+				row = append(row, nil)
+			}
+			if !colStatsUsage.LastAnalyzedAt.IsZero() {
+				row = append(row, colStatsUsage.LastAnalyzedAt)
+			} else {
+				row = append(row, nil)
+			}
+			e.appendRow(row)
 		}
 	}
 

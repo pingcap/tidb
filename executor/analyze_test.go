@@ -1134,5 +1134,34 @@ func (s *testSuite10) TestSnapshotAnalyze(c *C) {
 }
 
 func (s *testSerialSuite2) TestAnalyzePredicateColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t1 (a int, b int, c int, d int, index idx_a_b(a, b))")
+	tk.MustExec("insert into t1 values (1,2,3,4), (5,6,7,8), (9,10,11,12)")
 
+	do := s.dom
+	is := do.InfoSchema()
+	h := do.StatsHandle()
+	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+
+	tk.MustQuery("select * from t1 where c > 3").Check(testkit.Rows("5 6 7 8", "9 10 11 12"))
+	// Here we execute `select 1` so that ResetContextOfStmt is called and StatementContext.ColStatsUsage is merged to session.statsCollector.
+	tk.MustExec("select 1")
+	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
+	res := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1' and last_used_at is not null").Sort()
+	rows := res.Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][3], Equals, "c")
+
+	tk.MustExec("analyze table t1 predicate columns")
+	res = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't1'").Sort()
+	rows = res.Rows()
+	c.Assert(len(rows), Equals, 1)
+	// modify count should be set to 0
+	c.Assert(rows[0][4], Equals, "0")
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, stats_ver from mysql.stats_histograms where table_id = %d and stats_ver > 0 order by is_index, hist_id", t1.Meta().ID)).Check(
+		testkit.Rows("0 1 2", "0 2 2", "0 3 2", "1 1 2"))
 }
