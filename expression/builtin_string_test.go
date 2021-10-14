@@ -23,11 +23,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -1168,6 +1170,32 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 			} else {
 				c.Assert(d.GetString(), Equals, t.res)
 			}
+		}
+	}
+
+	strCases := []struct {
+		arg     string
+		chs     string
+		res     string
+		errCode int
+	}{
+		{"你好", "", "E4BDA0E5A5BD", 0},
+		{"你好", "gbk", "C4E3BAC3", 0},
+		{"一忒(๑•ㅂ•)و✧", "", "E4B880E5BF9228E0B991E280A2E38582E280A229D988E29CA7", 0},
+		{"一忒(๑•ㅂ•)و✧", "gbk", "", errno.ErrInvalidCharacterString},
+	}
+	for _, t := range strCases {
+		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, t.chs)
+		c.Assert(err, IsNil)
+		f, err := newFunctionForTest(s.ctx, ast.Hex, s.primitiveValsToConstants([]interface{}{t.arg})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		if t.errCode != 0 {
+			c.Assert(err, NotNil)
+			c.Assert(strings.Contains(err.Error(), strconv.Itoa(t.errCode)), IsTrue)
+		} else {
+			c.Assert(err, IsNil)
+			c.Assert(d.GetString(), Equals, t.res)
 		}
 	}
 

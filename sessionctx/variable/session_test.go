@@ -233,6 +233,7 @@ func TestSlowLogFormat(t *testing.T) {
 # PD_total: 11
 # Backoff_total: 12
 # Write_sql_response_total: 1
+# Result_rows: 12345
 # Succ: true`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
@@ -259,6 +260,7 @@ func TestSlowLogFormat(t *testing.T) {
 		PDTotal:           11 * time.Second,
 		BackoffTotal:      12 * time.Second,
 		WriteSQLRespTotal: 1 * time.Second,
+		ResultRows:        12345,
 		Succ:              true,
 		RewriteInfo: variable.RewritePhaseInfo{
 			DurationRewrite:            3,
