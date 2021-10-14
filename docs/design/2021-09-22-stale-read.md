@@ -44,9 +44,9 @@ This makes each store could know the smallest resolved timestamp they could hand
 
 ### New Syntax Overview
 
-Here we will introduce how to use Stale Read in TiDB. 
+Here we will introduce how to use Stale Read in TiDB in 4 methods.
 
-1. Use Stale Read with given specific timestamp in a single statement:
+1. Use Stale Read by `SELECT ... FROM ... AS OF TIMESTAMP` format
 
 ```sql
 SELECT * FROM t AS OF TIMESTAMP '2021-09-22 15:04:05' WHERE id = 1;
@@ -55,7 +55,7 @@ SELECT * FROM t AS OF TIMESTAMP NOW() - INTERVAL 20 SECOND WHERE id = 1;
 
 You can get detailed grammar `ebnf diagram` for `SELECT ... FROM ... AS OF TIMESTAMP` in this [document](https://docs.pingcap.com/tidb/dev/sql-statement-select)
 
-2. Use Stale Read with a given timestamp in a single interactive transaction:
+2. Use Stale Read by `START TRANSACTION READ ONLY AS OF TIMESTAMP` format
 
 ```sql
 START TRANSACTION READ ONLY AS OF TIMESTAMP '2021-09-22 15:04:05';
@@ -65,35 +65,7 @@ COMMIT;
 
 You can get detailed grammar `ebnf diagram` for `START TRANSACTION READ ONLY AS OF TIMESTAMP` in this [document](https://docs.pingcap.com/tidb/dev/sql-statement-start-transaction)
 
-3. Use Stale Read with given exact seconds ago staleness in a single statement:
-
-You can get detailed grammar `ebnf diagram` for `START TRANSACTION READ ONLY AS OF TIMESTAMP` in this [document](https://docs.pingcap.com/tidb/dev/sql-statement-start-transaction)
-
-4. Use Stale Read with given exact seconds ago staleness in an interactive statement:
-
-```sql
-// query data with exact 20 seconds ago timestamp
-START TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 20 SECOND;
-SELECT * FROM t where id = 1;
-COMMIT;
-```
-
-5. Use Stale Read with given max tolerant staleness in a single statement:
-
-```sql
-// query data with at most 20 seconds staleness
-SELECT * FROM t AS OF TIMESTAMP NOW() - INTERVAL 20 SECOND WHERE id = 1;
-```
-
-6. Use Stale Read with given max tolerant staleness in an interactive transaction:
-
-```sql
-START TRANSACTION READ ONLY AS OF timestamp NOW() - INTERVAL 20 SECOND;
-SELECT * FROM t WHERE id = 1;
-COMMIT;
-```
-
-7. Use Stale Read by `SET TRANSACTION` statement to affect the next query.
+3. Use Stale Read by `SET TRANSACTION READ ONLY AS OF TIMESTAMP` format.
 
 ```sql
 SET TRANSACTION READ ONLY AS OF TIMESTAMP '2021-09-22 15:04:05';
@@ -107,7 +79,7 @@ SELECT * FROM t  WHERE id = 1;
 
 You can get detailed grammar `ebnf diagram` for `SET TRANSACTION READ ONLY AS OF TIMESTAMP` in this [document](https://docs.pingcap.com/tidb/dev/sql-statement-set-transaction)
 
-8. Enable Stale Read with given max tolerant staleness in session:
+4. Enable Stale Read with given max tolerant staleness in session:
 
 ```sql
 // enable stale read with max tolerant 5 seconds ago in session
@@ -116,6 +88,10 @@ select * from t where id = 1;
 ```
 
 Note that Stale Read will only affect the following query statement `SELECT`, it won't affect the interactive transaction, or updating statement like `INSERT`,`DELETE` and `UPDATE`
+
+#### Detail of AS OF TIMESTAMP
+
+`AS OF TIMESTAMP` provide several ways to define the staleness of `STALE READ`, you can find detail usage in this [document](https://docs.pingcap.com/tidb/dev/as-of-timestamp#syntax)
 
 ### Compatibility
 
