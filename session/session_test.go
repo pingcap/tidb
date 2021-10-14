@@ -5643,3 +5643,15 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
 	}
 }
+
+func (s *testSessionSuite2) TestDefend24029(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk.MustExec("create table t(a int key, b varchar(20) collate utf8mb4_unicode_ci, c varchar(20) collate utf8mb4_general_ci, unique key idx_b_c(b, c));")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/tablecodec/injectNeedRestoredData", "return(false)"), IsNil)
+	_, err := tk.Exec("insert into t values (4, 'd', 'F');")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "inconsistent index values"),IsTrue)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/tablecodec/injectNeedRestoredData"), IsNil)
+}
