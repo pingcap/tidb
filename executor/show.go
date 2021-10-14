@@ -27,13 +27,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-tools/pkg/etcd"
 	"github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
@@ -45,6 +38,13 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
@@ -218,6 +218,10 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlacementLabels(ctx)
 	case ast.ShowPlacement:
 		return e.fetchShowPlacement(ctx)
+	case ast.ShowPlacementForDatabase:
+		return e.fetchShowPlacementForDB(ctx)
+	case ast.ShowPlacementForTable:
+		return e.fetchShowPlacementForTable(ctx)
 	}
 	return nil
 }
@@ -1067,13 +1071,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.PlacementPolicyRef != nil {
-		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=`%s` */", tableInfo.PlacementPolicyRef.Name.String())
+		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(tableInfo.PlacementPolicyRef.Name.String(), sqlMode))
 	}
 
 	// add direct placement info here
 	appendDirectPlacementInfo(tableInfo.DirectPlacementOpts, buf)
 	// add partition info here.
-	appendPartitionInfo(tableInfo.Partition, buf)
+	appendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
 }
 
@@ -1224,7 +1228,7 @@ func appendDirectPlacementInfo(directPlacementOpts *model.PlacementSettings, buf
 	fmt.Fprintf(buf, " */")
 }
 
-func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {
+func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
 	if partitionInfo == nil {
 		return
 	}
@@ -1263,6 +1267,14 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 		for i, def := range partitionInfo.Definitions {
 			lessThans := strings.Join(def.LessThan, ",")
 			fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
+			if def.DirectPlacementOpts != nil {
+				// add direct placement info here
+				appendDirectPlacementInfo(def.DirectPlacementOpts, buf)
+			}
+			if def.PlacementPolicyRef != nil {
+				// add placement ref info here
+				fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
+			}
 			if i < len(partitionInfo.Definitions)-1 {
 				buf.WriteString(",\n")
 			} else {
@@ -1286,6 +1298,14 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 				}
 			}
 			fmt.Fprintf(buf, "  PARTITION `%s` VALUES IN (%s)", def.Name, values.String())
+			if def.DirectPlacementOpts != nil {
+				// add direct placement info here
+				appendDirectPlacementInfo(def.DirectPlacementOpts, buf)
+			}
+			if def.PlacementPolicyRef != nil {
+				// add placement ref info here
+				fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
+			}
 			if i < len(partitionInfo.Definitions)-1 {
 				buf.WriteString(",\n")
 			} else {
@@ -1314,9 +1334,7 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
 		}
 		fmt.Fprint(buf, "*/")
-		return nil
-	}
-	if dbInfo.Collate != "" {
+	} else if dbInfo.Collate != "" {
 		collInfo, err := collate.GetCollationByName(dbInfo.Collate)
 		if err != nil {
 			return errors.Trace(err)
@@ -1326,10 +1344,17 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
 		}
 		fmt.Fprint(buf, "*/")
-		return nil
 	}
 	// MySQL 5.7 always show the charset info but TiDB may ignore it, which makes a slight difference. We keep this
 	// behavior unchanged because it is trivial enough.
+	if dbInfo.PlacementPolicyRef != nil {
+		// add placement ref info here
+		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
+	}
+	if dbInfo.DirectPlacementOpts != nil {
+		// add direct placement info here
+		appendDirectPlacementInfo(dbInfo.DirectPlacementOpts, buf)
+	}
 	return nil
 }
 

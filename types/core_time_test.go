@@ -15,26 +15,27 @@
 package types
 
 import (
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-type testCoreTimeSuite struct{}
+func TestWeekBehaviour(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(&testCoreTimeSuite{})
+	require.Equal(t, weekBehaviour(1), weekBehaviourMondayFirst)
+	require.Equal(t, weekBehaviour(2), weekBehaviourYear)
+	require.Equal(t, weekBehaviour(4), weekBehaviourFirstWeekday)
 
-func (s *testCoreTimeSuite) TestWeekBehaviour(c *C) {
-	c.Assert(weekBehaviourMondayFirst, Equals, weekBehaviour(1))
-	c.Assert(weekBehaviourYear, Equals, weekBehaviour(2))
-	c.Assert(weekBehaviourFirstWeekday, Equals, weekBehaviour(4))
-
-	c.Check(weekBehaviour(1).test(weekBehaviourMondayFirst), IsTrue)
-	c.Check(weekBehaviour(2).test(weekBehaviourYear), IsTrue)
-	c.Check(weekBehaviour(4).test(weekBehaviourFirstWeekday), IsTrue)
+	require.True(t, weekBehaviour(1).test(weekBehaviourMondayFirst))
+	require.True(t, weekBehaviour(2).test(weekBehaviourYear))
+	require.True(t, weekBehaviour(4).test(weekBehaviourFirstWeekday))
 }
 
-func (s *testCoreTimeSuite) TestWeek(c *C) {
+func TestWeek(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		Input  CoreTime
 		Mode   int
@@ -47,20 +48,24 @@ func (s *testCoreTimeSuite) TestWeek(c *C) {
 
 	for ith, tt := range tests {
 		_, week := calcWeek(tt.Input, weekMode(tt.Mode))
-		c.Check(week, Equals, tt.Expect, Commentf("%d failed.", ith))
+		require.Equal(t, tt.Expect, week, "%d failed.", ith)
 	}
 }
 
-func (s *testCoreTimeSuite) TestCalcDaynr(c *C) {
-	c.Assert(calcDaynr(0, 0, 0), Equals, 0)
-	c.Assert(calcDaynr(9999, 12, 31), Equals, 3652424)
-	c.Assert(calcDaynr(1970, 1, 1), Equals, 719528)
-	c.Assert(calcDaynr(2006, 12, 16), Equals, 733026)
-	c.Assert(calcDaynr(10, 1, 2), Equals, 3654)
-	c.Assert(calcDaynr(2008, 2, 20), Equals, 733457)
+func TestCalcDaynr(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, 0, calcDaynr(0, 0, 0))
+	require.Equal(t, 3652424, calcDaynr(9999, 12, 31))
+	require.Equal(t, 719528, calcDaynr(1970, 1, 1))
+	require.Equal(t, 733026, calcDaynr(2006, 12, 16))
+	require.Equal(t, 3654, calcDaynr(10, 1, 2))
+	require.Equal(t, 733457, calcDaynr(2008, 2, 20))
 }
 
-func (s *testCoreTimeSuite) TestCalcTimeTimeDiff(c *C) {
+func TestCalcTimeTimeDiff(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		T1           CoreTime
 		T2           CoreTime
@@ -94,12 +99,14 @@ func (s *testCoreTimeSuite) TestCalcTimeTimeDiff(c *C) {
 
 	for i, tt := range tests {
 		seconds, microseconds, _ := calcTimeTimeDiff(tt.T1, tt.T2, tt.Sign)
-		c.Assert(seconds, Equals, tt.ExpectSecond, Commentf("%d failed.", i))
-		c.Assert(microseconds, Equals, tt.ExpectMicro, Commentf("%d failed.", i))
+		require.Equal(t, tt.ExpectSecond, seconds, "%d failed.", i)
+		require.Equal(t, tt.ExpectMicro, microseconds, "%d failed.", i)
 	}
 }
 
-func (s *testCoreTimeSuite) TestCompareTime(c *C) {
+func TestCompareTime(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		T1     CoreTime
 		T2     CoreTime
@@ -113,12 +120,14 @@ func (s *testCoreTimeSuite) TestCompareTime(c *C) {
 	}
 
 	for _, tt := range tests {
-		c.Assert(compareTime(tt.T1, tt.T2), Equals, tt.Expect)
-		c.Assert(compareTime(tt.T2, tt.T1), Equals, -tt.Expect)
+		require.Equal(t, tt.Expect, compareTime(tt.T1, tt.T2))
+		require.Equal(t, -tt.Expect, compareTime(tt.T2, tt.T1))
 	}
 }
 
-func (s *testCoreTimeSuite) TestGetDateFromDaynr(c *C) {
+func TestGetDateFromDaynr(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		daynr uint
 		year  uint
@@ -141,13 +150,15 @@ func (s *testCoreTimeSuite) TestGetDateFromDaynr(c *C) {
 
 	for _, tt := range tests {
 		yy, mm, dd := getDateFromDaynr(tt.daynr)
-		c.Assert(yy, Equals, tt.year)
-		c.Assert(mm, Equals, tt.month)
-		c.Assert(dd, Equals, tt.day)
+		require.Equal(t, tt.year, yy)
+		require.Equal(t, tt.month, mm)
+		require.Equal(t, tt.day, dd)
 	}
 }
 
-func (s *testCoreTimeSuite) TestMixDateAndTime(c *C) {
+func TestMixDateAndTime(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		date   CoreTime
 		dur    Duration
@@ -186,17 +197,19 @@ func (s *testCoreTimeSuite) TestMixDateAndTime(c *C) {
 		},
 	}
 
-	for ith, t := range tests {
-		if t.neg {
-			mixDateAndDuration(&t.date, t.dur.Neg())
+	for ith, tt := range tests {
+		if tt.neg {
+			mixDateAndDuration(&tt.date, tt.dur.Neg())
 		} else {
-			mixDateAndDuration(&t.date, t.dur)
+			mixDateAndDuration(&tt.date, tt.dur)
 		}
-		c.Assert(compareTime(t.date, t.expect), Equals, 0, Commentf("%d", ith))
+		require.Equal(t, 0, compareTime(tt.date, tt.expect), "%d", ith)
 	}
 }
 
-func (s *testCoreTimeSuite) TestIsLeapYear(c *C) {
+func TestIsLeapYear(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		T      CoreTime
 		Expect bool
@@ -217,10 +230,12 @@ func (s *testCoreTimeSuite) TestIsLeapYear(c *C) {
 	}
 
 	for _, tt := range tests {
-		c.Assert(tt.T.IsLeapYear(), Equals, tt.Expect)
+		require.Equal(t, tt.Expect, tt.T.IsLeapYear())
 	}
 }
-func (s *testCoreTimeSuite) TestGetLastDay(c *C) {
+func TestGetLastDay(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		year        int
 		month       int
@@ -233,13 +248,15 @@ func (s *testCoreTimeSuite) TestGetLastDay(c *C) {
 		{1996, 2, 29},
 	}
 
-	for _, t := range tests {
-		day := GetLastDay(t.year, t.month)
-		c.Assert(day, Equals, t.expectedDay)
+	for _, tt := range tests {
+		day := GetLastDay(tt.year, tt.month)
+		require.Equal(t, tt.expectedDay, day)
 	}
 }
 
-func (s *testCoreTimeSuite) TestgetFixDays(c *C) {
+func TestGetFixDays(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		year        int
 		month       int
@@ -254,13 +271,15 @@ func (s *testCoreTimeSuite) TestgetFixDays(c *C) {
 		{2019, 04, 05, time.Date(2019, 04, 01, 1, 2, 3, 4, time.UTC), 0},
 	}
 
-	for _, t := range tests {
-		res := getFixDays(t.year, t.month, t.day, t.ot)
-		c.Assert(res, Equals, t.expectedDay)
+	for _, tt := range tests {
+		res := getFixDays(tt.year, tt.month, tt.day, tt.ot)
+		require.Equal(t, tt.expectedDay, res)
 	}
 }
 
-func (s *testCoreTimeSuite) TestAddDate(c *C) {
+func TestAddDate(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		year  int
 		month int
@@ -274,13 +293,15 @@ func (s *testCoreTimeSuite) TestAddDate(c *C) {
 		{01, 04, 05, time.Date(2019, 04, 01, 1, 2, 3, 4, time.UTC)},
 	}
 
-	for _, t := range tests {
-		res := AddDate(int64(t.year), int64(t.month), int64(t.day), t.ot)
-		c.Assert(res.Year(), Equals, t.year+t.ot.Year())
+	for _, tt := range tests {
+		res := AddDate(int64(tt.year), int64(tt.month), int64(tt.day), tt.ot)
+		require.Equal(t, tt.year+tt.ot.Year(), res.Year())
 	}
 }
 
-func (s *testCoreTimeSuite) TestWeekday(c *C) {
+func TestWeekday(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		Input  CoreTime
 		Expect string
@@ -292,6 +313,6 @@ func (s *testCoreTimeSuite) TestWeekday(c *C) {
 
 	for _, tt := range tests {
 		weekday := tt.Input.Weekday()
-		c.Check(weekday.String(), Equals, tt.Expect)
+		require.Equal(t, tt.Expect, weekday.String())
 	}
 }

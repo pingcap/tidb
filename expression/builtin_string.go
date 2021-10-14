@@ -29,9 +29,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -1364,6 +1364,10 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 	if len(delim) == 0 {
 		return "", false, nil
 	}
+	// when count > MaxInt64, returns whole string.
+	if count < 0 && mysql.HasUnsignedFlag(b.args[2].GetType().Flag) {
+		return str, false, nil
+	}
 
 	strs := strings.Split(str, delim)
 	start, end := int64(0), int64(len(strs))
@@ -1376,8 +1380,8 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 		// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
 		count = -count
 		if count < 0 {
-			// -count overflows max int64, returns an empty string.
-			return "", false, nil
+			// -count overflows max int64, returns whole string.
+			return str, false, nil
 		}
 
 		if count < end {
@@ -1587,10 +1591,10 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		if err != nil {
 			return nil, err
 		}
-		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+		argFieldTp := args[0].GetType()
 		// Use UTF8MB4 as default.
-		bf.tp.Flen = args[0].GetType().Flen * 4 * 2
-		sig := &builtinHexStrArgSig{bf}
+		bf.tp.Flen = argFieldTp.Flen * 4 * 2
+		sig := &builtinHexStrArgSig{bf, charset.NewEncoding(argFieldTp.Charset)}
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
 	case types.ETInt, types.ETReal, types.ETDecimal:
@@ -1610,11 +1614,15 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 
 type builtinHexStrArgSig struct {
 	baseBuiltinFunc
+	encoding *charset.Encoding
 }
 
 func (b *builtinHexStrArgSig) Clone() builtinFunc {
 	newSig := &builtinHexStrArgSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	if b.encoding != nil {
+		newSig.encoding = charset.NewEncoding(b.encoding.Name())
+	}
 	return newSig
 }
 
@@ -1625,7 +1633,14 @@ func (b *builtinHexStrArgSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-	return strings.ToUpper(hex.EncodeToString(hack.Slice(d))), false, nil
+	dBytes := hack.Slice(d)
+	if b.encoding.Enabled() {
+		dBytes, err = b.encoding.Encode(nil, dBytes)
+		if err != nil {
+			return d, false, err
+		}
+	}
+	return strings.ToUpper(hex.EncodeToString(dBytes)), false, nil
 }
 
 type builtinHexIntArgSig struct {
@@ -3813,7 +3828,35 @@ type loadFileFunctionClass struct {
 }
 
 func (c *loadFileFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "load_file")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.Flen = 64
+	sig := &builtinLoadFileSig{bf}
+	return sig, nil
+}
+
+type builtinLoadFileSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLoadFileSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
+	return "", true, nil
+}
+
+func (b *builtinLoadFileSig) Clone() builtinFunc {
+	newSig := &builtinLoadFileSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 type weightStringPadding byte

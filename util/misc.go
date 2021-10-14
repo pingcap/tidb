@@ -35,12 +35,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -582,6 +582,14 @@ func initInternalClient() {
 	internalHTTPClient = &http.Client{
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
+}
+
+// ComposeURL adds HTTP schema if missing and concats address with path
+func ComposeURL(address, path string) string {
+	if strings.HasPrefix(address, "http://") || strings.HasPrefix(address, "https://") {
+		return fmt.Sprintf("%s%s", address, path)
+	}
+	return fmt.Sprintf("%s://%s%s", InternalHTTPSchema(), address, path)
 }
 
 // GetLocalIP will return a local IP(non-loopback, non 0.0.0.0), if there is one

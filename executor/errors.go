@@ -15,8 +15,8 @@
 package executor
 
 import (
-	parser_mysql "github.com/pingcap/parser/mysql"
 	mysql "github.com/pingcap/tidb/errno"
+	parser_mysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
