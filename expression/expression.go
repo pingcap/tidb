@@ -1143,10 +1143,9 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ret = scalarExprSupportedByFlash(sf)
 	case kv.TiKV:
 		ret = scalarExprSupportedByTiKV(sf)
-	case kv.TiDB:
+	case kv.TiDB, kv.UnSpecified:
+		// because checking TiDB includes check for TiKV and TiFlash, we can merge the case when storeType is unspecified
 		ret = scalarExprSupportedByTiDB(sf)
-	case kv.UnSpecified:
-		ret = scalarExprSupportedByTiDB(sf) || scalarExprSupportedByTiKV(sf) || scalarExprSupportedByFlash(sf)
 	}
 
 	if ret {
