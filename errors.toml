@@ -21,6 +21,11 @@ error = '''
 backup no leader
 '''
 
+["BR:Common:ErrEnvNotSpecified"]
+error = '''
+environment variable not find
+'''
+
 ["BR:Common:ErrFailedToConnect"]
 error = '''
 failed to make gRPC channels
