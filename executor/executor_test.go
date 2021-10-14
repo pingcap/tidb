@@ -5231,7 +5231,6 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 
 	// Test show table regions and split table on global temporary table.
 	tk.MustExec("drop table if exists t_regions_temporary_table")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t_regions_temporary_table (a int key, b int, c int, index idx(b), index idx2(c)) ON COMMIT DELETE ROWS;")
 	// Test show table regions.
 	_, err = tk.Exec("show table t_regions_temporary_table regions")
@@ -6078,7 +6077,6 @@ func (s *testRecoverTable) TestRecoverTempTable(c *C) {
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t_recover (a int) on commit delete rows;")
 
 	tk.MustExec("use test_recover")
