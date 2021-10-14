@@ -28,13 +28,13 @@ package parser
 import (
 	"strings"
 
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/types"
 )
 
 %}
@@ -12948,14 +12948,34 @@ RevokeStmt:
 RevokeRoleStmt:
 	"REVOKE" RoleOrPrivElemList "FROM" UsernameList
 	{
-		r, err := convertToRole($2.([]*ast.RoleOrPriv))
-		if err != nil {
-			yylex.AppendError(err)
-			return 1
-		}
-		$$ = &ast.RevokeRoleStmt{
-			Roles: r,
-			Users: $4.([]*auth.UserIdentity),
+		// MySQL has special syntax for REVOKE ALL [PRIVILEGES], GRANT OPTION
+		// which uses the RevokeRoleStmt syntax but is of type RevokeStmt.
+		// It is documented at https://dev.mysql.com/doc/refman/5.7/en/revoke.html
+		// as the "second syntax" for REVOKE. It is only valid if *both*
+		// ALL PRIVILEGES + GRANT OPTION are specified in that order.
+		if isRevokeAllGrant($2.([]*ast.RoleOrPriv)) {
+			var users []*ast.UserSpec
+			for _, u := range $4.([]*auth.UserIdentity) {
+				users = append(users, &ast.UserSpec{
+					User: u,
+				})
+			}
+			$$ = &ast.RevokeStmt{
+				Privs:      []*ast.PrivElem{{Priv: mysql.AllPriv}, {Priv: mysql.GrantPriv}},
+				ObjectType: ast.ObjectTypeNone,
+				Level:      &ast.GrantLevel{Level: ast.GrantLevelGlobal},
+				Users:      users,
+			}
+		} else {
+			r, err := convertToRole($2.([]*ast.RoleOrPriv))
+			if err != nil {
+				yylex.AppendError(err)
+				return 1
+			}
+			$$ = &ast.RevokeRoleStmt{
+				Roles: r,
+				Users: $4.([]*auth.UserIdentity),
+			}
 		}
 	}
 

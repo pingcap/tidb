@@ -28,11 +28,11 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
@@ -2102,7 +2102,7 @@ func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 
 }
 
-func TestBenchDaily(t *testing.T) {
+func BenchmarkDaily(b *testing.B) {
 	benchdaily.Run(
 		BenchmarkReadLastLinesOfHugeLine,
 	)
