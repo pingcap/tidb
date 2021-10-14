@@ -891,7 +891,7 @@ backupLoop:
 			}
 		})
 		if err != nil {
-			if isRetryableError(err) {
+			if utils.IsRetryableError(err) {
 				time.Sleep(3 * time.Second)
 				client, errReset = resetFn()
 				if errReset != nil {
@@ -914,7 +914,7 @@ backupLoop:
 						zap.Int("retry-time", retry))
 					break backupLoop
 				}
-				if isRetryableError(err) {
+				if utils.IsRetryableError(err) {
 					time.Sleep(3 * time.Second)
 					// current tikv is unavailable
 					client, errReset = resetFn()
