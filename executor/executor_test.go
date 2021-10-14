@@ -98,6 +98,7 @@ func TestT(t *testing.T) {
 		conf.Log.SlowThreshold = 30000 // 30s
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
 	tmpDir := config.GetGlobalConfig().TempStoragePath
@@ -4977,6 +4978,16 @@ func (s *testSuiteP2) TestAddDateBuiltinWithWarnings(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '2001-01-00'"))
 }
 
+func (s *testSuiteP2) TestIssue27232(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a timestamp)")
+	tk.MustExec("insert into t values (\"1970-07-23 10:04:59\"), (\"2038-01-19 03:14:07\")")
+	tk.MustQuery("select * from t where date_sub(a, interval 10 month) = date_sub(\"1970-07-23 10:04:59\", interval 10 month)").Check(testkit.Rows("1970-07-23 10:04:59"))
+	tk.MustQuery("select * from t where timestampadd(hour, 1, a ) = timestampadd(hour, 1, \"2038-01-19 03:14:07\")").Check(testkit.Rows("2038-01-19 03:14:07"))
+}
+
 func (s *testSuiteP2) TestStrToDateBuiltinWithWarnings(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@sql_mode='NO_ZERO_DATE'")
@@ -8620,7 +8631,9 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 
 	// Enable Top SQL
 	variable.TopSQLVariable.Enable.Store(true)
-	variable.TopSQLVariable.AgentAddress.Store("mock-agent")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.ReceiverAddress = "mock-agent"
+	})
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
@@ -8981,4 +8994,16 @@ func (s *testSuite) TestIssue25447(c *C) {
 	tk.MustExec("create table t2(a int , b varchar(8) GENERATED ALWAYS AS (c) VIRTUAL, c varchar(8), PRIMARY KEY (a))")
 	tk.MustExec("insert into t2(a) values(1)")
 	tk.MustQuery("select /*+ tidb_inlj(t2) */ t2.b, t1.b from t1 join t2 ON t2.a=t1.a").Check(testkit.Rows("<nil> 1"))
+}
+
+func (s *testSuite) TestCTEWithIndexLookupJoinDeadLock(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int(11) default null,b int(11) default null,key b (b),key ba (b))")
+	tk.MustExec("create table t1 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
+	tk.MustExec("create table t2 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
+	// It's easy to reproduce this problem in 30 times execution of IndexLookUpJoin.
+	for i := 0; i < 30; i++ {
+		tk.MustExec("with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;")
+	}
 }
