@@ -1388,7 +1388,8 @@ func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
 	if !found {
 		return infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(e.DBName.O)
 	}
-	e.appendRow([]interface{}{e.DBName.O, policy.PlacementSettings.String()})
+	showCreate := fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", e.DBName.O, policy.PlacementSettings.String())
+	e.appendRow([]interface{}{e.DBName.O, showCreate})
 	return nil
 }
 
