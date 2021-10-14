@@ -2888,6 +2888,10 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustGetErrCode("create table t(id int) on commit delete rows", errno.ErrParse)
 	tk.MustGetErrCode("create table t(id int) on commit preserve rows", errno.ErrParse)
 
+	tk.MustGetErrCode("create temporary table tplacement (id int) followers=4", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create temporary table tplacement (id int) primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create temporary table tplacement (id int) placement policy='x'", errno.ErrOptOnTemporaryTable)
+
 	// Not support yet.
 	tk.MustGetErrCode("create global temporary table t (id int) on commit preserve rows", errno.ErrUnsupportedDDLOperation)
 	// Engine type can only be 'memory' or empty for now.
