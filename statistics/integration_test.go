@@ -414,4 +414,3 @@ func TestAnalyzeLongString(t *testing.T) {
 	tk.MustExec("insert into t value(repeat(\"b\",65536));")
 	tk.MustExec("analyze table t with 0 topn")
 }
-
