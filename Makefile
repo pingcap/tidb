@@ -277,13 +277,14 @@ endif
 # Usage:
 #	make bench-daily TO=/path/to/file.json
 bench-daily:
-	go test github.com/pingcap/tidb/session -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/executor -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/tablecodec -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/expression -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/util/codec -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/util/benchdaily -run TestBenchDaily \
+	go test github.com/pingcap/tidb/session -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/executor -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/tablecodec -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/expression -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/rowcodec -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/codec -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/distsql -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/benchdaily -bench BenchmarkDaily \
 		-date `git log -n1 --date=unix --pretty=format:%cd` \
 		-commit `git log -n1 --pretty=format:%h` \
 		-outfile $(TO)

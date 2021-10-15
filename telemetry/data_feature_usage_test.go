@@ -76,7 +76,6 @@ func TestTemporaryTable(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("use test")
 
 	usage, err := telemetry.GetFeatureUsage(tk.Session())

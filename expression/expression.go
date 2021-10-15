@@ -1109,6 +1109,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		default:
 			return false
 		}
+	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase:
+		return true
 	}
 	return false
 }

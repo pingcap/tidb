@@ -2881,12 +2881,15 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustExec("drop table if exists t;")
 
 	// Grammar error.
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustGetErrCode("create global temporary table t(a double(0, 0))", errno.ErrParse)
 	tk.MustGetErrCode("create temporary table t(id int) on commit delete rows", errno.ErrParse)
 	tk.MustGetErrCode("create temporary table t(id int) on commit preserve rows", errno.ErrParse)
 	tk.MustGetErrCode("create table t(id int) on commit delete rows", errno.ErrParse)
 	tk.MustGetErrCode("create table t(id int) on commit preserve rows", errno.ErrParse)
+
+	tk.MustGetErrCode("create temporary table tplacement (id int) followers=4", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create temporary table tplacement (id int) primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create temporary table tplacement (id int) placement policy='x'", errno.ErrOptOnTemporaryTable)
 
 	// Not support yet.
 	tk.MustGetErrCode("create global temporary table t (id int) on commit preserve rows", errno.ErrUnsupportedDDLOperation)
@@ -3157,7 +3160,6 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	clearSQL := "drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2"
 	tk.MustExec(clearSQL)
 	defer tk.MustExec(clearSQL)
@@ -3231,7 +3233,6 @@ func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
 func (s *testIntegrationSuite3) TestDropWithLocalTemporaryTableKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	clearSQL := "drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2, testt.ltemp3"
 	tk.MustExec(clearSQL)
 	defer tk.MustExec(clearSQL)
