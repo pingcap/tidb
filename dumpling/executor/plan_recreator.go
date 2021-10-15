@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ const remainedInterval float64 = 3
 
 // PlanRecreatorInfo saves the information of plan recreator operation.
 type PlanRecreatorInfo interface {
-	// Process dose the export/import work for reproducing sql queries.
+	// Process does the export/import work for reproducing sql queries.
 	Process() (string, error)
 }
 
@@ -93,12 +93,12 @@ const PlanRecreatorFileList planRecreatorFileListType = 0
 func (e *PlanRecreatorSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.info.ExecStmt == nil {
-		return errors.New("plan Recreator: sql is empty")
+		return errors.New("plan recreator: sql is empty")
 	}
 	val := e.ctx.Value(PlanRecreatorVarKey)
 	if val != nil {
 		e.ctx.SetValue(PlanRecreatorVarKey, nil)
-		return errors.New("plan Recreator: previous plan recreator option isn't closed normally")
+		return errors.New("plan recreator: previous plan recreator option isn't closed normally")
 	}
 	e.ctx.SetValue(PlanRecreatorVarKey, e.info)
 	return nil
@@ -114,7 +114,7 @@ func (e *PlanRecreatorSingleExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Process dose the export/import work for reproducing sql queries.
+// Process does the export/import work for reproducing sql queries.
 func (e *PlanRecreatorSingleInfo) Process() (string, error) {
 	// TODO: plan recreator load will be developed later
 	if e.Load {
@@ -127,7 +127,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
 	// Create path
 	err := os.MkdirAll(recreatorPath, os.ModePerm)
 	if err != nil {
-		return "", errors.New("plan Recreator: cannot create plan recreator path")
+		return "", errors.New("plan recreator: cannot create plan recreator path")
 	}
 
 	// Create zip file
@@ -135,7 +135,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
 	fileName := fmt.Sprintf("recreator_single_%v.zip", startTime.UnixNano())
 	zf, err := os.Create(recreatorPath + "/" + fileName)
 	if err != nil {
-		return "", errors.New("plan Recreator: cannot create zip file")
+		return "", errors.New("plan recreator: cannot create zip file")
 	}
 	val := e.Ctx.Value(PlanRecreatorFileList)
 	if val == nil {
