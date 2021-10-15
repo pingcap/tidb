@@ -263,7 +263,7 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 		}
 		opt.Chs, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CharacterSetServer)
 		if err != nil {
-			logutil.BgLogger().Warn("Failed to get server character set", zap.Error(err))
+			return err
 		}
 	}
 
