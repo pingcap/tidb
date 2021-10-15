@@ -162,8 +162,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildLoadStats(v)
 	case *plannercore.IndexAdvise:
 		return b.buildIndexAdvise(v)
-	case *plannercore.PlanRecreatorSingle:
-		return b.buildPlanRecreatorSingle(v)
+	case *plannercore.PlanReplayerSingle:
+		return b.buildPlanReplayerSingle(v)
 	case *plannercore.PhysicalLimit:
 		return b.buildLimit(v)
 	case *plannercore.Prepare:
@@ -905,10 +905,10 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 	return e
 }
 
-func (b *executorBuilder) buildPlanRecreatorSingle(v *plannercore.PlanRecreatorSingle) Executor {
-	e := &PlanRecreatorSingleExec{
+func (b *executorBuilder) buildPlanReplayerSingle(v *plannercore.PlanReplayerSingle) Executor {
+	e := &PlanReplayerSingleExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		info:         &PlanRecreatorSingleInfo{v.ExecStmt, v.Analyze, v.Load, v.File, b.ctx},
+		info:         &PlanReplayerSingleInfo{v.ExecStmt, v.Analyze, v.Load, v.File, b.ctx},
 	}
 	return e
 }
