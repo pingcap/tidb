@@ -16,8 +16,6 @@ package globalconfigsync
 
 import (
 	"context"
-	"path"
-
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
@@ -25,7 +23,7 @@ import (
 )
 
 const (
-	globalConfigPath     = "/global/config"
+	globalConfigPath     = "/global/config/"
 	keyOpDefaultRetryCnt = 5
 )
 
@@ -60,7 +58,7 @@ func (c *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, entry Config
 		return nil
 	}
 
-	key := path.Join(globalConfigPath, entry.name)
+	key := globalConfigPath + entry.name
 	err := util.PutKVToEtcd(ctx, c.etcdCli, keyOpDefaultRetryCnt, key, entry.value)
 	if err != nil {
 		return err

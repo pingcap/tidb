@@ -305,21 +305,6 @@ func (sv *SysVar) validateFromType(vars *SessionVars, value string, scope ScopeF
 	return value, nil // typeString
 }
 
-// NormalizeGlobalConfigValue uses to normalize the config value. such as:
-// ON -> true
-// 1  -> true
-// OFF -> false
-func (sv *SysVar) NormalizeGlobalConfigValue(value string) string {
-	switch sv.Type {
-	case TypeBool:
-		if value == On || value == "1" {
-			return "true"
-		}
-		return "false"
-	}
-	return value
-}
-
 func (sv *SysVar) validateScope(scope ScopeFlag) error {
 	if sv.ReadOnly || sv.Scope == ScopeNone {
 		return ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")

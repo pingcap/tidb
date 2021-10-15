@@ -1132,7 +1132,7 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 		return err
 	}
 	if sv.GlobalConfigName != "" {
-		domain.GetDomain(s).NotifyGlobalConfigChange(sv.GlobalConfigName, sv.NormalizeGlobalConfigValue(value))
+		domain.GetDomain(s).NotifyGlobalConfigChange(sv.GlobalConfigName, variable.OnOffToTrueFalse(value))
 	}
 	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
 }

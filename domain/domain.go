@@ -819,13 +819,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
-	do.wg.Add(1)
+	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
-
-	do.wg.Add(1)
 	go do.infoSyncerKeeper()
-
-	do.wg.Add(1)
 	go do.globalConfigSyncerKeeper()
 
 	if !skipRegisterToDashboard {
