@@ -209,7 +209,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 		"tiflash key2.nest2 n-value2",
 		"tiflash key1 value1",
 		"tiflash key2.nest1 n-value1",
-		"tiflash key2.nest2 n-value2",		
+		"tiflash key2.nest2 n-value2",
 		"pd key1 value1",
 		"pd key2.nest1 n-value1",
 		"pd key2.nest2 n-value2",
