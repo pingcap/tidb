@@ -258,7 +258,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 	}{
 		{
 			sql:      "select * from information_schema.cluster_config",
-			reqCount: 9,
+			reqCount: 12,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tidb"][1],
@@ -367,7 +367,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 		{
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where instance='%s'`,
 				testServers[0].address),
-			reqCount: 3,
+			reqCount: 4,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
