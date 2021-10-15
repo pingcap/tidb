@@ -63,7 +63,7 @@ func NewTableRestore(
 	cp *checkpoints.TableCheckpoint,
 	ignoreColumns []string,
 ) (*TableRestore, error) {
-	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
+	idAlloc := kv.NewPanickingAllocators(cp.AllocBase, tableInfo.Core.Version)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
@@ -678,12 +678,24 @@ func (tr *TableRestore) postProcess(
 	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
 		rc.alterTableLock.Lock()
 		tblInfo := tr.tableInfo.Core
+		hasRowID := common.TableHasAutoRowID(tblInfo)
+		hasIncID := tblInfo.GetAutoIncrementColInfo() != nil
 		var err error
 		if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() {
 			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, tr.alloc.Get(autoid.AutoRandomType).Base()+1)
-		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
-			// only alter auto increment id iff table contains auto-increment column or generated handle
-			err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, tr.alloc.Get(autoid.RowIDAllocType).Base()+1)
+		}
+		if model.AutoIncrementIDIsSeparated(tblInfo.Version) {
+			if hasRowID && err == nil {
+				err = AlterRowID(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, tr.alloc.Get(autoid.RowIDAllocType).Base()+1)
+			}
+			if hasIncID && err == nil {
+				err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, tr.alloc.Get(autoid.AutoIncrementType).Base()+1)
+			}
+		} else {
+			if (hasRowID || hasIncID) && err == nil {
+				// only alter auto increment id iff table contains auto-increment column or generated handle
+				err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, tr.alloc.Get(autoid.RowIDAllocType).Base()+1)
+			}
 		}
 		rc.alterTableLock.Unlock()
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)

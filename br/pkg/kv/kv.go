@@ -354,7 +354,7 @@ func (kvcodec *tableKVEncoder) AddRecord(
 			_ = alloc.Rebase(context.Background(), value.GetInt64()&((1<<incrementalBits)-1), false)
 		}
 		if isAutoIncCol {
-			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.RowIDAllocType)
+			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoIncrementType)
 			_ = alloc.Rebase(context.Background(), getAutoRecordID(value, &col.FieldType), false)
 		}
 	}

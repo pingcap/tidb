@@ -704,15 +704,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	return ver, nil
 }
 
-func onRebaseRowIDType(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	return onRebaseAutoID(store, t, job, autoid.RowIDAllocType)
-}
-
-func onRebaseAutoRandomType(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	return onRebaseAutoID(store, t, job, autoid.AutoRandomType)
-}
-
-func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
+func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var (
 		newBase int64
@@ -729,10 +721,17 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.Al
 		return ver, errors.Trace(err)
 	}
 	// No need to check `newBase` again, because `RebaseAutoID` will do this check.
-	if tp == autoid.RowIDAllocType {
+	var tp autoid.AllocatorType
+	switch job.Type {
+	case model.ActionRebaseAutoID:
 		tblInfo.AutoIncID = newBase
-	} else {
+		tp = autoid.AutoIncrementType
+	case model.ActionRebaseAutoRandomBase:
 		tblInfo.AutoRandID = newBase
+		tp = autoid.AutoRandomType
+	case model.ActionRebaseRowID:
+		tblInfo.AutoRowID = newBase
+		tp = autoid.RowIDAllocType
 	}
 
 	tbl, err := getTable(store, schemaID, tblInfo)
@@ -827,7 +826,11 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 	defer s.put(ctx)
 
 	// Check next global max auto ID first.
-	autoIncID, err := tbl.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID()
+	alloc := tbl.Allocators(ctx).Get(autoid.RowIDAllocType)
+	if alloc == nil {
+		return nil
+	}
+	autoIncID, err := alloc.NextGlobalAutoID()
 	if err != nil {
 		return errors.Trace(err)
 	}

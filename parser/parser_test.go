@@ -3346,6 +3346,13 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"alter table t force auto_random_base = 50", true, "ALTER TABLE `t` FORCE AUTO_RANDOM_BASE = 50"},
 		{"alter table t auto_increment 30, force auto_random_base 40", true, "ALTER TABLE `t` AUTO_INCREMENT = 30, FORCE AUTO_RANDOM_BASE = 40"},
 
+		// for row id
+		{"create table t (a bigint primary key) row_id = 10", true, "CREATE TABLE `t` (`a` BIGINT PRIMARY KEY) ROW_ID = 10"},
+		{"alter table t row_id = 100", true, "ALTER TABLE `t` ROW_ID = 100"},
+		{"alter table t auto_increment 30, row_id 40", true, "ALTER TABLE `t` AUTO_INCREMENT = 30, ROW_ID = 40"},
+		{"alter table t force row_id = 50", true, "ALTER TABLE `t` FORCE ROW_ID = 50"},
+		{"alter table t auto_increment 30, force row_id 40", true, "ALTER TABLE `t` AUTO_INCREMENT = 30, FORCE ROW_ID = 40"},
+
 		// for alter sequence
 		{"alter sequence seq", false, ""},
 		{"alter sequence seq comment=\"haha\"", false, ""},

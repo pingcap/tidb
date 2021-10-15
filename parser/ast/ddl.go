@@ -1968,6 +1968,7 @@ const (
 	TableOptionAutoIdCache
 	TableOptionAutoIncrement
 	TableOptionAutoRandomBase
+	TableOptionRowID
 	TableOptionComment
 	TableOptionAvgRowLength
 	TableOptionCheckSum
@@ -2084,6 +2085,16 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("DEFAULT COLLATE ")
 		ctx.WritePlain("= ")
 		ctx.WriteKeyWord(n.StrValue)
+	case TableOptionRowID:
+		if n.BoolValue {
+			ctx.WriteWithSpecialComments(tidb.FeatureIDRowID, func() {
+				ctx.WriteKeyWord("FORCE")
+			})
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("ROW_ID ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
 	case TableOptionAutoIncrement:
 		if n.BoolValue {
 			ctx.WriteWithSpecialComments(tidb.FeatureIDForceAutoInc, func() {

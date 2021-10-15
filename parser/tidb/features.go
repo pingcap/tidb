@@ -28,6 +28,8 @@ const (
 	FeatureIDForceAutoInc = "force_inc"
 	// FeatureIDPlacement is the `placement rule` feature.
 	FeatureIDPlacement = "placement"
+	// FeatureIDRowID is the `row_id` table option feature.
+	FeatureIDRowID = "row_id"
 )
 
 var featureIDs = map[string]struct{}{
@@ -37,6 +39,7 @@ var featureIDs = map[string]struct{}{
 	FeatureIDClusteredIndex: {},
 	FeatureIDForceAutoInc:   {},
 	FeatureIDPlacement:      {},
+	FeatureIDRowID:          {},
 }
 
 func CanParseFeature(fs ...string) bool {

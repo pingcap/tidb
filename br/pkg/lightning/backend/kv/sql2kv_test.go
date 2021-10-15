@@ -75,7 +75,7 @@ func (s *kvSuite) TestEncode(c *C) {
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0, 0), tblInfo)
 	c.Assert(err, IsNil)
 
 	logger := log.Logger{Logger: zap.NewNop()}
@@ -148,7 +148,7 @@ func (s *kvSuite) TestDecode(c *C) {
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0, 0), tblInfo)
 	c.Assert(err, IsNil)
 	decoder, err := NewTableKVDecoder(tbl, &SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
@@ -191,7 +191,7 @@ func (s *kvSuite) TestDecodeIndex(c *C) {
 		State:      model.StatePublic,
 		PKIsHandle: false,
 	}
-	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0, 0), tblInfo)
 	if err != nil {
 		fmt.Printf("error: %v", err.Error())
 	}
@@ -232,7 +232,7 @@ func (s *kvSuite) TestEncodeRowFormatV2(c *C) {
 	c1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0, 0), tblInfo)
 	c.Assert(err, IsNil)
 
 	logger := log.Logger{Logger: zap.NewNop()}
@@ -281,7 +281,7 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 	}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0, 0), tblInfo)
 	c.Assert(err, IsNil)
 
 	logger := log.Logger{Logger: zap.NewNop()}
@@ -309,7 +309,7 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 
 func (s *kvSuite) TestEncodeDoubleAutoIncrement(c *C) {
 	tblInfo := mockTableInfo(c, "create table t (id double not null auto_increment, unique key `u_id` (`id`));")
-	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0, 0), tblInfo)
 	c.Assert(err, IsNil)
 
 	logger := log.Logger{Logger: zap.NewNop()}
@@ -357,7 +357,7 @@ func (s *kvSuite) TestDefaultAutoRandoms(c *C) {
 	tblInfo := mockTableInfo(c, "create table t (id bigint unsigned NOT NULL auto_random primary key clustered, a varchar(100));")
 	// seems parser can't parse auto_random properly.
 	tblInfo.AutoRandomBits = 5
-	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0, 0), tblInfo)
 	c.Assert(err, IsNil)
 	encoder, err := NewTableKVEncoder(tbl, &SessionOptions{
 		SQLMode:        mysql.ModeStrictAllTables,
@@ -394,7 +394,7 @@ func (s *kvSuite) TestDefaultAutoRandoms(c *C) {
 
 func (s *kvSuite) TestShardRowId(c *C) {
 	tblInfo := mockTableInfo(c, "create table t (s varchar(16)) shard_row_id_bits = 3;")
-	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0, 0), tblInfo)
 	c.Assert(err, IsNil)
 	encoder, err := NewTableKVEncoder(tbl, &SessionOptions{
 		SQLMode:        mysql.ModeStrictAllTables,
@@ -559,7 +559,7 @@ func (s *benchSQL2KVSuite) SetUpTest(c *C) {
 	tableInfo.State = model.StatePublic
 
 	// Construct the corresponding KV encoder.
-	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tableInfo)
+	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0, 0), tableInfo)
 	c.Assert(err, IsNil)
 	s.encoder, err = NewTableKVEncoder(tbl, &SessionOptions{SysVars: map[string]string{"tidb_row_format_version": "2"}})
 	c.Assert(err, IsNil)

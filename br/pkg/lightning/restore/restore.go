@@ -1503,7 +1503,11 @@ func (tr *TableRestore) restoreTable(
 				return false, err
 			}
 		} else {
-			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
+			maxRowID := tr.tableInfo.Core.AutoIncID
+			if model.AutoIncrementIDIsSeparated(tr.tableInfo.Core.Version) {
+				maxRowID = tr.tableInfo.Core.AutoRowID
+			}
+			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, maxRowID)
 			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
 				return false, err
 			}

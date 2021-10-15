@@ -2422,22 +2422,6 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	tk.MustExec("insert into t1 values()")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("101"))
 
-	// Test primary key is not handle.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t(a int) auto_id_cache 100")
-	_, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-
-	tk.MustExec("insert into t values()")
-	tk.MustQuery("select _tidb_rowid from t").Check(testkit.Rows("1"))
-	tk.MustExec("delete from t")
-
-	// Invalid the allocator cache, insert will trigger a new cache
-	tk.MustExec("rename table t to t1;")
-	tk.MustExec("insert into t1 values()")
-	tk.MustQuery("select _tidb_rowid from t1").Check(testkit.Rows("101"))
-
 	// Test both auto_increment and rowid exist.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
@@ -2446,13 +2430,13 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustExec("insert into t(b) values(NULL)")
-	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("1 1"))
 	tk.MustExec("delete from t")
 
 	// Invalid the allocator cache, insert will trigger a new cache.
 	tk.MustExec("rename table t to t1;")
 	tk.MustExec("insert into t1(b) values(NULL)")
-	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("101 102"))
+	tk.MustQuery("select b from t1").Check(testkit.Rows("101"))
 	tk.MustExec("delete from t1")
 
 	// Test alter auto_id_cache.
@@ -2462,13 +2446,13 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(200))
 
 	tk.MustExec("insert into t1(b) values(NULL)")
-	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("201 202"))
+	tk.MustQuery("select b from t1").Check(testkit.Rows("201"))
 	tk.MustExec("delete from t1")
 
 	// Invalid the allocator cache, insert will trigger a new cache.
 	tk.MustExec("rename table t1 to t;")
 	tk.MustExec("insert into t(b) values(NULL)")
-	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("401 402"))
+	tk.MustQuery("select b from t").Check(testkit.Rows("401"))
 	tk.MustExec("delete from t")
 
 	tk.MustExec("drop table if exists t;")
@@ -2649,12 +2633,12 @@ func (s *testIntegrationSuite3) TestAutoIncrementForce(c *C) {
 	}
 	// Rebase _tidb_row_id.
 	tk.MustExec("create table t (a int);")
-	tk.MustExec("alter table t force auto_increment = 2;")
+	tk.MustExec("alter table t force row_id = 2;")
 	tk.MustExec("insert into t values (1),(2);")
 	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 2", "2 3"))
 	// Cannot set next global ID to 0.
-	tk.MustGetErrCode("alter table t force auto_increment = 0;", errno.ErrAutoincReadFailed)
-	tk.MustExec("alter table t force auto_increment = 1;")
+	tk.MustGetErrCode("alter table t force row_id = 0;", errno.ErrAutoincReadFailed)
+	tk.MustExec("alter table t force row_id = 1;")
 	c.Assert(getNextGlobalID(), Equals, uint64(1))
 	// inserting new rows can overwrite the existing data.
 	tk.MustExec("insert into t values (3);")

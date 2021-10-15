@@ -482,7 +482,7 @@ func (l *LogClient) reloadTableMeta(dom *domain.Domain, tableID int64, item *cdc
 		zap.Int64("restore table id", newTableID),
 		zap.String("restore table name", item.Table),
 		zap.String("restore schema name", item.Schema),
-		zap.Any("allocator", len(allocs)),
+		zap.Any("allocator", len(allocs.Items)),
 		zap.Any("auto", newTableInfo.Meta().GetAutoIncrementColInfo()),
 	)
 	return nil

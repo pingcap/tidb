@@ -88,20 +88,6 @@ const (
 	SequenceType
 )
 
-func (a AllocatorType) String() string {
-	switch a {
-	case RowIDAllocType:
-		return "_tidb_rowid"
-	case AutoIncrementType:
-		return "auto_increment"
-	case AutoRandomType:
-		return "auto_random"
-	case SequenceType:
-		return "sequence"
-	}
-	return "unknown"
-}
-
 // CustomAutoIncCacheOption is one kind of AllocOption to customize the allocator step length.
 type CustomAutoIncCacheOption int64
 
@@ -112,14 +98,6 @@ func (step CustomAutoIncCacheOption) ApplyOn(alloc *allocator) {
 	}
 	alloc.step = int64(step)
 	alloc.customStep = true
-}
-
-// AllocOptionTableInfoVersion is used to pass the TableInfo.Version to the allocator.
-type AllocOptionTableInfoVersion uint16
-
-// ApplyOn implements the AllocOption interface.
-func (v AllocOptionTableInfoVersion) ApplyOn(alloc *allocator) {
-	alloc.tbVersion = uint16(v)
 }
 
 // AllocOption is a interface to define allocator custom options coming in future.
@@ -165,16 +143,25 @@ type Allocator interface {
 }
 
 // Allocators represents a set of `Allocator`s.
-type Allocators []Allocator
+type Allocators struct {
+	Items        []Allocator
+	TableVersion uint16
+}
 
 // NewAllocators packs multiple `Allocator`s into Allocators.
-func NewAllocators(allocators ...Allocator) Allocators {
-	return allocators
+func NewAllocators(tableVersion uint16, allocators ...Allocator) Allocators {
+	return Allocators{
+		Items:        allocators,
+		TableVersion: tableVersion,
+	}
 }
 
 // Get returns the Allocator according to the AllocatorType.
 func (all Allocators) Get(allocType AllocatorType) Allocator {
-	for _, a := range all {
+	if allocType == AutoIncrementType && !model.AutoIncrementIDIsSeparated(all.TableVersion) {
+		allocType = RowIDAllocType
+	}
+	for _, a := range all.Items {
 		if a.GetType() == allocType {
 			return a
 		}
@@ -182,15 +169,26 @@ func (all Allocators) Get(allocType AllocatorType) Allocator {
 	return nil
 }
 
-// Filter filters all the allocators that match pred.
-func (all Allocators) Filter(pred func(Allocator) bool) Allocators {
-	var ret Allocators
-	for _, a := range all {
-		if pred(a) {
-			ret = append(ret, a)
+// Remove remove all the allocators that match tp.
+func (all Allocators) Remove(tp AllocatorType) Allocators {
+	total := all.Items
+	cur := 0
+	for cur < len(total) {
+		last := len(total) - 1
+		if total[cur].GetType() == tp {
+			total[cur], total[last] = total[last], total[cur]
+			total = total[:len(total)-1]
+		} else {
+			cur++
 		}
 	}
-	return ret
+	all.Items = total
+	return all
+}
+
+func (all Allocators) Add(a Allocator) Allocators {
+	all.Items = append(all.Items, a)
+	return all
 }
 
 type allocator struct {
@@ -201,7 +199,6 @@ type allocator struct {
 	// dbID is current database's ID.
 	dbID          int64
 	tbID          int64
-	tbVersion     uint16
 	isUnsigned    bool
 	lastAllocTime time.Time
 	step          int64
@@ -524,26 +521,34 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
 func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) Allocators {
-	var allocs []Allocator
 	dbID := tblInfo.GetDBID(schemaID)
+	if tblInfo.IsSequence() {
+		return NewAllocators(tblInfo.Version, NewSequenceAllocator(store, dbID, tblInfo.ID, tblInfo.Sequence))
+	}
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
-	tblVer := AllocOptionTableInfoVersion(tblInfo.Version)
-
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
-	if hasRowID || hasAutoIncID {
-		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
+	var allocs []Allocator
+	if model.AutoIncrementIDIsSeparated(tblInfo.Version) {
+		if hasRowID {
+			alloc := NewAllocator(store, dbID, tblInfo.ID, false, RowIDAllocType)
+			allocs = append(allocs, alloc)
+		}
+		if hasAutoIncID {
+			alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, idCacheOpt)
+			allocs = append(allocs, alloc)
+		}
+	} else {
+		if hasRowID || hasAutoIncID {
+			alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt)
+			allocs = append(allocs, alloc)
+		}
+	}
+	if tblInfo.ContainsAutoRandomBits() {
+		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType)
 		allocs = append(allocs, alloc)
 	}
-	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
-	if hasAutoRandID {
-		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt, tblVer)
-		allocs = append(allocs, alloc)
-	}
-	if tblInfo.IsSequence() {
-		allocs = append(allocs, NewSequenceAllocator(store, dbID, tblInfo.ID, tblInfo.Sequence))
-	}
-	return NewAllocators(allocs...)
+	return NewAllocators(tblInfo.Version, allocs...)
 }
 
 // Alloc implements autoid.Allocator Alloc interface.
@@ -566,11 +571,6 @@ func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset i
 	if n == 0 {
 		return 0, 0, nil
 	}
-	if alloc.allocType == AutoIncrementType || alloc.allocType == RowIDAllocType {
-		if !validIncrementAndOffset(increment, offset) {
-			return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
-		}
-	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.isUnsigned {
@@ -583,10 +583,6 @@ func (alloc *allocator) AllocSeqCache() (int64, int64, int64, error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	return alloc.alloc4Sequence()
-}
-
-func validIncrementAndOffset(increment, offset int64) bool {
-	return (increment >= minIncrement && increment <= maxIncrement) && (offset >= minIncrement && offset <= maxIncrement)
 }
 
 // CalcNeededBatchSize is used to calculate batch size for autoID allocation.
@@ -1025,7 +1021,7 @@ func (alloc *allocator) getIDAccessor(txn kv.Transaction) meta.AutoIDAccessor {
 	case RowIDAllocType:
 		return acc.RowID()
 	case AutoIncrementType:
-		return acc.IncrementID(alloc.tbVersion)
+		return acc.IncrementID()
 	case AutoRandomType:
 		return acc.RandomID()
 	case SequenceType:

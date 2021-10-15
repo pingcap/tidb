@@ -22,17 +22,24 @@ import (
 )
 
 // NewAllocatorFromTempTblInfo creates an in-memory allocator from a temporary table info.
-func NewAllocatorFromTempTblInfo(tblInfo *model.TableInfo) Allocator {
+func NewAllocatorFromTempTblInfo(tblInfo *model.TableInfo) Allocators {
+	var allocators []Allocator
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
-	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
-	// Temporary tables don't support auto_random and sequence.
-	if hasRowID || hasAutoIncID {
-		return &inMemoryAllocator{
-			isUnsigned: tblInfo.IsAutoIncColUnsigned(),
+	if hasRowID {
+		allocators = append(allocators, &inMemoryAllocator{
+			isUnsigned: false,
 			allocType:  RowIDAllocType,
-		}
+		})
 	}
-	return nil
+	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
+	if hasAutoIncID {
+		allocators = append(allocators, &inMemoryAllocator{
+			isUnsigned: tblInfo.IsAutoIncColUnsigned(),
+			allocType:  AutoIncrementType,
+		})
+	}
+	// Temporary tables don't support auto_random and sequence.
+	return NewAllocators(tblInfo.Version, allocators...)
 }
 
 // inMemoryAllocator is typically used for temporary tables.
@@ -71,11 +78,6 @@ func (alloc *inMemoryAllocator) NextGlobalAutoID() (int64, error) {
 func (alloc *inMemoryAllocator) Alloc(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
 	if n == 0 {
 		return 0, 0, nil
-	}
-	if alloc.allocType == AutoIncrementType || alloc.allocType == RowIDAllocType {
-		if !validIncrementAndOffset(increment, offset) {
-			return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
-		}
 	}
 	if alloc.isUnsigned {
 		return alloc.alloc4Unsigned(n, increment, offset)

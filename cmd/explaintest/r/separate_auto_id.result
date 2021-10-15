@@ -1,0 +1,8 @@
+drop table if exists t;
+create table t (c bigint auto_increment, unique key(c));
+insert into t values();
+insert into t values();
+select *, _tidb_rowid from t;
+c	_tidb_rowid
+1	1
+2	2

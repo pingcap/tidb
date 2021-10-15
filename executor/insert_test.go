@@ -1131,27 +1131,27 @@ func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	// AutoID allocation will take increment and offset into consideration.
 	tk.MustQuery(`select b from io`).Check(testkit.Rows("10", "12", "14"))
 	// HandleID allocation will ignore the increment and offset.
-	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("15", "16", "17"))
+	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("1", "2", "3"))
 	tk.MustExec(`delete from io`)
 
 	tk.Se.GetSessionVars().AutoIncrementIncrement = 10
 	tk.MustExec(`insert into io(b) values (null),(null),(null)`)
 	tk.MustQuery(`select b from io`).Check(testkit.Rows("20", "30", "40"))
-	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("41", "42", "43"))
+	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("4", "5", "6"))
 
 	// Test invalid value.
-	tk.Se.GetSessionVars().AutoIncrementIncrement = -1
-	tk.Se.GetSessionVars().AutoIncrementOffset = -2
-	_, err := tk.Exec(`insert into io(b) values (null),(null),(null)`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: -1, auto_increment_offset: -2, both of them must be in range [1..65535]")
-	tk.MustExec(`delete from io`)
-
-	tk.Se.GetSessionVars().AutoIncrementIncrement = 65536
-	tk.Se.GetSessionVars().AutoIncrementOffset = 65536
-	_, err = tk.Exec(`insert into io(b) values (null),(null),(null)`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
+	tk.MustExec("set @@auto_increment_increment = -1")
+	tk.MustQuery("show warnings;").Check(
+		testkit.Rows("Warning 1292 Truncated incorrect auto_increment_increment value: '-1'"))
+	tk.MustExec("set @@auto_increment_offset = -2")
+	tk.MustQuery("show warnings;").Check(
+		testkit.Rows("Warning 1292 Truncated incorrect auto_increment_offset value: '-2'"))
+	tk.MustExec("set @@auto_increment_increment = 65536")
+	tk.MustQuery("show warnings;").Check(
+		testkit.Rows("Warning 1292 Truncated incorrect auto_increment_increment value: '65536'"))
+	tk.MustExec("set @@auto_increment_offset = 65536")
+	tk.MustQuery("show warnings;").Check(
+		testkit.Rows("Warning 1292 Truncated incorrect auto_increment_offset value: '65536'"))
 }
 
 var _ = Suite(&testSuite9{&baseTestSuite{}})

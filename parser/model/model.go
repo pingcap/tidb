@@ -253,11 +253,17 @@ const (
 	// _tidb_rowid allocator. This version is introduced to preserve the compatibility of old tables:
 	// the tables with version < TableInfoVersion4 still use a single allocator for auto_increment and _tidb_rowid.
 	// Also see https://github.com/pingcap/tidb/issues/982.
-	TableInfoVersion4 = uint16(4)
+	TableInfoVersion5 = uint16(5)
 
 	// CurrLatestTableInfoVersion means the latest table info in the current TiDB.
-	CurrLatestTableInfoVersion = TableInfoVersion4
+	CurrLatestTableInfoVersion = TableInfoVersion5
 )
+
+// AutoIncrementIDIsSeparated indicates whether auto_increment ID of is separated from _tidb_row_id.
+// For details, see https://github.com/pingcap/tidb/issues/982.
+func AutoIncrementIDIsSeparated(ver uint16) bool {
+	return ver >= TableInfoVersion5
+}
 
 // ExtraHandleName is the name of ExtraHandle Column.
 var ExtraHandleName = NewCIStr("_tidb_rowid")
@@ -289,6 +295,7 @@ type TableInfo struct {
 
 	Comment         string `json:"comment"`
 	AutoIncID       int64  `json:"auto_inc_id"`
+	AutoRowID       int64  `json:"auto_row_id"`
 	AutoIdCache     int64  `json:"auto_id_cache"`
 	AutoRandID      int64  `json:"auto_rand_id"`
 	MaxColumnID     int64  `json:"max_col_id"`

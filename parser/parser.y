@@ -531,6 +531,7 @@ import (
 	routine               "ROUTINE"
 	rowCount              "ROW_COUNT"
 	rowFormat             "ROW_FORMAT"
+	rowID                 "ROW_ID"
 	rtree                 "RTREE"
 	san                   "SAN"
 	second                "SECOND"
@@ -6087,6 +6088,7 @@ UnReservedKeyword:
 |	"CLUSTERED"
 |	"NONCLUSTERED"
 |	"PRESERVE"
+|	"ROW_ID"
 
 TiDBKeyword:
 	"ADMIN"
@@ -11131,6 +11133,10 @@ TableOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionCollate, StrValue: $4,
 			UintValue: ast.TableOptionCharsetWithoutConvertTo}
+	}
+|	ForceOpt "ROW_ID" EqOpt LengthNum
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionRowID, UintValue: $4.(uint64), BoolValue: $1.(bool)}
 	}
 |	ForceOpt "AUTO_INCREMENT" EqOpt LengthNum
 	{

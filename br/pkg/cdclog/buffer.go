@@ -107,7 +107,7 @@ func (t *TableBuffer) ReloadMeta(tbl table.Table, allocator autoid.Allocators) {
 	if kv.TableHasAutoRowID(tbl.Meta()) {
 		colPerm = append(colPerm, -1)
 	}
-	if t.allocator == nil {
+	if t.allocator.Items == nil {
 		t.allocator = allocator
 	}
 	t.tableInfo = tbl

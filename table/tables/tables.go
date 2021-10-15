@@ -83,7 +83,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	}
 
 	var t TableCommon
-	initTableCommon(&t, tblInfo, tblInfo.ID, columns, nil)
+	initTableCommon(&t, tblInfo, tblInfo.ID, columns, autoid.Allocators{})
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t); err != nil {
 			return nil
@@ -1437,19 +1437,15 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	} else if ctx.GetSessionVars().IDAllocator == nil {
 		// Use an independent allocator for global temporary tables.
 		if t.meta.TempTableType == model.TempTableGlobal {
-			if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
-				return autoid.Allocators{alloc}
-			}
-			// If the session is not in a txn, for example, in "show create table", use the original allocator.
-			// Otherwise the would be a nil pointer dereference.
+			return ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocators()
 		}
 		return t.allocs
 	}
 
 	// Replace the row id allocator with the one in session variables.
 	sessAlloc := ctx.GetSessionVars().IDAllocator
-	retAllocs := make([]autoid.Allocator, 0, len(t.allocs))
-	copy(retAllocs, t.allocs)
+	retAllocs := make([]autoid.Allocator, 0, len(t.allocs.Items))
+	copy(retAllocs, t.allocs.Items)
 
 	overwritten := false
 	for i, a := range retAllocs {
@@ -1462,7 +1458,7 @@ func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	if !overwritten {
 		retAllocs = append(retAllocs, sessAlloc)
 	}
-	return retAllocs
+	return autoid.NewAllocators(t.meta.Version, retAllocs...)
 }
 
 // Type implements table.Table Type interface.
@@ -1631,12 +1627,11 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 			return nil
 		}
 		// Update batch alloc from kv storage.
-		sequenceAlloc, err1 := getSequenceAllocator(t.allocs)
-		if err1 != nil {
-			return err1
-		}
-		var base, end, round int64
-		base, end, round, err1 = sequenceAlloc.AllocSeqCache()
+		var (
+			base, end, round int64
+			err1             error
+		)
+		base, end, round, err1 = t.allocs.Get(autoid.SequenceType).AllocSeqCache()
 		if err1 != nil {
 			return err1
 		}
@@ -1708,11 +1703,7 @@ func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqN
 	t.sequence.base = t.sequence.end
 
 	// Rebase from kv storage.
-	sequenceAlloc, err := getSequenceAllocator(t.allocs)
-	if err != nil {
-		return 0, false, err
-	}
-	res, alreadySatisfied, err := sequenceAlloc.RebaseSeq(newVal)
+	res, alreadySatisfied, err := t.allocs.Get(autoid.SequenceType).RebaseSeq(newVal)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1810,16 +1801,6 @@ func maxIndexLen(idxA, idxB *model.IndexColumn) *model.IndexColumn {
 	return idxB
 }
 
-func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {
-	for _, alloc := range allocs {
-		if alloc.GetType() == autoid.SequenceType {
-			return alloc, nil
-		}
-	}
-	// TODO: refine the error.
-	return nil, errors.New("sequence allocator is nil")
-}
-
 // BuildTableScanFromInfos build tipb.TableScan with *model.TableInfo and *model.ColumnInfo.
 func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo) *tipb.TableScan {
 	pkColIds := TryGetCommonPkColumnIds(tableInfo)
@@ -1841,8 +1822,8 @@ type TemporaryTable struct {
 	modified bool
 	// The stats of this table. So far it's always pseudo stats.
 	stats *statistics.Table
-	// The autoID allocator of this table.
-	autoIDAllocator autoid.Allocator
+	// The autoID allocators of this table.
+	autoIDAllocators autoid.Allocators
 	// Table size.
 	size int64
 
@@ -1852,16 +1833,16 @@ type TemporaryTable struct {
 // TempTableFromMeta builds a TempTable from model.TableInfo.
 func TempTableFromMeta(tblInfo *model.TableInfo) tableutil.TempTable {
 	return &TemporaryTable{
-		modified:        false,
-		stats:           statistics.PseudoTable(tblInfo),
-		autoIDAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
-		meta:            tblInfo,
+		modified:         false,
+		stats:            statistics.PseudoTable(tblInfo),
+		autoIDAllocators: autoid.NewAllocatorFromTempTblInfo(tblInfo),
+		meta:             tblInfo,
 	}
 }
 
-// GetAutoIDAllocator is implemented from TempTable.GetAutoIDAllocator.
-func (t *TemporaryTable) GetAutoIDAllocator() autoid.Allocator {
-	return t.autoIDAllocator
+// GetAutoIDAllocator is implemented from TempTable.GetAutoIDAllocators.
+func (t *TemporaryTable) GetAutoIDAllocators() autoid.Allocators {
+	return t.autoIDAllocators
 }
 
 // SetModified is implemented from TempTable.SetModified.

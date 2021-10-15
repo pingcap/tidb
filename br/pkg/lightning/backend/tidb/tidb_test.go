@@ -66,7 +66,7 @@ func (s *mysqlSuite) SetUpTest(c *C) {
 		cols = append(cols, col)
 	}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0, 0), tblInfo)
 	c.Assert(err, IsNil)
 
 	s.dbHandle = db
@@ -222,7 +222,7 @@ func (s *mysqlSuite) testStrictMode(c *C) {
 	ft.Charset = charset.CharsetASCII
 	col1 := &model.ColumnInfo{ID: 2, Name: model.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldType: ft}
 	tblInfo := &model.TableInfo{ID: 1, Columns: []*model.ColumnInfo{col0, col1}, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0, 0), tblInfo)
 	c.Assert(err, IsNil)
 
 	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))

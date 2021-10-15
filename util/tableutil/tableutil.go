@@ -22,8 +22,8 @@ import (
 // TempTable is used to store transaction-specific or session-specific information for global / local temporary tables.
 // For example, stats and autoID should have their own copies of data, instead of being shared by all sessions.
 type TempTable interface {
-	// GetAutoIDAllocator gets the autoID allocator of this table.
-	GetAutoIDAllocator() autoid.Allocator
+	// GetAutoIDAllocators gets the autoID allocators of this table.
+	GetAutoIDAllocators() autoid.Allocators
 
 	// SetModified sets that the table is modified.
 	SetModified(bool)
