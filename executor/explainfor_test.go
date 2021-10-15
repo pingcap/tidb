@@ -816,3 +816,71 @@ func (s *testPrepareSerialSuite) TestIssue28696(c *C) {
 	c.Assert(res.Rows()[3][0], Matches, ".*Selection.*")
 	c.Assert(res.Rows()[4][0], Matches, ".*TableRowIDScan.*")
 }
+
+func (s *testPrepareSerialSuite) TestIssue28710(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists IDT_MULTI15858STROBJSTROBJ;")
+	tk.MustExec("CREATE TABLE `IDT_MULTI15858STROBJSTROBJ` (" +
+		"`COL1` enum('aa','bb','cc','dd','ee','ff','gg','hh','ii','mm') DEFAULT NULL," +
+		"`COL2` int(41) DEFAULT NULL," +
+		"`COL3` datetime DEFAULT NULL," +
+		"KEY `U_M_COL4` (`COL1`,`COL2`)," +
+		"KEY `U_M_COL5` (`COL3`,`COL2`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into IDT_MULTI15858STROBJSTROBJ values('aa', 1333053589,'1037-12-26 01:38:52');")
+
+	tk.MustExec("set tidb_enable_index_merge=on;")
+	tk.MustExec("prepare stmt from 'select * from IDT_MULTI15858STROBJSTROBJ where col2 <> ? and col1 not in (?, ?, ?) or col3 = ? order by 2;';")
+	tk.MustExec("set @a=2134549621, @b='aa', @c='aa', @d='aa', @e='9941-07-07 01:08:48';")
+	tk.MustQuery("execute stmt using @a,@b,@c,@d,@e;").Check(testkit.Rows())
+
+	tk.MustExec("set @a=-2144294194, @b='mm', @c='mm', @d='mm', @e='0198-09-29 20:19:49';")
+	tk.MustQuery("execute stmt using @a,@b,@c,@d,@e;").Check(testkit.Rows("aa 1333053589 1037-12-26 01:38:52"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a,@b,@c,@d,@e;").Check(testkit.Rows("aa 1333053589 1037-12-26 01:38:52"))
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 6)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexMerge.*")
+	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
+	c.Assert(res.Rows()[3][4], Equals, "range:(NULL,\"mm\"), (\"mm\",+inf], keep order:false, stats:pseudo")
+	c.Assert(res.Rows()[4][0], Matches, ".*IndexRangeScan.*")
+	c.Assert(res.Rows()[4][4], Equals, "range:[0198-09-29 20:19:49,0198-09-29 20:19:49], keep order:false, stats:pseudo")
+
+	// test for cluster index in indexMerge
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), index idx_b(b));")
+	tk.MustExec("prepare stmt from 'select * from t where ((a > ? and a < ?) or b > 1) and c > 1;';")
+	tk.MustExec("set @a = 0, @b = 3;")
+	tk.MustQuery("execute stmt using @a, @b;").Check(testkit.Rows())
+
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 5)
+	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
+	c.Assert(res.Rows()[1][0], Matches, ".*TableRangeScan.*")
+	c.Assert(res.Rows()[1][4], Equals, "range:(0,3), keep order:false, stats:pseudo")
+	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
+	c.Assert(res.Rows()[2][4], Equals, "range:(1,+inf], keep order:false, stats:pseudo")
+}
