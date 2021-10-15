@@ -1464,7 +1464,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 
 	authData := checker.GetEncodedPassword(e.User.Username, e.User.Hostname)
 	authStr := ""
-	if !((authplugin == mysql.AuthSocket) && (authData == "")) {
+	if !(authplugin == mysql.AuthSocket && authData == "") {
 		authStr = fmt.Sprintf(" AS '%s'", authData)
 	}
 
