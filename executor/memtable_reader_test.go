@@ -292,6 +292,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
+				rows["tiflash"][0],
 				rows["pd"][0],
 				rows["pd"][1],
 				rows["pd"][2],
