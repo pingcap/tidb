@@ -723,6 +723,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 				return err
 			}
 		case mysql.AuthNativePassword:
+		case mysql.AuthSocket:
 		default:
 			logutil.Logger(ctx).Warn("Unknown Auth Plugin", zap.String("plugin", resp.AuthPlugin))
 		}
