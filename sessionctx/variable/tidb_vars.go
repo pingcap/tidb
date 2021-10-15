@@ -608,7 +608,7 @@ const (
 
 const (
 	// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
-	// for any type of configuraiton item that has concurrent workers.
+	// for any type of configuration item that has concurrent workers.
 	MaxConfigurableConcurrency = 128
 )
 
