@@ -603,6 +603,15 @@ const (
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 )
 
+// TiDB intentional limits
+// Can be raised in future.
+
+const (
+	// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
+	// for any type of configuraiton item that has concurrent workers.
+	MaxConfigurableConcurrency = 128
+)
+
 // Default TiDB system variable values.
 const (
 	DefHostname                           = "localhost"

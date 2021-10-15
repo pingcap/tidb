@@ -241,7 +241,7 @@ func TestDeprecation(t *testing.T) {
 
 	vars := NewSessionVars()
 
-	_, err := sysVar.Validate(vars, "1234", ScopeSession)
+	_, err := sysVar.Validate(vars, "123", ScopeSession)
 	require.NoError(t, err)
 
 	// There was no error but there is a deprecation warning.
