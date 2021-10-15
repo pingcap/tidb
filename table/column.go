@@ -333,15 +333,21 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 func makeStringValidator(ctx sessionctx.Context, col *model.ColumnInfo) charset.StringValidator {
 	switch col.Charset {
 	case charset.CharsetASCII:
-		enabled := !ctx.GetSessionVars().SkipASCIICheck
-		return charset.StringValidatorASCII{Enabled: enabled}
+		if ctx.GetSessionVars().SkipASCIICheck {
+			return nil
+		}
+		return charset.StringValidatorASCII{}
 	case charset.CharsetUTF8:
-		enabled := !ctx.GetSessionVars().SkipUTF8Check
+		if ctx.GetSessionVars().SkipUTF8Check {
+			return nil
+		}
 		needCheckMB4 := config.GetGlobalConfig().CheckMb4ValueInUTF8
-		return charset.StringValidatorUTF8{Enabled: enabled, IsUTF8MB4: false, CheckMB4ValueInUTF8: needCheckMB4}
+		return charset.StringValidatorUTF8{IsUTF8MB4: false, CheckMB4ValueInUTF8: needCheckMB4}
 	case charset.CharsetUTF8MB4:
-		enabled := !ctx.GetSessionVars().SkipUTF8Check
-		return charset.StringValidatorUTF8{Enabled: enabled, IsUTF8MB4: true}
+		if ctx.GetSessionVars().SkipUTF8Check {
+			return nil
+		}
+		return charset.StringValidatorUTF8{IsUTF8MB4: true}
 	case charset.CharsetLatin1, charset.CharsetBinary:
 		return nil
 	default:

@@ -76,19 +76,15 @@ func (s *testEncodingSuite) TestEncoding(c *C) {
 }
 
 func (s *testEncodingSuite) TestValidatorASCII(c *C) {
-	v := charset.StringValidatorASCII{Enabled: false}
-	c.Assert(v.Validate("qwerty"), Equals, -1)
-	c.Assert(v.Validate("qwÊrty"), Equals, -1)
-	v.Enabled = true
+	v := charset.StringValidatorASCII{}
 	c.Assert(v.Validate("qwerty"), Equals, -1)
 	c.Assert(v.Validate("qwÊrty"), Equals, 2)
+	c.Assert(v.Validate("中文"), Equals, 0)
 }
 
 func (s *testEncodingSuite) TestValidatorUTF8(c *C) {
-	v := charset.StringValidatorUTF8{Enabled: false}
-	c.Assert(v.Validate("qwerty"), Equals, -1)
 	// Test charset "utf8mb4".
-	v = charset.StringValidatorUTF8{Enabled: true, IsUTF8MB4: true}
+	v := charset.StringValidatorUTF8{IsUTF8MB4: true}
 	c.Assert(v.Validate("qwerty"), Equals, -1)
 	c.Assert(v.Validate("qwÊrty"), Equals, -1)
 	c.Assert(v.Validate("qwÊ合法字符串"), Equals, -1)
@@ -96,7 +92,7 @@ func (s *testEncodingSuite) TestValidatorUTF8(c *C) {
 	invalid := string([]byte{0xff, 0xfe, 0xfd})
 	c.Assert(v.Validate(invalid), Equals, 0)
 	// Test charset "utf8" without checking mb4 value.
-	v = charset.StringValidatorUTF8{Enabled: true, IsUTF8MB4: false, CheckMB4ValueInUTF8: false}
+	v = charset.StringValidatorUTF8{IsUTF8MB4: false, CheckMB4ValueInUTF8: false}
 	c.Assert(v.Validate("qwerty"), Equals, -1)
 	c.Assert(v.Validate("qwÊrty"), Equals, -1)
 	c.Assert(v.Validate("qwÊ合法字符串"), Equals, -1)
@@ -104,7 +100,7 @@ func (s *testEncodingSuite) TestValidatorUTF8(c *C) {
 	c.Assert(v.Validate("😂"), Equals, -1)
 	c.Assert(v.Validate(invalid), Equals, 0)
 	// Test charset "utf8" with checking mb4 value.
-	v = charset.StringValidatorUTF8{Enabled: true, IsUTF8MB4: false, CheckMB4ValueInUTF8: true}
+	v = charset.StringValidatorUTF8{IsUTF8MB4: false, CheckMB4ValueInUTF8: true}
 	c.Assert(v.Validate("😂"), Equals, 0) // 4-bytes character is invalid.
 	c.Assert(v.Validate(invalid), Equals, 0)
 }

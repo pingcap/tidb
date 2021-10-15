@@ -311,16 +311,11 @@ type StringValidator interface {
 }
 
 // StringValidatorASCII checks whether a string is valid ASCII string.
-type StringValidatorASCII struct {
-	Enabled bool
-}
+type StringValidatorASCII struct {}
 
 // Validate checks whether the string is valid in the given charset.
 // It returns the first invalid byte offset.
 func (s StringValidatorASCII) Validate(str string) (invalidPos int) {
-	if !s.Enabled {
-		return -1
-	}
 	for i := 0; i < len(str); i++ {
 		if str[i] > go_unicode.MaxASCII {
 			return i
@@ -331,7 +326,6 @@ func (s StringValidatorASCII) Validate(str string) (invalidPos int) {
 
 // StringValidatorUTF8 checks whether a string is valid UTF8 string.
 type StringValidatorUTF8 struct {
-	Enabled             bool
 	IsUTF8MB4           bool // Distinguish between "utf8" and "utf8mb4"
 	CheckMB4ValueInUTF8 bool
 }
@@ -339,9 +333,6 @@ type StringValidatorUTF8 struct {
 // Validate checks whether the string is valid in the given charset.
 // It returns the first invalid byte offset.
 func (s StringValidatorUTF8) Validate(str string) (invalidPos int) {
-	if !s.Enabled {
-		return -1
-	}
 	if s.IsUTF8MB4 && utf8.ValidString(str) {
 		// Quick check passed.
 		return -1
