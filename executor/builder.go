@@ -2612,6 +2612,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	for i, col := range v.OuterHashKeys {
 		outerTypes[col.Index] = outerTypes[col.Index].Clone()
 		outerTypes[col.Index].Collate = innerTypes[v.InnerHashKeys[i].Index].Collate
+		outerTypes[col.Index].Flag = col.RetType.Flag
 	}
 
 	var (

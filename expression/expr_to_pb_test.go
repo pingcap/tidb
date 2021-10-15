@@ -608,6 +608,8 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	datetimeColumn := dg.genColumn(mysql.TypeDatetime, 6)
 	binaryStringColumn := dg.genColumn(mysql.TypeString, 7)
 	binaryStringColumn.RetType.Collate = charset.CollationBin
+	int32Column := dg.genColumn(mysql.TypeLong, 8)
+	float32Column := dg.genColumn(mysql.TypeFloat, 9)
 
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	c.Assert(err, IsNil)
@@ -655,28 +657,31 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	validDecimalType := types.NewFieldType(mysql.TypeNewDecimal)
+	validDecimalType.Flen = 20
+	validDecimalType.Decimal = 2
 	// CastIntAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), intColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, intColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastRealAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), realColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, realColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastDecimalAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, decimalColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastStringAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), stringColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, stringColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastTimeAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), datetimeColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, datetimeColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
@@ -940,6 +945,16 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_StrToDateDatetime)
 	exprs = append(exprs, function)
 
+	// cast Int32 to Int32
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLong), int32Column)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast float32 to float32
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeFloat), float32Column)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
 	c.Assert(canPush, Equals, true)
 
@@ -966,6 +981,28 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 
 	// RoundDecimal: can not be pushed
 	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Cast to Int32: not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLong), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Cast to Float: not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeFloat), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Cast to invalid Decimal Type: not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast Int32 to UInt32
+	unsignedInt32Type := types.NewFieldType(mysql.TypeLong)
+	unsignedInt32Type.Flag = mysql.UnsignedFlag
+	function, err = NewFunction(mock.NewContext(), ast.Cast, unsignedInt32Type, int32Column)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 

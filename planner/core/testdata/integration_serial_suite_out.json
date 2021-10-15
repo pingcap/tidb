@@ -11,10 +11,10 @@
         ]
       },
       {
-        "SQL": "explain format = 'brief' select * from t where cast(t.a as float) + 3 = 5.1",
+        "SQL": "explain format = 'brief' select * from t where cast(t.a as double) + 3 = 5.1",
         "Plan": [
           "TableReader 8000.00 root  data:Selection",
-          "└─Selection 8000.00 cop[tiflash]  eq(plus(cast(test.t.a, float BINARY), 3), 5.1)",
+          "└─Selection 8000.00 cop[tiflash]  eq(plus(cast(test.t.a, double BINARY), 3), 5.1)",
           "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -945,6 +945,76 @@
     ]
   },
   {
+    "Name": "TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select v from t3 as a left join (select t1.v1, t1.v2, t1.v1 + t1.v2 as v from t1 left join t2 on t1.v1 = t2.v1 and t1.v2 = t2.v2) b on a.v1 = b.v1 and a.v2 = b.v2",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 cop[tiflash]  Column#13",
+          "    └─HashJoin 1.00 cop[tiflash]  left outer join, equal:[eq(test.t3.v1, test.t1.v1) eq(test.t3.v2, test.t1.v2)]",
+          "      ├─ExchangeReceiver(Build) 1.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender 1.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#23, collate: N/A], [name: Column#24, collate: N/A]",
+          "      │   └─Projection 1.00 cop[tiflash]  test.t3.v1, test.t3.v2, cast(test.t3.v1, decimal(20,2))->Column#23, cast(test.t3.v2, decimal(20,2))->Column#24",
+          "      │     └─TableFullScan 1.00 cop[tiflash] table:a keep order:false",
+          "      └─Projection(Probe) 2.00 cop[tiflash]  test.t1.v1, test.t1.v2, plus(test.t1.v1, test.t1.v2)->Column#13",
+          "        └─HashJoin 2.00 cop[tiflash]  left outer join, equal:[eq(test.t1.v1, test.t2.v1) eq(test.t1.v2, test.t2.v2)]",
+          "          ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
+          "          │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.v1, collate: N/A], [name: test.t1.v2, collate: N/A]",
+          "          │   └─Selection 2.00 cop[tiflash]  not(isnull(test.t1.v1)), not(isnull(test.t1.v2))",
+          "          │     └─TableFullScan 2.00 cop[tiflash] table:t1 keep order:false",
+          "          └─ExchangeReceiver(Probe) 8.00 cop[tiflash]  ",
+          "            └─ExchangeSender 8.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#15, collate: N/A], [name: Column#16, collate: N/A]",
+          "              └─Projection 8.00 cop[tiflash]  test.t2.v1, test.t2.v2, cast(test.t2.v1, decimal(20,2))->Column#15, cast(test.t2.v2, decimal(20,2))->Column#16",
+          "                └─Selection 8.00 cop[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
+          "                  └─TableFullScan 8.00 cop[tiflash] table:t2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*), t2.v1, t2.v2 from t1 left join t2 on t1.v1 = t2.v1 and t1.v2 = t2.v2 group by t2.v1, t2.v2",
+        "Plan": [
+          "TableReader 2.00 root  data:ExchangeSender",
+          "└─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2.00 batchCop[tiflash]  Column#9, test.t2.v1, test.t2.v2",
+          "    └─HashAgg 2.00 batchCop[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:sum(Column#22)->Column#9, funcs:firstrow(test.t2.v1)->test.t2.v1, funcs:firstrow(test.t2.v2)->test.t2.v2",
+          "      └─ExchangeReceiver 2.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.v1, collate: N/A], [name: test.t2.v2, collate: N/A]",
+          "          └─HashAgg 2.00 batchCop[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:count(1)->Column#22",
+          "            └─HashJoin 2.00 batchCop[tiflash]  left outer join, equal:[eq(test.t1.v1, test.t2.v1) eq(test.t1.v2, test.t2.v2)]",
+          "              ├─ExchangeReceiver(Build) 2.00 batchCop[tiflash]  ",
+          "              │ └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.v1, collate: N/A], [name: test.t1.v2, collate: N/A]",
+          "              │   └─TableFullScan 2.00 batchCop[tiflash] table:t1 keep order:false",
+          "              └─ExchangeReceiver(Probe) 8.00 batchCop[tiflash]  ",
+          "                └─ExchangeSender 8.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#14, collate: N/A], [name: Column#15, collate: N/A]",
+          "                  └─Projection 8.00 batchCop[tiflash]  test.t2.v1, test.t2.v2, cast(test.t2.v1, decimal(20,2))->Column#14, cast(test.t2.v2, decimal(20,2))->Column#15",
+          "                    └─Selection 8.00 batchCop[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
+          "                      └─TableFullScan 8.00 batchCop[tiflash] table:t2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*), t2.v1, t2.v2 from t3 left join t2 on t3.v1 = t2.v1 and t3.v2 = t2.v2 group by t2.v1, t2.v2",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#9, test.t2.v1, test.t2.v2",
+          "    └─HashAgg 1.00 batchCop[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:sum(Column#16)->Column#9, funcs:firstrow(test.t2.v1)->test.t2.v1, funcs:firstrow(test.t2.v2)->test.t2.v2",
+          "      └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.v1, collate: N/A], [name: test.t2.v2, collate: N/A]",
+          "          └─HashAgg 1.00 batchCop[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:count(1)->Column#16",
+          "            └─HashJoin 1.00 batchCop[tiflash]  left outer join, equal:[eq(test.t3.v1, test.t2.v1) eq(test.t3.v2, test.t2.v2)]",
+          "              ├─ExchangeReceiver(Build) 1.00 batchCop[tiflash]  ",
+          "              │ └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t3.v1, collate: N/A], [name: test.t3.v2, collate: N/A]",
+          "              │   └─TableFullScan 1.00 batchCop[tiflash] table:t3 keep order:false",
+          "              └─ExchangeReceiver(Probe) 8.00 batchCop[tiflash]  ",
+          "                └─ExchangeSender 8.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.v1, collate: N/A], [name: test.t2.v2, collate: N/A]",
+          "                  └─Selection 8.00 batchCop[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
+          "                    └─TableFullScan 8.00 batchCop[tiflash] table:t2 keep order:false"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestJoinNotSupportedByTiFlash",
     "Cases": [
       {
@@ -1508,58 +1578,58 @@
       {
         "SQL": "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "HashAgg 1.00 root  funcs:count(Column#8)->Column#6",
           "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#7",
-          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#9",
+          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#10)->Column#8",
+          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#10",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "HashAgg 1.00 root  funcs:count(Column#7)->Column#6",
           "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
+          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#7",
           "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#7)->Column#5",
+          "HashAgg 1.00 root  funcs:sum(Column#8)->Column#6",
           "└─TableReader 1.00 root  data:HashAgg",
-          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#9)->Column#7",
-          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#9",
+          "  └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#10)->Column#8",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#10",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#9)->Column#7",
-          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#9",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(Column#10)->Column#8",
+          "    └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#10",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#6",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#7",
           "    └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:sum(Column#7)->Column#5",
+          "StreamAgg 1.00 root  funcs:sum(Column#8)->Column#6",
           "└─TableReader 1.00 root  data:StreamAgg",
-          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#9)->Column#7",
-          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#9",
+          "  └─StreamAgg 1.00 batchCop[tiflash]  funcs:sum(Column#10)->Column#8",
+          "    └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#10",
           "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -1567,11 +1637,11 @@
         "SQL": "desc format = 'brief' select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
         "Plan": [
           "TableReader 10000.00 root  data:HashJoin",
-          "└─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#4, Column#8)]",
-          "  ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
+          "└─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#5, Column#10)]",
+          "  ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#5",
           "  │ └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "  │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
-          "  └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
+          "  └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#10",
           "    └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
@@ -1580,8 +1650,8 @@
         "SQL": "desc format = 'brief' select * from t join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
           "TableReader 10000.00 root  data:HashJoin",
-          "└─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(test.t.id, Column#7)]",
-          "  ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
+          "└─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(test.t.id, Column#9)]",
+          "  ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#9",
           "  │ └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "  │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
           "  └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
@@ -1592,8 +1662,8 @@
         "SQL": "desc format = 'brief' select * from t left join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
           "TableReader 10000.00 root  data:HashJoin",
-          "└─HashJoin 10000.00 cop[tiflash]  left outer join, equal:[eq(test.t.id, Column#7)]",
-          "  ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
+          "└─HashJoin 10000.00 cop[tiflash]  left outer join, equal:[eq(test.t.id, Column#9)]",
+          "  ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#9",
           "  │ └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "  │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
           "  └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
@@ -1603,23 +1673,23 @@
         "SQL": "desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
           "TableReader 12487.50 root  data:HashJoin",
-          "└─HashJoin 12487.50 cop[tiflash]  right outer join, equal:[eq(test.t.id, Column#7)]",
+          "└─HashJoin 12487.50 cop[tiflash]  right outer join, equal:[eq(test.t.id, Column#9)]",
           "  ├─Selection(Build) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
           "  │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
-          "  └─Projection(Probe) 10000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
+          "  └─Projection(Probe) 10000.00 cop[tiflash]  minus(test.t.id, 2)->Column#9",
           "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
         "Plan": [
-          "Projection 10000.00 root  Column#8, Column#4",
+          "Projection 10000.00 root  Column#10, Column#5",
           "└─TableReader 10000.00 root  data:HashJoin",
-          "  └─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#4, Column#8)]",
-          "    ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
+          "  └─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#5, Column#10)]",
+          "    ├─Projection(Build) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#5",
           "    │ └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "    │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
-          "    └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
+          "    └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#10",
           "      └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "        └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
@@ -1643,6 +1713,14 @@
           "  ├─TableFullScan(Build) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo, global read",
           "  └─TableFullScan(Probe) 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;",
+        "Plan": [
+          "Projection 10000.00 root  from_unixtime(cast(test.t.name, decimal(65,0) BINARY), %Y-%m-%d)->Column#5",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
@@ -1652,50 +1730,18 @@
       {
         "SQL": "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#8)->Column#5",
+          "HashAgg 1.00 root  funcs:count(Column#9)->Column#6",
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#10)->Column#8",
-          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#10",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#11)->Column#9",
+          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#11",
           "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#7",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "desc format = 'brief' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#8)->Column#5",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#10)->Column#8",
-          "      └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#10",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#9)->Column#5",
-          "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#10)->Column#9",
-          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#10",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
-        "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#8)->Column#5",
+          "HashAgg 1.00 root  funcs:count(Column#8)->Column#6",
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#8",
@@ -1703,13 +1749,45 @@
         ]
       },
       {
-        "SQL": "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+        "SQL": "desc format = 'brief' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#9)->Column#5",
+          "HashAgg 1.00 root  funcs:sum(Column#9)->Column#6",
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#10)->Column#9",
-          "      └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#10",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#11)->Column#9",
+          "      └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#11",
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#10)->Column#6",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#11)->Column#10",
+          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#11",
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#9)->Column#6",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#9",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(Column#10)->Column#6",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#11)->Column#10",
+          "      └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(41,0) BINARY)->Column#11",
           "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -1718,14 +1796,14 @@
         "Plan": [
           "TableReader 10000.00 root  data:ExchangeSender",
           "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 10000.00 cop[tiflash]  plus(Column#4, Column#8)->Column#9",
-          "    └─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#4, Column#8)]",
+          "  └─Projection 10000.00 cop[tiflash]  plus(Column#5, Column#10)->Column#11",
+          "    └─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#5, Column#10)]",
           "      ├─ExchangeReceiver(Build) 8000.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: Broadcast",
-          "      │   └─Projection 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
+          "      │   └─Projection 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#5",
           "      │     └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "      │       └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
+          "      └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#10",
           "        └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "          └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
@@ -1735,10 +1813,10 @@
         "Plan": [
           "TableReader 10000.00 root  data:ExchangeSender",
           "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(test.t.id, Column#7)]",
+          "  └─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(test.t.id, Column#9)]",
           "    ├─ExchangeReceiver(Build) 8000.00 cop[tiflash]  ",
           "    │ └─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: Broadcast",
-          "    │   └─Projection 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
+          "    │   └─Projection 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#9",
           "    │     └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "    │       └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
@@ -1750,10 +1828,10 @@
         "Plan": [
           "TableReader 10000.00 root  data:ExchangeSender",
           "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 10000.00 cop[tiflash]  left outer join, equal:[eq(test.t.id, Column#7)]",
+          "  └─HashJoin 10000.00 cop[tiflash]  left outer join, equal:[eq(test.t.id, Column#9)]",
           "    ├─ExchangeReceiver(Build) 8000.00 cop[tiflash]  ",
           "    │ └─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: Broadcast",
-          "    │   └─Projection 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
+          "    │   └─Projection 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#9",
           "    │     └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "    │       └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
           "    └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
@@ -1764,12 +1842,12 @@
         "Plan": [
           "TableReader 12487.50 root  data:ExchangeSender",
           "└─ExchangeSender 12487.50 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 cop[tiflash]  right outer join, equal:[eq(test.t.id, Column#7)]",
+          "  └─HashJoin 12487.50 cop[tiflash]  right outer join, equal:[eq(test.t.id, Column#9)]",
           "    ├─ExchangeReceiver(Build) 9990.00 cop[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: Broadcast",
           "    │   └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
           "    │     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─Projection(Probe) 10000.00 cop[tiflash]  minus(test.t.id, 2)->Column#7",
+          "    └─Projection(Probe) 10000.00 cop[tiflash]  minus(test.t.id, 2)->Column#9",
           "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -1778,14 +1856,14 @@
         "Plan": [
           "TableReader 10000.00 root  data:ExchangeSender",
           "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 10000.00 cop[tiflash]  Column#8, Column#4",
-          "    └─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#4, Column#8)]",
+          "  └─Projection 10000.00 cop[tiflash]  Column#10, Column#5",
+          "    └─HashJoin 10000.00 cop[tiflash]  inner join, equal:[eq(Column#5, Column#10)]",
           "      ├─ExchangeReceiver(Build) 8000.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: Broadcast",
-          "      │   └─Projection 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#4",
+          "      │   └─Projection 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#5",
           "      │     └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "      │       └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#8",
+          "      └─Projection(Probe) 8000.00 cop[tiflash]  minus(test.t.id, 2)->Column#10",
           "        └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
           "          └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
@@ -1822,14 +1900,23 @@
           "Sort 8000.00 root  test.t.id",
           "└─TableReader 8000.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection 8000.00 batchCop[tiflash]  mul(Column#4, 2)->Column#5, test.t.id",
-          "      └─Projection 8000.00 batchCop[tiflash]  div(Column#4, cast(case(eq(Column#19, 0), 1, Column#19), decimal(20,0) BINARY))->Column#4, test.t.id",
-          "        └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#20)->Column#19, funcs:sum(Column#21)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "    └─Projection 8000.00 batchCop[tiflash]  mul(Column#5, 2)->Column#6, test.t.id",
+          "      └─Projection 8000.00 batchCop[tiflash]  div(Column#5, cast(case(eq(Column#20, 0), 1, Column#20), decimal(20,0) BINARY))->Column#5, test.t.id",
+          "        └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, funcs:sum(Column#21)->Column#20, funcs:sum(Column#22)->Column#5, funcs:firstrow(test.t.id)->test.t.id",
           "          └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
           "            └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: N/A]",
-          "              └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#25, funcs:count(Column#23)->Column#20, funcs:sum(Column#24)->Column#21",
-          "                └─Projection 10000.00 batchCop[tiflash]  plus(test.t.value, 2)->Column#23, plus(test.t.value, 2)->Column#24, test.t.id",
+          "              └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#26, funcs:count(Column#24)->Column#21, funcs:sum(Column#25)->Column#22",
+          "                └─Projection 10000.00 batchCop[tiflash]  plus(test.t.value, 2)->Column#24, plus(test.t.value, 2)->Column#25, test.t.id",
           "                  └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 cop[tiflash]  from_unixtime(cast(test.t.name, decimal(65,0) BINARY), %Y-%m-%d)->Column#5",
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
