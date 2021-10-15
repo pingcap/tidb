@@ -339,12 +339,8 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 func isValidString(str string, dstChs string) bool {
 	switch dstChs {
 	case charset.CharsetASCII:
-		for _, c := range str {
-			if c >= 0x80 {
-				return false
-			}
-		}
-		return true
+		v := charset.StringValidatorASCII{Enabled: true}
+		return v.Validate(str) == -1
 	case charset.CharsetLatin1:
 		// For backward compatibility, we do not block SQL like select '啊' = convert('a' using latin1) collate latin1_bin;
 		return true
@@ -355,9 +351,8 @@ func isValidString(str string, dstChs string) bool {
 		// Convert to binary is always safe.
 		return true
 	default:
-		e, _ := charset.Lookup(dstChs)
-		_, err := e.NewEncoder().String(str)
-		return err == nil
+		v := charset.StringValidatorOther{Charset: dstChs}
+		return v.Validate(str) == -1
 	}
 }
 

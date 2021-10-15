@@ -331,22 +331,22 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 }
 
 func makeStringValidator(ctx sessionctx.Context, col *model.ColumnInfo) charset.StringValidator {
-	var validator charset.StringValidator
 	switch col.Charset {
 	case charset.CharsetASCII:
 		enabled := !ctx.GetSessionVars().SkipASCIICheck
-		validator = charset.StringValidatorASCII{Enabled: enabled}
+		return charset.StringValidatorASCII{Enabled: enabled}
 	case charset.CharsetUTF8:
 		enabled := !ctx.GetSessionVars().SkipUTF8Check
 		needCheckMB4 := config.GetGlobalConfig().CheckMb4ValueInUTF8
-		validator = charset.StringValidatorUTF8{Enabled: enabled, IsUTF8MB4: false, CheckMB4ValueInUTF8: needCheckMB4}
+		return charset.StringValidatorUTF8{Enabled: enabled, IsUTF8MB4: false, CheckMB4ValueInUTF8: needCheckMB4}
 	case charset.CharsetUTF8MB4:
 		enabled := !ctx.GetSessionVars().SkipUTF8Check
-		validator = charset.StringValidatorUTF8{Enabled: enabled, IsUTF8MB4: true}
-	case charset.CharsetGBK:
-		validator = charset.StringValidatorOther{Charset: "gbk"}
+		return charset.StringValidatorUTF8{Enabled: enabled, IsUTF8MB4: true}
+	case charset.CharsetLatin1, charset.CharsetBinary:
+		return nil
+	default:
+		return charset.StringValidatorOther{Charset: col.Charset}
 	}
-	return validator
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.
