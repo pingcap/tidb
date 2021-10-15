@@ -78,6 +78,7 @@ type ShowExec struct {
 	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName    model.CIStr
 	Table     *ast.TableName       // Used for showing columns.
+	Partition model.CIStr          // Used for showing partition
 	Column    *ast.ColumnName      // Used for `desc table column`.
 	IndexName model.CIStr          // Used for show table regions.
 	Flag      int                  // Some flag parsed from sql, such as FULL.
@@ -146,6 +147,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreateView()
 	case ast.ShowCreateDatabase:
 		return e.fetchShowCreateDatabase()
+	case ast.ShowCreatePlacementPolicy:
+		return e.fetchShowCreatePlacementPolicy()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowDrainerStatus:
@@ -222,6 +225,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlacementForDB(ctx)
 	case ast.ShowPlacementForTable:
 		return e.fetchShowPlacementForTable(ctx)
+	case ast.ShowPlacementForPartition:
+		return e.fetchShowPlacementForPartition(ctx)
 	}
 	return nil
 }
@@ -1377,6 +1382,17 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 		return err
 	}
 	e.appendRow([]interface{}{dbInfo.Name.O, buf.String()})
+	return nil
+}
+
+// fetchShowCreatePlacementPolicy composes show create policy result.
+func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
+	policy, found := e.is.PolicyByName(e.DBName)
+	if !found {
+		return infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+	showCreate := fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", e.DBName.O, policy.PlacementSettings.String())
+	e.appendRow([]interface{}{e.DBName.O, showCreate})
 	return nil
 }
 
