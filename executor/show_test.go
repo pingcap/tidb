@@ -1415,6 +1415,19 @@ func (s *testSuite5) TestShowPerformanceSchema(c *C) {
 			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 }
 
+func (s *testSuite5) TestShowCreatePlacementPolicy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE PLACEMENT POLICY xyz PRIMARY_REGION='us-east-1' REGIONS='us-east-1,us-east-2' FOLLOWERS=4")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` PRIMARY_REGION=\"us-east-1\" REGIONS=\"us-east-1,us-east-2\" FOLLOWERS=4"))
+	// non existent policy
+	err := tk.QueryToErr("SHOW CREATE PLACEMENT POLICY doesnotexist")
+	c.Assert(err.Error(), Equals, infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs("doesnotexist").Error())
+	// alter and try second example
+	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4"))
+	tk.MustExec("DROP PLACEMENT POLICY xyz")
+}
+
 func (s *testSuite5) TestShowTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

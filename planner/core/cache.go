@@ -160,7 +160,9 @@ func (s FieldSlice) Equal(tps []*types.FieldType) bool {
 		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
 		tpEqual := (s[i].Tp == tps[i].Tp) ||
 			(s[i].Tp == mysql.TypeVarchar && tps[i].Tp == mysql.TypeVarString) ||
-			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar)
+			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar) ||
+			// TypeNull should be considered the same as other types.
+			(s[i].Tp == mysql.TypeNull || tps[i].Tp == mysql.TypeNull)
 		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate {
 			return false
 		}
