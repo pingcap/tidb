@@ -609,7 +609,7 @@ const (
 const (
 	// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
 	// for any type of configuration item that has concurrent workers.
-	MaxConfigurableConcurrency = 128
+	MaxConfigurableConcurrency = 256
 )
 
 // Default TiDB system variable values.
@@ -757,14 +757,13 @@ const (
 
 // Process global variables.
 var (
-	ProcessGeneralLog            = atomic.NewBool(false)
-	EnablePProfSQLCPU            = atomic.NewBool(false)
-	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
-	maxDDLReorgWorkerCount int32 = 128
-	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
-	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
-	ddlReorgRowFormat      int64 = DefTiDBRowFormatV2
-	maxDeltaSchemaCount    int64 = DefTiDBMaxDeltaSchemaCount
+	ProcessGeneralLog           = atomic.NewBool(false)
+	EnablePProfSQLCPU           = atomic.NewBool(false)
+	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
+	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
+	ddlErrorCountlimit    int64 = DefTiDBDDLErrorCountLimit
+	ddlReorgRowFormat     int64 = DefTiDBRowFormatV2
+	maxDeltaSchemaCount   int64 = DefTiDBMaxDeltaSchemaCount
 	// Export for testing.
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32

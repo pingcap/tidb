@@ -751,3 +751,29 @@ func TestIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, val, "21")
 }
+
+func TestDDLWorkers(t *testing.T) {
+	svWorkerCount, svBatchSize := GetSysVar(TiDBDDLReorgWorkerCount), GetSysVar(TiDBDDLReorgBatchSize)
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+
+	val, err := svWorkerCount.Validate(vars, "-100", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "1") // converts it to min value
+	val, err = svWorkerCount.Validate(vars, "1234", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "256") // converts it to max value
+	val, err = svWorkerCount.Validate(vars, "100", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "100") // unchanged
+
+	val, err = svBatchSize.Validate(vars, "10", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, fmt.Sprint(MinDDLReorgBatchSize)) // converts it to min value
+	val, err = svBatchSize.Validate(vars, "999999", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, fmt.Sprint(MaxDDLReorgBatchSize)) // converts it to max value
+	val, err = svBatchSize.Validate(vars, "100", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "100") // unchanged
+}

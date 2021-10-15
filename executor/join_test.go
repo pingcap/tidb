@@ -98,8 +98,8 @@ func (s *testSuite) TestJoinInDisk(c *C) {
 func (s *testSuiteJoin2) TestJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustExec("set @@tidb_index_lookup_join_concurrency = 100")
-	c.Assert(tk.Se.GetSessionVars().IndexLookupJoinConcurrency(), Equals, 100)
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency = 200")
+	c.Assert(tk.Se.GetSessionVars().IndexLookupJoinConcurrency(), Equals, 200)
 
 	tk.MustExec("set @@tidb_index_lookup_join_concurrency = 4")
 	c.Assert(tk.Se.GetSessionVars().IndexLookupJoinConcurrency(), Equals, 4)
