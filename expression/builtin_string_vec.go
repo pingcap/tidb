@@ -34,20 +34,27 @@ import (
 )
 
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	// if error is not nil return error, or builtinLowerSig is for binary strings (do nothing)
+	return b.args[0].VecEvalString(b.ctx, input, result)
+}
+
+func (b *builtinLowerSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLowerUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
-	}
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return nil
 	}
 
 	for i := 0; i < input.NumRows(); i++ {
 		result.SetRaw(i, []byte(strings.ToLower(result.GetString(i))))
 	}
+
 	return nil
 }
 
-func (b *builtinLowerSig) vectorized() bool {
+func (b *builtinLowerUTF8Sig) vectorized() bool {
 	return true
 }
 

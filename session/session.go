@@ -2552,6 +2552,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	se8, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	dom.PlanReplayerLoop(se8)
+
 	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {

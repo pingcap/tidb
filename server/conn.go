@@ -1647,7 +1647,7 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 	return nil
 }
 
-// handlePlanRecreator dose the export/import work for reproducing sql queries.
+// handlePlanRecreator does the export/import work for reproducing sql queries.
 func (cc *clientConn) handlePlanRecreator(ctx context.Context, info executor.PlanRecreatorInfo) (string, error) {
 	switch info.(type) {
 	case *executor.PlanRecreatorSingleInfo:
