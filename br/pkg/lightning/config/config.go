@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/tikv/pd/server/api"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -745,7 +744,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		if cfg.App.RegionConcurrency > cpuCount {
 			cfg.App.RegionConcurrency = cpuCount
 		}
-		cfg.DefaultVarsForImporterAndLocalBackend(ctx)
+		cfg.DefaultVarsForImporterAndLocalBackend()
 	default:
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
 	}
@@ -843,39 +842,7 @@ func (cfg *Config) DefaultVarsForTiDBBackend() {
 	}
 }
 
-func (cfg *Config) adjustDistSQLConcurrency(ctx context.Context) error {
-	tls, err := cfg.ToTLS()
-	if err != nil {
-		return err
-	}
-	result := &api.StoresInfo{}
-	err = tls.WithHost(cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.TiDB.DistSQLScanConcurrency = len(result.Stores) * distSQLScanConcurrencyPerStore
-	if cfg.TiDB.DistSQLScanConcurrency < defaultDistSQLScanConcurrency {
-		cfg.TiDB.DistSQLScanConcurrency = defaultDistSQLScanConcurrency
-	}
-	log.L().Info("adjust scan concurrency success", zap.Int("DistSQLScanConcurrency", cfg.TiDB.DistSQLScanConcurrency))
-	return nil
-}
-
-func (cfg *Config) DefaultVarsForImporterAndLocalBackend(ctx context.Context) {
-	if cfg.TiDB.DistSQLScanConcurrency == defaultDistSQLScanConcurrency {
-		var e error
-		for i := 0; i < maxRetryTimes; i++ {
-			e = cfg.adjustDistSQLConcurrency(ctx)
-			if e == nil {
-				break
-			}
-			time.Sleep(defaultRetryBackoffTime)
-		}
-		if e != nil {
-			log.L().Error("failed to adjust scan concurrency", zap.Error(e))
-		}
-	}
-
+func (cfg *Config) DefaultVarsForImporterAndLocalBackend() {
 	if cfg.App.IndexConcurrency == 0 {
 		cfg.App.IndexConcurrency = defaultIndexConcurrency
 	}

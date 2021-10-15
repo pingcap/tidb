@@ -92,7 +92,7 @@ func BenchmarkDecode(b *testing.B) {
 	}
 }
 
-func TestBenchDaily(t *testing.T) {
+func BenchmarkDaily(b *testing.B) {
 	benchdaily.Run(
 		BenchmarkEncode,
 		BenchmarkDecode,
