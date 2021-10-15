@@ -222,7 +222,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 	))
 	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(len(warnings), Equals, 0, Commentf("unexpected warnigns: %+v", warnings))
-	c.Assert(requestCounter, Equals, int32(9))
+	c.Assert(requestCounter, Equals, int32(12))
 
 	// TODO: we need remove it when index usage is GA.
 	rs := tk.MustQuery("show config").Rows()
@@ -235,7 +235,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 
 	// type => server index => row
 	rows := map[string][][]string{}
-	for _, typ := range []string{"tidb", "tikv", "pd"} {
+	for _, typ := range []string{"tidb", "tikv", "tiflash", "pd"} {
 		for _, server := range testServers {
 			rows[typ] = append(rows[typ], []string{
 				fmt.Sprintf("%s %s key1 value1", typ, server.address),
@@ -266,6 +266,9 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 				rows["tikv"][0],
 				rows["tikv"][1],
 				rows["tikv"][2],
+				rows["tiflash"][0],
+				rows["tiflash"][1],
+				rows["tiflash"][2],
 				rows["pd"][0],
 				rows["pd"][1],
 				rows["pd"][2],
@@ -368,6 +371,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
+				rows["tiflash"][0],
 				rows["pd"][0],
 			),
 		},
