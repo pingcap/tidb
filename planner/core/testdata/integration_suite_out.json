@@ -1805,5 +1805,81 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestGroupBySetVar",
+    "Cases": [
+      {
+        "SQL": "select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;",
+        "Plan": [
+          "Sort 1.00 root  Column#6",
+          "└─Projection 1.00 root  floor(div(cast(Column#4, decimal(20,0) BINARY), 2))->Column#6, Column#5",
+          "  └─HashAgg 1.00 root  group by:Column#13, funcs:count(Column#11)->Column#5, funcs:firstrow(Column#12)->Column#4",
+          "    └─Projection 10000.00 root  test.t1.c1, Column#4, floor(div(cast(Column#4, decimal(20,0) BINARY), 2))->Column#13",
+          "      └─Projection 10000.00 root  setvar(rownum, plus(getvar(rownum), 1))->Column#4, test.t1.c1",
+          "        └─HashJoin 10000.00 root  CARTESIAN inner join",
+          "          ├─Projection(Build) 1.00 root  setvar(rownum, -1)->Column#1",
+          "          │ └─TableDual 1.00 root  rows:1",
+          "          └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "            └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select @n:=@n+1 as e from ta group by e",
+        "Plan": [
+          "Projection 1.00 root  setvar(n, plus(getvar(n), 1))->Column#4",
+          "└─HashAgg 1.00 root  group by:Column#8, funcs:firstrow(1)->Column#7",
+          "  └─Projection 10000.00 root  setvar(n, plus(cast(getvar(n), double BINARY), 1))->Column#8",
+          "    └─TableReader 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select @n:=@n+a as e from ta group by e",
+        "Plan": [
+          "Projection 8000.00 root  setvar(n, plus(getvar(n), cast(test.ta.a, double BINARY)))->Column#4",
+          "└─HashAgg 8000.00 root  group by:Column#7, funcs:firstrow(Column#6)->test.ta.a",
+          "  └─Projection 10000.00 root  test.ta.a, setvar(n, plus(getvar(n), cast(test.ta.a, double BINARY)))->Column#7",
+          "    └─TableReader 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select @n:=@n+1 as e from ta) tt group by e",
+        "Plan": [
+          "HashAgg 1.00 root  group by:Column#4, funcs:firstrow(Column#4)->Column#4",
+          "└─Projection 10000.00 root  setvar(n, plus(getvar(n), 1))->Column#4",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select @n:=@n+a as e from ta) tt group by e",
+        "Plan": [
+          "HashAgg 8000.00 root  group by:Column#4, funcs:firstrow(Column#4)->Column#4",
+          "└─Projection 10000.00 root  setvar(n, plus(getvar(n), cast(test.ta.a, double BINARY)))->Column#4",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a from ta group by @n:=@n+1",
+        "Plan": [
+          "HashAgg 1.00 root  group by:Column#5, funcs:firstrow(Column#4)->test.ta.a",
+          "└─Projection 10000.00 root  test.ta.a, setvar(n, plus(getvar(n), 1))->Column#5",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a from ta group by @n:=@n+a",
+        "Plan": [
+          "HashAgg 8000.00 root  group by:Column#5, funcs:firstrow(Column#4)->test.ta.a",
+          "└─Projection 10000.00 root  test.ta.a, setvar(n, plus(getvar(n), cast(test.ta.a, double BINARY)))->Column#5",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]
