@@ -19,14 +19,13 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -268,8 +267,13 @@ func testMaxSlidingWindow(tk *testkit.TestKit, tc maxSlidingWindowTestCase) {
 	result.Check(testkit.Rows(tc.expect...))
 }
 
-func (s *testSuite) TestMaxSlidingWindow(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestMaxSlidingWindow(t *testing.T) {
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	testCases := []maxSlidingWindowTestCase{
 		{
 			rowType:       "bigint",
@@ -332,10 +336,12 @@ func (s *testSuite) TestMaxSlidingWindow(c *C) {
 	for _, o := range orderBy {
 		for _, f := range frameType {
 			for _, tc := range testCases {
-				tc.frameType = f
-				tc.orderBy = o
-				tk.MustExec("drop table if exists t;")
-				testMaxSlidingWindow(tk, tc)
+				t.Run(fmt.Sprintf("%s_%v_%d", tc.rowType, o, f), func(t *testing.T) {
+					tc.frameType = f
+					tc.orderBy = o
+					tk.MustExec("drop table if exists t;")
+					testMaxSlidingWindow(tk, tc)
+				})
 			}
 		}
 	}
