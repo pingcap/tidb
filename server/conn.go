@@ -1647,13 +1647,13 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 	return nil
 }
 
-// handlePlanRecreator does the export/import work for reproducing sql queries.
-func (cc *clientConn) handlePlanRecreator(ctx context.Context, info executor.PlanRecreatorInfo) (string, error) {
+// handlePlanReplayer dose the export/import work for reproducing sql queries.
+func (cc *clientConn) handlePlanReplayer(ctx context.Context, info executor.PlanReplayerInfo) (string, error) {
 	switch info.(type) {
-	case *executor.PlanRecreatorSingleInfo:
+	case *executor.PlanReplayerSingleInfo:
 		return info.Process()
 	}
-	return "", errors.New("plan recreator: not supporting info type")
+	return "", errors.New("plan replayer: not supporting info type")
 }
 
 func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
@@ -1935,11 +1935,11 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 		}
 	}
 
-	planRecreator := cc.ctx.Value(executor.PlanRecreatorVarKey)
-	if planRecreator != nil {
+	planReplayer := cc.ctx.Value(executor.PlanReplayerVarKey)
+	if planReplayer != nil {
 		handled = true
-		defer cc.ctx.SetValue(executor.PlanRecreatorVarKey, nil)
-		token, err := cc.handlePlanRecreator(ctx, planRecreator.(executor.PlanRecreatorInfo))
+		defer cc.ctx.SetValue(executor.PlanReplayerVarKey, nil)
+		token, err := cc.handlePlanReplayer(ctx, planReplayer.(executor.PlanReplayerInfo))
 		if err != nil {
 			return handled, err
 		}
