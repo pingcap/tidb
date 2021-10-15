@@ -148,7 +148,7 @@ func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	}
 
 	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(strings.ToUpper(result.GetString(i))))
+		result.SetRaw(i, []byte(b.encoding.ToUpper(result.GetString(i))))
 	}
 	return nil
 }
