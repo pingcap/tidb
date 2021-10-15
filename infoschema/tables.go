@@ -179,7 +179,9 @@ const (
 	TableDataLockWaits = "DATA_LOCK_WAITS"
 	// TableRegionLabel is the string constant of region label table.
 	TableRegionLabel = "REGION_LABEL"
-	TableTrxSummary  = "TRX_SUMMARY"
+	// TablePlacementRules is the string constant of placement rules table.
+	TablePlacementRules = "PLACEMENT_RULES"
+	TableTrxSummary     = "TRX_SUMMARY"
 )
 
 const (
@@ -276,7 +278,8 @@ var tableIDMap = map[string]int64{
 	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
 	TableRegionLabel:                        autoid.InformationSchemaDBID + 77,
 	TableTiDBHotRegionsHistory:              autoid.InformationSchemaDBID + 78,
-	TableTrxSummary:                         autoid.InformationSchemaDBID + 79,
+	TablePlacementRules:                     autoid.InformationSchemaDBID + 79,
+	TableTrxSummary:                         autoid.InformationSchemaDBID + 80,
 }
 
 type columnInfo struct {
@@ -380,7 +383,7 @@ var tablesCols = []columnInfo{
 	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "UPDATE_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "CHECK_TIME", tp: mysql.TypeDatetime, size: 19},
-	{name: "TABLE_COLLATION", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag, deflt: "utf8_bin"},
+	{name: "TABLE_COLLATION", tp: mysql.TypeVarchar, size: 32, deflt: "utf8_bin"},
 	{name: "CHECKSUM", tp: mysql.TypeLonglong, size: 21},
 	{name: "CREATE_OPTIONS", tp: mysql.TypeVarchar, size: 255},
 	{name: "TABLE_COMMENT", tp: mysql.TypeVarchar, size: 2048},
@@ -1458,6 +1461,24 @@ var tableTrxSummaryCols = []columnInfo{
 	{name: txninfo.AllSQLDigestsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
 }
 
+var tablePlacementRulesCols = []columnInfo{
+	{name: "POLICY_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "CATALOG_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "POLICY_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},    // Catalog wide policy
+	{name: "SCHEMA_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},    // System policy does not have a schema
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},     // Schema level rules does not have a table
+	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength}, // Table level rules does not have a partition
+	{name: "PRIMARY_REGION", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "REGIONS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "LEADER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "FOLLOWER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "LEARNER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "SCHEDULE", tp: mysql.TypeVarchar, size: 20, flag: mysql.NotNullFlag}, // EVEN or MAJORITY_IN_PRIMARY
+	{name: "FOLLOWERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "LEARNERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1842,6 +1863,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableDeadlocks:                          tableDeadlocksCols,
 	TableDataLockWaits:                      tableDataLockWaitsCols,
 	TableRegionLabel:                        tableRegionLabelCols,
+	TablePlacementRules:                     tablePlacementRulesCols,
 	TableTrxSummary:                         tableTrxSummaryCols,
 }
 

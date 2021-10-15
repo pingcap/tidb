@@ -1598,6 +1598,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
 			strings.ToLower(infoschema.TableRegionLabel),
+			strings.ToLower(infoschema.TablePlacementRules),
 			strings.ToLower(infoschema.TableTrxSummary),
 			strings.ToLower(infoschema.ClusterTableTrxSummary):
 			return &MemTableReaderExec{
