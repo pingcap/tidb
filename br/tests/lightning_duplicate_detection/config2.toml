@@ -1,3 +1,6 @@
+[lightning]
+task-info-schema-name = 'lightning_task_info'
+
 [tikv-importer]
 backend = "local"
 duplicate-detection = true
@@ -28,3 +31,7 @@ schema = '$1'
 table = '$2'
 key = '1'
 type = 'sql'
+
+[post-restore]
+analyze = false
+checksum = "optional"

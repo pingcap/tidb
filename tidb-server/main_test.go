@@ -17,8 +17,8 @@ package main
 import (
 	"testing"
 
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"

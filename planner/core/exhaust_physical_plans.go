@@ -22,11 +22,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1886,8 +1886,22 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		lPartitionKeys, rPartitionKeys := p.GetPotentialPartitionKeys()
 		if prop.MPPPartitionTp == property.HashType {
 			var matches []int
-			if matches = prop.IsSubsetOf(lPartitionKeys); len(matches) == 0 {
+			if p.JoinType == InnerJoin {
+				if matches = prop.IsSubsetOf(lPartitionKeys); len(matches) == 0 {
+					matches = prop.IsSubsetOf(rPartitionKeys)
+				}
+			} else if p.JoinType == RightOuterJoin {
+				// for right out join, only the right partition keys can possibly matches the prop, because
+				// the left partition keys will generate NULL values randomly
+				// todo maybe we can add a null-sensitive flag in the MPPPartitionColumn to indicate whether the partition column is
+				//  null-sensitive(used in aggregation) or null-insensitive(used in join)
 				matches = prop.IsSubsetOf(rPartitionKeys)
+			} else {
+				// for left out join, only the left partition keys can possibly matches the prop, because
+				// the right partition keys will generate NULL values randomly
+				// for semi/anti semi/left out semi/anti left out semi join, only left partition keys are returned,
+				// so just check the left partition keys
+				matches = prop.IsSubsetOf(lPartitionKeys)
 			}
 			if len(matches) == 0 {
 				return nil

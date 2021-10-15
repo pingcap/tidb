@@ -27,11 +27,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -222,41 +222,6 @@ func (m *Meta) GenAutoTableIDKeyValue(dbID, tableID, autoID int64) (key, value [
 // GetAutoIDAccessors gets the controller for auto IDs.
 func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
 	return NewAutoIDAccessors(m, dbID, tableID)
-}
-
-// GenSequenceValue adds step to the sequence value and returns the sum.
-func (m *Meta) GenSequenceValue(dbID, sequenceID, step int64) (int64, error) {
-	// Check if DB exists.
-	dbKey := m.dbKey(dbID)
-	if err := m.checkDBExists(dbKey); err != nil {
-		return 0, errors.Trace(err)
-	}
-	// Check if sequence exists.
-	tableKey := m.tableKey(sequenceID)
-	if err := m.checkTableExists(dbKey, tableKey); err != nil {
-		return 0, errors.Trace(err)
-	}
-	return m.txn.HInc(dbKey, m.sequenceKey(sequenceID), step)
-}
-
-// GetSequenceValue gets current sequence value with sequence id.
-func (m *Meta) GetSequenceValue(dbID int64, sequenceID int64) (int64, error) {
-	return m.txn.HGetInt64(m.dbKey(dbID), m.sequenceKey(sequenceID))
-}
-
-// SetSequenceValue sets start value when sequence in cycle.
-func (m *Meta) SetSequenceValue(dbID int64, sequenceID int64, start int64) error {
-	return m.txn.HSet(m.dbKey(dbID), m.sequenceKey(sequenceID), []byte(strconv.FormatInt(start, 10)))
-}
-
-// GetSequenceCycle gets current sequence cycle times with sequence id.
-func (m *Meta) GetSequenceCycle(dbID int64, sequenceID int64) (int64, error) {
-	return m.txn.HGetInt64(m.dbKey(dbID), m.sequenceCycleKey(sequenceID))
-}
-
-// SetSequenceCycle sets cycle times value when sequence in cycle.
-func (m *Meta) SetSequenceCycle(dbID int64, sequenceID int64, round int64) error {
-	return m.txn.HSet(m.dbKey(dbID), m.sequenceCycleKey(sequenceID), []byte(strconv.FormatInt(round, 10)))
 }
 
 // GetSchemaVersion gets current global schema version.

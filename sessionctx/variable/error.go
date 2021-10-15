@@ -15,8 +15,8 @@
 package variable
 
 import (
-	pmysql "github.com/pingcap/parser/mysql"
 	mysql "github.com/pingcap/tidb/errno"
+	pmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
