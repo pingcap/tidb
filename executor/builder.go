@@ -729,6 +729,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		Tp:           v.Tp,
 		DBName:       model.NewCIStr(v.DBName),
 		Table:        v.Table,
+		Partition:    v.Partition,
 		Column:       v.Column,
 		IndexName:    v.IndexName,
 		Flag:         v.Flag,
@@ -1597,7 +1598,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
-			strings.ToLower(infoschema.TableRegionLabel):
+			strings.ToLower(infoschema.TableRegionLabel),
+			strings.ToLower(infoschema.TablePlacementRules):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
