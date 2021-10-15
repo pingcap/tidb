@@ -665,7 +665,7 @@ import (
 	position              "POSITION"
 	primaryRegion         "PRIMARY_REGION"
 	recent                "RECENT"
-	recreator             "RECREATOR"
+	replayer              "REPLAYER"
 	running               "RUNNING"
 	s3                    "S3"
 	schedule              "SCHEDULE"
@@ -888,7 +888,7 @@ import (
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockTablesStmt             "Lock tables statement"
-	PlanRecreatorStmt          "Plan recreator statement"
+	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
 	SelectStmt                 "SELECT statement"
@@ -6151,7 +6151,7 @@ NotKeywordToken:
 |	"MAX"
 |	"NOW"
 |	"RECENT"
-|	"RECREATOR"
+|	"REPLAYER"
 |	"RUNNING"
 |	"PLACEMENT"
 |	"PLAN"
@@ -10939,7 +10939,7 @@ Statement:
 |	KillStmt
 |	LoadDataStmt
 |	LoadStatsStmt
-|	PlanRecreatorStmt
+|	PlanReplayerStmt
 |	PreparedStmt
 |	PurgeImportStmt
 |	RollbackStmt
@@ -13642,9 +13642,9 @@ RowStmt:
 
 /********************************************************************
  *
- * Plan Recreator Statement
+ * Plan Replayer Statement
  *
- * PLAN RECREATOR
+ * PLAN REPLAYER
  * 		[DUMP EXPLAIN
  *			[ANALYZE]
  *			{ExplainableStmt
@@ -13654,10 +13654,10 @@ RowStmt:
  *  		  [LIMIT {[offset,] row_count | row_count OFFSET offset}]}
  *		| LOAD 'file_name']
  *******************************************************************/
-PlanRecreatorStmt:
-	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" ExplainableStmt
+PlanReplayerStmt:
+	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" ExplainableStmt
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    $5,
 			Analyze: false,
 			Load:    false,
@@ -13671,9 +13671,9 @@ PlanRecreatorStmt:
 
 		$$ = x
 	}
-|	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" "ANALYZE" ExplainableStmt
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" ExplainableStmt
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    $6,
 			Analyze: true,
 			Load:    false,
@@ -13687,9 +13687,9 @@ PlanRecreatorStmt:
 
 		$$ = x
 	}
-|	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    nil,
 			Analyze: false,
 			Load:    false,
@@ -13707,9 +13707,9 @@ PlanRecreatorStmt:
 
 		$$ = x
 	}
-|	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" "ANALYZE" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    nil,
 			Analyze: true,
 			Load:    false,
@@ -13727,9 +13727,9 @@ PlanRecreatorStmt:
 
 		$$ = x
 	}
-|	"PLAN" "RECREATOR" "LOAD" stringLit
+|	"PLAN" "REPLAYER" "LOAD" stringLit
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    nil,
 			Analyze: false,
 			Load:    true,
