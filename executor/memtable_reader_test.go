@@ -288,7 +288,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 		},
 		{
 			sql:      "select * from information_schema.cluster_config where type='pd' or instance='" + testServers[0].address + "'",
-			reqCount: 9,
+			reqCount: 12,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
