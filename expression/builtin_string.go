@@ -99,6 +99,7 @@ var (
 	_ builtinFunc = &builtinRightSig{}
 	_ builtinFunc = &builtinRightUTF8Sig{}
 	_ builtinFunc = &builtinRepeatSig{}
+	_ builtinFunc = &builtinLowerUTF8Sig{}
 	_ builtinFunc = &builtinLowerSig{}
 	_ builtinFunc = &builtinReverseUTF8Sig{}
 	_ builtinFunc = &builtinReverseSig{}
@@ -700,9 +701,36 @@ func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	argTp := args[0].GetType()
 	bf.tp.Flen = argTp.Flen
 	SetBinFlagOrBinStr(argTp, bf.tp)
-	sig := &builtinLowerSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_Lower)
+	var sig builtinFunc
+	if types.IsBinaryStr(argTp) {
+		sig = &builtinLowerSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Lower)
+	} else {
+		sig = &builtinLowerUTF8Sig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_LowerUTF8)
+	}
 	return sig, nil
+}
+
+type builtinLowerUTF8Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLowerUTF8Sig) Clone() builtinFunc {
+	newSig := &builtinLowerUTF8Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinLowerUTF8Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
+func (b *builtinLowerUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
+
+	return strings.ToLower(d), false, nil
 }
 
 type builtinLowerSig struct {
@@ -723,11 +751,7 @@ func (b *builtinLowerSig) evalString(row chunk.Row) (d string, isNull bool, err 
 		return d, isNull, err
 	}
 
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return d, false, nil
-	}
-
-	return strings.ToLower(d), false, nil
+	return d, false, nil
 }
 
 type reverseFunctionClass struct {
