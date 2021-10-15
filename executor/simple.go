@@ -982,7 +982,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 	}
 
 	for _, role := range s.Roles {
-		exists, err := userExists(ctx, e.ctx, role.Username, role.Hostname)
+		exists, err := userExists(ctx, e.ctx, role.Username, strings.ToLower(role.Hostname))
 		if err != nil {
 			return err
 		}
@@ -991,7 +991,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 		}
 	}
 	for _, user := range s.Users {
-		exists, err := userExists(ctx, e.ctx, user.Username, user.Hostname)
+		exists, err := userExists(ctx, e.ctx, user.Username, strings.ToLower(user.Hostname))
 		if err != nil {
 			return err
 		}
