@@ -18,8 +18,15 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
+
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	goleak.VerifyTestMain(m)
+}
 
 func TestGlobalConfigSyncer(t *testing.T) {
 	syncer := NewGlobalConfigSyncer(nil)
