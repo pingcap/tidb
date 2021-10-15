@@ -63,7 +63,7 @@ func (p *planReplayer) planReplayerGC(t time.Duration) {
 	files, err := ioutil.ReadDir(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			logutil.BgLogger().Info("[PlanReplayer] no plan replayer directory", zap.Error(err))
+			logutil.BgLogger().Warn("[PlanReplayer] open plan replayer directory failed", zap.Error(err))
 		}
 		return
 	}
