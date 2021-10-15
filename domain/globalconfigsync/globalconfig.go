@@ -16,6 +16,7 @@ package globalconfigsync
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
