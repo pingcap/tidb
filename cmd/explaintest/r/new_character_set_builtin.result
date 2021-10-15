@@ -9,3 +9,14 @@ select hex(a), hex(b), hex(c) from t;
 hex(a)	hex(b)	hex(c)
 E4B880E4BA8CE4B889	D2BBB6FEC8FD	E4B880E4BA8CE4B8890000000000000000000000
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(100) charset utf8mb4, b char(100) charset gbk);
+insert into t values ('àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ', 'àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ');
+select upper(a), upper(b) from t;
+upper(a)	upper(b)
+ÀÁÈÉÊÌÍÒÓÙÚÜĀĒĚĪŃŇŌŪǍǏǑǓǕǗǙǛⅪⅫ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
+set @@tidb_enable_vectorized_expression = true;
+select upper(a), upper(b) from t;
+upper(a)	upper(b)
+ÀÁÈÉÊÌÍÒÓÙÚÜĀĒĚĪŃŇŌŪǍǏǑǓǕǗǙǛⅪⅫ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
+set @@tidb_enable_vectorized_expression = false;
