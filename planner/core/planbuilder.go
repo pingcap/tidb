@@ -1182,10 +1182,10 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	if len(paths) == 0 {
 		helpMsg := ""
 		if engineVals == "tiflash" {
-			helpMsg = ". May be TiFlash repilca is not ready or the query is not read only (TiFlash can only process read-only query)"
+			helpMsg = ". Please check tiflash replica or ensure the query is readonly"
 		}
-		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v') for table '%v'%s. Available values are '%v'.",
-			variable.TiDBIsolationReadEngines, engineVals, tblName.String(), helpMsg, availableEngineStr))
+		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%v' = '%v', valid value can be '%s'%s.", tblName.String(),
+			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
 	}
 	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
 		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
