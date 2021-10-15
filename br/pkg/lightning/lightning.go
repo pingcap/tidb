@@ -61,6 +61,7 @@ type Lightning struct {
 	server     http.Server
 	serverAddr net.Addr
 	serverLock sync.Mutex
+	status     restore.LightningStatus
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -271,7 +272,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	// initiation of default glue should be after RegisterMySQL, which is ready to be called after taskCfg.Adjust
 	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
 	if g == nil {
-		db, err := restore.DBFromConfig(taskCfg.TiDB)
+		db, err := restore.DBFromConfig(ctx, taskCfg.TiDB)
 		if err != nil {
 			return err
 		}
@@ -310,7 +311,8 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	web.BroadcastInitProgress(dbMetas)
 
 	var procedure *restore.Controller
-	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, s, g)
+
+	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, &l.status, s, g)
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
@@ -331,6 +333,13 @@ func (l *Lightning) Stop() {
 		log.L().Warn("failed to shutdown HTTP server", log.ShortError(err))
 	}
 	l.shutdown()
+}
+
+// Status return the sum size of file which has been imported to TiKV and the total size of source file.
+func (l *Lightning) Status() (finished int64, total int64) {
+	finished = l.status.FinishedFileSize.Load()
+	total = l.status.TotalFileSize.Load()
+	return
 }
 
 func writeJSONError(w http.ResponseWriter, code int, prefix string, err error) {

@@ -26,13 +26,13 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -133,7 +133,7 @@ func SubTestInfo(t *testing.T) {
 		Col: "utf8_bin",
 	}
 	ctx := mock.NewContext()
-	require.NoError(t, dom.ddl.CreateSchema(ctx, model.NewCIStr("aaa"), cs))
+	require.NoError(t, dom.ddl.CreateSchema(ctx, model.NewCIStr("aaa"), cs, nil, nil))
 	require.NoError(t, dom.Reload())
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 
@@ -175,7 +175,7 @@ func SubTestDomain(t *testing.T) {
 		Chs: "utf8",
 		Col: "utf8_bin",
 	}
-	err = dd.CreateSchema(ctx, model.NewCIStr("aaa"), cs)
+	err = dd.CreateSchema(ctx, model.NewCIStr("aaa"), cs, nil, nil)
 	require.NoError(t, err)
 
 	// Test for fetchSchemasWithTables when "tables" isn't nil.
@@ -232,7 +232,7 @@ func SubTestDomain(t *testing.T) {
 	require.Equal(t, tblInfo2, tbl.Meta())
 
 	// Test for tryLoadSchemaDiffs when "isTooOldSchema" is false.
-	err = dd.CreateSchema(ctx, model.NewCIStr("bbb"), cs)
+	err = dd.CreateSchema(ctx, model.NewCIStr("bbb"), cs, nil, nil)
 	require.NoError(t, err)
 
 	err = dom.Reload()
