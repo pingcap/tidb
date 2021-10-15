@@ -286,10 +286,10 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
 		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys)
 		require.NoError(t, err)
-		require.Equal(t, fmt.Sprintf("%v", helper.chosenAccess), tt.accesses)
-		require.Equal(t, fmt.Sprintf("%v", helper.chosenRanges), tt.ranges, "test case: #%v", i)
-		require.Equal(t, fmt.Sprintf("%v", helper.idxOff2KeyOff), tt.idxOff2KeyOff)
-		require.Equal(t, fmt.Sprintf("%v", helper.chosenRemained), tt.remained)
-		require.Equal(t, fmt.Sprintf("%v", helper.lastColManager), tt.compareFilters)
+		require.Equal(t, tt.accesses, fmt.Sprintf("%v", helper.chosenAccess))
+		require.Equal(t, tt.ranges, fmt.Sprintf("%v", helper.chosenRanges), "test case: ", i)
+		require.Equal(t, tt.idxOff2KeyOff, fmt.Sprintf("%v", helper.idxOff2KeyOff))
+		require.Equal(t, tt.remained, fmt.Sprintf("%v", helper.chosenRemained))
+		require.Equal(t, tt.compareFilters, fmt.Sprintf("%v", helper.lastColManager))
 	}
 }
