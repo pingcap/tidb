@@ -311,7 +311,7 @@ type StringValidator interface {
 }
 
 // StringValidatorASCII checks whether a string is valid ASCII string.
-type StringValidatorASCII struct {}
+type StringValidatorASCII struct{}
 
 // Validate checks whether the string is valid in the given charset.
 // It returns the first invalid byte offset.
