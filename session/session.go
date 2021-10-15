@@ -1631,7 +1631,7 @@ var querySpecialKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
 	executor.IndexAdviseVarKey,
-	executor.PlanRecreatorVarKey,
+	executor.PlanReplayerVarKey,
 }
 
 func (s *session) hasQuerySpecial() bool {
