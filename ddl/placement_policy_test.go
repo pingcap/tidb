@@ -249,7 +249,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t,t2")
+	tk.MustExec("drop table if exists t,t_range_p,t_hash_p,t_list_p")
 
 	// Direct placement option: special constraints may be incompatible with common constraint.
 	_, err := tk.Exec("create table t(a int) " +
@@ -306,11 +306,18 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		"CONSTRAINTS=\"[+region=bj]\" ")
 	tk.MustExec("create table t(a int)" +
 		"PLACEMENT POLICY=\"x\"")
-	tk.MustExec("create table t2(id int) placement policy x partition by range(id) (" +
+	tk.MustExec("create table t_range_p(id int) placement policy x partition by range(id) (" +
 		"PARTITION p0 VALUES LESS THAN (100)," +
 		"PARTITION p1 VALUES LESS THAN (1000) placement policy y," +
 		"PARTITION p2 VALUES LESS THAN (10000) PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1, cn-east-2\" FOLLOWERS=2 )",
 	)
+	tk.MustExec("set tidb_enable_list_partition=1")
+	tk.MustExec("create table t_list_p(name varchar(10)) placement policy x partition by list columns(name) (" +
+		"PARTITION p0 VALUES IN ('a', 'b')," +
+		"PARTITION p1 VALUES IN ('c', 'd') placement policy y," +
+		"PARTITION p2 VALUES IN ('e', 'f') PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1, cn-east-2\" FOLLOWERS=2 )",
+	)
+	tk.MustExec("create table t_hash_p(id int) placement policy x partition by HASH(id) PARTITIONS 4")
 
 	policyX := testGetPolicyByName(c, tk.Se, "x", true)
 	c.Assert(policyX.Name.L, Equals, "x")
@@ -328,31 +335,49 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	tk.MustQuery("SELECT * FROM information_schema.placement_rules WHERE TABLE_NAME = 't'").Check(testkit.Rows())
 	tk.MustExec("drop table if exists t")
 
-	tbl = testGetTableByName(c, tk.Se, "test", "t2")
+	checkPartitionTableFunc := func(tblName string) {
+		tbl = testGetTableByName(c, tk.Se, "test", tblName)
+		c.Assert(tbl, NotNil)
+		c.Assert(tbl.Meta().PlacementPolicyRef, NotNil)
+		c.Assert(tbl.Meta().PlacementPolicyRef.Name.L, Equals, "x")
+		c.Assert(tbl.Meta().PlacementPolicyRef.ID, Equals, policyX.ID)
+		c.Assert(tbl.Meta().DirectPlacementOpts, IsNil)
+
+		c.Assert(tbl.Meta().Partition, NotNil)
+		c.Assert(len(tbl.Meta().Partition.Definitions), Equals, 3)
+
+		p0 := tbl.Meta().Partition.Definitions[0]
+		c.Assert(p0.PlacementPolicyRef, IsNil)
+		c.Assert(p0.DirectPlacementOpts, IsNil)
+
+		p1 := tbl.Meta().Partition.Definitions[1]
+		c.Assert(p1.PlacementPolicyRef, NotNil)
+		c.Assert(p1.PlacementPolicyRef.Name.L, Equals, "y")
+		c.Assert(p1.PlacementPolicyRef.ID, Equals, policyY.ID)
+		c.Assert(p1.DirectPlacementOpts, IsNil)
+
+		p2 := tbl.Meta().Partition.Definitions[2]
+		c.Assert(p0.PlacementPolicyRef, IsNil)
+		checkFunc(p2.DirectPlacementOpts)
+	}
+
+	checkPartitionTableFunc("t_range_p")
+	tk.MustExec("drop table if exists t_range_p")
+
+	checkPartitionTableFunc("t_list_p")
+	tk.MustExec("drop table if exists t_list_p")
+
+	tbl = testGetTableByName(c, tk.Se, "test", "t_hash_p")
 	c.Assert(tbl, NotNil)
 	c.Assert(tbl.Meta().PlacementPolicyRef, NotNil)
 	c.Assert(tbl.Meta().PlacementPolicyRef.Name.L, Equals, "x")
 	c.Assert(tbl.Meta().PlacementPolicyRef.ID, Equals, policyX.ID)
 	c.Assert(tbl.Meta().DirectPlacementOpts, IsNil)
-
-	c.Assert(tbl.Meta().Partition, NotNil)
-	c.Assert(len(tbl.Meta().Partition.Definitions), Equals, 3)
-
-	p0 := tbl.Meta().Partition.Definitions[0]
-	c.Assert(p0.PlacementPolicyRef, IsNil)
-	c.Assert(p0.DirectPlacementOpts, IsNil)
-
-	p1 := tbl.Meta().Partition.Definitions[1]
-	c.Assert(p1.PlacementPolicyRef, NotNil)
-	c.Assert(p1.PlacementPolicyRef.Name.L, Equals, "y")
-	c.Assert(p1.PlacementPolicyRef.ID, Equals, policyY.ID)
-	c.Assert(p1.DirectPlacementOpts, IsNil)
-
-	p2 := tbl.Meta().Partition.Definitions[2]
-	c.Assert(p0.PlacementPolicyRef, IsNil)
-	checkFunc(p2.DirectPlacementOpts)
-
-	tk.MustExec("drop table if exists t2")
+	for _, p := range tbl.Meta().Partition.Definitions {
+		c.Assert(p.PlacementPolicyRef, IsNil)
+		c.Assert(p.DirectPlacementOpts, IsNil)
+	}
+	tk.MustExec("drop table if exists t_hash_p")
 
 	tk.MustExec("create table t(a int)" +
 		"FOLLOWERS=2 " +
