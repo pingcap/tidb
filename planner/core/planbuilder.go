@@ -2338,6 +2338,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			Tp:          show.Tp,
 			DBName:      show.DBName,
 			Table:       show.Table,
+			Partition:   show.Partition,
 			Column:      show.Column,
 			IndexName:   show.IndexName,
 			Flag:        show.Flag,
@@ -2356,7 +2357,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if p.DBName == "" {
 			return nil, ErrNoDB
 		}
-	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable:
+	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
 		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()

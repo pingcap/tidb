@@ -249,7 +249,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t,t2")
 
 	// Direct placement option: special constraints may be incompatible with common constraint.
 	_, err := tk.Exec("create table t(a int) " +
@@ -301,16 +301,58 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	tk.MustExec("create placement policy x " +
 		"FOLLOWERS=2 " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
+	tk.MustExec("create placement policy y " +
+		"FOLLOWERS=3 " +
+		"CONSTRAINTS=\"[+region=bj]\" ")
 	tk.MustExec("create table t(a int)" +
 		"PLACEMENT POLICY=\"x\"")
+	tk.MustExec("create table t2(id int) placement policy x partition by range(id) (" +
+		"PARTITION p0 VALUES LESS THAN (100)," +
+		"PARTITION p1 VALUES LESS THAN (1000) placement policy y," +
+		"PARTITION p2 VALUES LESS THAN (10000) PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1, cn-east-2\" FOLLOWERS=2 )",
+	)
+
+	policyX := testGetPolicyByName(c, tk.Se, "x", true)
+	c.Assert(policyX.Name.L, Equals, "x")
+	c.Assert(policyX.ID != 0, Equals, true)
+
+	policyY := testGetPolicyByName(c, tk.Se, "y", true)
+	c.Assert(policyY.Name.L, Equals, "y")
+	c.Assert(policyY.ID != 0, Equals, true)
 
 	tbl = testGetTableByName(c, tk.Se, "test", "t")
 	c.Assert(tbl, NotNil)
 	c.Assert(tbl.Meta().PlacementPolicyRef, NotNil)
 	c.Assert(tbl.Meta().PlacementPolicyRef.Name.L, Equals, "x")
-	c.Assert(tbl.Meta().PlacementPolicyRef.ID != 0, Equals, true)
+	c.Assert(tbl.Meta().PlacementPolicyRef.ID, Equals, policyX.ID)
 	tk.MustQuery("SELECT * FROM information_schema.placement_rules WHERE TABLE_NAME = 't'").Check(testkit.Rows())
 	tk.MustExec("drop table if exists t")
+
+	tbl = testGetTableByName(c, tk.Se, "test", "t2")
+	c.Assert(tbl, NotNil)
+	c.Assert(tbl.Meta().PlacementPolicyRef, NotNil)
+	c.Assert(tbl.Meta().PlacementPolicyRef.Name.L, Equals, "x")
+	c.Assert(tbl.Meta().PlacementPolicyRef.ID, Equals, policyX.ID)
+	c.Assert(tbl.Meta().DirectPlacementOpts, IsNil)
+
+	c.Assert(tbl.Meta().Partition, NotNil)
+	c.Assert(len(tbl.Meta().Partition.Definitions), Equals, 3)
+
+	p0 := tbl.Meta().Partition.Definitions[0]
+	c.Assert(p0.PlacementPolicyRef, IsNil)
+	c.Assert(p0.DirectPlacementOpts, IsNil)
+
+	p1 := tbl.Meta().Partition.Definitions[1]
+	c.Assert(p1.PlacementPolicyRef, NotNil)
+	c.Assert(p1.PlacementPolicyRef.Name.L, Equals, "y")
+	c.Assert(p1.PlacementPolicyRef.ID, Equals, policyY.ID)
+	c.Assert(p1.DirectPlacementOpts, IsNil)
+
+	p2 := tbl.Meta().Partition.Definitions[2]
+	c.Assert(p0.PlacementPolicyRef, IsNil)
+	checkFunc(p2.DirectPlacementOpts)
+
+	tk.MustExec("drop table if exists t2")
 
 	tk.MustExec("create table t(a int)" +
 		"FOLLOWERS=2 " +
@@ -336,6 +378,7 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	tk.MustQuery("SELECT * FROM information_schema.placement_rules WHERE TABLE_NAME = 't'").Check(testkit.Rows("<nil> def <nil> test t <nil>   [+disk=ssd]     2 0"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("drop placement policy if exists y")
 }
 
 func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
