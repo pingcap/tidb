@@ -21,10 +21,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -239,9 +239,9 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, 32, v.InitChunkSize)
 	require.Equal(t, 1024, v.MaxChunkSize)
 	err = SetSessionSystemVar(v, TiDBMaxChunkSize, "2")
-	require.Error(t, err)
+	require.NoError(t, err) // converts to min value
 	err = SetSessionSystemVar(v, TiDBInitChunkSize, "1024")
-	require.Error(t, err)
+	require.NoError(t, err) // converts to max value
 
 	// Test case for TiDBConfig session variable.
 	err = SetSessionSystemVar(v, TiDBConfig, "abc")
@@ -486,8 +486,14 @@ func TestVarsutil(t *testing.T) {
 	err = SetSessionSystemVar(v, "UnknownVariable", "on")
 	require.Regexp(t, ".*]Unknown system variable 'UnknownVariable'", err.Error())
 
+	// reset warnings
+	v.StmtCtx.TruncateWarnings(0)
+	require.Len(t, v.StmtCtx.GetWarnings(), 0)
+
 	err = SetSessionSystemVar(v, TiDBAnalyzeVersion, "4")
-	require.Regexp(t, ".*Variable 'tidb_analyze_version' can't be set to the value of '4'", err.Error())
+	require.NoError(t, err) // converts to max value
+	warn := v.StmtCtx.GetWarnings()[0]
+	require.Regexp(t, ".*Truncated incorrect tidb_analyze_version value", warn.Err.Error())
 }
 
 func TestSetOverflowBehave(t *testing.T) {
@@ -549,35 +555,35 @@ func TestValidate(t *testing.T) {
 		{TiDBEnableListTablePartition, "OFF", false},
 		{TiDBEnableListTablePartition, "list", true},
 		{TiDBOptCorrelationExpFactor, "a", true},
-		{TiDBOptCorrelationExpFactor, "-10", true},
+		{TiDBOptCorrelationExpFactor, "-10", false},
 		{TiDBOptCorrelationThreshold, "a", true},
-		{TiDBOptCorrelationThreshold, "-2", true},
+		{TiDBOptCorrelationThreshold, "-2", false},
 		{TiDBOptCPUFactor, "a", true},
-		{TiDBOptCPUFactor, "-2", true},
-		{TiDBOptTiFlashConcurrencyFactor, "-2", true},
+		{TiDBOptCPUFactor, "-2", false},
+		{TiDBOptTiFlashConcurrencyFactor, "-2", false},
 		{TiDBOptCopCPUFactor, "a", true},
-		{TiDBOptCopCPUFactor, "-2", true},
+		{TiDBOptCopCPUFactor, "-2", false},
 		{TiDBOptNetworkFactor, "a", true},
-		{TiDBOptNetworkFactor, "-2", true},
+		{TiDBOptNetworkFactor, "-2", false},
 		{TiDBOptScanFactor, "a", true},
-		{TiDBOptScanFactor, "-2", true},
+		{TiDBOptScanFactor, "-2", false},
 		{TiDBOptDescScanFactor, "a", true},
-		{TiDBOptDescScanFactor, "-2", true},
+		{TiDBOptDescScanFactor, "-2", false},
 		{TiDBOptSeekFactor, "a", true},
-		{TiDBOptSeekFactor, "-2", true},
+		{TiDBOptSeekFactor, "-2", false},
 		{TiDBOptMemoryFactor, "a", true},
-		{TiDBOptMemoryFactor, "-2", true},
+		{TiDBOptMemoryFactor, "-2", false},
 		{TiDBOptDiskFactor, "a", true},
-		{TiDBOptDiskFactor, "-2", true},
+		{TiDBOptDiskFactor, "-2", false},
 		{TiDBOptConcurrencyFactor, "a", true},
-		{TiDBOptConcurrencyFactor, "-2", true},
+		{TiDBOptConcurrencyFactor, "-2", false},
 		{TxnIsolation, "READ-UNCOMMITTED", true},
 		{TiDBInitChunkSize, "a", true},
-		{TiDBInitChunkSize, "-1", true},
+		{TiDBInitChunkSize, "-1", false},
 		{TiDBMaxChunkSize, "a", true},
-		{TiDBMaxChunkSize, "-1", true},
+		{TiDBMaxChunkSize, "-1", false},
 		{TiDBOptJoinReorderThreshold, "a", true},
-		{TiDBOptJoinReorderThreshold, "-1", true},
+		{TiDBOptJoinReorderThreshold, "-1", false},
 		{TiDBReplicaRead, "invalid", true},
 		{TiDBTxnMode, "invalid", true},
 		{TiDBTxnMode, "pessimistic", false},
@@ -662,25 +668,25 @@ func TestValidateStmtSummary(t *testing.T) {
 		{TiDBStmtSummaryRefreshInterval, "a", true, ScopeSession},
 		{TiDBStmtSummaryRefreshInterval, "", false, ScopeSession},
 		{TiDBStmtSummaryRefreshInterval, "", true, ScopeGlobal},
-		{TiDBStmtSummaryRefreshInterval, "0", true, ScopeGlobal},
-		{TiDBStmtSummaryRefreshInterval, "99999999999", true, ScopeGlobal},
+		{TiDBStmtSummaryRefreshInterval, "0", false, ScopeGlobal},
+		{TiDBStmtSummaryRefreshInterval, "99999999999", false, ScopeGlobal},
 		{TiDBStmtSummaryHistorySize, "a", true, ScopeSession},
 		{TiDBStmtSummaryHistorySize, "", false, ScopeSession},
 		{TiDBStmtSummaryHistorySize, "", true, ScopeGlobal},
 		{TiDBStmtSummaryHistorySize, "0", false, ScopeGlobal},
-		{TiDBStmtSummaryHistorySize, "-1", true, ScopeGlobal},
-		{TiDBStmtSummaryHistorySize, "99999999", true, ScopeGlobal},
+		{TiDBStmtSummaryHistorySize, "-1", false, ScopeGlobal},
+		{TiDBStmtSummaryHistorySize, "99999999", false, ScopeGlobal},
 		{TiDBStmtSummaryMaxStmtCount, "a", true, ScopeSession},
 		{TiDBStmtSummaryMaxStmtCount, "", false, ScopeSession},
 		{TiDBStmtSummaryMaxStmtCount, "", true, ScopeGlobal},
-		{TiDBStmtSummaryMaxStmtCount, "0", true, ScopeGlobal},
-		{TiDBStmtSummaryMaxStmtCount, "99999999", true, ScopeGlobal},
+		{TiDBStmtSummaryMaxStmtCount, "0", false, ScopeGlobal},
+		{TiDBStmtSummaryMaxStmtCount, "99999999", false, ScopeGlobal},
 		{TiDBStmtSummaryMaxSQLLength, "a", true, ScopeSession},
 		{TiDBStmtSummaryMaxSQLLength, "", false, ScopeSession},
 		{TiDBStmtSummaryMaxSQLLength, "", true, ScopeGlobal},
 		{TiDBStmtSummaryMaxSQLLength, "0", false, ScopeGlobal},
-		{TiDBStmtSummaryMaxSQLLength, "-1", true, ScopeGlobal},
-		{TiDBStmtSummaryMaxSQLLength, "99999999999", true, ScopeGlobal},
+		{TiDBStmtSummaryMaxSQLLength, "-1", false, ScopeGlobal},
+		{TiDBStmtSummaryMaxSQLLength, "99999999999", false, ScopeGlobal},
 	}
 
 	for _, tc := range testCases {

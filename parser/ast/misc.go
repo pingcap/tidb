@@ -21,10 +21,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 )
 
 var (
@@ -54,7 +54,7 @@ var (
 	_ StmtNode = &RestartStmt{}
 	_ StmtNode = &RenameUserStmt{}
 	_ StmtNode = &HelpStmt{}
-	_ StmtNode = &PlanRecreatorStmt{}
+	_ StmtNode = &PlanReplayerStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -243,8 +243,8 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// PlanRecreatorStmt is a statement to dump or load information for recreating plans
-type PlanRecreatorStmt struct {
+// PlanReplayerStmt is a statement to dump or load information for recreating plans
+type PlanReplayerStmt struct {
 	stmtNode
 
 	Stmt    StmtNode
@@ -260,13 +260,13 @@ type PlanRecreatorStmt struct {
 }
 
 // Restore implements Node interface.
-func (n *PlanRecreatorStmt) Restore(ctx *format.RestoreCtx) error {
+func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Load {
-		ctx.WriteKeyWord("PLAN RECREATOR LOAD ")
+		ctx.WriteKeyWord("PLAN REPLAYER LOAD ")
 		ctx.WriteString(n.File)
 		return nil
 	}
-	ctx.WriteKeyWord("PLAN RECREATOR DUMP EXPLAIN ")
+	ctx.WriteKeyWord("PLAN REPLAYER DUMP EXPLAIN ")
 	if n.Analyze {
 		ctx.WriteKeyWord("ANALYZE ")
 	}
@@ -275,37 +275,37 @@ func (n *PlanRecreatorStmt) Restore(ctx *format.RestoreCtx) error {
 		if n.Where != nil {
 			ctx.WriteKeyWord(" WHERE ")
 			if err := n.Where.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore PlanRecreatorStmt.Where")
+				return errors.Annotate(err, "An error occurred while restore PlanReplayerStmt.Where")
 			}
 		}
 		if n.OrderBy != nil {
 			ctx.WriteKeyWord(" ")
 			if err := n.OrderBy.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore PlanRecreatorStmt.OrderBy")
+				return errors.Annotate(err, "An error occurred while restore PlanReplayerStmt.OrderBy")
 			}
 		}
 		if n.Limit != nil {
 			ctx.WriteKeyWord(" ")
 			if err := n.Limit.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore PlanRecreatorStmt.Limit")
+				return errors.Annotate(err, "An error occurred while restore PlanReplayerStmt.Limit")
 			}
 		}
 		return nil
 	}
 	if err := n.Stmt.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore PlanRecreatorStmt.Stmt")
+		return errors.Annotate(err, "An error occurred while restore PlanReplayerStmt.Stmt")
 	}
 	return nil
 }
 
 // Accept implements Node Accept interface.
-func (n *PlanRecreatorStmt) Accept(v Visitor) (Node, bool) {
+func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
 
-	n = newNode.(*PlanRecreatorStmt)
+	n = newNode.(*PlanReplayerStmt)
 
 	if n.Load {
 		return v.Leave(n)

@@ -23,9 +23,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -34,20 +34,27 @@ import (
 )
 
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
-		return err
-	}
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return nil
-	}
-
-	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(strings.ToLower(result.GetString(i))))
-	}
-	return nil
+	// if error is not nil return error, or builtinLowerSig is for binary strings (do nothing)
+	return b.args[0].VecEvalString(b.ctx, input, result)
 }
 
 func (b *builtinLowerSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLowerUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	for i := 0; i < input.NumRows(); i++ {
+		result.SetRaw(i, []byte(b.encoding.ToLower(result.GetString(i))))
+	}
+
+	return nil
+}
+
+func (b *builtinLowerUTF8Sig) vectorized() bool {
 	return true
 }
 
@@ -141,7 +148,7 @@ func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	}
 
 	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(strings.ToUpper(result.GetString(i))))
+		result.SetRaw(i, []byte(b.encoding.ToUpper(result.GetString(i))))
 	}
 	return nil
 }
@@ -440,6 +447,7 @@ func (b *builtinHexStrArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
+	var encodedBuf []byte
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
@@ -449,7 +457,15 @@ func (b *builtinHexStrArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(strings.ToUpper(hex.EncodeToString(buf0.GetBytes(i))))
+		buf0Bytes := buf0.GetBytes(i)
+		if b.encoding.Enabled() {
+			encodedBuf, err = b.encoding.Encode(encodedBuf, buf0Bytes)
+			if err != nil {
+				return err
+			}
+			buf0Bytes = encodedBuf
+		}
+		result.AppendString(strings.ToUpper(hex.EncodeToString(buf0Bytes)))
 	}
 	return nil
 }
