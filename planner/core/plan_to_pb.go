@@ -16,11 +16,11 @@ package core
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -216,8 +216,9 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 	return true
 }
 
-func findColumnInfoByID(infos []*model.ColumnInfo, id int64) *model.ColumnInfo {
-	for _, info := range infos {
+// FindColumnInfoByID finds ColumnInfo in cols by ID.
+func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInfo {
+	for _, info := range colInfos {
 		if info.ID == id {
 			return info
 		}
@@ -308,7 +309,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 		} else if col.ID == model.ExtraPidColID {
 			columns = append(columns, model.NewExtraPartitionIDColInfo())
 		} else {
-			columns = append(columns, findColumnInfoByID(tableColumns, col.ID))
+			columns = append(columns, FindColumnInfoByID(tableColumns, col.ID))
 		}
 	}
 	var pkColIds []int64

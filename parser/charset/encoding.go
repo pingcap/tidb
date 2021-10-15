@@ -17,10 +17,11 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/transform"
 )
@@ -43,9 +44,10 @@ func Formatted(label string) EncodingLabel {
 
 // Encoding provide a interface to encode/decode a string with specific encoding.
 type Encoding struct {
-	enc        encoding.Encoding
-	name       string
-	charLength func([]byte) int
+	enc         encoding.Encoding
+	name        string
+	charLength  func([]byte) int
+	specialCase unicode.SpecialCase
 }
 
 // Enabled indicates whether the non-utf8 encoding is used.
@@ -66,9 +68,10 @@ func NewEncoding(label string) *Encoding {
 	e, name := Lookup(label)
 	if e != nil && name != encodingLegacy {
 		return &Encoding{
-			enc:        e,
-			name:       name,
-			charLength: FindNextCharacterLength(name),
+			enc:         e,
+			name:        name,
+			charLength:  FindNextCharacterLength(name),
+			specialCase: LookupSpecialCase(name),
 		}
 	}
 	return &Encoding{name: name}
@@ -85,6 +88,7 @@ func (e *Encoding) UpdateEncoding(label EncodingLabel) {
 		e.enc = nil
 		e.charLength = nil
 	}
+	e.specialCase = LookupSpecialCase(e.name)
 }
 
 // Encode convert bytes from utf-8 charset to a specific charset.
