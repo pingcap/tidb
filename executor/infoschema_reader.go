@@ -166,7 +166,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableRegionLabel:
 			err = e.setDataForRegionLabel(sctx)
-		case infoschema.TableTrxSummary:
+		case infoschema.TableTrxSummary,
+			infoschema.ClusterTableTrxSummary:
 			_ = e.setDataForTrxSummary(sctx)
 		}
 		if err != nil {

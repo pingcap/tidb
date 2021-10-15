@@ -19,8 +19,10 @@ import (
 	"encoding/json"
 	"hash/fnv"
 	"sync"
+	"time"
 
 	"github.com/pingcap/tidb/types"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func digest(stmts []string) uint32 {
@@ -103,6 +105,17 @@ func (recorder *TrxHistoryRecorder) DumpTrxSummary() [][]types.Datum {
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
 	return recorder.summaries.dumpTrxSummary()
+}
+
+func (recorder *TrxHistoryRecorder) OnTrxEnd(info *TxnInfo) {
+	now := time.Now()
+	startTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
+	if now.Sub(startTime) < time.Second {
+		return
+	}
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	recorder.summaries.onTrxEnd(info.AllSQLDigests)
 }
 
 func new(summariesCap uint) TrxHistoryRecorder {
