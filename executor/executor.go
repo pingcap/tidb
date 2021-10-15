@@ -31,12 +31,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -45,6 +39,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -1009,6 +1009,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 	// Skip the temporary table keys.
 	keys = filterTemporaryTableKeys(sessVars, keys)
 
+	keys = filterLockTableKeys(sessVars.StmtCtx, keys)
 	var lockKeyStats *tikvutil.LockKeysDetails
 	ctx = context.WithValue(ctx, tikvutil.LockKeysDetailCtxKey, &lockKeyStats)
 	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
@@ -1028,6 +1029,20 @@ func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Ke
 	for _, key := range keys {
 		tblID := tablecodec.DecodeTableID(key)
 		if _, ok := txnCtx.TemporaryTables[tblID]; !ok {
+			newKeys = append(newKeys, key)
+		}
+	}
+	return newKeys
+}
+
+func filterLockTableKeys(stmtCtx *stmtctx.StatementContext, keys []kv.Key) []kv.Key {
+	if len(stmtCtx.LockTableIDs) == 0 {
+		return keys
+	}
+	newKeys := keys[:0:len(keys)]
+	for _, key := range keys {
+		tblID := tablecodec.DecodeTableID(key)
+		if _, ok := stmtCtx.LockTableIDs[tblID]; ok {
 			newKeys = append(newKeys, key)
 		}
 	}
@@ -1666,6 +1681,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.TaskID = stmtctx.AllocateTaskID()
 	sc.CTEStorageMap = map[int]*CTEStorages{}
 	sc.IsStaleness = false
+	sc.LockTableIDs = make(map[int64]struct{})
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)

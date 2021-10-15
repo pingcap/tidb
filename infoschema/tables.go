@@ -28,10 +28,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/stmtsummary"
 
 	"github.com/pingcap/tidb/config"
@@ -179,6 +179,8 @@ const (
 	TableDataLockWaits = "DATA_LOCK_WAITS"
 	// TableRegionLabel is the string constant of region label table.
 	TableRegionLabel = "REGION_LABEL"
+	// TablePlacementRules is the string constant of placement rules table.
+	TablePlacementRules = "PLACEMENT_RULES"
 )
 
 const (
@@ -275,6 +277,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
 	TableRegionLabel:                        autoid.InformationSchemaDBID + 77,
 	TableTiDBHotRegionsHistory:              autoid.InformationSchemaDBID + 78,
+	TablePlacementRules:                     autoid.InformationSchemaDBID + 79,
 }
 
 type columnInfo struct {
@@ -378,7 +381,7 @@ var tablesCols = []columnInfo{
 	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "UPDATE_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "CHECK_TIME", tp: mysql.TypeDatetime, size: 19},
-	{name: "TABLE_COLLATION", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag, deflt: "utf8_bin"},
+	{name: "TABLE_COLLATION", tp: mysql.TypeVarchar, size: 32, deflt: "utf8_bin"},
 	{name: "CHECKSUM", tp: mysql.TypeLonglong, size: 21},
 	{name: "CREATE_OPTIONS", tp: mysql.TypeVarchar, size: 255},
 	{name: "TABLE_COMMENT", tp: mysql.TypeVarchar, size: 2048},
@@ -857,6 +860,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogPDTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogBackoffTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogWriteSQLRespTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogResultRows, tp: mysql.TypeLonglong, size: 22},
 	{name: variable.SlowLogBackoffDetail, tp: mysql.TypeVarchar, size: 4096},
 	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
@@ -1251,6 +1255,9 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.AvgPdTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of PD used"},
 	{name: stmtsummary.AvgBackoffTotalTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of Backoff used"},
 	{name: stmtsummary.AvgWriteSQLRespTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of write sql resp used"},
+	{name: stmtsummary.MaxResultRowsStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag, comment: "Max count of sql result rows"},
+	{name: stmtsummary.MinResultRowsStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag, comment: "Min count of sql result rows"},
+	{name: stmtsummary.AvgResultRowsStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag, comment: "Average count of sql result rows"},
 	{name: stmtsummary.PreparedStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether prepared"},
 	{name: stmtsummary.AvgAffectedRowsStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rows affected"},
 	{name: stmtsummary.FirstSeenStr, tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the first time"},
@@ -1449,6 +1456,24 @@ var tableRegionLabelCols = []columnInfo{
 	{name: "RULE_TYPE", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag},
 	{name: "REGION_LABEL", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
 	{name: "RANGES", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
+}
+
+var tablePlacementRulesCols = []columnInfo{
+	{name: "POLICY_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "CATALOG_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "POLICY_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},    // Catalog wide policy
+	{name: "SCHEMA_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},    // System policy does not have a schema
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},     // Schema level rules does not have a table
+	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength}, // Table level rules does not have a partition
+	{name: "PRIMARY_REGION", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "REGIONS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "LEADER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "FOLLOWER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "LEARNER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "SCHEDULE", tp: mysql.TypeVarchar, size: 20, flag: mysql.NotNullFlag}, // EVEN or MAJORITY_IN_PRIMARY
+	{name: "FOLLOWERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "LEARNERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1835,6 +1860,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableDeadlocks:                          tableDeadlocksCols,
 	TableDataLockWaits:                      tableDataLockWaitsCols,
 	TableRegionLabel:                        tableRegionLabelCols,
+	TablePlacementRules:                     tablePlacementRulesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
