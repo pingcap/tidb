@@ -366,7 +366,7 @@
         "Plan": [
           "TableReader_7 1.00 root  data:Selection_6",
           "└─Selection_6 1.00 cop[tikv]  eq(test.t2.t, \"aaaa\")",
-          "  └─TableRangeScan_5 2.00 cop[tikv] table:t2 range:[0,+inf], keep order:false"
+          "  └─TableFullScan_5 2.00 cop[tikv] table:t2 keep order:false"
         ],
         "Result": [
           "1 aaaa"
@@ -377,7 +377,7 @@
         "Plan": [
           "TableReader_7 1.60 root  data:Selection_6",
           "└─Selection_6 1.60 cop[tikv]  or(eq(test.t2.t, \"aaaa\"), eq(test.t2.t, \"a\"))",
-          "  └─TableRangeScan_5 2.00 cop[tikv] table:t2 range:[0,+inf], keep order:false"
+          "  └─TableFullScan_5 2.00 cop[tikv] table:t2 keep order:false"
         ],
         "Result": [
           "1 aaaa",

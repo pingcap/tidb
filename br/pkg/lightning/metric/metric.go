@@ -23,13 +23,10 @@ import (
 
 const (
 	// states used for the TableCounter labels
-	TableStatePending        = "pending"
-	TableStateWritten        = "written"
-	TableStateClosed         = "closed"
-	TableStateImported       = "imported"
-	TableStateAlteredAutoInc = "altered_auto_inc"
-	TableStateChecksum       = "checksum"
-	TableStateCompleted      = "completed"
+	TableStatePending   = "pending"
+	TableStateWritten   = "written"
+	TableStateImported  = "imported"
+	TableStateCompleted = "completed"
 
 	// results used for the TableCounter labels
 	TableResultSuccess = "success"

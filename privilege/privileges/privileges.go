@@ -22,10 +22,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -46,6 +46,7 @@ var dynamicPrivs = []string{
 	"SYSTEM_VARIABLES_ADMIN",
 	"ROLE_ADMIN",
 	"CONNECTION_ADMIN",
+	"PLACEMENT_ADMIN",                 // Can Create/Drop/Alter PLACEMENT POLICY
 	"DASHBOARD_CLIENT",                // Can login to the TiDB-Dashboard.
 	"RESTRICTED_TABLES_ADMIN",         // Can see system tables when SEM is enabled
 	"RESTRICTED_STATUS_ADMIN",         // Can see all status vars when SEM is enabled.
@@ -149,9 +150,6 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 			switch priv {
 			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 				return false
-			// TODO: remove this and update the test cases.
-			case mysql.SelectPriv:
-				return true
 			}
 		}
 	case util.MetricSchemaName.L:

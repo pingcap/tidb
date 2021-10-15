@@ -50,124 +50,34 @@ type Rule struct {
 	IsolationLevel string       `json:"isolation_level,omitempty"`
 }
 
-type constraintCombineType uint8
-
-const (
-	listAndList constraintCombineType = 0x0
-	dictAndList constraintCombineType = 0x1
-)
-
-// NewMergeRules constructs []*Rule from a yaml-compatible representation of array or map of constraint1 and constraint2.
-// It is quite like NewRules but the common constraint2 can only be a list labels which will be appended to constraint1.
-func NewMergeRules(replicas uint64, constr1, constr2 string) ([]*Rule, error) {
-	var (
-		err1, err2, err3 error
-		combineType      constraintCombineType
-	)
-	rules := []*Rule{}
-	constraintsList1, constraintsList2 := []string{}, []string{}
-	constraintsDict1 := map[string]int{}
-	err1, err2 = yaml.UnmarshalStrict([]byte(constr1), &constraintsList1), yaml.UnmarshalStrict([]byte(constr2), &constraintsList2)
-	if err2 != nil {
-		// Common constraints can only be a list.
-		return nil, fmt.Errorf("%w: should be [constraint1, ...] (error %s)", ErrInvalidConstraintsFormat, err2)
+// NewRule constructs *Rule from role, count, and constraints. It is here to
+// consistent the behavior of creating new rules.
+func NewRule(role PeerRoleType, replicas uint64, cnst Constraints) *Rule {
+	return &Rule{
+		Role:           role,
+		Count:          int(replicas),
+		Constraints:    cnst,
+		LocationLabels: []string{"region", "zone", "rack", "host"},
+		IsolationLevel: "region",
 	}
-	if err1 != nil {
-		combineType = 0x01
-		err3 = yaml.UnmarshalStrict([]byte(constr1), &constraintsDict1)
-		if err3 != nil {
-			return nil, fmt.Errorf("%w: should be [constraint1, ...] (error %s), {constraint1: cnt1, ...} (error %s), or any yaml compatible representation", ErrInvalidConstraintsFormat, err1, err3)
-		}
-	}
-	switch combineType {
-	case listAndList:
-		/*
-		 * eg: followerConstraint = ["+zone=sh", "+zone=bj"], constraint = ["+disk=ssd"]
-		 * res: followerConstraint = ["+zone=sh", "+zone=bj", "+disk=ssd"]
-		 */
-		if replicas == 0 {
-			if len(constr1) == 0 {
-				return rules, nil
-			}
-			return rules, fmt.Errorf("%w: should be positive", ErrInvalidConstraintsRelicas)
-		}
-		constraintsList1 = append(constraintsList1, constraintsList2...)
-		labelConstraints, err := NewConstraints(constraintsList1)
-		if err != nil {
-			return rules, err
-		}
-		rules = append(rules, &Rule{
-			Count:       int(replicas),
-			Constraints: labelConstraints,
-		})
-		return rules, nil
-	case dictAndList:
-		/*
-		 * eg: followerConstraint = { '+zone=sh, -zone=bj':2, '+zone=sh':1 }, constraint = ['+disk=ssd']
-		 * res: followerConstraint = { '+zone=sh, -zone=bj, +disk=ssd':2, '+zone=sh, +disk=ssd':1 }
-		 */
-		ruleCnt := 0
-		for labels, cnt := range constraintsDict1 {
-			if cnt <= 0 {
-				return rules, fmt.Errorf("%w: count of labels '%s' should be positive, but got %d", ErrInvalidConstraintsMapcnt, labels, cnt)
-			}
-			ruleCnt += cnt
-		}
-		if replicas == 0 {
-			replicas = uint64(ruleCnt)
-		}
-		if int(replicas) < ruleCnt {
-			return rules, fmt.Errorf("%w: should be larger or equal to the number of total replicas, but REPLICAS=%d < total=%d", ErrInvalidConstraintsRelicas, replicas, ruleCnt)
-		}
-		for labels, cnt := range constraintsDict1 {
-			mergeLabels := append(strings.Split(labels, ","), constraintsList2...)
-			labelConstraints, err := NewConstraints(mergeLabels)
-			if err != nil {
-				return rules, err
-			}
-			rules = append(rules, &Rule{
-				Count:       cnt,
-				Constraints: labelConstraints,
-			})
-		}
-		remain := int(replicas) - ruleCnt
-		if remain > 0 {
-			rules = append(rules, &Rule{
-				Count: remain,
-			})
-		}
-		return rules, nil
-	}
-	// empty
-	return rules, nil
 }
 
 // NewRules constructs []*Rule from a yaml-compatible representation of
-// array or map of constraints. It converts 'CONSTRAINTS' field in RFC
-// https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md to structs.
-func NewRules(replicas uint64, cnstr string) ([]*Rule, error) {
+// 'array' or 'dict' constraints.
+// Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
+func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error) {
 	rules := []*Rule{}
 
 	cnstbytes := []byte(cnstr)
 
-	constraints1 := []string{}
-	err1 := yaml.UnmarshalStrict(cnstbytes, &constraints1)
+	constraints1, err1 := NewConstraintsFromYaml(cnstbytes)
 	if err1 == nil {
 		// can not emit REPLICAS with an array or empty label
 		if replicas == 0 {
 			return rules, fmt.Errorf("%w: should be positive", ErrInvalidConstraintsRelicas)
 		}
 
-		labelConstraints, err := NewConstraints(constraints1)
-		if err != nil {
-			return rules, err
-		}
-
-		rules = append(rules, &Rule{
-			Count:       int(replicas),
-			Constraints: labelConstraints,
-		})
-
+		rules = append(rules, NewRule(role, replicas, constraints1))
 		return rules, nil
 	}
 
@@ -196,19 +106,13 @@ func NewRules(replicas uint64, cnstr string) ([]*Rule, error) {
 				return rules, err
 			}
 
-			rules = append(rules, &Rule{
-				Count:       cnt,
-				Constraints: labelConstraints,
-			})
+			rules = append(rules, NewRule(role, uint64(cnt), labelConstraints))
 		}
 
 		remain := int(replicas) - ruleCnt
 		if remain > 0 {
-			rules = append(rules, &Rule{
-				Count: remain,
-			})
+			rules = append(rules, NewRule(role, uint64(remain), nil))
 		}
-
 		return rules, nil
 	}
 
@@ -222,4 +126,8 @@ func (r *Rule) Clone() *Rule {
 	n := &Rule{}
 	*n = *r
 	return n
+}
+
+func (r *Rule) String() string {
+	return fmt.Sprintf("%+v", *r)
 }

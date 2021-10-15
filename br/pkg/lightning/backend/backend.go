@@ -23,13 +23,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"go.uber.org/zap"
 )
@@ -199,11 +199,11 @@ type AbstractBackend interface {
 
 	// CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
 	//  may be repeated with other keys in local data source.
-	CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) error
+	CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (hasDupe bool, err error)
 
-	// CollectLocalDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
+	// CollectRemoteDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
 	//  the data import by other lightning.
-	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) error
+	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (hasDupe bool, err error)
 }
 
 // Backend is the delivery target for Lightning
@@ -359,11 +359,11 @@ func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableNam
 	}, nil
 }
 
-func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (be Backend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
 	return be.abstract.CollectLocalDuplicateRows(ctx, tbl)
 }
 
-func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) error {
+func (be Backend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
 	return be.abstract.CollectRemoteDuplicateRows(ctx, tbl)
 }
 
@@ -442,7 +442,7 @@ func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize int64) e
 	for i := 0; i < importMaxRetryTimes; i++ {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
 		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize)
-		if !common.IsRetryableError(err) {
+		if !utils.IsRetryableError(err) {
 			task.End(zap.ErrorLevel, err)
 			return err
 		}

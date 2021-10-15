@@ -25,10 +25,10 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -889,4 +889,37 @@ func TestShowErrors(t *testing.T) {
 	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
 	require.Error(t, err)
 	tk.MustQuery("show errors").Check(testkit.Rows("Error 1051 Unknown table 'test.idontexist'"))
+}
+
+func TestHandleAuthPlugin(t *testing.T) {
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+	}
+	ctx := context.Background()
+	resp := handshakeResponse41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+	}
+	err = cc.handleAuthPlugin(ctx, &resp)
+	require.NoError(t, err)
+
+	resp.Capability = mysql.ClientProtocol41
+	err = cc.handleAuthPlugin(ctx, &resp)
+	require.NoError(t, err)
 }
