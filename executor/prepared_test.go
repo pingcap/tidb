@@ -686,11 +686,13 @@ func (s *testSerialSuite) TestPreparePlanCache4DifferentSystemVars(c *C) {
 
 	tk.MustExec("set @@sql_select_limit = 2")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("<nil>", "0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	// The 'sql_select_limit' will be stored in the cache key. So if the `sql_select_limit`
+	// have been changed, the plan cache can not be reused.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 
 	tk.MustExec("set @@sql_select_limit = 18446744073709551615")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("<nil>", "0", "1"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 
 	// test for 'tidb_enable_index_merge'
 	tk.MustExec("set @@tidb_enable_index_merge = 1;")
@@ -743,7 +745,61 @@ func (s *testSerialSuite) TestPreparePlanCache4DifferentSystemVars(c *C) {
 	// Do not use the parallel apply.
 	c.Assert(strings.Contains(executionInfo, "Concurrency") == false, Equals, true)
 	tk.MustExec("execute stmt;")
+	// The subquery plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
+
+func (s *testSerialSuite) TestPreparePlanCache4Blacklist(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+
+	// test the blacklist of optimization rules
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("prepare stmt from 'select min(a) from t;';")
+	tk.MustExec("execute stmt;")
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	c.Assert(res.Rows()[1][0], Matches, ".*TopN.*")
+
+	res = tk.MustQuery("explain format = 'brief' select min(a) from t")
+	c.Assert(res.Rows()[1][0], Matches, ".*TopN.*")
+
+	tk.MustExec("INSERT INTO mysql.opt_rule_blacklist VALUES('max_min_eliminate');")
+	tk.MustExec("ADMIN reload opt_rule_blacklist;")
+
+	tk.MustExec("execute stmt;")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustExec("execute stmt;")
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	c.Assert(res.Rows()[1][0], Matches, ".*TopN.*")
+
+	res = tk.MustQuery("explain format = 'brief' select min(a) from t")
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[0][0], Matches, ".*StreamAgg.*")
+	c.Assert(res.Rows()[1][0], Matches, ".*TableReader.*")
+	c.Assert(res.Rows()[2][0], Matches, ".*StreamAgg.*")
+	c.Assert(res.Rows()[3][0], Matches, ".*TableFullScan.*")
+
+	// test the blacklist of Expression Pushdown
+
 }
 
 func (s *testSerialSuite) TestIssue28064(c *C) {
