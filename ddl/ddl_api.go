@@ -1730,6 +1730,21 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 		}
 		tbInfo.PlacementPolicyRef.ID = policy.ID
 	}
+
+	if tbInfo.Partition != nil {
+		for _, partition := range tbInfo.Partition.Definitions {
+			if partition.PlacementPolicyRef == nil {
+				continue
+			}
+
+			policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(partition.PlacementPolicyRef.Name)
+			if !ok {
+				return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(partition.PlacementPolicyRef.Name))
+			}
+			partition.PlacementPolicyRef.ID = policy.ID
+		}
+	}
+
 	return nil
 }
 
