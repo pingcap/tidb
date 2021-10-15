@@ -414,7 +414,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 			}
 
 			clientConn.isUnixSocket = true
-			clientConn.socketCredUID, err = linux.GetSockUid(*uc)
+			clientConn.socketCredUID, err = linux.GetSockUID(*uc)
 			if err != nil {
 				logutil.BgLogger().Error("Failed to get UNIX socket peer credentials", zap.Error(err))
 				return

@@ -34,8 +34,8 @@ func SetAffinity(cpus []int) error {
 	return nil
 }
 
-// GetSockUid gets the uid of the other end of the UNIX domain socket
-func GetSockUid(uc net.UnixConn) (uid uint32, err error) {
+// GetSockUID gets the uid of the other end of the UNIX domain socket
+func GetSockUID(uc net.UnixConn) (uid uint32, err error) {
 	raw, err := uc.SyscallConn()
 	if err != nil {
 		return 0, err
