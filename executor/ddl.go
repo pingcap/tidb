@@ -300,22 +300,24 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 	}
 
 	if opt.Col != "" {
-		if coll, err := collate.GetCollationByName(opt.Col); err == nil {
-			// The collation is not valid for the specified character set.
-			// Try to remove any of them, but not if they are explicitly defined.
-			if coll.CharsetName != opt.Chs {
-				if explicitCollation && !explicitCharset {
-					// Use the explicitly set collation, not the implicit charset.
-					opt.Chs = ""
-				}
-				if !explicitCollation && explicitCharset {
-					// Use the explicitly set charset, not the (session) collation.
-					opt.Col = ""
-				}
-			}
-		} else {
-			return errors.Errorf("failed to get collation details for %s", opt.Col)
+		coll, err := collate.GetCollationByName(opt.Col)
+		if err != nil {
+			return err
 		}
+
+		// The collation is not valid for the specified character set.
+		// Try to remove any of them, but not if they are explicitly defined.
+		if coll.CharsetName != opt.Chs {
+			if explicitCollation && !explicitCharset {
+				// Use the explicitly set collation, not the implicit charset.
+				opt.Chs = ""
+			}
+			if !explicitCollation && explicitCharset {
+				// Use the explicitly set charset, not the (session) collation.
+				opt.Col = ""
+			}
+		}
+
 	}
 
 	err = domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt, directPlacementOpts, placementPolicyRef)
