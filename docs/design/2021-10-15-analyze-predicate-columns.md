@@ -6,7 +6,7 @@
 
 ## Abstract
 
-
+It takes lots of time, memory and CPU to analyze large and wide tables currently. In order to address the problem, we plan to support `ANALYZE PREDICATE COLUMNS` or `ANALYZE COLUMNS c1, ..., cn`, which only collects statistics of the columns which are used(needed) by the optimizer and can reduce the cost of `ANALYZE`.
 
 ## Background
 
