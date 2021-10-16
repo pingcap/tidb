@@ -23,8 +23,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -39,6 +39,7 @@ var testKitIDGenerator atomic.Uint64
 type TestKit struct {
 	require *require.Assertions
 	assert  *assert.Assertions
+	t       *testing.T
 	store   kv.Storage
 	session session.Session
 }
@@ -48,9 +49,15 @@ func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
 	return &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
+		t:       t,
 		store:   store,
 		session: newSession(t, store),
 	}
+}
+
+// RefreshSession set a new session for the testkit
+func (tk *TestKit) RefreshSession() {
+	tk.session = newSession(tk.t, tk.store)
 }
 
 // SetSession set the session of testkit

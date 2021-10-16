@@ -17,15 +17,17 @@ package executor
 import (
 	"context"
 	gjson "encoding/json"
+	"fmt"
 	"sort"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -177,6 +179,50 @@ func (e *ShowExec) fetchShowPlacementForTable(_ context.Context) (err error) {
 	return nil
 }
 
+func (e *ShowExec) fetchShowPlacementForPartition(_ context.Context) (err error) {
+	tbl, err := e.getTable()
+	if err != nil {
+		return err
+	}
+
+	tblInfo := tbl.Meta()
+	if tblInfo.Partition == nil {
+		return errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(e.Partition.O, tblInfo.Name.O))
+	}
+
+	var partition *model.PartitionDefinition
+	for _, par := range tblInfo.Partition.Definitions {
+		if par.Name.L == e.Partition.L {
+			partition = &par
+			break
+		}
+	}
+
+	if partition == nil {
+		return errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(e.Partition.O, tblInfo.Name.O))
+	}
+
+	placement, err := e.getTablePlacement(tblInfo)
+	if err != nil {
+		return err
+	}
+
+	placement, err = e.getPartitionPlacement(placement, partition)
+	if err != nil {
+		return err
+	}
+
+	if placement != nil {
+		tableIndent := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
+		e.appendRow([]interface{}{
+			fmt.Sprintf("TABLE %s PARTITION %s", tableIndent.String(), partition.Name.String()),
+			placement.String(),
+		})
+	}
+
+	return nil
+}
+
 func (e *ShowExec) fetchShowPlacement(_ context.Context) error {
 	if err := e.fetchAllPlacementPolicies(); err != nil {
 		return err
@@ -247,16 +293,30 @@ func (e *ShowExec) fetchAllTablePlacements() error {
 
 			var rows [][]interface{}
 			ident := ast.Ident{Schema: dbInfo.Name, Name: tblInfo.Name}
-			placement, err := e.getTablePlacement(tblInfo)
+			tblPlacement, err := e.getTablePlacement(tblInfo)
 			if err != nil {
 				return err
 			}
 
-			if placement != nil {
-				rows = append(rows, []interface{}{"TABLE " + ident.String(), placement.String()})
+			if tblPlacement != nil {
+				rows = append(rows, []interface{}{"TABLE " + ident.String(), tblPlacement.String()})
 			}
 
-			// TODO: Add partition placement rules
+			if tblInfo.Partition != nil {
+				for _, partition := range tblInfo.Partition.Definitions {
+					partitionPlacement, err := e.getPartitionPlacement(tblPlacement, &partition)
+					if err != nil {
+						return err
+					}
+
+					if partitionPlacement != nil {
+						rows = append(rows, []interface{}{
+							fmt.Sprintf("TABLE %s PARTITION %s", ident.String(), partition.Name.String()),
+							partitionPlacement.String(),
+						})
+					}
+				}
+			}
 
 			if len(rows) > 0 {
 				tableRowSets = append(tableRowSets, struct {
@@ -296,6 +356,24 @@ func (e *ShowExec) getTablePlacement(tblInfo *model.TableInfo) (*model.Placement
 	}
 
 	return e.getPolicyPlacement(tblInfo.PlacementPolicyRef)
+}
+
+func (e *ShowExec) getPartitionPlacement(tblPlacement *model.PlacementSettings, partition *model.PartitionDefinition) (*model.PlacementSettings, error) {
+	placement := partition.DirectPlacementOpts
+	if placement != nil {
+		return placement, nil
+	}
+
+	placement, err := e.getPolicyPlacement(partition.PlacementPolicyRef)
+	if err != nil {
+		return nil, err
+	}
+
+	if placement != nil {
+		return placement, nil
+	}
+
+	return tblPlacement, nil
 }
 
 func (e *ShowExec) getPolicyPlacement(policyRef *model.PolicyRefInfo) (settings *model.PlacementSettings, err error) {

@@ -28,12 +28,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/kvproto/pkg/deadlock"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
@@ -78,6 +78,7 @@ func TestClusterTables(t *testing.T) {
 	t.Run("StmtSummaryEvictedCountTable", SubTestStmtSummaryEvictedCountTable(s))
 	t.Run("StmtSummaryHistoryTable", SubTestStmtSummaryHistoryTable(s))
 	t.Run("Issue26379", SubTestIssue26379(s))
+	t.Run("SubTestStmtSummaryResultRows", SubTestStmtSummaryResultRows(s))
 }
 
 func SubTestForClusterServerInfo(s *clusterTablesSuite) func(*testing.T) {
@@ -454,6 +455,37 @@ func SubTestIssue26379(s *clusterTablesSuite) func(*testing.T) {
 		tk.MustQuery("select count(*) from information_schema.statements_summary where digest is null").Check(testkit.Rows("1"))
 		tk.MustQuery("select count(*) from information_schema.cluster_statements_summary where digest=''").Check(testkit.Rows("0"))
 		tk.MustQuery("select count(*) from information_schema.cluster_statements_summary where digest is null").Check(testkit.Rows("1"))
+	}
+}
+
+func SubTestStmtSummaryResultRows(s *clusterTablesSuite) func(t *testing.T) {
+	return func(t *testing.T) {
+		tk := s.newTestKitWithRoot(t)
+		tk.MustExec("set global tidb_stmt_summary_refresh_interval=999999999")
+		tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
+		tk.MustExec("set global tidb_stmt_summary_history_size=24")
+		tk.MustExec("set global tidb_stmt_summary_max_sql_length=4096")
+		tk.MustExec("set global tidb_enable_stmt_summary=0")
+		tk.MustExec("set global tidb_enable_stmt_summary=1")
+		if !config.GetGlobalConfig().EnableCollectExecutionInfo {
+			tk.MustExec("set @@tidb_enable_collect_execution_info=1")
+			defer tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+		}
+
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int)")
+		for i := 1; i <= 30; i++ {
+			tk.MustExec(fmt.Sprintf("insert into t values (%v)", i))
+		}
+
+		tk.MustQuery("select * from test.t limit 10;")
+		tk.MustQuery("select * from test.t limit 20;")
+		tk.MustQuery("select * from test.t limit 30;")
+		tk.MustQuery("select MIN_RESULT_ROWS,MAX_RESULT_ROWS,AVG_RESULT_ROWS from information_schema.statements_summary where query_sample_text like 'select%test.t limit%' and MAX_RESULT_ROWS > 10").
+			Check(testkit.Rows("10 30 20"))
+		tk.MustQuery("select MIN_RESULT_ROWS,MAX_RESULT_ROWS,AVG_RESULT_ROWS from information_schema.cluster_statements_summary where query_sample_text like 'select%test.t limit%' and MAX_RESULT_ROWS > 10").
+			Check(testkit.Rows("10 30 20"))
 	}
 }
 

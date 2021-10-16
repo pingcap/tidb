@@ -22,13 +22,13 @@ import (
 	"github.com/pingcap/check"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	parsertypes "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	parsertypes "github.com/pingcap/tidb/parser/types"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
@@ -151,13 +151,13 @@ func (s *testSuite5) TestShowWarningsForExprPushdown(c *C) {
 	tk.MustExec(testSQL)
 	tk.MustExec("explain select * from show_warnings_expr_pushdown where date_add(value, interval 1 day) = '2020-01-01'")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt) can not be pushed to tikv"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt, return type: datetime(6)) can not be pushed to tikv"))
 	tk.MustExec("explain select max(date_add(value, interval 1 day)) from show_warnings_expr_pushdown group by a")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt) can not be pushed to tikv", "Warning|1105|Aggregation can not be pushed to tikv because arguments of AggFunc `max` contains unsupported exprs"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt, return type: datetime(6)) can not be pushed to tikv", "Warning|1105|Aggregation can not be pushed to tikv because arguments of AggFunc `max` contains unsupported exprs"))
 	tk.MustExec("explain select max(a) from show_warnings_expr_pushdown group by date_add(value, interval 1 day)")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt) can not be pushed to tikv", "Warning|1105|Aggregation can not be pushed to tikv because groupByItems contain unsupported exprs"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt, return type: datetime(6)) can not be pushed to tikv", "Warning|1105|Aggregation can not be pushed to tikv because groupByItems contain unsupported exprs"))
 	tk.MustExec("set tidb_opt_distinct_agg_push_down=0")
 	tk.MustExec("explain select max(distinct a) from show_warnings_expr_pushdown group by value")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
@@ -947,29 +947,24 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	defer tk.MustExec(`DROP TABLE IF EXISTS t`)
 
 	// case for direct opts
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec("create table t(a int) " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
 		"CONSTRAINTS=\"[+disk=ssd]\"")
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PRIMARY_REGION=\"cn-east-1\" "+
-			"REGIONS=\"cn-east-1, cn-east-2\" "+
-			"FOLLOWERS=2 "+
+			"/*T![placement] FOLLOWERS=2 "+
 			"CONSTRAINTS=\"[+disk=ssd]\" */",
 	))
 
 	// case for policy
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec("create placement policy x " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
 	tk.MustExec("create table t(a int)" +
@@ -981,7 +976,16 @@ func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 			"/*T![placement] PLACEMENT POLICY=`x` */",
 	))
 
+	// case for policy with quotes
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create table t(a int)" +
+		"/*T![placement] PLACEMENT POLICY=\"x\" */")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PLACEMENT POLICY=`x` */",
+	))
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
@@ -1411,10 +1415,22 @@ func (s *testSuite5) TestShowPerformanceSchema(c *C) {
 			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 }
 
+func (s *testSuite5) TestShowCreatePlacementPolicy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE PLACEMENT POLICY xyz PRIMARY_REGION='us-east-1' REGIONS='us-east-1,us-east-2' FOLLOWERS=4")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` PRIMARY_REGION=\"us-east-1\" REGIONS=\"us-east-1,us-east-2\" FOLLOWERS=4"))
+	// non existent policy
+	err := tk.QueryToErr("SHOW CREATE PLACEMENT POLICY doesnotexist")
+	c.Assert(err.Error(), Equals, infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs("doesnotexist").Error())
+	// alter and try second example
+	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4"))
+	tk.MustExec("DROP PLACEMENT POLICY xyz")
+}
+
 func (s *testSuite5) TestShowTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t1 (id int) on commit delete rows")
 	tk.MustExec("create global temporary table t3 (i int primary key, j int) on commit delete rows")
 	// For issue https://github.com/pingcap/tidb/issues/24752

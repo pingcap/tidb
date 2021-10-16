@@ -17,8 +17,8 @@ package variable
 import (
 	"math"
 
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/atomic"
 )
 
@@ -703,7 +703,7 @@ const (
 	DefTiDBScatterRegion                  = false
 	DefTiDBWaitSplitRegionFinish          = true
 	DefWaitSplitRegionTimeout             = 300 // 300s
-	DefTiDBEnableNoopFuncs                = false
+	DefTiDBEnableNoopFuncs                = Off
 	DefTiDBAllowRemoveAutoInc             = false
 	DefTiDBUsePlanBaselines               = true
 	DefTiDBEvolvePlanBaselines            = false
@@ -740,7 +740,7 @@ const (
 	DefTiDBTopSQLMaxStatementCount        = 200
 	DefTiDBTopSQLMaxCollect               = 10000
 	DefTiDBTopSQLReportIntervalSeconds    = 60
-	DefTiDBEnableGlobalTemporaryTable     = false
+	DefTiDBEnableGlobalTemporaryTable     = true
 	DefTMPTableSize                       = 16777216
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBEnableOrderedResultMode        = false
