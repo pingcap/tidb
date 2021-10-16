@@ -510,6 +510,11 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.MustExec("create role `engineering`@`INDIA`;")
 	_, err = tk.Exec("grant `engineering`@`US` TO `engineering`@`INDIA`;")
 	c.Check(err, IsNil)
+
+	tk.MustQuery("select user,host from mysql.user where user='engineering' and host = 'india'").
+		Check(testkit.Rows("engineering india"))
+	tk.MustQuery("select user,host from mysql.user where user='engineering' and host = 'us'").
+		Check(testkit.Rows("engineering us"))
 }
 
 func (s *testSuite3) TestSetPwd(c *C) {
