@@ -6,8 +6,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/hex"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -480,13 +480,11 @@ func (importer *FileImporter) downloadSST(
 		logutil.Leader(regionInfo.Leader),
 	)
 
-	var m sync.Mutex
-	var downloadResp *import_sstpb.DownloadResponse
-	workerPool := utils.NewWorkerPool(uint(len(regionInfo.Region.Peers)), "download SST")
+	var atomicResp atomic.Value
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
-		workerPool.ApplyOnErrorGroup(eg, func() error {
+		eg.Go(func() error {
 			resp, err := importer.importClient.DownloadSST(ectx, peer.GetStoreId(), req)
 			if err != nil {
 				return errors.Trace(err)
@@ -501,14 +499,12 @@ func (importer *FileImporter) downloadSST(
 			log.Debug("download from peer",
 				logutil.Region(regionInfo.Region),
 				logutil.Peer(peer),
-				zap.String("resp-range-start", hex.EncodeToString(resp.Range.Start)),
-				zap.String("resp-range-end", hex.EncodeToString(resp.Range.End)),
+				logutil.Key("resp-range-start", resp.Range.Start),
+				logutil.Key("resp-range-end", resp.Range.Start),
 				zap.Bool("resp-isempty", resp.IsEmpty),
 				zap.Uint32("resp-crc32", resp.Crc32),
 			)
-			m.Lock()
-			downloadResp = resp
-			m.Unlock()
+			atomicResp.Store(resp)
 			return nil
 		})
 	}
@@ -516,6 +512,7 @@ func (importer *FileImporter) downloadSST(
 		return nil, err
 	}
 
+	downloadResp := atomicResp.Load().(*import_sstpb.DownloadResponse)
 	sstMeta.Range.Start = truncateTS(downloadResp.Range.GetStart())
 	sstMeta.Range.End = truncateTS(downloadResp.Range.GetEnd())
 	return &sstMeta, nil
@@ -554,13 +551,13 @@ func (importer *FileImporter) downloadRawKVSST(
 	}
 	log.Debug("download SST", logutil.SSTMeta(&sstMeta), logutil.Region(regionInfo.Region))
 
-	var m sync.Mutex
-	var downloadResp *import_sstpb.DownloadResponse
-	workerPool := utils.NewWorkerPool(uint(len(regionInfo.Region.Peers)), "download RawKVSST")
+	//var downloadResp *import_sstpb.DownloadResponse
+	var atomicResp atomic.Value
+
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
-		workerPool.ApplyOnErrorGroup(eg, func() error {
+		eg.Go(func() error {
 			resp, err := importer.importClient.DownloadSST(ectx, peer.GetStoreId(), req)
 			if err != nil {
 				return errors.Trace(err)
@@ -572,16 +569,16 @@ func (importer *FileImporter) downloadRawKVSST(
 				return errors.Trace(berrors.ErrKVRangeIsEmpty)
 			}
 
-			m.Lock()
-			downloadResp = resp
-			m.Unlock()
+			atomicResp.Store(resp)
 			return nil
 		})
 	}
+
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
 
+	downloadResp := atomicResp.Load().(*import_sstpb.DownloadResponse)
 	sstMeta.Range.Start = downloadResp.Range.GetStart()
 	sstMeta.Range.End = downloadResp.Range.GetEnd()
 	return &sstMeta, nil
