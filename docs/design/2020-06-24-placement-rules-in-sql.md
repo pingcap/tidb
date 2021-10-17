@@ -569,33 +569,33 @@ In this case the default rules will apply to placement, and the output from `SHO
 For a more complex rule using partitions, consider the following example:
 
 ```sql
-ALTER TABLE t1 PARTITION p0 PLACEMENT="acdc";
+ALTER TABLE t1 PARTITION p0 PLACEMENT POLICY="acdc";
 --> 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
  PARTITION BY RANGE( YEAR(purchased) ) (
-  PARTITION p0 VALUES LESS THAN (2000) PLACEMENT="acdc",
+  PARTITION p0 VALUES LESS THAN (2000) PLACEMENT POLICY="acdc",
   PARTITION p1 VALUES LESS THAN (2005)
  );
 
-ALTER TABLE t1 PLACEMENT="xyz";
+ALTER TABLE t1 PLACEMENT POLICY="xyz";
 --> 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
  PARTITION BY RANGE( YEAR(purchased) ) (
-  PARTITION p0 VALUES LESS THAN (2000) PLACEMENT="acdc",
+  PARTITION p0 VALUES LESS THAN (2000) PLACEMENT POLICY="acdc",
   PARTITION p1 VALUES LESS THAN (2005)
- ) PLACEMENT="xyz";
+ ) PLACEMENT POLICY="xyz";
 
-ALTER TABLE t1 PARTITION p0 PLACEMENT=DEFAULT;
+ALTER TABLE t1 PARTITION p0 PLACEMENT POLICY=DEFAULT;
 --> 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
  PARTITION BY RANGE( YEAR(purchased) ) (
   PARTITION p0 VALUES LESS THAN (2000),
   PARTITION p1 VALUES LESS THAN (2005)
- ) PLACEMENT="xyz";
+ ) PLACEMENT POLICY="xyz";
  
 ```
 
-The behavior above is described as `ALTER TABLE t1 PARTITION p0 PLACEMENT=DEFAULT` resets the placement of the partition `p0` to be inherited from the table `t1`.
+The behavior above is described as `ALTER TABLE t1 PARTITION p0 PLACEMENT POLICY=DEFAULT` resets the placement of the partition `p0` to be inherited from the table `t1`.
 
 #### Sequences
 
