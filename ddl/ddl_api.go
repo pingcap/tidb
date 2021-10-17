@@ -1730,6 +1730,21 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 		}
 		tbInfo.PlacementPolicyRef.ID = policy.ID
 	}
+
+	if tbInfo.Partition != nil {
+		for _, partition := range tbInfo.Partition.Definitions {
+			if partition.PlacementPolicyRef == nil {
+				continue
+			}
+
+			policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(partition.PlacementPolicyRef.Name)
+			if !ok {
+				return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(partition.PlacementPolicyRef.Name))
+			}
+			partition.PlacementPolicyRef.ID = policy.ID
+		}
+	}
+
 	return nil
 }
 
@@ -1984,7 +1999,7 @@ func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.Cr
 	case ast.TemporaryGlobal:
 		tbInfo.TempTableType = model.TempTableGlobal
 		if !ctx.GetSessionVars().EnableGlobalTemporaryTable {
-			return errors.New("global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table")
+			return errors.New("SET tidb_enable_global_temporary_table=1 to enable temporary tables")
 		}
 		// "create global temporary table ... on commit preserve rows"
 		if !s.OnCommitDelete {
