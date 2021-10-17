@@ -267,6 +267,8 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 				placementPolicyRef = &model.PolicyRefInfo{ID: policy.ID, Name: policyName}
 			}
 			isAlterPlacement = true
+		case ast.DatabaseOptionPlacementDefault:
+			//TODO: sylzd
 		}
 	}
 
