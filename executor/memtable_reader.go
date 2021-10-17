@@ -782,13 +782,6 @@ type HistoryHotRegion struct {
 	EndKey        []byte  `json:"end_key,omitempty"`
 }
 
-const (
-	// HotRegionTypeRead hot read region.
-	HotRegionTypeRead = "READ"
-	// HotRegionTypeWrite hot write region.
-	HotRegionTypeWrite = "WRITE"
-)
-
 func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan hotRegionsResult, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
 		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
@@ -806,42 +799,14 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 		return nil, errors.New("denied to scan hot regions, please specified the end time, such as `update_time < '2020-01-01 00:00:00'`")
 	}
 
-	// Divide read-write into two requests because of time range overlap,
-	// because PD use [type,time] as key of hot regions.
-	if e.extractor.HotRegionTypes.Count() == 0 {
-		e.extractor.HotRegionTypes.Insert(HotRegionTypeRead)
-		e.extractor.HotRegionTypes.Insert(HotRegionTypeWrite)
-	}
-	hotRegionTypes := make([]string, 0, e.extractor.HotRegionTypes.Count())
-	for typ := range e.extractor.HotRegionTypes {
-		hotRegionTypes = append(hotRegionTypes, typ)
-	}
-
-	// Request all if no conditions
-	if len(e.extractor.IsLearners) == 0 {
-		e.extractor.IsLearners = []uint64{0, 1}
-	}
-	if len(e.extractor.IsLeaders) == 0 {
-		e.extractor.IsLeaders = []uint64{0, 1}
-	}
-	// Change uint to ture false slice,
-	var isLearners, isLeaders []bool
-	for _, l := range e.extractor.IsLearners {
-		isLearners = append(isLearners, l == 1)
-	}
-	for _, l := range e.extractor.IsLeaders {
-		isLeaders = append(isLeaders, l == 1)
-	}
-
-	// set hotType before request
 	historyHotRegionsRequest := &HistoryHotRegionsRequest{
 		StartTime:  e.extractor.StartTime,
 		EndTime:    e.extractor.EndTime,
 		RegionIDs:  e.extractor.RegionIDs,
 		StoreIDs:   e.extractor.StoreIDs,
 		PeerIDs:    e.extractor.PeerIDs,
-		IsLearners: isLearners,
-		IsLeaders:  isLeaders,
+		IsLearners: e.extractor.IsLearners,
+		IsLeaders:  e.extractor.IsLeaders,
 	}
 
 	return e.startRetrieving(ctx, sctx, pdServers, historyHotRegionsRequest)
@@ -874,7 +839,7 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 						ch <- hotRegionsResult{err: errors.Trace(err)}
 						return
 					}
-					req.Header.Add("PD-Allow-follower-handle", "false")
+					req.Header.Add("PD-Allow-follower-handle", "true")
 					resp, err := util.InternalHTTPClient().Do(req)
 					if err != nil {
 						ch <- hotRegionsResult{err: errors.Trace(err)}
@@ -916,12 +881,12 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		e.heap = &hotRegionsResponseHeap{}
 		for _, ch := range results {
 			result := <-ch
-				if result.err != nil  {
-					sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
-				}
-				if result.err != nil || len(result.messages.HistoryHotRegion) == 0 {
-				   continue
-				}
+			if result.err != nil {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+			}
+			if result.err != nil || len(result.messages.HistoryHotRegion) == 0 {
+				continue
+			}
 			*e.heap = append(*e.heap, result)
 		}
 		heap.Init(e.heap)

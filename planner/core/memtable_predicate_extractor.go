@@ -697,6 +697,13 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	return s
 }
 
+const (
+	// HotRegionTypeRead hot read region.
+	HotRegionTypeRead = "read"
+	// HotRegionTypeWrite hot write region.
+	HotRegionTypeWrite = "write"
+)
+
 // HotRegionsHistoryTableExtractor is used to extract some predicates of `tidb_hot_regions_history`
 type HotRegionsHistoryTableExtractor struct {
 	extractHelper
@@ -723,8 +730,8 @@ type HotRegionsHistoryTableExtractor struct {
 	// e.g:
 	// 1. SELECT * FROM tidb_hot_regions_history WHERE is_learner=1
 	// 2. SELECT * FROM tidb_hot_regions_history WHERE is_learner in (0,1) -> request all
-	IsLearners []uint64
-	IsLeaders  []uint64
+	IsLearners []bool
+	IsLeaders  []bool
 
 	// HotRegionTypes represents all hot region types we should filter in PD to reduce network IO.
 	// e.g:
@@ -754,10 +761,24 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	// Extract the is_learner/is_leader columns.
 	remained, isLearnerSkipRequest, isLearners := e.extractCol(schema, names, remained, "is_learner", false)
 	remained, isLeaderSkipRequest, isLeaders := e.extractCol(schema, names, remained, "is_leader", false)
-	e.IsLearners, e.IsLeaders = e.parseUint64(isLearners), e.parseUint64(isLeaders)
+	isLearnersUint64, isLeadersUint64 := e.parseUint64(isLearners), e.parseUint64(isLeaders)
 	e.SkipRequest = isLearnerSkipRequest || isLeaderSkipRequest
 	if e.SkipRequest {
 		return nil
+	}
+	// Request all if no conditions
+	if len(isLearnersUint64) == 0 {
+		isLearnersUint64 = []uint64{0, 1}
+	}
+	if len(isLeadersUint64) == 0 {
+		isLeadersUint64 = []uint64{0, 1}
+	}
+	// Change uint to ture false slice
+	for _, l := range isLearnersUint64 {
+		e.IsLearners = append(e.IsLearners, l == 1)
+	}
+	for _, l := range isLeadersUint64 {
+		e.IsLeaders = append(e.IsLeaders, l == 1)
 	}
 
 	// Extract the `type` column.
@@ -766,6 +787,12 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	e.SkipRequest = typeSkipRequest
 	if e.SkipRequest {
 		return nil
+	}
+	// Divide read-write into two requests because of time range overlap,
+	// PD use [type,time] as key of hot regions.
+	if e.HotRegionTypes.Count() == 0 {
+		e.HotRegionTypes.Insert(HotRegionTypeRead)
+		e.HotRegionTypes.Insert(HotRegionTypeWrite)
 	}
 
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time", ctx.GetSessionVars().StmtCtx.TimeZone)
@@ -808,10 +835,10 @@ func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) strin
 		r.WriteString(fmt.Sprintf("peer_ids:[%s], ", extractStringFromUint64Slice(e.PeerIDs)))
 	}
 	if len(e.IsLearners) > 0 {
-		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromUint64Slice(e.IsLearners)))
+		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromBoolSlice(e.IsLearners)))
 	}
 	if len(e.IsLeaders) > 0 {
-		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromUint64Slice(e.IsLeaders)))
+		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromBoolSlice(e.IsLeaders)))
 	}
 	if len(e.HotRegionTypes) > 0 {
 		r.WriteString(fmt.Sprintf("hot_region_types:[%s], ", extractStringFromStringSet(e.HotRegionTypes)))
