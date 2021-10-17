@@ -37,11 +37,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/types"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
@@ -63,6 +58,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/table/tables"
 	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/tikv/pd/server/api"
@@ -983,10 +983,11 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 			}
 		}
 	}()
-	exec := mock.NewMockSQLExecutor(controller)
-	g.EXPECT().GetSQLExecutor().Return(exec).AnyTimes()
-	exec.EXPECT().ObtainStringWithLog(gomock.Any(), "SELECT version()", gomock.Any(), gomock.Any()).
-		Return("5.7.25-TiDB-v5.0.1", nil).AnyTimes()
+	db, sqlMock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	g.EXPECT().GetDB().Return(db, nil).AnyTimes()
+	sqlMock.ExpectQuery("SELECT version\\(\\);").WillReturnRows(sqlmock.NewRows([]string{"version()"}).
+		AddRow("5.7.25-TiDB-v5.0.1"))
 
 	web.BroadcastInitProgress(rc.dbMetas)
 

@@ -28,7 +28,7 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check explaintest devgotest gogenerate br_unit_test
+dev: checklist check explaintest devgotest gogenerate br_unit_test test_part_parser_dev
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
@@ -83,7 +83,20 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: gotest gogenerate br_unit_test
+test_part_2: test_part_parser gotest gogenerate br_unit_test
+
+test_part_parser: parser_yacc test_part_parser_dev
+
+test_part_parser_dev: parser_fmt parser_unit_test
+
+parser_yacc:
+	@cd parser && mv parser.go parser.go.committed && make parser && diff -u parser.go.committed parser.go && rm parser.go.committed
+
+parser_fmt:
+	@cd parser && make fmt
+
+parser_unit_test:
+	@cd parser && make test
 
 test_part_br: br_unit_test br_integration_test
 
@@ -264,13 +277,14 @@ endif
 # Usage:
 #	make bench-daily TO=/path/to/file.json
 bench-daily:
-	go test github.com/pingcap/tidb/session -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/executor -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/tablecodec -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/expression -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/util/codec -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/util/benchdaily -run TestBenchDaily \
+	go test github.com/pingcap/tidb/session -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/executor -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/tablecodec -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/expression -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/rowcodec -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/codec -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/distsql -bench BenchmarkDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/benchdaily -bench BenchmarkDaily \
 		-date `git log -n1 --date=unix --pretty=format:%cd` \
 		-commit `git log -n1 --pretty=format:%h` \
 		-outfile $(TO)
@@ -317,6 +331,7 @@ build_for_br_integration_test:
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
+	@export TZ='Asia/Shanghai';
 	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -tags leak $(ARGS) || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 

@@ -29,7 +29,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -429,6 +429,7 @@ type Performance struct {
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
 	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease   string  `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                  int     `toml:"gogc" json:"gogc"`
 	EnforceMPP            bool    `toml:"enforce-mpp" json:"enforce-mpp"`
 }
@@ -641,6 +642,7 @@ var defaultConf = Config{
 		IndexUsageSyncLease: "0s",
 		GOGC:                100,
 		EnforceMPP:          false,
+		PlanReplayerGCLease: "10m",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

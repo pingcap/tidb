@@ -1,0 +1,20 @@
+-- test for builtin function hex()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select hex(a), hex(b), hex(c) from t;
+set @@tidb_enable_vectorized_expression = true;
+select hex(a), hex(b), hex(c) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function upper() and lower()
+drop table if exists t;
+create table t (a char(100) charset utf8mb4, b char(100) charset gbk);
+insert into t values ('àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ', 'àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ');
+select upper(a), upper(b) from t;
+select lower(a), lower(b) from t;
+set @@tidb_enable_vectorized_expression = true;
+select upper(a), upper(b) from t;
+select lower(a), lower(b) from t;
+set @@tidb_enable_vectorized_expression = false;
+

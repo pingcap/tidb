@@ -26,13 +26,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -716,7 +716,6 @@ func TestTempTableBinlog(t *testing.T) {
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().BinlogClient = s.client
 	tk.MustExec("begin")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("drop table if exists temp_table")
 	ddlQuery := "create global temporary table temp_table(id int) on commit delete rows"
 	tk.MustExec(ddlQuery)
