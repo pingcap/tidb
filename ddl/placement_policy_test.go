@@ -221,6 +221,8 @@ func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {
 	))
 	// Test for "=`default`"
 	tk.MustGetErrCode("ALTER DATABASE TestResetPlacementDB DEFAULT PLACEMENT POLICY=`default`;", mysql.ErrReservedSyntax)
+	tk.MustGetErrCode("ALTER DATABASE TestResetPlacementDB DEFAULT PLACEMENT POLICY='default';", mysql.ErrReservedSyntax)
+	tk.MustGetErrCode(`ALTER DATABASE TestResetPlacementDB DEFAULT PLACEMENT POLICY="default";`, mysql.ErrReservedSyntax)
 
 	tk.MustExec("drop placement policy `TestReset`;")
 	tk.MustExec("drop database TestResetPlacementDB;")
