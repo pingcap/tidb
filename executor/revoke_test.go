@@ -199,9 +199,8 @@ func (s *testSuite1) TestRevokeOnNonExistTable(c *C) {
 	// issue #28533
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustExec("DROP DATABASE IF EXISTS d1;")
-	tk.MustExec("DROP USER IF EXISTS issue28533;")
 	tk.MustExec("CREATE DATABASE d1;")
+	defer tk.MustExec("DROP DATABASE IF EXISTS d1;")
 	tk.MustExec("USE d1;")
 	tk.MustExec("CREATE TABLE t1 (a int)")
 	defer tk.MustExec("DROP TABLE IF EXISTS t1")
