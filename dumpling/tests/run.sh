@@ -14,8 +14,8 @@ export DUMPLING_TEST_PORT=3306
 set -eu
 
 mkdir -p "$DUMPLING_TEST_DIR"
-PATH="tests/_utils:$PATH"
-. "tests/_utils/run_services"
+PATH="dumpling/tests/_utils:$PATH"
+. "dumpling/tests/_utils/run_services"
 
 file_should_exist bin/tidb-server
 file_should_exist bin/tidb-lightning
@@ -47,11 +47,11 @@ else
 fi
 
 if [ "$test_case" == "*" ]; then
-    for script in tests/*/run.sh; do
+    for script in dumpling/tests/*/run.sh; do
         run_case_by_fullpath "$script"
     done
 else
-    script="tests/$test_case/run.sh"
+    script="dumpling/tests/$test_case/run.sh"
     run_case_by_fullpath "$script"
 fi
 
