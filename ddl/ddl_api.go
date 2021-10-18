@@ -87,6 +87,9 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 	if placementPolicyRef != nil {
 		// placement policy reference will override the direct placement options.
 		policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(placementPolicyRef.Name)
+		if placementPolicyRef.Name.L == "default" {
+			return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(placementPolicyRef.Name))
+		}
 		if !ok {
 			return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(placementPolicyRef.Name))
 		}
@@ -6499,6 +6502,9 @@ func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*model.P
 
 func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {
 	policyName := stmt.PolicyName
+	if policyName.L == "default" {
+		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(policyName))
+	}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check policy existence.
 	_, ok := is.PolicyByName(policyName)

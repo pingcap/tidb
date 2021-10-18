@@ -198,6 +198,8 @@ func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists TestResetPlacementDB;")
 	tk.MustExec("create placement policy `TestReset` followers=4;")
+	tk.MustGetErrCode("create placement policy `default` followers=4;", mysql.ErrReservedSyntax)
+
 	tk.MustExec("create database TestResetPlacementDB placement policy `TestReset`;")
 	tk.MustExec("use TestResetPlacementDB")
 	// Test for `=default`
