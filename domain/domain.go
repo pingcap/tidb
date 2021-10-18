@@ -341,6 +341,11 @@ func (do *Domain) NotifyGlobalConfigChange(name, value string) {
 	do.globalCfgSyncer.Notify(name, value)
 }
 
+// GetGlobalConfigSyncer exports for testing.
+func (do *Domain) GetGlobalConfigSyncer() *globalconfigsync.GlobalConfigSyncer {
+	return do.globalCfgSyncer
+}
+
 // Store gets KV store from domain.
 func (do *Domain) Store() kv.Storage {
 	return do.store

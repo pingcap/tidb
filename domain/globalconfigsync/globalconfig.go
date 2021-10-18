@@ -42,15 +42,15 @@ func NewGlobalConfigSyncer(etcdCli *clientv3.Client) *GlobalConfigSyncer {
 	}
 }
 
-// ConfigEntry contain the global config name and value.
+// ConfigEntry contain the global config Name and Value.
 type ConfigEntry struct {
-	name  string
-	value string
+	Name  string
+	Value string
 }
 
 // Notify sends the config entry into notify channel.
 func (c *GlobalConfigSyncer) Notify(name, value string) {
-	c.NotifyCh <- ConfigEntry{name: name, value: value}
+	c.NotifyCh <- ConfigEntry{Name: name, Value: value}
 }
 
 // StoreGlobalConfig stores the global config into etcd.
@@ -59,11 +59,16 @@ func (c *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, entry Config
 		return nil
 	}
 
-	key := globalConfigPath + entry.name
-	err := util.PutKVToEtcd(ctx, c.etcdCli, keyOpDefaultRetryCnt, key, entry.value)
+	key := globalConfigPath + entry.Name
+	err := util.PutKVToEtcd(ctx, c.etcdCli, keyOpDefaultRetryCnt, key, entry.Value)
 	if err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("store global config", zap.String("name", entry.name), zap.String("value", entry.value))
+	logutil.BgLogger().Info("store global config", zap.String("Name", entry.Name), zap.String("Value", entry.Value))
 	return nil
+}
+
+// SetEtcdClient exports for testing.
+func (c *GlobalConfigSyncer) SetEtcdClient(etcdCli *clientv3.Client) {
+	c.etcdCli = etcdCli
 }
