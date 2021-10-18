@@ -997,6 +997,25 @@ func (s *testPlanSerialSuite) TestIssue28867(c *C) {
 	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows())
 	tk.MustExec(`set @a=1, @b=2`)
 	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("1 1 1"))
+
+	// test case for IndexJoin + PlanCache
+	tk.MustExec(`drop table t1, t2`)
+	tk.MustExec(`create table t1 (a int, b int, c int, index idxab(a, b, c))`)
+	tk.MustExec(`create table t2 (a int, b int)`)
+
+	tk.MustExec(`prepare stmt from 'select /*+ INL_JOIN(t1,t2) */ * from t1, t2 where t1.a=t2.a and t1.b=?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute stmt using @a`)
+	tk.MustExec(`execute stmt using @a`)
+	// the index range [a, b] depends on parameters, so it cannot use plan-cache
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec(`prepare stmt from 'select /*+ INL_JOIN(t1,t2) */ * from t1, t2 where t1.a=t2.a and t1.c=?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute stmt using @a`)
+	tk.MustExec(`execute stmt using @a`)
+	// the index range [a] doesn't depend on parameters, so it can use plan-cache
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func (s *testPlanSerialSuite) TestIssue18066(c *C) {
