@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,8 +48,7 @@ func (s *HDFSStorage) WriteFile(ctx context.Context, name string, data []byte) e
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Print(string(out))
-		return err
+		return errors.Annotate(err, string(out))
 	}
 	return nil
 }
@@ -73,8 +71,7 @@ func (s *HDFSStorage) FileExists(ctx context.Context, name string) (bool, error)
 		return false, nil
 	}
 	if err != nil {
-		log.Print(string(out))
-		return false, err
+		return false, errors.Annotate(err, string(out))
 	}
 	return true, nil
 }
