@@ -124,4 +124,9 @@ func new(summariesCap uint) TrxHistoryRecorder {
 	}
 }
 
+// Clean clears the history recorder. For test only.
+func (recorder *TrxHistoryRecorder) Clean() {
+	recorder.summaries.size = 0
+}
+
 var Recorder TrxHistoryRecorder = new(8192)

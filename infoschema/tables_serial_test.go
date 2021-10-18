@@ -1492,6 +1492,27 @@ func TestTiDBTrx(t *testing.T) {
 		"[null,null,\"update `test_tidb_trx` set `i` = `i` + ?\"]"))
 }
 
+func TestTiDBTrxSummary(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec("drop table if exists test_tidb_trx")
+	tk.MustExec("create table test_tidb_trx(i int)")
+	_, beginDigest := parser.NormalizeDigest("begin")
+	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
+	_, commitDigest := parser.NormalizeDigest("commit")
+	txninfo.Recorder.Clean()
+	tk.MustExec("begin")
+	tk.MustExec("update test_tidb_trx set i = i + 1")
+	time.Sleep(1 * time.Second)
+	tk.MustExec("update test_tidb_trx set i = i + 1")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from information_schema.TRX_SUMMARY;").Check(testkit.Rows(
+		"643628328 [\"" + beginDigest.String() + "\",\"" + digest.String() + "\",\"" + digest.String() + "\",\"" + commitDigest.String() + "\"]",
+	))
+}
+
 func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
