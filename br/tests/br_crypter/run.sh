@@ -80,8 +80,8 @@ function test_crypter(){
     echo "restore crypter method of $CRYPTER_METHOD with wrong key of $CRYPTER_WRONG_KEY"
     restore_fail=0
     run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/$CRYPTER_METHOD" \
-        --crypter.method $CRYPTER_METHOD  --crypter.key $CRYPTER_WRONG_KEY || backup_fail=1
-    if [ $backup_fail -ne 1 ]; then
+        --crypter.method $CRYPTER_METHOD  --crypter.key $CRYPTER_WRONG_KEY || restore_fail=1
+    if [ $restore_fail -ne 1 ]; then
         echo "TEST: [$TEST_NAME] test restore crypter with wrong key failed!"
         exit 1
     fi
@@ -104,8 +104,8 @@ function test_crypter(){
     echo "backup crypter method of $CRYPTER_METHOD with the wrong key-file of $CRYPTER_WRONG_KEY_FILE"
     restore_fail=0
     run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
-        --crypter.method $CRYPTER_METHOD  --crypter.key-file $CRYPTER_WRONG_KEY_FILE || backup_fail=1
-    if [ $backup_fail -ne 1 ]; then
+        --crypter.method $CRYPTER_METHOD  --crypter.key-file $CRYPTER_WRONG_KEY_FILE || restore_fail=1
+    if [ $restore_fail -ne 1 ]; then
         echo "TEST: [$TEST_NAME] test restore with wrong key-file failed!"
         exit 1
     fi
