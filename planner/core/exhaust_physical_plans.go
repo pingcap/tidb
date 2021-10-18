@@ -2729,7 +2729,7 @@ func (p *LogicalPartitionUnionAll) exhaustPhysicalPlans(prop *property.PhysicalP
 }
 
 func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *PhysicalSort {
-	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, &property.PhysicalProperty{TaskTp: prop.TaskTp,ExpectedCnt: math.MaxFloat64})
+	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, &property.PhysicalProperty{TaskTp: prop.TaskTp,ExpectedCnt: math.MaxFloat64, RejectSort: true})
 	return ps
 }
 
@@ -2738,6 +2738,7 @@ func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *Nomin
 	if !canPass {
 		return nil
 	}
+	prop.RejectSort = true
 	prop.ExpectedCnt = reqProp.ExpectedCnt
 	ps := NominalSort{OnlyColumn: onlyColumn, ByItems: ls.ByItems}.Init(
 		ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, prop)

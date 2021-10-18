@@ -3293,5 +3293,42 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestRejectSortForMPP",
+    "Cases": [
+      {
+        "SQL": "desc format = 'brief' select count(*) from (select * from t order by id)a group by name order by id;",
+        "Plan": null
+      },
+      {
+        "SQL": "",
+        "Plan": null
+      },
+      {
+        "SQL": "",
+        "Plan": null
+      },
+      {
+        "SQL": "",
+        "Plan": null
+      },
+      {
+        "SQL": "",
+        "Plan": null
+      },
+      {
+        "SQL": "",
+        "Plan": null
+      },
+      {
+        "SQL": "",
+        "Plan": null
+      },
+      {
+        "SQL": "",
+        "Plan": null
+      }
+    ]
   }
 ]
