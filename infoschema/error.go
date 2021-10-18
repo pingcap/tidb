@@ -35,7 +35,7 @@ var (
 	// ErrReservedSyntax  for internal syntax.
 	ErrReservedSyntax = dbterror.ClassSchema.NewStd(mysql.ErrReservedSyntax)
 	// ErrTableExists returns for table already exists.
-	ErrTableExists    = dbterror.ClassSchema.NewStd(mysql.ErrTableExists)
+	ErrTableExists = dbterror.ClassSchema.NewStd(mysql.ErrTableExists)
 	// ErrTableDropExists returns for dropping a non-existent table.
 	ErrTableDropExists = dbterror.ClassSchema.NewStd(mysql.ErrBadTable)
 	// ErrSequenceDropExists returns for dropping a non-exist sequence.
