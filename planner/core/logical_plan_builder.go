@@ -3583,8 +3583,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, err
 		}
 	}
-	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
-		if sel.LockInfo.LockType == ast.SelectLockForShare && noopFuncsMode != variable.OnInt {
+	l := sel.LockInfo
+	if l != nil && l.LockType != ast.SelectLockNone {
+		if l.LockType == ast.SelectLockForShare && noopFuncsMode != variable.OnInt {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 			if noopFuncsMode == variable.OffInt {
 				return nil, err
@@ -3592,7 +3593,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			// NoopFuncsMode is Warn, append an error
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
-		p, err = b.buildSelectLock(p, sel.LockInfo)
+		for _, tName := range l.Tables {
+			b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tName.TableInfo.ID] = struct{}{}
+		}
+		p, err = b.buildSelectLock(p, l)
 		if err != nil {
 			return nil, err
 		}
