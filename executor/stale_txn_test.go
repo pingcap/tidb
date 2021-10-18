@@ -275,17 +275,17 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		{
 			name:   "coprocessor read",
 			sql:    "select * from t",
-			assert: "github.com/pingcap/distsql/assertRequestBuilderStalenessOption",
+			assert: "github.com/pingcap/tidb/distsql/assertRequestBuilderReplicaOption",
 		},
 		{
 			name:   "point get read",
 			sql:    "select * from t where id = 1",
-			assert: "github.com/pingcap/tidb/executor/assertPointStalenessOption",
+			assert: "github.com/pingcap/tidb/executor/assertPointReplicaOption",
 		},
 		{
 			name:   "batch point get read",
 			sql:    "select * from t where id in (1,2,3)",
-			assert: "github.com/pingcap/tidb/executor/assertBatchPointStalenessOption",
+			assert: "github.com/pingcap/tidb/executor/assertBatchPointReplicaOption",
 		},
 	}
 	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
@@ -305,13 +305,6 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		failpoint.Disable(testcase.assert)
 	}
 	// assert follower read closest read
-	for _, testcase := range testcases {
-		failpoint.Enable(testcase.assert, `return("sh")`)
-		tk.MustExec(`begin;`)
-		tk.MustQuery(testcase.sql)
-		tk.MustExec(`commit`)
-		failpoint.Disable(testcase.assert)
-	}
 	for _, testcase := range testcases {
 		failpoint.Enable(testcase.assert, `return("sh")`)
 		tk.MustQuery(testcase.sql)
@@ -1122,7 +1115,7 @@ func (s *testStaleTxnSerialSuite) TestStaleSessionQuery(c *C) {
 	tk.MustExec("insert into t10 (id) values (1)")
 	time.Sleep(2 * time.Second)
 	now := time.Now()
-	tk.MustExec(`set @@tidb_read_staleness="-1s"`)
+	tk.MustExec(`set @@tidb_read_staleness="-1"`)
 	// query will use stale read
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, now.Unix()-1)), IsNil)
@@ -1166,7 +1159,7 @@ func (s *testStaleTxnSerialSuite) TestStaleReadCompatibility(c *C) {
 	// assert set transaction read only as of timestamp is consumed
 	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 3)
 	// enable tidb_read_staleness
-	tk.MustExec("set @@tidb_read_staleness='-1s'")
+	tk.MustExec("set @@tidb_read_staleness='-1'")
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, t1.Unix())), IsNil)
 	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 1)
 	// assert select as of timestamp during tidb_read_staleness

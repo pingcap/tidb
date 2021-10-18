@@ -17,23 +17,16 @@ package common_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
-	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	tmysql "github.com/pingcap/tidb/errno"
-	"go.uber.org/multierr"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type utilSuite struct{}
@@ -83,48 +76,6 @@ func (s *utilSuite) TestGetJSON(c *C) {
 	err = common.GetJSON(ctx, client, testServer.URL, &response)
 	c.Assert(err, NotNil)
 	c.Assert(err, ErrorMatches, ".*http status code != 200.*")
-}
-
-func (s *utilSuite) TestIsRetryableError(c *C) {
-	c.Assert(common.IsRetryableError(context.Canceled), IsFalse)
-	c.Assert(common.IsRetryableError(context.DeadlineExceeded), IsFalse)
-	c.Assert(common.IsRetryableError(io.EOF), IsFalse)
-	c.Assert(common.IsRetryableError(&net.AddrError{}), IsFalse)
-	c.Assert(common.IsRetryableError(&net.DNSError{}), IsFalse)
-	c.Assert(common.IsRetryableError(&net.DNSError{IsTimeout: true}), IsTrue)
-
-	// MySQL Errors
-	c.Assert(common.IsRetryableError(&mysql.MySQLError{}), IsFalse)
-	c.Assert(common.IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrUnknown}), IsTrue)
-	c.Assert(common.IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrLockDeadlock}), IsTrue)
-	c.Assert(common.IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrPDServerTimeout}), IsTrue)
-	c.Assert(common.IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerTimeout}), IsTrue)
-	c.Assert(common.IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerBusy}), IsTrue)
-	c.Assert(common.IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrResolveLockTimeout}), IsTrue)
-	c.Assert(common.IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrRegionUnavailable}), IsTrue)
-	c.Assert(common.IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflictInTiDB}), IsTrue)
-
-	// gRPC Errors
-	c.Assert(common.IsRetryableError(status.Error(codes.Canceled, "")), IsFalse)
-	c.Assert(common.IsRetryableError(status.Error(codes.Unknown, "")), IsTrue)
-	c.Assert(common.IsRetryableError(status.Error(codes.DeadlineExceeded, "")), IsTrue)
-	c.Assert(common.IsRetryableError(status.Error(codes.NotFound, "")), IsTrue)
-	c.Assert(common.IsRetryableError(status.Error(codes.AlreadyExists, "")), IsTrue)
-	c.Assert(common.IsRetryableError(status.Error(codes.PermissionDenied, "")), IsTrue)
-	c.Assert(common.IsRetryableError(status.Error(codes.ResourceExhausted, "")), IsTrue)
-	c.Assert(common.IsRetryableError(status.Error(codes.Aborted, "")), IsTrue)
-	c.Assert(common.IsRetryableError(status.Error(codes.OutOfRange, "")), IsTrue)
-	c.Assert(common.IsRetryableError(status.Error(codes.Unavailable, "")), IsTrue)
-	c.Assert(common.IsRetryableError(status.Error(codes.DataLoss, "")), IsTrue)
-
-	// sqlmock errors
-	c.Assert(common.IsRetryableError(fmt.Errorf("call to database Close was not expected")), IsFalse)
-	c.Assert(common.IsRetryableError(errors.New("call to database Close was not expected")), IsTrue)
-
-	// multierr
-	c.Assert(common.IsRetryableError(multierr.Combine(context.Canceled, context.Canceled)), IsFalse)
-	c.Assert(common.IsRetryableError(multierr.Combine(&net.DNSError{IsTimeout: true}, &net.DNSError{IsTimeout: true})), IsTrue)
-	c.Assert(common.IsRetryableError(multierr.Combine(context.Canceled, &net.DNSError{IsTimeout: true})), IsFalse)
 }
 
 func (s *utilSuite) TestToDSN(c *C) {
