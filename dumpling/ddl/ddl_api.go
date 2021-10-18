@@ -2447,12 +2447,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.PreSplitRegions = op.UintValue
 		case ast.TableOptionCharset, ast.TableOptionCollate:
 			// We don't handle charset and collate here since they're handled in `getCharsetAndCollateInTableOption`.
-		case ast.TableOptionEngine:
-			if tbInfo.TempTableType != model.TempTableNone {
-				if op.StrValue != "" && !strings.EqualFold(op.StrValue, "memory") {
-					return errors.Trace(errUnsupportedEngineTemporary)
-				}
-			}
 		case ast.TableOptionPlacementPolicy:
 			tbInfo.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(op.StrValue),
