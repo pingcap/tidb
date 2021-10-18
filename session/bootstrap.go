@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
 package session
 
 import (
@@ -29,16 +29,16 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -132,7 +132,7 @@ const (
 		Grantor		CHAR(77),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
-		Column_priv	SET('Select','Insert','Update'),
+		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
@@ -142,7 +142,7 @@ const (
 		Table_name	CHAR(64),
 		Column_name	CHAR(64),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		Column_priv	SET('Select','Insert','Update'),
+		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
@@ -521,13 +521,15 @@ const (
 	version74 = 74
 	// version75 update mysql.*.host from char(60) to char(255)
 	version75 = 75
-	// version76 adds mysql.column_stats_usage table
+	// version76 update mysql.columns_priv from SET('Select','Insert','Update') to SET('Select','Insert','Update','References')
 	version76 = 76
+	// version77 adds mysql.column_stats_usage table
+	version77 = 77
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version76
+var currentBootstrapVersion int64 = version77
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -607,6 +609,7 @@ var (
 		upgradeToVer74,
 		upgradeToVer75,
 		upgradeToVer76,
+		upgradeToVer77,
 	}
 )
 
@@ -1584,6 +1587,13 @@ func upgradeToVer75(s Session, ver int64) {
 
 func upgradeToVer76(s Session, ver int64) {
 	if ver >= version76 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Column_priv SET('Select','Insert','Update','References')")
+}
+
+func upgradeToVer77(s Session, ver int64) {
+	if ver >= version77 {
 		return
 	}
 	doReentrantDDL(s, CreateColumnStatsUsageTable)

@@ -22,10 +22,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -222,6 +222,11 @@ func (c *Context) NewTxn(context.Context) error {
 // NewStaleTxnWithStartTS implements the sessionctx.Context interface.
 func (c *Context) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error {
 	return c.NewTxn(ctx)
+}
+
+// GetSnapshotWithTS return a snapshot with ts
+func (c *Context) GetSnapshotWithTS(ts uint64) kv.Snapshot {
+	return c.Store.GetSnapshot(kv.Version{Ver: ts})
 }
 
 // RefreshTxnCtx implements the sessionctx.Context interface.
