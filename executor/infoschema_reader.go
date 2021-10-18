@@ -2106,7 +2106,10 @@ func (e *memtableRetriever) setDataForTrxSummary(ctx sessionctx.Context) error {
 }
 
 func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionctx.Context) error {
-	e.setDataForTrxSummary(ctx)
+	err := e.setDataForTrxSummary(ctx)
+	if err != nil {
+		return err
+	}
 	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
 	if err != nil {
 		return err

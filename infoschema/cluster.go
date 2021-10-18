@@ -43,7 +43,8 @@ const (
 	// ClusterTableTiDBTrx is the string constant of cluster transaction running table.
 	ClusterTableTiDBTrx = "CLUSTER_TIDB_TRX"
 	// ClusterTableDeadlocks is the string constant of cluster dead lock table.
-	ClusterTableDeadlocks  = "CLUSTER_DEADLOCKS"
+	ClusterTableDeadlocks = "CLUSTER_DEADLOCKS"
+	// ClusterTableDeadlocks is the string constant of cluster transaction summary table.
 	ClusterTableTrxSummary = "CLUSTER_TRX_SUMMARY"
 )
 

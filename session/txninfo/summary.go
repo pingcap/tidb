@@ -25,17 +25,17 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-func digest(stmts []string) uint32 {
+func digest(digests []string) uint32 {
 	hash := fnv.New32a()
-	for _, sql := range stmts {
-		hash.Write([]byte(sql))
+	for _, digest := range digests {
+		hash.Write([]byte(digest))
 	}
 	return hash.Sum32()
 }
 
 type trxSummaryEntry struct {
 	trxDigest uint32
-	stmts     []string
+	digests   []string
 }
 
 type trxSummaries struct {
@@ -56,32 +56,31 @@ func newTrxSummaries(capacity uint) trxSummaries {
 	}
 }
 
-func (s *trxSummaries) onTrxEnd(stmts []string) {
-	key := digest(stmts)
+func (s *trxSummaries) onTrxEnd(digests []string) {
+	key := digest(digests)
 	element, exists := s.elements[key]
 	if exists {
 		s.cache.MoveToFront(element)
 		return
+	}
+	e := trxSummaryEntry{
+		trxDigest: key,
+		digests:   digests,
+	}
+	s.elements[key] = s.cache.PushFront(e)
+	if s.size == s.capacity {
+		last := s.cache.Back()
+		delete(s.elements, last.Value.(trxSummaryEntry).trxDigest)
+		s.cache.Remove(last)
 	} else {
-		e := trxSummaryEntry{
-			trxDigest: key,
-			stmts:     stmts,
-		}
-		s.elements[key] = s.cache.PushFront(e)
-		if s.size == s.capacity {
-			last := s.cache.Back()
-			delete(s.elements, last.Value.(trxSummaryEntry).trxDigest)
-			s.cache.Remove(last)
-		} else {
-			s.size++
-		}
+		s.size++
 	}
 }
 
 func (s *trxSummaries) dumpTrxSummary() [][]types.Datum {
 	var result [][]types.Datum
 	for ele := s.cache.Front(); ele != nil; ele = ele.Next() {
-		sqls := ele.Value.(trxSummaryEntry).stmts
+		sqls := ele.Value.(trxSummaryEntry).digests
 		digest := ele.Value.(trxSummaryEntry).trxDigest
 		res, err := json.Marshal(sqls)
 		if err != nil {
@@ -95,18 +94,21 @@ func (s *trxSummaries) dumpTrxSummary() [][]types.Datum {
 	return result
 }
 
+// TrxHistoryRecorder is a history recorder for transaction.
 type TrxHistoryRecorder struct {
 	mu sync.Mutex
 
 	summaries trxSummaries
 }
 
+// DumpTrxSummary dumps the transaction summary to Datum for displaying in `TRX_SUMMARY` table.
 func (recorder *TrxHistoryRecorder) DumpTrxSummary() [][]types.Datum {
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
 	return recorder.summaries.dumpTrxSummary()
 }
 
+// OnTrxEnd should be called when a transaction ends, ie. leaves `TIDB_TRX` table.
 func (recorder *TrxHistoryRecorder) OnTrxEnd(info *TxnInfo) {
 	now := time.Now()
 	startTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
@@ -129,4 +131,5 @@ func (recorder *TrxHistoryRecorder) Clean() {
 	recorder.summaries.size = 0
 }
 
+// Recorder is the recorder instance.
 var Recorder TrxHistoryRecorder = new(8192)
