@@ -631,7 +631,7 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	defer tk.MustExec("drop table if exists tb3, tb4")
 	tk.MustQuery("show create table tb4;").Check(testkit.Rows("tb4 CREATE GLOBAL TEMPORARY TABLE `tb4` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
 
 	// Test from->global temporary, to->normal.
 	tk.MustExec("drop table if exists tb5, tb6")
@@ -653,7 +653,7 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk.MustExec("create temporary table tb12 like tb11")
 	tk.MustQuery("show create table tb12;").Check(testkit.Rows("tb12 CREATE TEMPORARY TABLE `tb12` (\n" +
 		"  `i` int(11) NOT NULL,\n  `j` int(11) DEFAULT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("create temporary table if not exists tb12 like tb11;")
 	c.Assert(tk.Se.(sessionctx.Context).GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals,
 		infoschema.ErrTableExists.GenWithStackByArgs("test.tb12").Error())
