@@ -125,9 +125,8 @@ func regionTotalCount(storeTasks map[uint64]*batchCopTask, candidateRegionInfos 
 }
 
 const (
-	maxIgnoreUnbalanceCount = 20
 	maxBalanceScore         = 100
-	balanceScoreThreshold   = 80
+	balanceScoreThreshold   = 85
 )
 
 // Select at most cnt RegionInfos from candidateRegionInfos that belong to storeID.
@@ -156,12 +155,12 @@ func selectRegion(storeID uint64, candidateRegionInfos []RegionInfo, selected []
 }
 
 // Higher scores mean more balance: (100 - unblance percentage)
-func balanceScore(maxRegionCount, minRegionCount int) int {
+func balanceScore(maxRegionCount, minRegionCount int, balanceContinuousRegionCount int64) int {
 	if minRegionCount <= 0 {
 		return math.MinInt32
 	}
 	unbalanceCount := maxRegionCount - minRegionCount
-	if unbalanceCount <= maxIgnoreUnbalanceCount {
+	if unbalanceCount <= int(balanceContinuousRegionCount) {
 		return maxBalanceScore
 	}
 	return maxBalanceScore - unbalanceCount*100/minRegionCount
@@ -171,7 +170,7 @@ func isBalance(score int) bool {
 	return score >= balanceScoreThreshold
 }
 
-func checkBatchCopTaskBalance(storeTasks map[uint64]*batchCopTask) (int, []string) {
+func checkBatchCopTaskBalance(storeTasks map[uint64]*batchCopTask, balanceContinuousRegionCount int64) (int, []string) {
 	if len(storeTasks) == 0 {
 		return 0, []string{}
 	}
@@ -188,7 +187,7 @@ func checkBatchCopTaskBalance(storeTasks map[uint64]*batchCopTask) (int, []strin
 		}
 		balanceInfos = append(balanceInfos, fmt.Sprintf("storeID %d storeAddr %s regionCount %d", storeID, task.storeAddr, cnt))
 	}
-	return balanceScore(maxRegionCount, minRegionCount), balanceInfos
+	return balanceScore(maxRegionCount, minRegionCount, balanceContinuousRegionCount), balanceInfos
 }
 
 func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, candidateRegionInfos []RegionInfo, balanceContinuousRegionCount int64) ([]*batchCopTask, int) {
@@ -245,7 +244,7 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 	}
 	balanceEnd := time.Now()
 
-	score, balanceInfos := checkBatchCopTaskBalance(storeTasks)
+	score, balanceInfos := checkBatchCopTaskBalance(storeTasks, balanceContinuousRegionCount)
 	if !isBalance(score) {
 		logutil.BgLogger().Warn("balanceBatchCopTaskWithContinuity is not balance", zap.Int("score", score), zap.Strings("balanceInfos", balanceInfos))
 	}
@@ -486,7 +485,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 	}
 
 	if contiguousTasks != nil {
-		score, balanceInfos := checkBatchCopTaskBalance(storeTaskMap)
+		score, balanceInfos := checkBatchCopTaskBalance(storeTaskMap, balanceContinuousRegionCount)
 		if !isBalance(score) {
 			logutil.BgLogger().Warn("Region count is not balance and use contiguousTasks", zap.Int("contiguousBalanceScore", contiguousBalanceScore), zap.Int("score", score), zap.Strings("balanceInfos", balanceInfos))
 			return contiguousTasks
