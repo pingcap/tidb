@@ -257,6 +257,9 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 			isAlterPlacement = true
 		case ast.DatabaseOptionPlacementPolicy:
 			policyName = model.NewCIStr(val.Value)
+			if policyName.L == "default" {
+				return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(policyName))
+			}
 			policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(policyName)
 			if !ok {
 				return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(policyName))

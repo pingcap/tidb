@@ -220,7 +220,7 @@ func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {
 		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 	// Test for "=`default`"
-	tk.MustGetErrCode("ALTER DATABASE TestResetPlacementDB DEFAULT PLACEMENT POLICY=`default`;", mysql.ErrPlacementPolicyNotExists)
+	tk.MustGetErrCode("ALTER DATABASE TestResetPlacementDB DEFAULT PLACEMENT POLICY=`default`;", mysql.ErrReservedSyntax)
 
 	tk.MustExec("drop placement policy `TestReset`;")
 	tk.MustExec("drop database TestResetPlacementDB;")

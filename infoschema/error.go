@@ -32,7 +32,8 @@ var (
 	ErrPlacementPolicyExists = dbterror.ClassSchema.NewStd(mysql.ErrPlacementPolicyExists)
 	// ErrPlacementPolicyNotExists return for placement_policy policy not exists.
 	ErrPlacementPolicyNotExists = dbterror.ClassSchema.NewStd(mysql.ErrPlacementPolicyNotExists)
-	// ErrTableExists returns for table already exists.
+	// ErrReservedSyntax  for internal syntax.
+	ErrReservedSyntax = dbterror.ClassSchema.NewStd(mysql.ErrReservedSyntax)
 	ErrTableExists = dbterror.ClassSchema.NewStd(mysql.ErrTableExists)
 	// ErrTableDropExists returns for dropping a non-existent table.
 	ErrTableDropExists = dbterror.ClassSchema.NewStd(mysql.ErrBadTable)
