@@ -368,19 +368,12 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		totalExpr := expression.ComposeCNFCondition(ctx, exprs...)
 		logutil.BgLogger().Info(">>> CE Trace: Selectivity", zap.String("expr", ExprToString(totalExpr)), zap.Float64("Row count", ret*float64(coll.Count)))
 		CERecord := trace.CETraceRecord{
+			TableID: coll.PhysicalID,
 			Type:     "Selectivity",
 			Expr:     ExprToString(totalExpr),
 			RowCount: uint64(ret * float64(coll.Count)),
 		}
-		rec := trace.Record{
-			TableID: coll.PhysicalID,
-			CETrace: []trace.CETraceRecord{CERecord},
-		}
-		select {
-		case ctx.GetSessionVars().StmtCtx.CETraceRecordCh <- &rec:
-		default:
-			logutil.BgLogger().Info("[CE Trace] dropped one record")
-		}
+		ctx.GetSessionVars().StmtCtx.CETraceRecords = append(ctx.GetSessionVars().StmtCtx.CETraceRecords, &CERecord)
 	}
 	return ret, nodes, nil
 }

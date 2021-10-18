@@ -185,9 +185,10 @@ type StatementContext struct {
 	OptimInfo map[int]string
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
+
 	// EnableCETrace indicate if Cardinality Estimation module need to trace its internal progress.
 	EnableCETrace   bool
-	CETraceRecordCh chan interface{}
+	CETraceRecords []interface{}
 }
 
 // StmtHints are SessionVars related sql hints.

@@ -16,6 +16,8 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/util/logutil"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -166,6 +168,18 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 		return nil, 0, err
 	}
 	finalPlan := postOptimize(sctx, physical)
+
+	vars := sctx.GetSessionVars()
+	// Save CE trace records.
+	if vars.EnableCETrace {
+		traceHandle := domain.GetDomain(sctx).OptTraceHandle
+		traceRecords := vars.StmtCtx.CETraceRecords
+		select {
+		case traceHandle.RecordCh <- traceRecords:
+		default:
+			logutil.BgLogger().Warn("[CE Trace] dropped records for one optimization")
+		}
+	}
 	return finalPlan, cost, nil
 }
 

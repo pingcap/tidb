@@ -350,19 +350,12 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 			zap.String("ranges", trace.RangesToString(intRanges, []string{c.Info.Name.O})),
 			zap.Float64("Row count", result))
 		CERecord := trace.CETraceRecord{
+			TableID: coll.PhysicalID,
 			Type:     "Int Column Ranges",
 			Expr:     trace.RangesToString(intRanges, []string{c.Info.Name.O}),
 			RowCount: uint64(result),
 		}
-		rec := trace.Record{
-			TableID: coll.PhysicalID,
-			CETrace: []trace.CETraceRecord{CERecord},
-		}
-		select {
-		case sc.CETraceRecordCh <- &rec:
-		default:
-			logutil.BgLogger().Info("[CE Trace] dropped one record")
-		}
+		sc.CETraceRecords = append(sc.CETraceRecords, &CERecord)
 	}
 	return result, errors.Trace(err)
 }
@@ -379,19 +372,12 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 			zap.String("ranges", trace.RangesToString(colRanges, []string{c.Info.Name.O})),
 			zap.Float64("Row count", result))
 		CERecord := trace.CETraceRecord{
+			TableID: coll.PhysicalID,
 			Type:     "Column Ranges",
 			Expr:     trace.RangesToString(colRanges, []string{c.Info.Name.O}),
 			RowCount: uint64(result),
 		}
-		rec := trace.Record{
-			TableID: coll.PhysicalID,
-			CETrace: []trace.CETraceRecord{CERecord},
-		}
-		select {
-		case sc.CETraceRecordCh <- &rec:
-		default:
-			logutil.BgLogger().Info("[CE Trace] dropped one record")
-		}
+		sc.CETraceRecords = append(sc.CETraceRecords, &CERecord)
 	}
 	return result, errors.Trace(err)
 }
@@ -422,19 +408,12 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 			zap.String("ranges", trace.RangesToString(indexRanges, colNames)),
 			zap.Float64("Row count", result))
 		CERecord := trace.CETraceRecord{
+			TableID: coll.PhysicalID,
 			Type:     "Index Ranges",
 			Expr:     trace.RangesToString(indexRanges, colNames),
 			RowCount: uint64(result),
 		}
-		rec := trace.Record{
-			TableID: coll.PhysicalID,
-			CETrace: []trace.CETraceRecord{CERecord},
-		}
-		select {
-		case sc.CETraceRecordCh <- &rec:
-		default:
-			logutil.BgLogger().Info("[CE Trace] dropped one record")
-		}
+		sc.CETraceRecords = append(sc.CETraceRecords, &CERecord)
 	}
 	return result, errors.Trace(err)
 }

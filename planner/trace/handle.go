@@ -18,39 +18,32 @@ type Handle struct {
 	Session  sessionctx.Context
 }
 
-type Record struct {
-	TableID int64
-	CETrace []CETraceRecord
-}
-
 type CETraceRecord struct {
+	TableID  int64
 	Type     string
 	Expr     string
 	RowCount uint64
 }
 
-func NewHandle(ctx sessionctx.Context) *Handle {
+func NewHandle(sctx sessionctx.Context) *Handle {
 	h := &Handle{
 		RecordCh: make(chan interface{}, 100),
-		Session:  ctx,
+		Session:  sctx,
 	}
 	return h
 }
 
-func (h *Handle) Run(rec *Record, dbName, tableName string) {
+func (h *Handle) Run(rec *CETraceRecord, dbName, tableName string) {
 	ctx := context.Background()
 	sql := "insert into mysql.optimizer_trace value (%?, %?, %?, %?, %?)"
 	exec := h.Session.(sqlexec.RestrictedSQLExecutor)
-	for _, CERec := range rec.CETrace {
-		stmt, err := exec.ParseWithParams(ctx, sql, CERec.Type, dbName, tableName, CERec.Expr, CERec.RowCount)
-		if err != nil {
-			logutil.BgLogger().Warn("[CE Trace] Error from ParseWithParams", zap.Error(err))
-			continue
-		}
-		_, _, err = exec.ExecRestrictedStmt(ctx, stmt)
-		if err != nil {
-			logutil.BgLogger().Warn("[CE Trace] Error from ExecRestrictedStmt", zap.Error(err))
-		}
+	stmt, err := exec.ParseWithParams(ctx, sql, rec.Type, dbName, tableName, rec.Expr, rec.RowCount)
+	if err != nil {
+		logutil.BgLogger().Warn("[CE Trace] Error from ParseWithParams", zap.Error(err))
+	}
+	_, _, err = exec.ExecRestrictedStmt(ctx, stmt)
+	if err != nil {
+		logutil.BgLogger().Warn("[CE Trace] Error from ExecRestrictedStmt", zap.Error(err))
 	}
 }
 

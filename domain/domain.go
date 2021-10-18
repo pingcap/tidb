@@ -1148,28 +1148,35 @@ func (do *Domain) OptimizerTraceWorker(ctx sessionctx.Context) {
 	go func() {
 		for {
 			select {
-			case recI := <-h.RecordCh:
-				rec, ok := recI.(*trace.Record)
+			case received := <-h.RecordCh:
+				records, ok := received.([]interface{})
 				if !ok {
-					logutil.BgLogger().Warn("[CE Trace] channel receive invalid record",
-						zap.String("received", fmt.Sprintf("%v", recI)))
+					logutil.BgLogger().Warn("[CE Trace] channel receive invalid records",
+						zap.String("received", fmt.Sprintf("%v", received)))
 				}
-				is := h.Session.GetInfoSchema().(infoschema.InfoSchema)
-				tbl, ok := is.TableByID(rec.TableID)
-				if !ok {
-					logutil.BgLogger().Warn("[CE Trace] Failed to find table in infoschema",
-						zap.Int64("table id", rec.TableID))
+				for _, recI := range records {
+					rec, ok := recI.(*trace.CETraceRecord)
+					if !ok {
+						logutil.BgLogger().Warn("[CE Trace] channel receive invalid record",
+							zap.String("received", fmt.Sprintf("%v", recI)))
+					}
+					is := h.Session.GetInfoSchema().(infoschema.InfoSchema)
+					tbl, ok := is.TableByID(rec.TableID)
+					if !ok {
+						logutil.BgLogger().Warn("[CE Trace] Failed to find table in infoschema",
+							zap.Int64("table id", rec.TableID))
+					}
+					tblInfo := tbl.Meta()
+					tableName := tblInfo.Name.O
+					dbInfo, ok := is.SchemaByTable(tblInfo)
+					if !ok {
+						logutil.BgLogger().Warn("[CE Trace] Failed to find db in infoschema",
+							zap.Int64("table id", rec.TableID),
+							zap.String("table name", tableName))
+					}
+					dbName := dbInfo.Name.O
+					h.Run(rec, dbName, tableName)
 				}
-				tblInfo := tbl.Meta()
-				tableName := tblInfo.Name.O
-				dbInfo, ok := is.SchemaByTable(tblInfo)
-				if !ok {
-					logutil.BgLogger().Warn("[CE Trace] Failed to find db in infoschema",
-						zap.Int64("table id", rec.TableID),
-						zap.String("table name", tableName))
-				}
-				dbName := dbInfo.Name.O
-				h.Run(rec, dbName, tableName)
 			case <-do.exit:
 				return
 			}

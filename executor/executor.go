@@ -1825,10 +1825,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	sc.EnableCETrace = vars.EnableCETrace
-	OptTraceHandle := domain.GetDomain(ctx).OptTraceHandle
-	if OptTraceHandle != nil {
-		sc.CETraceRecordCh = OptTraceHandle.RecordCh
-	}
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount
