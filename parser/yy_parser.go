@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 )
@@ -73,7 +72,6 @@ type ParserConfig struct {
 	EnableWindowFunction        bool
 	EnableStrictDoubleTypeCheck bool
 	SkipPositionRecording       bool
-	CharsetClient               string // CharsetClient indicates how to decode the original SQL.
 }
 
 // Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
@@ -134,21 +132,16 @@ func (parser *Parser) SetParserConfig(config ParserConfig) {
 	parser.EnableWindowFunc(config.EnableWindowFunction)
 	parser.SetStrictDoubleTypeCheck(config.EnableStrictDoubleTypeCheck)
 	parser.lexer.skipPositionRecording = config.SkipPositionRecording
-	parser.lexer.encoding = *charset.NewEncoding(config.CharsetClient)
 }
 
-// Parse parses a query string to raw ast.StmtNode.
-// If charset or collation is "", default charset and collation will be used.
-func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode, warns []error, err error) {
+func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.StmtNode, warns []error, err error) {
+	ResetParams(parser)
+	for _, p := range params {
+		if err := p.ApplyOn(parser); err != nil {
+			return nil, nil, err
+		}
+	}
 	sql = parser.lexer.tryDecodeToUTF8String(sql)
-	if charset == "" {
-		charset = mysql.DefaultCharset
-	}
-	if collation == "" {
-		collation = mysql.DefaultCollationName
-	}
-	parser.charset = charset
-	parser.collation = collation
 	parser.src = sql
 	parser.result = parser.result[:0]
 
@@ -170,6 +163,12 @@ func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode
 		ast.SetFlag(stmt)
 	}
 	return parser.result, warns, nil
+}
+
+// Parse parses a query string to raw ast.StmtNode.
+// If charset or collation is "", default charset and collation will be used.
+func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode, warns []error, err error) {
+	return parser.ParseSQL(sql, CharsetConnection(charset), CollationConnection(collation))
 }
 
 func (parser *Parser) lastErrorAsWarn() {

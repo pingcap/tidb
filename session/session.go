@@ -1164,7 +1164,7 @@ func (s *session) GetTiDBTableValue(name string) (string, error) {
 
 var _ sqlexec.SQLParser = &session{}
 
-func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
+func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1175,7 +1175,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	defer parserPool.Put(p)
 	p.SetSQLMode(s.sessionVars.SQLMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
-	tmp, warn, err := p.Parse(sql, charset, collation)
+	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
 	if len(tmp) == 1 {
 		s.cache[0] = tmp[0]
@@ -1326,9 +1326,8 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
-	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 	parseStartTime := time.Now()
-	stmts, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	stmts, warns, err := s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -1379,11 +1378,10 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		// Charsets from clients may give chance injections.
 		// Refer to https://stackoverflow.com/questions/5741187/sql-injection-that-gets-around-mysql-real-escape-string/12118602.
 		parseStartTime = time.Now()
-		stmts, warns, err = s.ParseSQL(ctx, sql, mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation)
+		stmts, warns, err = s.ParseSQL(ctx, sql)
 	} else {
-		charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 		parseStartTime = time.Now()
-		stmts, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
+		stmts, warns, err = s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	}
 	if len(stmts) != 1 {
 		err = errors.New("run multiple statements internally is not supported")
@@ -2437,7 +2435,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		runInBootstrapSession(store, upgrade)
 	}
 
-	se, err := createSession(store)
+	se, err := createInitSession(store)
 	if err != nil {
 		return nil, err
 	}
@@ -2484,11 +2482,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	dom := domain.GetDomain(se)
 
-	se2, err := createSession(store)
+	se2, err := createInitSession(store)
 	if err != nil {
 		return nil, err
 	}
-	se3, err := createSession(store)
+	se3, err := createInitSession(store)
 	if err != nil {
 		return nil, err
 	}
@@ -2501,7 +2499,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
-		se4, err := createSession(store)
+		se4, err := createInitSession(store)
 		if err != nil {
 			return nil, err
 		}
@@ -2512,7 +2510,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	//  Rebuild sysvar cache in a loop
-	se5, err := createSession(store)
+	se5, err := createInitSession(store)
 	if err != nil {
 		return nil, err
 	}
@@ -2579,16 +2577,14 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
 func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
-	s, err := createSession(store)
+	s, err := createInitSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
 
-	s.SetValue(sessionctx.Initing, true)
 	bootstrap(s)
 	finishBootstrap(store)
-	s.ClearValue(sessionctx.Initing)
 
 	dom := domain.GetDomain(s)
 	dom.Close()
@@ -2597,6 +2593,15 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 
 func createSession(store kv.Storage) (*session, error) {
 	return createSessionWithOpt(store, nil)
+}
+
+func createInitSession(store kv.Storage) (*session, error) {
+	s, err := createSessionWithOpt(store, nil)
+	if err != nil {
+		return nil, err
+	}
+	s.SetValue(sessionctx.Initing, true)
+	return s, nil
 }
 
 func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
