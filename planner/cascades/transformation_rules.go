@@ -1666,9 +1666,6 @@ func NewRuleEliminateAgg() Transformation {
 
 // Match implements Transformation interface.
 func (r *EliminateAgg) Match(expr *memo.ExprIter) bool {
-	if expr.Children == nil || len(expr.Children) == 0 {
-		return false
-	}
 	expr.Children[0].Group.BuildKeyInfo()
 
 	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
