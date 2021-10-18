@@ -17,8 +17,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/docker/go-units"
+	"github.com/pingcap/tidb/infoschema"
 	"os"
 	"path"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -5575,8 +5578,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
 	}
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSessionSuite) TestTemporaryTableInterceptor(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -5693,4 +5694,3 @@ func (s *testSessionSuite) TestFixSetTiDBSnapshotTS(c *C) {
 	tk.MustExec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER';")
 	tk.MustExec("use t123")
 }
->>>>>>> 417c7358e... session: fix set session variable make tidb_snapshot unwork (#28677)
