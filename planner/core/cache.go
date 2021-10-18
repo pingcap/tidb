@@ -159,16 +159,9 @@ func (s FieldSlice) Equal(tps []*types.FieldType) bool {
 		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
 		tpEqual := (s[i].Tp == tps[i].Tp) ||
 			(s[i].Tp == mysql.TypeVarchar && tps[i].Tp == mysql.TypeVarString) ||
-<<<<<<< HEAD
 			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar)
-		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate {
-=======
-			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar) ||
-			// TypeNull should be considered the same as other types.
-			(s[i].Tp == mysql.TypeNull || tps[i].Tp == mysql.TypeNull)
 		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate ||
 			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].Flag) != mysql.HasUnsignedFlag(tps[i].Flag)) {
->>>>>>> fba989f56... planner: fix the issue that plan-cache cannot be aware of changes of unsigned flags (#28827)
 			return false
 		}
 	}
