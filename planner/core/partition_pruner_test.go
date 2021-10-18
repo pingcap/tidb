@@ -487,8 +487,6 @@ func (s *testPartitionPruneSuit) TestRangePartitionPredicatePruner(c *C) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
-<<<<<<< HEAD
-=======
 
 func (s *testPartitionPruneSuit) TestHashPartitionPruning(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -508,4 +506,3 @@ func (s *testPartitionPruneSuit) TestHashPartitionPruning(c *C) {
 	tk.MustExec("insert into t(col1, col3) values(0, 3522101843073676459);")
 	tk.MustQuery("SELECT col1, COL3 FROM t WHERE COL1 IN (0,14158354938390,0) AND COL3 IN (3522101843073676459,-2846203247576845955,838395691793635638);").Check(testkit.Rows("0 3522101843073676459"))
 }
->>>>>>> fdcf122f0... planner: fix the wrong partition pruning when some conditions is out of range (#28296)
