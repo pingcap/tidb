@@ -6491,6 +6491,9 @@ func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*model.P
 
 func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {
 	policyName := stmt.PolicyName
+	if policyName.L == "default" {
+		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(policyName))
+	}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check policy existence.
 	_, ok := is.PolicyByName(policyName)
