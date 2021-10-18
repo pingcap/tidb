@@ -701,8 +701,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildLoadStats(x), nil
 	case *ast.IndexAdviseStmt:
 		return b.buildIndexAdvise(x), nil
-	case *ast.PlanRecreatorStmt:
-		return b.buildPlanRecreator(x), nil
+	case *ast.PlanReplayerStmt:
+		return b.buildPlanReplayer(x), nil
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x), nil
 	case *ast.SelectStmt:
@@ -1381,16 +1381,6 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	// Admin command can only be executed by administrator.
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return ret, nil
-}
-
-// FindColumnInfoByID finds ColumnInfo in cols by ID.
-func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInfo {
-	for _, info := range colInfos {
-		if info.ID == id {
-			return info
-		}
-	}
-	return nil
 }
 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
@@ -2338,6 +2328,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			Tp:          show.Tp,
 			DBName:      show.DBName,
 			Table:       show.Table,
+			Partition:   show.Partition,
 			Column:      show.Column,
 			IndexName:   show.IndexName,
 			Flag:        show.Flag,
@@ -2356,7 +2347,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if p.DBName == "" {
 			return nil, ErrNoDB
 		}
-	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable:
+	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
 		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()
@@ -4171,8 +4162,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	return
 }
 
-func (b *PlanBuilder) buildPlanRecreator(pc *ast.PlanRecreatorStmt) Plan {
-	p := &PlanRecreatorSingle{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
+func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
+	p := &PlanReplayerSingle{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
 	return p
 }
 
