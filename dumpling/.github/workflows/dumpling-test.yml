@@ -1,4 +1,4 @@
-name: Go
+name: Dumpling
 on:
   push:
     branches:
@@ -59,9 +59,9 @@ jobs:
       - name: Get dependencies
         run: go mod download
       - name: Download dependencies
-        run: sh install.sh
+        run: sh dumpling/install.sh
       - name: Integration test
-        run: make integration_test
+        run: make dumpling_integration_test
       - name: Set up tmate session
         if: ${{ failure() }}
         uses: mxschmitt/action-tmate@v3
@@ -96,9 +96,9 @@ jobs:
       - name: Get dependencies
         run: go mod download
       - name: Download dependencies
-        run: sh install.sh
+        run: sh dumpling/install.sh
       - name: Integration test
-        run: make integration_test
+        run: make dumpling_integration_test
       - name: Set up tmate session
         if: ${{ failure() }}
         uses: mxschmitt/action-tmate@v3
@@ -133,9 +133,9 @@ jobs:
       - name: Get dependencies
         run: go mod download
       - name: Download dependencies
-        run: sh install.sh
+        run: sh dumpling/install.sh
       - name: Integration test
-        run: make integration_test
+        run: make dumpling_integration_test
       - name: Set up tmate session
         if: ${{ failure() }}
         uses: mxschmitt/action-tmate@v3
