@@ -166,9 +166,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableRegionLabel:
 			err = e.setDataForRegionLabel(sctx)
-		case infoschema.TableTrxSummary,
-			infoschema.ClusterTableTrxSummary:
-			_ = e.setDataForTrxSummary(sctx)
+		case infoschema.TableTrxSummary:
+			err = e.setDataForTrxSummary(sctx)
+		case infoschema.ClusterTableTrxSummary:
+			err = e.setDataForClusterTrxSummary(sctx)
 		case infoschema.TablePlacementRules:
 			err = e.setDataFromPlacementRules(ctx, sctx, dbs)
 		}
@@ -2100,6 +2101,16 @@ func (e *memtableRetriever) setDataForTrxSummary(ctx sessionctx.Context) error {
 		return nil
 	}
 	rows := txninfo.Recorder.DumpTrxSummary()
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionctx.Context) error {
+	e.setDataForTrxSummary(ctx)
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
 	e.rows = rows
 	return nil
 }

@@ -280,6 +280,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBHotRegionsHistory:              autoid.InformationSchemaDBID + 78,
 	TablePlacementRules:                     autoid.InformationSchemaDBID + 79,
 	TableTrxSummary:                         autoid.InformationSchemaDBID + 80,
+	ClusterTableTrxSummary:                  autoid.InformationSchemaDBID + 81,
 }
 
 type columnInfo struct {
