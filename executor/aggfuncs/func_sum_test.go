@@ -34,9 +34,7 @@ func TestMergePartialResult4Sum(t *testing.T) {
 	}
 
 	for i, test := range tests {
-		test := test
 		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
-			t.Parallel()
 			testMergePartialResult(t, test)
 		})
 	}
@@ -50,9 +48,7 @@ func TestSum(t *testing.T) {
 		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, nil, 10.0),
 	}
 	for i, test := range tests {
-		test := test
 		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
-			t.Parallel()
 			testAggFunc(t, test)
 		})
 	}
@@ -73,9 +69,7 @@ func TestMemSum(t *testing.T) {
 	}
 
 	for i, test := range tests {
-		test := test
 		t.Run(fmt.Sprintf("%s_%d", test.aggTest.funcName, i), func(t *testing.T) {
-			t.Parallel()
 			testAggMemFunc(t, test)
 		})
 	}
