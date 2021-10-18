@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -1349,6 +1350,65 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 
+	return ver, nil
+}
+
+var (
+	ErrInvalidStatsOptionsFormat = errors.New("stats options should be in format 'key=value'")
+)
+
+func onAlterTableStatsOptions(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	statsOptions := []string{}
+	err = job.DecodeArgs(statsOptions)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, statsOption := range statsOptions {
+		kv := strings.Split(statsOption, "=")
+		if len(kv) != 2 {
+			return 0, fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, statsOption)
+		}
+		key := strings.TrimSpace(kv[0])
+		if key == "" {
+			return 0, fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, statsOption)
+		}
+		val := strings.TrimSpace(kv[1])
+		if val == "" {
+			return 0, fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, statsOption)
+		}
+		switch strings.ToUpper(key) {
+		case "STATS_AUTO_RECALC":
+			autoRecalc, err0 := strconv.ParseBool(val)
+			if err0 != nil {
+				return 0, fmt.Errorf("%w: %s", errors.New("STATS_AUTO_RECALC should be a bool"), val)
+			}
+			tblInfo.StatsOptions.AutoRecalc = autoRecalc
+		case "STATS_BUCKETS":
+			buckets, err0 := strconv.ParseUint(val, 0, 64)
+			if err0 != nil {
+				return 0, fmt.Errorf("%w: %s", errors.New("STATS_BUCKETS should be a unit"), val)
+			}
+			tblInfo.StatsOptions.Buckets = buckets
+		case "STATS_TOPN":
+			topn, err0 := strconv.ParseUint(val, 0, 64)
+			if err0 != nil {
+				return 0, fmt.Errorf("%w: %s", errors.New("STATS_TOPN should be a unit"), val)
+			}
+			tblInfo.StatsOptions.TopN = topn
+		}
+	}
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
 

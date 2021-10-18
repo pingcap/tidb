@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
+	"gopkg.in/yaml.v2"
 )
 
 const (
@@ -2811,7 +2812,6 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 					err = d.AlterTableCharsetAndCollate(sctx, ident, toCharset, toCollate, needsOverwriteCols)
 					handledCharsetOrCollate = true
 				case ast.TableOptionEngine:
-				// TODO
 				default:
 					err = errUnsupportedAlterTableOption
 				}
@@ -2840,6 +2840,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			err = d.AlterTableDropStatistics(sctx, ident, spec.Statistics, spec.IfExists)
 		case ast.AlterTableAttributes:
 			err = d.AlterTableAttributes(sctx, ident, spec)
+		case ast.AlterTableStatsOptions:
+			err = d.AlterTableStatsOptions(sctx, ident, spec.StatsOptionsSpec)
 		case ast.AlterTablePartitionAttributes:
 			err = d.AlterTablePartitionAttributes(sctx, ident, spec)
 		case ast.AlterTablePartitionOptions:
@@ -6369,6 +6371,39 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 		Type:       model.ActionAlterTableAttributes,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{rule},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, spec *ast.StatsOptionsSpec) error {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	meta := tb.Meta()
+
+	// construct a string list
+	attrBytes := []byte("[" + spec.StatsOptions + "]")
+	statsOptions := []string{}
+	err = yaml.UnmarshalStrict(attrBytes, &statsOptions)
+	if err != nil {
+		return err
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterTableStatsOptions,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{statsOptions},
 	}
 
 	err = d.doDDLJob(ctx, job)

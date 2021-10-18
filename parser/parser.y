@@ -298,6 +298,7 @@ import (
 	any                   "ANY"
 	ascii                 "ASCII"
 	attributes            "ATTRIBUTES"
+    statsOptions          "STATS_OPTIONS"
 	autoIdCache           "AUTO_ID_CACHE"
 	autoIncrement         "AUTO_INCREMENT"
 	autoRandom            "AUTO_RANDOM"
@@ -1309,6 +1310,7 @@ import (
 	PlacementSpec                          "Placement rules specification"
 	PlacementSpecList                      "Placement rules specifications"
 	AttributesOpt                          "Attributes options"
+	StatsOptionsOpt                        "Stats options"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1701,6 +1703,16 @@ AttributesOpt:
 		$$ = &ast.AttributesSpec{Default: false, Attributes: $3}
 	}
 
+StatsOptionsOpt:
+	"STATS_OPTIONS" EqOpt "DEFAULT"
+	{
+		$$ = &ast.StatsOptionsSpec{Default: true}
+	}
+|	"STATS_OPTIONS" EqOpt stringLit
+	{
+		$$ = &ast.StatsOptionsSpec{Default: false, StatsOptions: $3}
+	}
+
 AlterTablePartitionOpt:
 	PartitionOpt
 	{
@@ -1881,6 +1893,13 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:             ast.AlterTableAttributes,
 			AttributesSpec: $1.(*ast.AttributesSpec),
+		}
+	}
+|	StatsOptionsOpt
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:               ast.AlterTableStatsOptions,
+			StatsOptionsSpec: $1.(*ast.StatsOptionsSpec),
 		}
 	}
 |	"ALTER" "PARTITION" Identifier PlacementSpecList %prec lowerThanComma

@@ -2478,6 +2478,7 @@ const (
 	AlterTableAddStatistics
 	AlterTableDropStatistics
 	AlterTableAttributes
+	AlterTableStatsOptions
 )
 
 // LockType is the type for AlterTableSpec.
@@ -2550,34 +2551,35 @@ type AlterTableSpec struct {
 	NoWriteToBinlog bool
 	OnAllPartitions bool
 
-	Tp              AlterTableType
-	Name            string
-	IndexName       model.CIStr
-	Constraint      *Constraint
-	Options         []*TableOption
-	OrderByList     []*AlterOrderItem
-	NewTable        *TableName
-	NewColumns      []*ColumnDef
-	NewConstraints  []*Constraint
-	OldColumnName   *ColumnName
-	NewColumnName   *ColumnName
-	Position        *ColumnPosition
-	LockType        LockType
-	Algorithm       AlgorithmType
-	Comment         string
-	FromKey         model.CIStr
-	ToKey           model.CIStr
-	Partition       *PartitionOptions
-	PartitionNames  []model.CIStr
-	PartDefinitions []*PartitionDefinition
-	WithValidation  bool
-	Num             uint64
-	Visibility      IndexVisibility
-	TiFlashReplica  *TiFlashReplicaSpec
-	PlacementSpecs  []*PlacementSpec
-	Writeable       bool
-	Statistics      *StatisticsSpec
-	AttributesSpec  *AttributesSpec
+	Tp               AlterTableType
+	Name             string
+	IndexName        model.CIStr
+	Constraint       *Constraint
+	Options          []*TableOption
+	OrderByList      []*AlterOrderItem
+	NewTable         *TableName
+	NewColumns       []*ColumnDef
+	NewConstraints   []*Constraint
+	OldColumnName    *ColumnName
+	NewColumnName    *ColumnName
+	Position         *ColumnPosition
+	LockType         LockType
+	Algorithm        AlgorithmType
+	Comment          string
+	FromKey          model.CIStr
+	ToKey            model.CIStr
+	Partition        *PartitionOptions
+	PartitionNames   []model.CIStr
+	PartDefinitions  []*PartitionDefinition
+	WithValidation   bool
+	Num              uint64
+	Visibility       IndexVisibility
+	TiFlashReplica   *TiFlashReplicaSpec
+	PlacementSpecs   []*PlacementSpec
+	Writeable        bool
+	Statistics       *StatisticsSpec
+	AttributesSpec   *AttributesSpec
+	StatsOptionsSpec *StatsOptionsSpec
 }
 
 type TiFlashReplicaSpec struct {
@@ -3108,6 +3110,11 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		spec := n.AttributesSpec
 		if err := spec.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.AttributesSpec")
+		}
+	case AlterTableStatsOptions:
+		spec := n.StatsOptionsSpec
+		if err := spec.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.StatsOptionsSpec")
 		}
 
 	default:
@@ -3956,6 +3963,33 @@ func (n *AttributesSpec) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AttributesSpec)
+	return v.Leave(n)
+}
+
+type StatsOptionsSpec struct {
+	node
+
+	StatsOptions string
+	Default      bool
+}
+
+func (n *StatsOptionsSpec) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("STATS_OPTIONS")
+	ctx.WritePlain("=")
+	if n.Default {
+		ctx.WriteKeyWord("DEFAULT")
+		return nil
+	}
+	ctx.WriteString(n.StatsOptions)
+	return nil
+}
+
+func (n *StatsOptionsSpec) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*StatsOptionsSpec)
 	return v.Leave(n)
 }
 
