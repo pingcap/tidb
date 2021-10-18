@@ -698,6 +698,26 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tableInfo = table.Meta()
 	c.Assert(len(tableInfo.ForeignKeys), Equals, 0)
 	defer tk.MustExec("drop table if exists foreign_key_table1, foreign_key_table2, foreign_key_tmp;")
+
+	// Test for placement
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1,r2'")
+	defer tk.MustExec("drop placement policy p1")
+	tk.MustExec("drop table if exists placement_table1, placement_table1")
+	tk.MustExec("create table placement_table1(id int) placement policy p1")
+	defer tk.MustExec("drop table if exists placement_table1")
+	tk.MustExec("create table placement_table2(id int) LEADER_CONSTRAINTS='[+region=hz]' FOLLOWERS=3")
+	defer tk.MustExec("drop table if exists placement_table2")
+
+	_, err = tk.Exec("create global temporary table g_tmp_placement1 like placement_table1 on commit delete rows")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
+	_, err = tk.Exec("create global temporary table g_tmp_placement2 like placement_table2 on commit delete rows")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
+
+	_, err = tk.Exec("create temporary table l_tmp_placement1 like placement_table1")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
+	_, err = tk.Exec("create temporary table l_tmp_placement2 like placement_table2")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error())
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
