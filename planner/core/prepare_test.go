@@ -892,6 +892,39 @@ func (s *testPlanSerialSuite) TestPlanCacheUnsignedHandleOverflow(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
+func (s *testPlanSerialSuite) TestIssue28254(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists PK_GCOL_STORED9816")
+	tk.MustExec("CREATE TABLE `PK_GCOL_STORED9816` (`COL102` decimal(55,0) DEFAULT NULL)")
+	tk.MustExec("insert into PK_GCOL_STORED9816 values(9710290195629059011)")
+	tk.MustExec("prepare stmt from 'select count(*) from PK_GCOL_STORED9816 where col102 > ?'")
+	tk.MustExec("set @a=9860178624005968368")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("0"))
+	tk.MustExec("set @a=-7235178122860450591")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
+	tk.MustExec("set @a=9860178624005968368")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("0"))
+	tk.MustExec("set @a=-7235178122860450591")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
+}
+
 func (s *testPlanSerialSuite) TestIssue18066(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
