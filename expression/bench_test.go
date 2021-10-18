@@ -28,11 +28,11 @@ import (
 
 	"github.com/google/uuid"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -1806,7 +1806,7 @@ func (s *testVectorizeSuite2) TestVecEvalBool(c *C) {
 			it := chunk.NewIterator4Chunk(input)
 			i := 0
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				ok, null, err := EvalBool(mock.NewContext(), exprs, row)
+				ok, null, err := EvalBool(ctx, exprs, row)
 				c.Assert(err, IsNil)
 				c.Assert(null, Equals, nulls[i])
 				c.Assert(ok, Equals, selected[i])
@@ -2024,7 +2024,7 @@ func (s *testVectorizeSuite2) TestVectorizedFilterConsiderNull(c *C) {
 	ctx.GetSessionVars().EnableVectorizedExpression = dafaultEnableVectorizedExpressionVar
 }
 
-func TestBenchDaily(t *testing.T) {
+func BenchmarkDaily(b *testing.B) {
 	benchdaily.Run(
 		BenchmarkCastIntAsIntRow,
 		BenchmarkCastIntAsIntVec,

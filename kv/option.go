@@ -78,11 +78,18 @@ const (
 	ReplicaReadLeader ReplicaReadType = iota
 	// ReplicaReadFollower stands for 'read from follower'.
 	ReplicaReadFollower
-	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
+	// ReplicaReadMixed stands for 'read from leader and follower'.
 	ReplicaReadMixed
+	// ReplicaReadClosest stands for 'read from leader and follower which locates with the same zone'
+	ReplicaReadClosest
 )
 
 // IsFollowerRead checks if follower is going to be used to read data.
 func (r ReplicaReadType) IsFollowerRead() bool {
 	return r != ReplicaReadLeader
+}
+
+// IsClosestRead checks whether is going to request closet store to read
+func (r ReplicaReadType) IsClosestRead() bool {
+	return r == ReplicaReadClosest
 }
