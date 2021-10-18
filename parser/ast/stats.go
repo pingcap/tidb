@@ -39,10 +39,7 @@ type AnalyzeTableStmt struct {
 	Incremental bool
 	// HistogramOperation is set in "ANALYZE TABLE ... UPDATE/DROP HISTOGRAM ..." statement.
 	HistogramOperation HistogramOperationType
-	// ColumnNames indicate the columns whose statistics need to be collected.
-	ColumnNames []*ColumnName
-	// PredicateColumns is true when we only collect statistics of predicate columns and indexed columns.
-	PredicateColumns bool
+	ColumnNames        []*ColumnName
 }
 
 // AnalyzeOptType is the type for analyze options.
@@ -122,25 +119,15 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(" ")
 		ctx.WriteKeyWord(n.HistogramOperation.String())
 		ctx.WritePlain(" ")
-		if len(n.ColumnNames) > 0 {
-			ctx.WriteKeyWord("ON ")
-			for i, columnName := range n.ColumnNames {
-				if i != 0 {
-					ctx.WritePlain(",")
-				}
-				ctx.WriteName(columnName.Name.O)
-			}
-		}
-	} else if len(n.ColumnNames) > 0 {
-		ctx.WriteKeyWord(" COLUMNS ")
+	}
+	if len(n.ColumnNames) > 0 {
+		ctx.WriteKeyWord("ON ")
 		for i, columnName := range n.ColumnNames {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
 			ctx.WriteName(columnName.Name.O)
 		}
-	} else if n.PredicateColumns {
-		ctx.WriteKeyWord(" PREDICATE COLUMNS")
 	}
 	if n.IndexFlag {
 		ctx.WriteKeyWord(" INDEX")
