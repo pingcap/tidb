@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
@@ -249,7 +250,7 @@ outside:
 			switch {
 			case err == nil:
 				continue outside
-			case common.IsRetryableError(err):
+			case utils.IsRetryableError(err):
 				// retry next loop
 			default:
 				return err

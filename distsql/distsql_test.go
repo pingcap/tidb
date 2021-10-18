@@ -337,50 +337,6 @@ func (r *mockResultSubset) MemSize() int64 { return int64(cap(r.data)) }
 // RespTime implements kv.ResultSubset interface.
 func (r *mockResultSubset) RespTime() time.Duration { return 0 }
 
-func BenchmarkSelectResponseChunk_BigResponse(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		sctx := newMockSessionContext()
-		sctx.GetSessionVars().InitChunkSize = 32
-		sctx.GetSessionVars().MaxChunkSize = 1024
-		selectResult, colTypes := createSelectNormalByBenchmarkTest(4000, 20000, sctx)
-		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
-		b.StartTimer()
-		for {
-			err := selectResult.Next(context.TODO(), chk)
-			if err != nil {
-				panic(err)
-			}
-			if chk.NumRows() == 0 {
-				break
-			}
-			chk.Reset()
-		}
-	}
-}
-
-func BenchmarkSelectResponseChunk_SmallResponse(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		sctx := newMockSessionContext()
-		sctx.GetSessionVars().InitChunkSize = 32
-		sctx.GetSessionVars().MaxChunkSize = 1024
-		selectResult, colTypes := createSelectNormalByBenchmarkTest(32, 3200, sctx)
-		chk := chunk.NewChunkWithCapacity(colTypes, 1024)
-		b.StartTimer()
-		for {
-			err := selectResult.Next(context.TODO(), chk)
-			if err != nil {
-				panic(err)
-			}
-			if chk.NumRows() == 0 {
-				break
-			}
-			chk.Reset()
-		}
-	}
-}
-
 func newMockSessionContext() sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = &stmtctx.StatementContext{
