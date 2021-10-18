@@ -49,15 +49,9 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-<<<<<<< HEAD
-	github.com/pingcap/kvproto v0.0.0-20210806074406-317f69fb54b4
+	github.com/pingcap/kvproto v0.0.0-20210915062418-0f5764a128ad
 	github.com/pingcap/log v0.0.0-20210818144256-6455d4a4c6f9
 	github.com/pingcap/parser v0.0.0-20210831085004-b5390aa83f65
-=======
-	github.com/pingcap/kvproto v0.0.0-20210915062418-0f5764a128ad
-	github.com/pingcap/log v0.0.0-20210906054005-afc726e70354
-	github.com/pingcap/parser v0.0.0-20211004012448-687005894c4e
->>>>>>> 38f05d1f4... executor: Add TiKV read throughput metric (#28701)
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
 	github.com/pingcap/tipb v0.0.0-20210708040514-0f154bb0dc0f
@@ -72,13 +66,8 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-<<<<<<< HEAD
-	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210831090540-391fcd842dc8
-	github.com/tikv/pd v1.1.0-beta.0.20210818112400-0c5667766690
-=======
 	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20211011034620-128ccbde43c4
 	github.com/tikv/pd v1.1.0-beta.0.20210818082359-acba1da0018d
->>>>>>> 38f05d1f4... executor: Add TiKV read throughput metric (#28701)
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
