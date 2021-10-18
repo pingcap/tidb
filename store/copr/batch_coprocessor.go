@@ -195,7 +195,7 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 	if len(candidateRegionInfos) < 500 {
 		return nil, 0
 	}
-	func_start := time.Now()
+	funcStart := time.Now()
 	regionCount := regionTotalCount(storeTaskMap, candidateRegionInfos)
 	storeTasks := deepCopyStoreTaskMap(storeTaskMap)
 
@@ -209,7 +209,7 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 		return bytes.Compare(candidateRegionInfos[i].Ranges.At(0).StartKey, candidateRegionInfos[j].Ranges.At(0).StartKey) == -1
 	})
 
-	balance_start := time.Now()
+	balanceStart := time.Now()
 	// Build storeID -> region index slice index and we can fastly locate regions of a store.
 	storeID2RegionIndex := make(map[uint64][]int)
 	for i, ri := range candidateRegionInfos {
@@ -243,7 +243,7 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 			return nil, 0
 		}
 	}
-	balance_end := time.Now()
+	balanceEnd := time.Now()
 
 	score, balanceInfos := checkBatchCopTaskBalance(storeTasks)
 	if !isBalance(score) {
@@ -261,8 +261,8 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 		zap.Int("candidateRegionCount", len(candidateRegionInfos)),
 		zap.Int64("balanceContinuousRegionCount", balanceContinuousRegionCount),
 		zap.Int("balanceScore", score),
-		zap.Duration("balanceTime", balance_end.Sub(balance_start)),
-		zap.Duration("totalTime", time.Since(func_start)))
+		zap.Duration("balanceTime", balanceEnd.Sub(balanceStart)),
+		zap.Duration("totalTime", time.Since(funcStart)))
 
 	return res, score
 }
