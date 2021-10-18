@@ -551,9 +551,7 @@ func (importer *FileImporter) downloadRawKVSST(
 	}
 	log.Debug("download SST", logutil.SSTMeta(&sstMeta), logutil.Region(regionInfo.Region))
 
-	//var downloadResp *import_sstpb.DownloadResponse
 	var atomicResp atomic.Value
-
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
