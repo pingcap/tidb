@@ -203,8 +203,10 @@ func (s *testSuite1) TestRevokeOnNonExistTable(c *C) {
 	tk.MustExec("DROP USER IF EXISTS issue28533;")
 	tk.MustExec("CREATE DATABASE d1;")
 	tk.MustExec("USE d1;")
-	tk.MustExec("CREATE TABLE t1 (a int);")
-	tk.MustExec("CREATE USER issue28533;")
+	tk.MustExec("CREATE TABLE t1 (a int)")
+	defer tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE USER issue28533")
+	defer tk.MustExec("DROP USER issue28533")
 
 	// GRANT ON existent table success
 	tk.MustExec("GRANT ALTER ON d1.t1 TO issue28533;")
