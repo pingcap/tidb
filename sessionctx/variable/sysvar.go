@@ -1730,13 +1730,6 @@ var defaultSysVars = []*SysVar{
 		TopSQLVariable.Enable.Store(TiDBOptOn(s))
 		return nil
 	}},
-	// TODO(crazycs520): Add validation
-	{Scope: ScopeSession, Name: TiDBTopSQLAgentAddress, Value: DefTiDBTopSQLAgentAddress, Type: TypeStr, Hidden: true, skipInit: true, AllowEmpty: true, GetSession: func(s *SessionVars) (string, error) {
-		return TopSQLVariable.AgentAddress.Load(), nil
-	}, SetSession: func(vars *SessionVars, s string) error {
-		TopSQLVariable.AgentAddress.Store(s)
-		return nil
-	}},
 	{Scope: ScopeGlobal, Name: TiDBTopSQLPrecisionSeconds, Value: strconv.Itoa(DefTiDBTopSQLPrecisionSeconds), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: math.MaxInt64, AllowEmpty: true, GetGlobal: func(s *SessionVars) (string, error) {
 		return strconv.FormatInt(TopSQLVariable.PrecisionSeconds.Load(), 10), nil
 	}, SetGlobal: func(vars *SessionVars, s string) error {
