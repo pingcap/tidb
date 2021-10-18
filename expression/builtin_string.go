@@ -29,9 +29,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -99,6 +99,7 @@ var (
 	_ builtinFunc = &builtinRightSig{}
 	_ builtinFunc = &builtinRightUTF8Sig{}
 	_ builtinFunc = &builtinRepeatSig{}
+	_ builtinFunc = &builtinLowerUTF8Sig{}
 	_ builtinFunc = &builtinLowerSig{}
 	_ builtinFunc = &builtinReverseUTF8Sig{}
 	_ builtinFunc = &builtinReverseSig{}
@@ -700,9 +701,40 @@ func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	argTp := args[0].GetType()
 	bf.tp.Flen = argTp.Flen
 	SetBinFlagOrBinStr(argTp, bf.tp)
-	sig := &builtinLowerSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_Lower)
+	var sig builtinFunc
+	if types.IsBinaryStr(argTp) {
+		sig = &builtinLowerSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_Lower)
+	} else {
+		sig = &builtinLowerUTF8Sig{bf, charset.NewEncoding(argTp.Charset)}
+		sig.setPbCode(tipb.ScalarFuncSig_LowerUTF8)
+	}
 	return sig, nil
+}
+
+type builtinLowerUTF8Sig struct {
+	baseBuiltinFunc
+	encoding *charset.Encoding
+}
+
+func (b *builtinLowerUTF8Sig) Clone() builtinFunc {
+	newSig := &builtinLowerUTF8Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	if b.encoding != nil {
+		newSig.encoding = charset.NewEncoding(b.encoding.Name())
+	}
+	return newSig
+}
+
+// evalString evals a builtinLowerUTF8Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lower
+func (b *builtinLowerUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
+
+	return b.encoding.ToLower(d), false, nil
 }
 
 type builtinLowerSig struct {
@@ -723,11 +755,7 @@ func (b *builtinLowerSig) evalString(row chunk.Row) (d string, isNull bool, err 
 		return d, isNull, err
 	}
 
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return d, false, nil
-	}
-
-	return strings.ToLower(d), false, nil
+	return d, false, nil
 }
 
 type reverseFunctionClass struct {
@@ -877,7 +905,7 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinUpperSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Upper)
 	} else {
-		sig = &builtinUpperUTF8Sig{bf}
+		sig = &builtinUpperUTF8Sig{bf, charset.NewEncoding(argTp.Charset)}
 		sig.setPbCode(tipb.ScalarFuncSig_UpperUTF8)
 	}
 	return sig, nil
@@ -885,11 +913,15 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinUpperUTF8Sig struct {
 	baseBuiltinFunc
+	encoding *charset.Encoding
 }
 
 func (b *builtinUpperUTF8Sig) Clone() builtinFunc {
 	newSig := &builtinUpperUTF8Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	if b.encoding != nil {
+		newSig.encoding = charset.NewEncoding(b.encoding.Name())
+	}
 	return newSig
 }
 
@@ -901,7 +933,7 @@ func (b *builtinUpperUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, 
 		return d, isNull, err
 	}
 
-	return strings.ToUpper(d), false, nil
+	return b.encoding.ToUpper(d), false, nil
 }
 
 type builtinUpperSig struct {
@@ -1591,10 +1623,10 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		if err != nil {
 			return nil, err
 		}
-		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+		argFieldTp := args[0].GetType()
 		// Use UTF8MB4 as default.
-		bf.tp.Flen = args[0].GetType().Flen * 4 * 2
-		sig := &builtinHexStrArgSig{bf}
+		bf.tp.Flen = argFieldTp.Flen * 4 * 2
+		sig := &builtinHexStrArgSig{bf, charset.NewEncoding(argFieldTp.Charset)}
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
 	case types.ETInt, types.ETReal, types.ETDecimal:
@@ -1614,11 +1646,15 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 
 type builtinHexStrArgSig struct {
 	baseBuiltinFunc
+	encoding *charset.Encoding
 }
 
 func (b *builtinHexStrArgSig) Clone() builtinFunc {
 	newSig := &builtinHexStrArgSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	if b.encoding != nil {
+		newSig.encoding = charset.NewEncoding(b.encoding.Name())
+	}
 	return newSig
 }
 
@@ -1629,7 +1665,14 @@ func (b *builtinHexStrArgSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-	return strings.ToUpper(hex.EncodeToString(hack.Slice(d))), false, nil
+	dBytes := hack.Slice(d)
+	if b.encoding.Enabled() {
+		dBytes, err = b.encoding.Encode(nil, dBytes)
+		if err != nil {
+			return d, false, err
+		}
+	}
+	return strings.ToUpper(hex.EncodeToString(dBytes)), false, nil
 }
 
 type builtinHexIntArgSig struct {
@@ -3817,7 +3860,35 @@ type loadFileFunctionClass struct {
 }
 
 func (c *loadFileFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "load_file")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.Flen = 64
+	sig := &builtinLoadFileSig{bf}
+	return sig, nil
+}
+
+type builtinLoadFileSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLoadFileSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	d, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
+	return "", true, nil
+}
+
+func (b *builtinLoadFileSig) Clone() builtinFunc {
+	newSig := &builtinLoadFileSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 type weightStringPadding byte
