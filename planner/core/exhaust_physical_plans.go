@@ -1466,6 +1466,11 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, p
 func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ranges []*ranger.Range, emptyRange bool, err error) {
 	pointLength := matchedKeyCnt + len(eqAndInFuncs)
 	//nolint:gosimple // false positive unnecessary nil check
+
+	if expression.MaybeOverOptimized4PlanCache(ijHelper.join.ctx, eqAndInFuncs) {
+		ijHelper.join.ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+	}
+
 	if nextColRange != nil {
 		for _, colRan := range nextColRange {
 			// The range's exclude status is the same with last col's.
@@ -1497,7 +1502,11 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 		if ijHelper.curIdxOff2KeyOff[i] != -1 {
 			continue
 		}
-		oneColumnRan, err := ranger.BuildColumnRange([]expression.Expression{eqAndInFuncs[j]}, sc, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j])
+		exprs := []expression.Expression{eqAndInFuncs[j]}
+		if !sc.MaybeOverOptimized4PlanCache && expression.MaybeOverOptimized4PlanCache(ijHelper.join.ctx, exprs) {
+			sc.MaybeOverOptimized4PlanCache = true
+		}
+		oneColumnRan, err := ranger.BuildColumnRange(exprs, sc, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j])
 		if err != nil {
 			return nil, false, err
 		}
