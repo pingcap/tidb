@@ -145,6 +145,9 @@ type PhysicalProperty struct {
 
 	// which types the exchange sender belongs to, only take effects when it's a mpp task.
 	MPPPartitionTp MPPPartitionType
+
+	// reject the sort property from its children
+	RejectSort bool
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -276,6 +279,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		ExpectedCnt:      p.ExpectedCnt,
 		MPPPartitionTp:   p.MPPPartitionTp,
 		MPPPartitionCols: p.MPPPartitionCols,
+		RejectSort: 	  p.RejectSort,
 	}
 	return prop
 }
