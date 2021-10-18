@@ -1655,8 +1655,7 @@ func TestGCPlacementRules(t *testing.T) {
 	}()
 
 	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
-	pid, err := s.gcWorker.doGCPlacementRules(dr)
-	require.Equal(t, int64(1), pid)
+	err := s.gcWorker.doGCPlacementRules(dr)
 	require.NoError(t, err)
 }
 
