@@ -895,7 +895,7 @@ func (tr *TableRestore) compareChecksum(remoteChecksum *RemoteChecksum, localChe
 func (tr *TableRestore) genAnalyzeSQL(ctx context.Context, g glue.SQLExecutor) string {
 	// TODO: because tidb v5.2 analyze full table OOM easily, we fallback to add `WITH NUM 10000` parameter
 	// if there are more than 600 regions in this table
-	sql := "ANALYZE TABLE "+tr.tableName
+	sql := "ANALYZE TABLE " + tr.tableName
 	analyzeVer, err := g.ObtainStringWithLog(ctx, "SELECT @@tidb_analyze_version", "fetch tidb analyze version", tr.logger)
 	if err != nil {
 		tr.logger.Warn("fetch tidb analyze version failed, will fallback to naive analyze", logutil.ShortError(err))
