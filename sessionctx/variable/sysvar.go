@@ -1836,7 +1836,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableStableResultMode = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMutationChecker,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMutationChecker, Hidden: true,
 		Value: BoolToOnOff(DefTiDBEnableMutationChecker), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.EnableMutationChecker = TiDBOptOn(val)
