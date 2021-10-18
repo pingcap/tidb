@@ -1946,7 +1946,7 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain("= ")
 			ctx.WriteName(n.StrValue)
 		case PlacementOptionDefault:
-			ctx.WriteKeyWord("PLACEMENT POLICY SET DEFAULT")
+			ctx.WriteKeyWord("PLACEMENT POLICY = DEFAULT")
 		default:
 			isSupported = false
 		}
