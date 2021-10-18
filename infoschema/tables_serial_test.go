@@ -1508,9 +1508,16 @@ func TestTiDBTrxSummary(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	tk.MustExec("update test_tidb_trx set i = i + 1")
 	tk.MustExec("commit")
-	tk.MustQuery("select * from information_schema.TRX_SUMMARY;").Check(testkit.Rows(
-		"643628328 [\"" + beginDigest.String() + "\",\"" + digest.String() + "\",\"" + digest.String() + "\",\"" + commitDigest.String() + "\"]",
-	))
+	// it is possible for TRX_SUMMARY to have other rows (due to parallel execution of tests)
+	for _, row := range tk.MustQuery("select * from information_schema.TRX_SUMMARY;").Rows() {
+		// so we just look for the row we are looking for
+		if row[0] == "643628328" {
+			if strings.TrimSpace(row[1].(string)) == "[\""+beginDigest.String()+"\",\""+digest.String()+"\",\""+digest.String()+"\",\""+commitDigest.String()+"\"]" {
+				return
+			}
+		}
+	}
+	t.Fatal("cannot find the expected row")
 }
 
 func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
