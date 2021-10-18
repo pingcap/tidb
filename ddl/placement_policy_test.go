@@ -201,9 +201,6 @@ func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {
 	tk.MustGetErrCode("create placement policy `default` followers=4;", mysql.ErrReservedSyntax)
 	tk.MustGetErrCode("create placement policy default followers=4;", mysql.ErrParse)
 
-	// Test for "=`default`"
-	tk.MustGetErrCode("ALTER DATABASE TestResetPlacementDB DEFAULT PLACEMENT POLICY=`default`;", mysql.ErrPlacementPolicyNotExists)
-
 	tk.MustExec("create database TestResetPlacementDB placement policy `TestReset`;")
 	tk.MustExec("use TestResetPlacementDB")
 	// Test for `=default`
@@ -222,6 +219,26 @@ func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {
 			"/*T![placement] PLACEMENT POLICY=`TestReset` */",
 	))
 	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY SET DEFAULT")
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
+	// Test for `= 'DEFAULT'`
+	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY=`TestReset`;")
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PLACEMENT POLICY=`TestReset` */",
+	))
+	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY = 'DEFAULT'")
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
+	// Test for "= `DEFAULT`"
+	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY=`TestReset`;")
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PLACEMENT POLICY=`TestReset` */",
+	))
+	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY = `DEFAULT`")
 	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
 		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))

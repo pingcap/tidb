@@ -1595,18 +1595,24 @@ PlacementOption:
 |	PlacementPolicyOption
 
 PlacementPolicyOption:
+    "PLACEMENT" "POLICY" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
+	}
+|
     "PLACEMENT" "POLICY" EqOpt PolicyName
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
 	}
 |
-	"PLACEMENT" "POLICY" EqOpt "DEFAULT"
+    "PLACEMENT" "POLICY" EqOpt "DEFAULT"
 	{
-		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionDefault, StrValue: $4}
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
 	}
-|	"PLACEMENT" "POLICY" "SET" "DEFAULT"
+|
+    "PLACEMENT" "POLICY" "SET" "DEFAULT"
 	{
-		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionDefault, StrValue: $4}
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
 	}
 
 OldPlacementOptions:

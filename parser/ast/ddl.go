@@ -85,7 +85,6 @@ const (
 	DatabaseOptionPlacementFollowerConstraints = DatabaseOptionType(PlacementOptionFollowerConstraints)
 	DatabaseOptionPlacementVoterConstraints    = DatabaseOptionType(PlacementOptionVoterConstraints)
 	DatabaseOptionPlacementPolicy              = DatabaseOptionType(PlacementOptionPolicy)
-	DatabaseOptionPlacementDefault             = DatabaseOptionType(PlacementOptionDefault)
 )
 
 // DatabaseOption represents database option.
@@ -110,7 +109,7 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ENCRYPTION")
 		ctx.WritePlain(" = ")
 		ctx.WriteString(n.Value)
-	case DatabaseOptionPlacementPrimaryRegion, DatabaseOptionPlacementRegions, DatabaseOptionPlacementFollowerCount, DatabaseOptionPlacementLeaderConstraints, DatabaseOptionPlacementLearnerCount, DatabaseOptionPlacementVoterCount, DatabaseOptionPlacementSchedule, DatabaseOptionPlacementConstraints, DatabaseOptionPlacementFollowerConstraints, DatabaseOptionPlacementVoterConstraints, DatabaseOptionPlacementLearnerConstraints, DatabaseOptionPlacementPolicy, DatabaseOptionPlacementDefault:
+	case DatabaseOptionPlacementPrimaryRegion, DatabaseOptionPlacementRegions, DatabaseOptionPlacementFollowerCount, DatabaseOptionPlacementLeaderConstraints, DatabaseOptionPlacementLearnerCount, DatabaseOptionPlacementVoterCount, DatabaseOptionPlacementSchedule, DatabaseOptionPlacementConstraints, DatabaseOptionPlacementFollowerConstraints, DatabaseOptionPlacementVoterConstraints, DatabaseOptionPlacementLearnerConstraints, DatabaseOptionPlacementPolicy:
 		placementOpt := PlacementOption{
 			Tp:        PlacementOptionType(n.Tp),
 			UintValue: n.UintValue,
@@ -1883,7 +1882,6 @@ const (
 	PlacementOptionFollowerConstraints
 	PlacementOptionVoterConstraints
 	PlacementOptionPolicy
-	PlacementOptionDefault
 )
 
 // PlacementOption is used for parsing placement option.
@@ -1945,10 +1943,6 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("PLACEMENT POLICY ")
 			ctx.WritePlain("= ")
 			ctx.WriteName(n.StrValue)
-		case PlacementOptionDefault:
-			ctx.WriteKeyWord("PLACEMENT POLICY ")
-			ctx.WritePlain("= ")
-			ctx.WriteKeyWord("DEFAULT")
 		default:
 			isSupported = false
 		}
