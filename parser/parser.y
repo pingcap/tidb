@@ -2285,6 +2285,19 @@ AlterTableSpec:
 			PlacementSpecs: $1.([]*ast.PlacementSpec),
 		}
 	}
+// 	Support caching or non-caching a table in memory for tidb, its can find in oracle see: https://logicalread.com/oracle-11g-caching-table-in-memory-mc02/#.YW0Pv9lBzFx
+|	"CACHE"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableCache,
+		}
+	}
+|	"NOCACHE"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableNoCache,
+		}
+	}
 
 ReorganizePartitionRuleOpt:
 	/* empty */ %prec lowerThanRemove
