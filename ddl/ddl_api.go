@@ -257,18 +257,15 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 			isAlterPlacement = true
 		case ast.DatabaseOptionPlacementPolicy:
 			policyName = model.NewCIStr(val.Value)
-			if policyName.L == "default" {
-				placementPolicyRef = nil
-			} else {
-				policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(policyName)
-				if !ok {
-					return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(policyName))
-				}
-				placementPolicyRef = &model.PolicyRefInfo{ID: policy.ID, Name: policyName}
+			policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(policyName)
+			if !ok {
+				return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(policyName))
 			}
+			placementPolicyRef = &model.PolicyRefInfo{ID: policy.ID, Name: policyName}
 			isAlterPlacement = true
 		case ast.DatabaseOptionPlacementDefault:
-			//TODO: sylzd
+			placementPolicyRef = nil
+			isAlterPlacement = true
 		}
 	}
 

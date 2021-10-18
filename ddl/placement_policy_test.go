@@ -195,43 +195,35 @@ func (s *testDBSuite6) TestPlacementValidation(c *C) {
 }
 
 func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {
-	// TODO: waiting for related parser merged
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists TestAlterDB;")
-	tk.MustExec("create database TestAlterDB;")
-	tk.MustExec("use TestAlterDB")
+	tk.MustExec("drop database if exists TestResetPlacementDB;")
+	tk.MustExec("create placement policy `TestReset` followers=4;")
+	tk.MustExec("create database TestResetPlacementDB placement policy `TestReset`;")
+	tk.MustExec("use TestResetPlacementDB")
 	// Test for `=default`
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
-		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
-			"/*T![placement] PLACEMENT POLICY=`y` */",
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PLACEMENT POLICY=`TestReset` */",
 	))
-	tk.MustExec("ALTER DATABASE TestAlterDB PLACEMENT POLICY=default;")
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
-		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY=default;")
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 	// Test for `SET DEFAULT`
-	tk.MustExec("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`y`;")
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
-		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
-			"/*T![placement] PLACEMENT POLICY=`y` */",
+	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY=`TestReset`;")
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
+			"/*T![placement] PLACEMENT POLICY=`TestReset` */",
 	))
-	tk.MustExec("ALTER DATABASE TestAlterDB PLACEMENT POLICY SET DEFAULT")
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
-		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
-	))
-	// Test for default `SET default`
-	tk.MustExec("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`y`;")
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
-		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
-			"/*T![placement] PLACEMENT POLICY=`y` */",
-	))
-	tk.MustExec("ALTER DATABASE TestAlterDB default PLACEMENT POLICY SET DEFAULT")
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
-		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	tk.MustExec("ALTER DATABASE TestResetPlacementDB PLACEMENT POLICY SET DEFAULT")
+	tk.MustQuery(`show create database TestResetPlacementDB`).Check(testutil.RowsWithSep("|",
+		"TestResetPlacementDB CREATE DATABASE `TestResetPlacementDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 	// Test for "=`default`"
-	// TODO: how can we split “default” (policy name) with default (keyword)?  or we just support SET DEFAULT syntax?
-	//	tk.MustGetErrCode("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`default`;", mysql.ErrPlacementPolicyNotExists)
+	tk.MustGetErrCode("ALTER DATABASE TestResetPlacementDB DEFAULT PLACEMENT POLICY=`default`;", mysql.ErrPlacementPolicyNotExists)
+
+	tk.MustExec("drop placement policy `TestReset`;")
+	tk.MustExec("drop database TestResetPlacementDB;")
 }
 
 func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
