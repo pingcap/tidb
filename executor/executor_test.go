@@ -282,12 +282,12 @@ func (s *testSuiteP1) TestLoadStats(c *C) {
 	c.Assert(tk.ExecToErr("load stats ./xxx.json"), NotNil)
 }
 
-func (s *testSuiteP1) TestPlanRecreator(c *C) {
+func (s *testSuiteP1) TestPlanReplayer(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
-	tk.MustExec("plan recreator dump explain select * from t where a=10")
+	tk.MustExec("plan replayer dump explain select * from t where a=10")
 }
 
 func (s *testSuiteP1) TestShow(c *C) {

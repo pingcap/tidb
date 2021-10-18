@@ -163,7 +163,8 @@ func (s FieldSlice) Equal(tps []*types.FieldType) bool {
 			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar) ||
 			// TypeNull should be considered the same as other types.
 			(s[i].Tp == mysql.TypeNull || tps[i].Tp == mysql.TypeNull)
-		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate {
+		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate ||
+			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].Flag) != mysql.HasUnsignedFlag(tps[i].Flag)) {
 			return false
 		}
 	}
