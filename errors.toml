@@ -23,7 +23,7 @@ backup no leader
 
 ["BR:Common:ErrEnvNotSpecified"]
 error = '''
-environment variable not find
+environment variable not found
 '''
 
 ["BR:Common:ErrFailedToConnect"]
