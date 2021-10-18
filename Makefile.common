@@ -43,10 +43,14 @@ endif
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "cmd|github.com\/pingcap\/tidb\/tests|github.com\/pingcap\/tidb\/br"
+PACKAGE_LIST  := go list ./...| grep -vE "cmd|github.com\/pingcap\/tidb\/tests"
+PACKAGE_LIST_WITHOUT_BR  := go list ./...| grep -vE "cmd|github.com\/pingcap\/tidb\/tests|github.com\/pingcap\/tidb\/br"
 PACKAGES  ?= $$($(PACKAGE_LIST))
+PACKAGES_WITHOUT_BR ?= $$($(PACKAGE_LIST_WITHOUT_BR))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
+PACKAGE_DIRECTORIES_WITHOUT_BR := $(PACKAGE_LIST_WITHOUT_BR) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
+FILES_WITHOUT_BR := $$(find $$($(PACKAGE_DIRECTORIES_WITHOUT_BR)) -name "*.go")
 UNCONVERT_PACKAGES_LIST := go list ./...| grep -vE "lightning\/checkpoints|lightning\/manual|lightning\/common"
 UNCONVERT_PACKAGES := $$($(UNCONVERT_PACKAGES_LIST))
 
