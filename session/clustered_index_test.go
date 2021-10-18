@@ -438,8 +438,6 @@ func TestClusteredIndexSplitAndAddIndex(t *testing.T) {
 	tk.MustQuery("select a from t use index (idx) order by a;").Check(testkit.Rows("a", "b", "c", "u"))
 }
 
-
-
 func TestClusteredIndexSelectWhereInNull(t *testing.T) {
 	t.Parallel()
 
