@@ -1170,7 +1170,7 @@ func (s *testSuite10) TestAutoAnalyzeWithSavedOptions(c *C) {
 	//c.Assert(len(col.TopN.TopN), Equals, 10)
 
 	// TODO alter table
-	//tk.MustExec("alter table t(a int) STATS_TOPN_NUM=15")
+	//tk.MustExec("alter table t(a int) STATS_TOPN=15")
 	//tk.MustExec("insert into t values (21)")
 	//c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	//c.Assert(h.Update(is), IsNil)
@@ -1190,4 +1190,12 @@ func (s *testSuite10) TestAutoAnalyzeWithSavedOptions(c *C) {
 	//c.Assert(len(col.TopN.TopN), Equals, 15)
 
 	// TODO partition table
+}
+
+func (s *testSuite10) TestAlterTableSyntax(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("alter table t(a int) STATS_OPTIONS=\"\"")
 }
