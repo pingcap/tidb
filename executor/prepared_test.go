@@ -598,7 +598,7 @@ func (s *testSerialSuite) TestIssue28828(c *C) {
 	tk.MustExec("prepare stmt from 'select * from t where audit_id=?';")
 	tk.MustExec("set @a='9941971237863475';")
 
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("9941971237863475"))
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1 9941971237863475"))
 }
 
 func (s *testSerialSuite) TestIssue28087And28162(c *C) {

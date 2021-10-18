@@ -60,7 +60,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"'1.1' >= a", "ge(1, a)"},
 		{"'1.1' = a", "0"},
 		{"'1.1' <=> a", "0"},
-		{"'1.1' != a", "ne(1.1, cast(a, double BINARY))"},
+		{"'1.1' != a", "ne(1.1, cast(a, decimal(20,0) BINARY))"},
 		{"'123456789123456711111189' = a", "0"},
 		{"123456789123456789.12345 = a", "0"},
 		{"123456789123456789123456789.12345 > a", "1"},
