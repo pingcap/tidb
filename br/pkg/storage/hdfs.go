@@ -9,7 +9,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -31,7 +31,7 @@ func getHdfsBin() (string, error) {
 	if !ok {
 		return "", errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify environment variable HADOOP_HOME")
 	}
-	return path.Join(hadoop_home, "bin/hdfs"), nil
+	return filepath.Join(hadoop_home, "bin/hdfs"), nil
 }
 
 // WriteFile writes a complete file to storage, similar to os.WriteFile
