@@ -2024,7 +2024,7 @@ func (s *testVectorizeSuite2) TestVectorizedFilterConsiderNull(c *C) {
 	ctx.GetSessionVars().EnableVectorizedExpression = dafaultEnableVectorizedExpressionVar
 }
 
-func TestBenchDaily(t *testing.T) {
+func BenchmarkDaily(b *testing.B) {
 	benchdaily.Run(
 		BenchmarkCastIntAsIntRow,
 		BenchmarkCastIntAsIntVec,
