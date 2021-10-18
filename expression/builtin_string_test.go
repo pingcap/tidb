@@ -562,6 +562,27 @@ func (s *testEvaluatorSuite) TestLower(c *C) {
 
 	_, err := funcs[ast.Lower].getFunction(s.ctx, []Expression{varcharCon})
 	c.Assert(err, IsNil)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result string
+	}{
+		{"ABC", "gbk", "abc"},
+		{"一二三", "gbk", "一二三"},
+		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "gbk", "àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ"},
+		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "", "àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅺⅻ"},
+	}
+	for _, t := range tbl {
+		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, t.chs)
+		c.Assert(err, IsNil)
+		f, err := newFunctionForTest(s.ctx, ast.Lower, s.primitiveValsToConstants([]interface{}{t.input})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.GetString(), Equals, t.result)
+	}
 }
 
 func (s *testEvaluatorSuite) TestUpper(c *C) {
