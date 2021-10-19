@@ -25,13 +25,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -67,6 +67,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
 	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
 	idxUsageSyncLease := GetIndexUsageSyncLease()
+	planReplayerGCLease := GetPlanReplayerGCLease()
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
@@ -78,7 +79,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		onClose := func() {
 			dm.Delete(store)
 		}
-		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, factory, onClose)
+		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory, onClose)
 		err1 = d.Init(ddlLease, sysFactory)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
@@ -125,6 +126,9 @@ var (
 	// Because we have not completed GC and other functions, we set it to 0.
 	// TODO: Set indexUsageSyncLease to 60s.
 	indexUsageSyncLease = int64(0 * time.Second)
+
+	// planReplayerGCLease is the time for plan replayer gc.
+	planReplayerGCLease = int64(10 * time.Minute)
 )
 
 // ResetStoreForWithTiKVTest is only used in the test code.
@@ -168,6 +172,16 @@ func SetIndexUsageSyncLease(lease time.Duration) {
 // GetIndexUsageSyncLease returns the index usage sync lease time.
 func GetIndexUsageSyncLease() time.Duration {
 	return time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
+}
+
+// SetPlanReplayerGCLease changes the default plan repalyer gc lease time.
+func SetPlanReplayerGCLease(lease time.Duration) {
+	atomic.StoreInt64(&planReplayerGCLease, int64(lease))
+}
+
+// GetPlanReplayerGCLease returns the plan replayer gc lease time.
+func GetPlanReplayerGCLease() time.Duration {
+	return time.Duration(atomic.LoadInt64(&planReplayerGCLease))
 }
 
 // DisableStats4Test disables the stats for tests.

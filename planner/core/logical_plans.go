@@ -17,13 +17,13 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1231,6 +1231,7 @@ type ShowContents struct {
 	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName    string
 	Table     *ast.TableName  // Used for showing columns.
+	Partition model.CIStr     // Use for showing partition
 	Column    *ast.ColumnName // Used for `desc table column`.
 	IndexName model.CIStr
 	Flag      int                  // Some flag parsed from sql, such as FULL.
