@@ -1666,11 +1666,9 @@ func (b *builtinHexStrArgSig) evalString(row chunk.Row) (string, bool, error) {
 		return d, isNull, err
 	}
 	dBytes := hack.Slice(d)
-	if b.encoding.Enabled() {
-		dBytes, err = b.encoding.Encode(nil, dBytes)
-		if err != nil {
-			return d, false, err
-		}
+	dBytes, err = b.encoding.Encode(nil, dBytes)
+	if err != nil {
+		return d, false, err
 	}
 	return strings.ToUpper(hex.EncodeToString(dBytes)), false, nil
 }
