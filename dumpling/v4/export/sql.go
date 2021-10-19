@@ -1075,18 +1075,24 @@ func parseSnapshotToTSO(pool *sql.DB, snapshot string) (uint64, error) {
 func buildWhereCondition(conf *Config, where string) string {
 	var query strings.Builder
 	separator := "WHERE"
+	leftBracket := " "
+	rightBracket := " "
+	if conf.Where != "" && where != "" {
+		leftBracket = " ("
+		rightBracket = ") "
+	}
 	if conf.Where != "" {
 		query.WriteString(separator)
-		query.WriteByte(' ')
+		query.WriteString(leftBracket)
 		query.WriteString(conf.Where)
-		query.WriteByte(' ')
+		query.WriteString(rightBracket)
 		separator = "AND"
-		query.WriteByte(' ')
 	}
 	if where != "" {
 		query.WriteString(separator)
-		query.WriteString(" ")
+		query.WriteString(leftBracket)
 		query.WriteString(where)
+		query.WriteString(rightBracket)
 	}
 	return query.String()
 }
