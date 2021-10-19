@@ -279,7 +279,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		ExpectedCnt:      p.ExpectedCnt,
 		MPPPartitionTp:   p.MPPPartitionTp,
 		MPPPartitionCols: p.MPPPartitionCols,
-		RejectSort: 	  p.RejectSort,
+		RejectSort:       p.RejectSort,
 	}
 	return prop
 }
