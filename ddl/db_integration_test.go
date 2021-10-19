@@ -2887,14 +2887,30 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustGetErrCode("create table t(id int) on commit delete rows", errno.ErrParse)
 	tk.MustGetErrCode("create table t(id int) on commit preserve rows", errno.ErrParse)
 
+	tk.MustGetErrCode("create global temporary table tplacement (id int) followers=4  on commit delete rows", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create global temporary table tplacement (id int) primary_region='us-east-1' regions='us-east-1,us-west-1' on commit delete rows", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create global temporary table tplacement (id int) placement policy='x' on commit delete rows", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create temporary table tplacement (id int) followers=4", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create temporary table tplacement (id int) primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create temporary table tplacement (id int) placement policy='x'", errno.ErrOptOnTemporaryTable)
 
 	// Not support yet.
 	tk.MustGetErrCode("create global temporary table t (id int) on commit preserve rows", errno.ErrUnsupportedDDLOperation)
-	// Engine type can only be 'memory' or empty for now.
-	tk.MustGetErrCode("create global temporary table t (id int) engine = 'innodb' on commit delete rows", errno.ErrUnsupportedDDLOperation)
+
+	// Engine type can be anyone, see https://github.com/pingcap/tidb/issues/28541.
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create global temporary table tengine (id int) engine = 'innodb' on commit delete rows")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create global temporary table tengine (id int) engine = 'memory' on commit delete rows")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create global temporary table tengine (id int) engine = 'myisam' on commit delete rows")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create temporary table tengine (id int) engine = 'innodb'")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create temporary table tengine (id int) engine = 'memory'")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create temporary table tengine (id int) engine = 'myisam'")
+	tk.MustExec("drop table if exists tengine")
 
 	// Create local temporary table.
 	tk.MustExec("create database tmp_db")
@@ -2935,9 +2951,6 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	_, err = tk.Exec("create temporary table b_local_temp_table (id int)")
 	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
 	tk.MustExec("create temporary table if not exists b_local_temp_table (id int)")
-
-	// Engine type can only be 'memory' or empty for now.
-	tk.MustGetErrCode("create temporary table te (id int) engine = 'innodb'", errno.ErrUnsupportedDDLOperation)
 
 	// Stale read see the local temporary table but can't read on it.
 	tk.MustExec("START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3)")
