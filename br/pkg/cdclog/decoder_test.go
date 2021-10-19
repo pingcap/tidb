@@ -19,11 +19,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 	"github.com/pingcap/tidb/parser/mysql"
 )
 
-func Test(t *testing.T) { check.TestingT(t) }
 
 type batchSuite struct {
 	ddlEvents     []*MessageDDL
@@ -39,7 +38,7 @@ var updateCols = map[string]Column{
 	"name": {Type: 2, Value: "test"},
 }
 
-var _ = check.Suite(&batchSuite{
+var s = batchSuite{
 	ddlEvents: []*MessageDDL{
 		{"drop table event", 4},
 		{"create table event", 3},
@@ -61,7 +60,7 @@ var _ = check.Suite(&batchSuite{
 		{ItemType: RowChanged, Schema: "test", Table: "event", TS: 1, RowID: 1, Data: MessageRow{PreColumns: updateCols}},
 		{ItemType: RowChanged, Schema: "test", Table: "event", TS: 1, RowID: 2, Data: MessageRow{Delete: updateCols}},
 	},
-})
+}
 
 func buildEncodeRowData(events []*MessageRow) []byte {
 	var versionByte [8]byte
@@ -110,12 +109,12 @@ func buildEncodeDDLData(events []*MessageDDL) []byte {
 	return data
 }
 
-func (s *batchSuite) TestDecoder(c *check.C) {
+func TestDecoder(t *testing.T) {
 	var item *SortItem
 
 	data := buildEncodeDDLData(s.ddlEvents)
 	decoder, err := NewJSONEventBatchDecoder(data)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	index := 0
 	for {
 		hasNext := decoder.HasNext()
@@ -123,14 +122,14 @@ func (s *batchSuite) TestDecoder(c *check.C) {
 			break
 		}
 		item, err = decoder.NextEvent(DDL)
-		c.Assert(err, check.IsNil)
-		c.Assert(item.Data.(*MessageDDL), check.DeepEquals, s.ddlEvents[index])
+		require.NoError(t, err)
+		require.Equal(t, s.ddlEvents[index], item.Data.(*MessageDDL))
 		index++
 	}
 
 	data = buildEncodeRowData(s.rowEvents)
 	decoder, err = NewJSONEventBatchDecoder(data)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	index = 0
 	for {
 		hasNext := decoder.HasNext()
@@ -138,32 +137,32 @@ func (s *batchSuite) TestDecoder(c *check.C) {
 			break
 		}
 		item, err = decoder.NextEvent(RowChanged)
-		c.Assert(err, check.IsNil)
-		c.Assert(item.Data.(*MessageRow), check.DeepEquals, s.rowEvents[index])
-		c.Assert(item.RowID, check.Equals, int64(index))
+		require.NoError(t, err)
+		require.Equal(t, s.rowEvents[index], item.Data.(*MessageRow))
+		require.Equal(t, int64(index), item.RowID)
 		index++
 	}
 }
 
-func (s *batchSuite) TestColumn(c *check.C) {
+func TestColumn(t *testing.T) {
 	// test varbinary columns (same type with varchar 15)
 	col1 := Column{Type: mysql.TypeVarchar, Flag: BinaryFlag, Value: "\\x00\\x01"}
 	col1 = formatColumnVal(col1)
 	dat, err := col1.ToDatum()
-	c.Assert(err, check.IsNil)
-	c.Assert(dat.GetString(), check.Equals, "\x00\x01")
+	require.NoError(t, err)
+	require.Equal(t, "\x00\x01", dat.GetString())
 
 	// test binary columns (same type with varchar 254)
 	col2 := Column{Type: mysql.TypeString, Flag: BinaryFlag, Value: "test\\ttest"}
 	col2 = formatColumnVal(col2)
 	dat, err = col2.ToDatum()
-	c.Assert(err, check.IsNil)
-	c.Assert(dat.GetString(), check.Equals, "test\ttest")
+	require.NoError(t, err)
+	require.Equal(t, "test\ttest", dat.GetString())
 
 	// test year columns
 	val := json.Number("2020")
 	colYear := Column{Type: mysql.TypeYear, Value: val}
 	dat, err = colYear.ToDatum()
-	c.Assert(err, check.IsNil)
-	c.Assert(dat.GetInt64(), check.Equals, int64(2020))
+	require.NoError(t, err)
+	require.Equal(t, int64(2020), dat.GetInt64())
 }
