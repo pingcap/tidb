@@ -695,6 +695,7 @@ func (h *Handle) FlushStats() {
 	if err := h.DumpStatsFeedbackToKV(); err != nil {
 		logutil.BgLogger().Error("[stats] dump stats feedback fail", zap.Error(err))
 	}
+	// TODO: DumpColStatsUsage
 }
 
 func (h *Handle) cmSketchAndTopNFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {

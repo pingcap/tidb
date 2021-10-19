@@ -857,6 +857,7 @@ func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.Query
 
 func (h *Handle) DumpColStatsUsageToKV() error {
 	h.sweepList()
+
 	for col, lastUsedAt := range h.colStatsUsage {
 		const sql = "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE last_used_at = GREATEST(last_used_at, %?)"
 		_, _, err := h.execRestrictedSQL(context.Background(), sql, col.TableID, col.ColumnID, lastUsedAt, lastUsedAt)
