@@ -225,10 +225,20 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		newExpr.SetCoercibility(v.Coercibility())
 		return true, newExpr
 	case *ScalarFunction:
+		substituted := false
+		if v.FuncName.L == ast.Cast {
+			newFunc := v.Clone().(*ScalarFunction)
+			substituted, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
+			if substituted {
+				// Workaround for issue https://github.com/pingcap/tidb/issues/28804
+				refExprArr := cowExprRef{v.GetArgs(), nil}
+				return true, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+			}
+			return true, newFunc
+		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed
 		refExprArr := cowExprRef{v.GetArgs(), nil}
-		substituted := false
 		_, coll := DeriveCollationFromExprs(v.GetCtx(), v.GetArgs()...)
 		for idx, arg := range v.GetArgs() {
 			changed, newFuncExpr := ColumnSubstituteImpl(arg, schema, newExprs)
