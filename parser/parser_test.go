@@ -2228,7 +2228,6 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (a, b.c);", false, ""},
 		{"CREATE TABLE (name CHAR(50) BINARY)", false, ""},
 		// test enable or disable cached table
-		{"CREATE TABLE tmp (a varchar(50), b int);", true, "CREATE TABLE `tmp` (`a` VARCHAR(50),`b` INT)"},
 		{"ALTER TABLE tmp CACHE", true, "ALTER TABLE `tmp` CACHE"},
 		{"ALTER TABLE tmp NOCACHE", true, "ALTER TABLE `tmp` NOCACHE"},
 		// for create temporary table
