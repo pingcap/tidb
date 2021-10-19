@@ -735,10 +735,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
 	)
-	err = do.ddl.Start(sysCtxPool)
-	if err != nil {
-		return err
-	}
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			if err := do.ddl.Stop(); err != nil {
@@ -780,7 +776,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return err
 	}
-
+	err = do.ddl.Start(sysCtxPool)
+	if err != nil {
+		return err
+	}
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
