@@ -26,7 +26,7 @@ jobs:
       - name: Check
         run: make check
       - name: Unit test
-        run: make test WITH_RACE=1
+        run: make dumpling_unit_test WITH_RACE=1
       - uses: codecov/codecov-action@v1
 
   integration-test-mysql-5735:
