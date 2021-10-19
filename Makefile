@@ -277,13 +277,14 @@ endif
 # Usage:
 #	make bench-daily TO=/path/to/file.json
 bench-daily:
-	go test github.com/pingcap/tidb/session -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/executor -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/tablecodec -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/expression -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/util/codec -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/util/benchdaily -run TestBenchDaily \
+	go test github.com/pingcap/tidb/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/executor -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/codec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/distsql -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/benchdaily -run TestBenchDaily -bench Ignore \
 		-date `git log -n1 --date=unix --pretty=format:%cd` \
 		-commit `git log -n1 --pretty=format:%h` \
 		-outfile $(TO)
