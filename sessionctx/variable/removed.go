@@ -26,6 +26,7 @@ var removedSysVars = []string{
 	TiDBSlowLogMasking,
 }
 
+// IsRemovedSysVar returns true if the sysvar has been removed
 func IsRemovedSysVar(varName string) bool {
 	for _, v := range removedSysVars {
 		if varName == v {
