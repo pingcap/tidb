@@ -397,18 +397,18 @@ func (*testSysVarSuite) TestTxnIsolation(c *C) {
 	// Enable global skip isolation check doesn't affect current session
 	require.Nil(t, GetSysVar(TiDBSkipIsolationLevelCheck).SetGlobalFromHook(vars, "ON", true))
 	_, err = sv.Validate(vars, "Serializable", ScopeSession)
-	require.Equal(t, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error", err.Error())
+	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
 
 	// Enable session skip isolation check
-	require.Nil(t, GetSysVar(TiDBSkipIsolationLevelCheck).SetSessionFromHook(vars, "ON"))
+	c.Assert(GetSysVar(TiDBSkipIsolationLevelCheck).SetSessionFromHook(vars, "ON"), IsNil)
 
 	val, err = sv.Validate(vars, "Serializable", ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, "SERIALIZABLE", val)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "SERIALIZABLE")
 
 	// Init TiDBSkipIsolationLevelCheck like what loadCommonGlobalVariables does
 	vars = NewSessionVars()
-	require.NoError(t, vars.SetSystemVarWithRelaxedValidation(TiDBSkipIsolationLevelCheck, "1"))
+	c.Assert(vars.SetSystemVarWithRelaxedValidation(TiDBSkipIsolationLevelCheck, "1"), IsNil)
 	val, err = sv.Validate(vars, "Serializable", ScopeSession)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "SERIALIZABLE")
