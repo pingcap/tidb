@@ -134,15 +134,15 @@ const (
 // storeID2RegionIndex is a map that key is storeID and value is a region index slice.
 // selectRegion use storeID2RegionIndex to find RegionInfos that belong to storeID efficiently.
 func selectRegion(storeID uint64, candidateRegionInfos []RegionInfo, selected []bool, storeID2RegionIndex map[uint64][]int, cnt int64) []RegionInfo {
-	regionIndex, ok := storeID2RegionIndex[storeID]
+	regionIndexes, ok := storeID2RegionIndex[storeID]
 	if !ok {
 		logutil.BgLogger().Error("selectRegion: storeID2RegionIndex not found", zap.Uint64("storeID", storeID))
 		return nil
 	}
 	var regionInfos []RegionInfo
 	i := 0
-	for ; i < len(regionIndex) && len(regionInfos) < int(cnt); i++ {
-		idx := regionIndex[i]
+	for ; i < len(regionIndexes) && len(regionInfos) < int(cnt); i++ {
+		idx := regionIndexes[i]
 		if selected[idx] {
 			continue
 		}
@@ -150,7 +150,7 @@ func selectRegion(storeID uint64, candidateRegionInfos []RegionInfo, selected []
 		regionInfos = append(regionInfos, candidateRegionInfos[idx])
 	}
 	// Remove regions that has beed selected.
-	storeID2RegionIndex[storeID] = regionIndex[i:]
+	storeID2RegionIndex[storeID] = regionIndexes[i:]
 	return regionInfos
 }
 
@@ -190,6 +190,13 @@ func checkBatchCopTaskBalance(storeTasks map[uint64]*batchCopTask, balanceContin
 	return balanceScore(maxRegionCount, minRegionCount, balanceContinuousRegionCount), balanceInfos
 }
 
+// balanceBatchCopTaskWithContinuity try to balance `continuous regions` between TiFlash Stores.
+// In fact, not absolutely continuous is required, regions' range are closed to store in a TiFlash segment is enough for internal read optimization.
+//
+// First, sort candidateRegionInfos by their key ranges.
+// Second, build a storeID2RegionIndex data structure to fastly locate regions of a store (avoid scanning candidateRegionInfos repeatly).
+// Third, each store will take balanceContinuousRegionCount from the sorted candidateRegionInfos. These regions are stored very close to each other in TiFlash.
+// Fourth, if the region count is not balance between TiFlash, it may fallback to the original balance logic.
 func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, candidateRegionInfos []RegionInfo, balanceContinuousRegionCount int64) ([]*batchCopTask, int) {
 	if len(candidateRegionInfos) < 500 {
 		return nil, 0
@@ -271,7 +278,12 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 //    meta data(like the rpc context) in batchCopTask is related to it
 // 2. for the remaining regions:
 //    if there is only 1 available store, then put the region to the related store
-//    otherwise, use a greedy algorithm to put it into the store with highest weight
+//    otherwise, these region will be balance between TiFlash stores.
+// Currently, there are two balance strategies.
+// The first balance strategy: use a greedy algorithm to put it into the store with highest weight. This strategy only consider the region count between TiFlash stores.
+//
+// The second balance strategy: Not only consider the region count between TiFlash stores, but also try to make the regions' range continuous(stored in TiFlash closely).
+// If balanceWithContinuity is true, the second balance strategy is enable.
 func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
 	isMPP := mppStoreLastFailTime != nil
 	// for mpp, we still need to detect the store availability

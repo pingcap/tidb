@@ -750,7 +750,7 @@ const (
 	DefTiDBEnableLocalTxn                   = false
 	DefTiDBEnableOrderedResultMode          = false
 	DefEnableMPPBalanceRegionWithContinuity = true
-	DefMPPBalanceContinuousRegionCount      = 50
+	DefMPPBalanceContinuousRegionCount      = 20
 )
 
 // Process global variables.
