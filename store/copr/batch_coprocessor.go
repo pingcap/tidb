@@ -256,11 +256,17 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 		logutil.BgLogger().Warn("balanceBatchCopTaskWithContinuity is not balance", zap.Int("score", score), zap.Strings("balanceInfos", balanceInfos))
 	}
 
+	totalCount := 0
 	var res []*batchCopTask
 	for _, task := range storeTasks {
+		totalCount += len(task.regionInfos)
 		if len(task.regionInfos) > 0 {
 			res = append(res, task)
 		}
+	}
+	if totalCount != regionCount {
+		logutil.BgLogger().Error("balanceBatchCopTaskWithContinuity error", zap.Int("totalCount", totalCount), zap.Int("regionCount", regionCount))
+		return nil, 0
 	}
 
 	logutil.BgLogger().Debug("balanceBatchCopTaskWithContinuity time",
