@@ -1670,6 +1670,9 @@ func doDMLWorks(s Session) {
 			if v.Name == variable.TiDBEnable1PC && config.GetGlobalConfig().Store == "tikv" {
 				vVal = variable.On
 			}
+			if v.Name == variable.TiDBEnableMutationChecker && config.GetGlobalConfig().Store == "tikv" {
+				vVal = variable.On
+			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
 		}
