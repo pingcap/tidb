@@ -19,13 +19,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 )
 
@@ -38,6 +39,7 @@ type stmtSummaryReader struct {
 	instanceAddr         string
 	ssMap                *stmtSummaryByDigestMap
 	columnValueFactories []columnValueFactory
+	checker              *stmtSummaryChecker
 }
 
 // NewStmtSummaryReader return a new statement summaries reader.
@@ -78,13 +80,19 @@ func (ssr *stmtSummaryReader) GetStmtSummaryCurrentRows() [][]types.Datum {
 
 	rows := make([][]types.Datum, 0, len(values))
 	for _, value := range values {
-		record := ssr.getStmtByDigestRow(value.(*stmtSummaryByDigest), beginTime)
+		ssbd := value.(*stmtSummaryByDigest)
+		if ssr.checker != nil && !ssr.checker.isDigestValid(ssbd.digest) {
+			continue
+		}
+		record := ssr.getStmtByDigestRow(ssbd, beginTime)
 		if record != nil {
 			rows = append(rows, record)
 		}
 	}
-	if otherDatum := ssr.getStmtEvictedOtherRow(other); otherDatum != nil {
-		rows = append(rows, otherDatum)
+	if ssr.checker == nil {
+		if otherDatum := ssr.getStmtEvictedOtherRow(other); otherDatum != nil {
+			rows = append(rows, otherDatum)
+		}
 	}
 	return rows
 }
@@ -100,13 +108,23 @@ func (ssr *stmtSummaryReader) GetStmtSummaryHistoryRows() [][]types.Datum {
 	historySize := ssMap.historySize()
 	rows := make([][]types.Datum, 0, len(values)*historySize)
 	for _, value := range values {
-		records := ssr.getStmtByDigestHistoryRow(value.(*stmtSummaryByDigest), historySize)
+		ssbd := value.(*stmtSummaryByDigest)
+		if ssr.checker != nil && !ssr.checker.isDigestValid(ssbd.digest) {
+			continue
+		}
+		records := ssr.getStmtByDigestHistoryRow(ssbd, historySize)
 		rows = append(rows, records...)
 	}
 
-	otherDatum := ssr.getStmtEvictedOtherHistoryRow(other, historySize)
-	rows = append(rows, otherDatum...)
+	if ssr.checker == nil {
+		otherDatum := ssr.getStmtEvictedOtherHistoryRow(other, historySize)
+		rows = append(rows, otherDatum...)
+	}
 	return rows
+}
+
+func (ssr *stmtSummaryReader) SetChecker(checker *stmtSummaryChecker) {
+	ssr.checker = checker
 }
 
 func (ssr *stmtSummaryReader) getStmtByDigestRow(ssbd *stmtSummaryByDigest, beginTimeForCurInterval int64) []types.Datum {
@@ -185,6 +203,21 @@ func (ssr *stmtSummaryReader) getStmtEvictedOtherHistoryRow(ssbde *stmtSummaryBy
 		rows = append(rows, ssr.getStmtByDigestElementRow(seElement.otherSummary, ssbd))
 	}
 	return rows
+}
+
+type stmtSummaryChecker struct {
+	digests set.StringSet
+}
+
+// NewStmtSummaryChecker return a new statement summaries checker.
+func NewStmtSummaryChecker(digests set.StringSet) *stmtSummaryChecker {
+	return &stmtSummaryChecker{
+		digests: digests,
+	}
+}
+
+func (ssc *stmtSummaryChecker) isDigestValid(digest string) bool {
+	return ssc.digests.Exist(digest)
 }
 
 // Statements summary table column name.
@@ -266,6 +299,9 @@ const (
 	AvgPdTimeStr                    = "AVG_PD_TIME"
 	AvgBackoffTotalTimeStr          = "AVG_BACKOFF_TOTAL_TIME"
 	AvgWriteSQLRespTimeStr          = "AVG_WRITE_SQL_RESP_TIME"
+	MaxResultRowsStr                = "MAX_RESULT_ROWS"
+	MinResultRowsStr                = "MIN_RESULT_ROWS"
+	AvgResultRowsStr                = "AVG_RESULT_ROWS"
 	PreparedStr                     = "PREPARED"
 	AvgAffectedRowsStr              = "AVG_AFFECTED_ROWS"
 	FirstSeenStr                    = "FIRST_SEEN"
@@ -517,6 +553,15 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	AvgWriteSQLRespTimeStr: func(ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
 		return avgInt(int64(ssElement.sumWriteSQLRespTotal), ssElement.commitCount)
+	},
+	MaxResultRowsStr: func(ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		return ssElement.maxResultRows
+	},
+	MinResultRowsStr: func(ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		return ssElement.minResultRows
+	},
+	AvgResultRowsStr: func(ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		return avgInt(ssElement.sumResultRows, ssElement.execCount)
 	},
 	PreparedStr: func(ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
 		return ssElement.prepared

@@ -38,13 +38,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
@@ -926,7 +926,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i))
 			}
+			_, digest := s.sessionVars.StmtCtx.SQLDigest()
+			s.txn.onStmtStart(digest.String())
 			_, err = st.Exec(ctx)
+			s.txn.onStmtEnd()
 			if err != nil {
 				s.StmtRollback()
 				break
@@ -1625,7 +1628,7 @@ var querySpecialKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
 	executor.IndexAdviseVarKey,
-	executor.PlanRecreatorVarKey,
+	executor.PlanReplayerVarKey,
 }
 
 func (s *session) hasQuerySpecial() bool {
@@ -2023,6 +2026,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if readReplicaType.IsFollowerRead() {
 			s.txn.SetOption(kv.ReplicaRead, readReplicaType)
 		}
+		s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	}
 	return &s.txn, nil
 }
@@ -2087,6 +2091,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		IsStaleness: false,
 		TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
 	}
+	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	return nil
 }
 
@@ -2132,6 +2137,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 		IsStaleness: true,
 		TxnScope:    txnScope,
 	}
+	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	return nil
 }
 
@@ -2546,6 +2552,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	se8, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	dom.PlanReplayerLoop(se8)
+
 	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
@@ -2807,7 +2820,15 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return err
 	}
+	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
 	return nil
+}
+
+// GetSnapshotWithTS returns a snapshot with ts.
+func (s *session) GetSnapshotWithTS(ts uint64) kv.Snapshot {
+	snap := s.GetStore().GetSnapshot(kv.Version{Ver: ts})
+	snap.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
+	return snap
 }
 
 // GetStore gets the store of session.
@@ -3047,4 +3068,8 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 
 func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
 	return s.builtinFunctionUsage
+}
+
+func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {
+	return temptable.SessionSnapshotInterceptor(s)
 }
