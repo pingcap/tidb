@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
@@ -76,19 +77,19 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		dbNameStr := model.NewCIStr(dbName)
 		schema := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
 		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName))
-		if err != nil {
+		// Allow GRANT on non-existent table, see issue #28533
+		if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
 			return err
 		}
-		err = infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 		// Note the table name compare is case sensitive here.
-		if tbl.Meta().Name.String() != e.Level.TableName {
-			return err
+		if tbl != nil && tbl.Meta().Name.String() != e.Level.TableName {
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 		}
 		if len(e.Level.DBName) > 0 {
 			// The database name should also match.
 			db, succ := schema.SchemaByName(dbNameStr)
 			if !succ || db.Name.L != dbNameStr.L {
-				return err
+				return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 			}
 		}
 	}
@@ -769,6 +770,9 @@ func getTargetSchemaAndTable(ctx sessionctx.Context, dbName, tableName string, i
 	}
 	name := model.NewCIStr(tableName)
 	tbl, err := is.TableByName(model.NewCIStr(dbName), name)
+	if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+		return dbName, nil, err
+	}
 	if err != nil {
 		return "", nil, err
 	}
