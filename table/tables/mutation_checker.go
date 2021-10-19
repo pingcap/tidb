@@ -31,9 +31,10 @@ import (
 )
 
 type mutation struct {
-	key   kv.Key
-	flags kv.KeyFlags
-	value []byte
+	key     kv.Key
+	flags   kv.KeyFlags
+	value   []byte
+	indexID int64 // only for index mutations
 }
 
 type columnMaps struct {
@@ -43,25 +44,25 @@ type columnMaps struct {
 	IndexIDToRowColInfos map[int64][]rowcodec.ColInfo
 }
 
-// CheckIndexConsistency checks whether the given set of mutations corresponding to a single row is consistent.
+// CheckDataConsistency checks whether the given set of mutations corresponding to a single row is consistent.
 // Namely, assume the database is consistent before, applying the mutations shouldn't break the consistency.
 // It aims at reducing bugs that will corrupt data, and preventing mistakes from spreading if possible.
+//
+// 3 conditions are checked:
+// (1) row.value is consistent with input data
+// (2) the handle is consistent in row and index insertions
+// (3) the keys of the indices are consistent with the values of rows
 //
 // The check doesn't work and just returns nil when:
 // (1) the table is partitioned
 // (2) new collation is enabled and restored data is needed
 //
-// How it works:
-//
-// Assume the set of row values changes from V1 to V2, we check
-// (1) V2 - V1 = {added indices}
-// (2) V1 - V2 = {deleted indices}
-//
-// To check (1), we need
-// (a) {added indices} is a subset of {needed indices} => each index mutation is consistent with the input/row key/value
-// (b) {needed indices} is a subset of {added indices}. The check process would be exactly the same with how we generate
-// 		the mutations, thus ignored.
-func CheckIndexConsistency(
+// The check is performed on almost every write. Its performance matters.
+// Let M = the number of mutations, C = the number of columns in the table,
+// I = the sum of the number of columns in all indices,
+// The time complexity is O(M * C + I)
+// The space complexity is O(M + C + I)
+func CheckDataConsistency(
 	txn kv.Transaction, sessVars *variable.SessionVars, t *TableCommon,
 	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle,
 ) error {
@@ -86,6 +87,17 @@ func CheckIndexConsistency(
 			return errors.Trace(err)
 		}
 	}
+
+	if err != nil {
+		return err
+	}
+
+	if rowInsertion.key != nil {
+		if err = checkHandleConsistency(rowInsertion, indexMutations, columnMaps.IndexIDToInfo); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	if err := checkIndexKeys(
 		sessVars, t, rowToInsert, rowToRemove, indexMutations, columnMaps.IndexIDToInfo, columnMaps.IndexIDToRowColInfos,
 	); err != nil {
@@ -94,25 +106,70 @@ func CheckIndexConsistency(
 	return nil
 }
 
+// checkHandleConsistency checks whether the handles, with regard to a single-row change,
+// in row insertions and index insertions are consistent.
+// A PUT_index implies a PUT_row with the same handle.
+// Deletions are not checked since the values of deletions are unknown
+func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo) error {
+	var insertionHandle kv.Handle
+	var err error
+
+	if rowInsertion.key == nil {
+		return nil
+	}
+	insertionHandle, err = tablecodec.DecodeRowKey(rowInsertion.key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, m := range indexMutations {
+		if len(m.value) == 0 {
+			continue
+		}
+
+		indexInfo, ok := indexIDToInfo[m.indexID]
+		if !ok {
+			return errors.New("index not found")
+		}
+
+		indexHandle, err := tablecodec.DecodeIndexHandle(m.key, m.value, len(indexInfo.Columns))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if indexHandle.Compare(insertionHandle) != 0 {
+			return errors.Errorf("inconsistent handles in row and index insertions. index handle = %v, "+
+				"row handle = %v, index = %+v, row = %+v",
+				indexHandle, insertionHandle, m, rowInsertion)
+		}
+	}
+
+	return err
+}
+
 // checkIndexKeys checks whether the decoded data from keys of index mutations are consistent with the expected ones.
+//
+// How it works:
+//
+// Assume the set of row values changes from V1 to V2, we check
+// (1) V2 - V1 = {added indices}
+// (2) V1 - V2 = {deleted indices}
+//
+// To check (1), we need
+// (a) {added indices} is a subset of {needed indices} => each index mutation is consistent with the input/row key/value
+// (b) {needed indices} is a subset of {added indices}. The check process would be exactly the same with how we generate
+// 		the mutations, thus ignored.
 func checkIndexKeys(
 	sessVars *variable.SessionVars, t *TableCommon, rowToInsert, rowToRemove []types.Datum,
 	indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo,
 	indexIDToRowColInfos map[int64][]rowcodec.ColInfo,
 ) error {
-
 	var indexData []types.Datum
 	for _, m := range indexMutations {
-		_, indexID, _, err := tablecodec.DecodeIndexKey(m.key)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		indexInfo, ok := indexIDToInfo[indexID]
+		indexInfo, ok := indexIDToInfo[m.indexID]
 		if !ok {
 			return errors.New("index not found")
 		}
-		rowColInfos, ok := indexIDToRowColInfos[indexID]
+		rowColInfos, ok := indexIDToRowColInfos[m.indexID]
 		if !ok {
 			return errors.New("index not found")
 		}
@@ -209,7 +266,7 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 	inspector := func(key kv.Key, flags kv.KeyFlags, data []byte) {
 		// only check the current table
 		if tablecodec.DecodeTableID(key) == t.physicalTableID {
-			m := mutation{key, flags, data}
+			m := mutation{key, flags, data, 0}
 			if rowcodec.IsRowKey(key) {
 				if len(data) > 0 {
 					if rowInsertion.key == nil {
@@ -221,6 +278,10 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 					}
 				}
 			} else {
+				_, m.indexID, _, err = tablecodec.DecodeIndexKey(m.key)
+				if err != nil {
+					err = errors.Trace(err)
+				}
 				indexMutations = append(indexMutations, m)
 			}
 		}
