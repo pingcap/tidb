@@ -6397,6 +6397,21 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 	return errors.Trace(err)
 }
 
+var (
+	ErrInvalidStatsOptionsFormat = errors.New("stats options should be in format 'key=value'")
+)
+
+type StatsOption struct {
+	Key   string `json:"key,omitempty"`
+	Value string `json:"value,omitempty"`
+}
+
+type StatsOptionList []StatsOption
+
+type StatsOptions struct {
+	Options StatsOptionList `json:"options"`
+}
+
 func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, spec *ast.StatsOptionsSpec) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
@@ -6406,10 +6421,29 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 
 	// construct a string list
 	attrBytes := []byte("[" + spec.StatsOptions + "]")
-	statsOptions := []string{}
-	err = yaml.UnmarshalStrict(attrBytes, &statsOptions)
+	var attrs []string
+	err = yaml.UnmarshalStrict(attrBytes, &attrs)
 	if err != nil {
 		return err
+	}
+
+	statsOptions := StatsOptions{}
+	statsOptions.Options = make(StatsOptionList, 0, len(attrs))
+	for _, attr := range attrs {
+		kv := strings.Split(attr, "=")
+		if len(kv) != 2 {
+			return fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, kv)
+		}
+		key := strings.TrimSpace(kv[0])
+		if key == "" {
+			return fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, key)
+		}
+		val := strings.TrimSpace(kv[1])
+		if val == "" {
+			return fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, val)
+		}
+		option := StatsOption{Key: key, Value: val}
+		statsOptions.Options = append(statsOptions.Options, option)
 	}
 
 	job := &model.Job{

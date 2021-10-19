@@ -1343,13 +1343,9 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 	return ver, nil
 }
 
-var (
-	ErrInvalidStatsOptionsFormat = errors.New("stats options should be in format 'key=value'")
-)
-
 func onAlterTableStatsOptions(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	statsOptions := []string{}
-	err = job.DecodeArgs(statsOptions)
+	statsOptions := StatsOptions{}
+	err = job.DecodeArgs(&statsOptions)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1360,36 +1356,27 @@ func onAlterTableStatsOptions(t *meta.Meta, job *model.Job) (ver int64, err erro
 		return 0, err
 	}
 
-	for _, statsOption := range statsOptions {
-		kv := strings.Split(statsOption, "=")
-		if len(kv) != 2 {
-			return 0, fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, statsOption)
-		}
-		key := strings.TrimSpace(kv[0])
-		if key == "" {
-			return 0, fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, statsOption)
-		}
-		val := strings.TrimSpace(kv[1])
-		if val == "" {
-			return 0, fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, statsOption)
-		}
-		switch strings.ToUpper(key) {
-		case "STATS_AUTO_RECALC":
-			autoRecalc, err0 := strconv.ParseBool(val)
+	if tblInfo.StatsOptions == nil {
+		tblInfo.StatsOptions = model.NewStatsOptions()
+	}
+	for _, statsOption := range statsOptions.Options {
+		switch strings.ToUpper(statsOption.Key) {
+		case "AUTO_RECALC":
+			autoRecalc, err0 := strconv.ParseBool(statsOption.Value)
 			if err0 != nil {
-				return 0, fmt.Errorf("%w: %s", errors.New("STATS_AUTO_RECALC should be a bool"), val)
+				return 0, fmt.Errorf("%w: %s", errors.New("STATS_AUTO_RECALC should be a bool"), statsOption.Value)
 			}
 			tblInfo.StatsOptions.AutoRecalc = autoRecalc
-		case "STATS_BUCKETS":
-			buckets, err0 := strconv.ParseUint(val, 0, 64)
+		case "BUCKETS":
+			buckets, err0 := strconv.ParseUint(statsOption.Value, 0, 64)
 			if err0 != nil {
-				return 0, fmt.Errorf("%w: %s", errors.New("STATS_BUCKETS should be a unit"), val)
+				return 0, fmt.Errorf("%w: %s", errors.New("STATS_BUCKETS should be a unit"), statsOption.Value)
 			}
 			tblInfo.StatsOptions.Buckets = buckets
-		case "STATS_TOPN":
-			topn, err0 := strconv.ParseUint(val, 0, 64)
+		case "TOPN":
+			topn, err0 := strconv.ParseUint(statsOption.Value, 0, 64)
 			if err0 != nil {
-				return 0, fmt.Errorf("%w: %s", errors.New("STATS_TOPN should be a unit"), val)
+				return 0, fmt.Errorf("%w: %s", errors.New("STATS_TOPN should be a unit"), statsOption.Value)
 			}
 			tblInfo.StatsOptions.TopN = topn
 		}

@@ -1215,6 +1215,13 @@ type StatsOptions struct {
 	Concurrency  uint         `json:"concurrency"`
 }
 
+func NewStatsOptions() *StatsOptions {
+	return &StatsOptions{
+		AutoRecalc: true,
+		// TODO use global settings as default
+	}
+}
+
 type ColumnChoice byte
 
 const (

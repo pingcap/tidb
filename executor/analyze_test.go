@@ -1197,5 +1197,6 @@ func (s *testSuite10) TestAlterTableSyntax(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
-	tk.MustExec("alter table t(a int) STATS_OPTIONS=\"\"")
+	tk.MustExec("alter table t STATS_OPTIONS=\"BUCKETS=10,TOPN=10\"")
+	tk.MustExec("alter table t STATS_OPTIONS=\"\"")
 }
