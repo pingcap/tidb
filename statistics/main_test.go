@@ -18,7 +18,6 @@ import (
 	"flag"
 	"testing"
 
-	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -29,8 +28,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
-
-var _ = check.Suite(&testStatisticsSuite{})
 
 var testDataMap = make(testdata.BookKeeper, 1)
 
