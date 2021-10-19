@@ -34,20 +34,17 @@ var _ = check.Suite(&testStatisticsSuite{})
 
 var testDataMap = make(testdata.BookKeeper, 1)
 
-func TestT(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
-	check.TestingT(t)
-}
-
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
 
 	if !flag.Parsed() {
 		flag.Parse()
 	}
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
 
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
 
