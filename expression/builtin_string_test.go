@@ -1070,8 +1070,7 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		{[]interface{}{"xxxbarxxx", "x", int(ast.TrimLeading)}, false, false, "barxxx"},
 		{[]interface{}{"barxxyz", "xyz", int(ast.TrimTrailing)}, false, false, "barx"},
 		{[]interface{}{"xxxbarxxx", "x", int(ast.TrimBoth)}, false, false, "bar"},
-		// FIXME: the result for this test shuold be nil, current is "bar"
-		{[]interface{}{"bar", nil, int(ast.TrimLeading)}, false, false, "bar"},
+		{[]interface{}{"bar", nil, int(ast.TrimLeading)}, true, false, ""},
 		{[]interface{}{errors.New("must error")}, false, true, ""},
 	}
 	for _, t := range cases {
