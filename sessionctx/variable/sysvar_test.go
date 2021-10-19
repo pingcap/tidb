@@ -395,7 +395,7 @@ func (*testSysVarSuite) TestTxnIsolation(c *C) {
 	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'READ-UNCOMMITTED' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
 
 	// Enable global skip isolation check doesn't affect current session
-	require.Nil(t, GetSysVar(TiDBSkipIsolationLevelCheck).SetGlobalFromHook(vars, "ON", true))
+	c.Assert(GetSysVar(TiDBSkipIsolationLevelCheck).SetGlobalFromHook(vars, "ON", true), IsNil)
 	_, err = sv.Validate(vars, "Serializable", ScopeSession)
 	c.Assert(err.Error(), Equals, "[variable:8048]The isolation level 'SERIALIZABLE' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error")
 
