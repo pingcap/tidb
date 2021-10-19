@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -91,7 +91,7 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
 	if e.ExecStmt == nil {
 		return errors.New("plan replayer: sql is empty")
 	}
-	res, err := e.dumpSingle(filepath.Join(domain.GetPlanReplayerDirName(), fmt.Sprintf("%v", os.Getpid())))
+	res, err := e.dumpSingle(domain.GetPlanReplayerDirName())
 	if err != nil {
 		return err
 	}
