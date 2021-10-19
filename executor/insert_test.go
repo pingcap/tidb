@@ -1630,7 +1630,6 @@ func (s *testSuite13) TestGlobalTempTableAutoInc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists temp_test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
 	defer tk.MustExec("drop table if exists temp_test")
 
@@ -1676,7 +1675,6 @@ func (s *testSuite13) TestGlobalTempTableRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists temp_test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table temp_test(id int) on commit delete rows")
 	defer tk.MustExec("drop table if exists temp_test")
 
@@ -1712,7 +1710,6 @@ func (s *testSuite13) TestGlobalTempTableParallel(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists temp_test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
 	defer tk.MustExec("drop table if exists temp_test")
 
