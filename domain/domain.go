@@ -1339,7 +1339,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	for {
 		select {
 		case <-do.exit:
-			statsHandle.FlushStats()
+			statsHandle.FlushStats(do.InfoSchema())
 			owner.Cancel()
 			return
 			// This channel is sent only by ddl owner.
@@ -1377,7 +1377,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				logutil.BgLogger().Debug("GC stats failed", zap.Error(err))
 			}
 		case <-dumpColStatsUsageTicker.C:
-			err := statsHandle.DumpColStatsUsageToKV()
+			err := statsHandle.DumpColStatsUsageToKV(do.InfoSchema())
 			if err != nil {
 				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
 			}

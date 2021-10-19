@@ -102,8 +102,12 @@ type Handle struct {
 	globalMap tableDeltaMap
 	// feedback is used to store query feedback info.
 	feedback *statistics.QueryFeedbackMap
-	// colStatsUsage stores the last time when the column stats are used(needed).
-	colStatsUsage colStatsUsageMap
+	// colStatsUsage stores the column stats usage information.
+	colStatsUsage struct {
+		sync.Mutex
+		// mapper contains the last time when the column stats are used(needed).
+		mapper colStatsUsageMap
+	}
 
 	lease atomic2.Duration
 
@@ -176,8 +180,11 @@ func (h *Handle) Clear() {
 	h.mu.ctx.GetSessionVars().SetProjectionConcurrency(0)
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
-	h.colStatsUsage = make(colStatsUsageMap)
 	h.mu.rateMap = make(errorRateDeltaMap)
+	// TODO: do we must clear h.colStatsUsage when h.mu.Lock()?
+	h.colStatsUsage.Lock()
+	h.colStatsUsage.mapper = make(colStatsUsageMap)
+	h.colStatsUsage.Unlock()
 	h.mu.Unlock()
 }
 
@@ -193,7 +200,6 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:        make(tableDeltaMap),
 		feedback:         statistics.NewQueryFeedbackMap(),
-		colStatsUsage:    make(colStatsUsageMap),
 		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 		pool:             pool,
 	}
@@ -203,6 +209,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
+	handle.colStatsUsage.mapper = make(colStatsUsageMap)
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
@@ -682,7 +689,7 @@ func (h *Handle) SetLastUpdateVersion(version uint64) {
 }
 
 // FlushStats flushes the cached stats update into store.
-func (h *Handle) FlushStats() {
+func (h *Handle) FlushStats(is infoschema.InfoSchema) {
 	for len(h.ddlEventCh) > 0 {
 		e := <-h.ddlEventCh
 		if err := h.HandleDDLEvent(e); err != nil {
@@ -695,7 +702,9 @@ func (h *Handle) FlushStats() {
 	if err := h.DumpStatsFeedbackToKV(); err != nil {
 		logutil.BgLogger().Error("[stats] dump stats feedback fail", zap.Error(err))
 	}
-	// TODO: DumpColStatsUsage
+	if err := h.DumpColStatsUsageToKV(is); err != nil {
+		logutil.BgLogger().Error("[stats] dump column stats usage fail", zap.Error(err))
+	}
 }
 
 func (h *Handle) cmSketchAndTopNFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {

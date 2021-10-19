@@ -136,7 +136,7 @@ func (m colStatsUsageMap) merge(other colStatsUsageMap) {
 	}
 }
 
-func (h *Handle) merge(s *SessionStatsCollector, rateMap errorRateDeltaMap) {
+func (h *Handle) merge(s *SessionStatsCollector, rateMap errorRateDeltaMap, colStatsUsage colStatsUsageMap) {
 	for id, item := range s.mapper {
 		h.globalMap.update(id, item.Delta, item.Count, &item.ColSize)
 	}
@@ -145,7 +145,7 @@ func (h *Handle) merge(s *SessionStatsCollector, rateMap errorRateDeltaMap) {
 	s.rateMap = make(errorRateDeltaMap)
 	h.feedback.Merge(s.feedback)
 	s.feedback = statistics.NewQueryFeedbackMap()
-	h.colStatsUsage.merge(s.colStatsUsage)
+	colStatsUsage.merge(s.colStatsUsage)
 	s.colStatsUsage = make(colStatsUsageMap)
 }
 
@@ -399,11 +399,11 @@ func (h *Handle) sweepList() {
 	prev := h.listHead
 	prev.Lock()
 	errorRateMap := make(errorRateDeltaMap)
+	colStatsUsage := make(colStatsUsageMap)
 	for curr := prev.next; curr != nil; curr = curr.next {
 		curr.Lock()
 		// Merge the session stats into handle and error rate map.
-		// TODO: specify which data to merge rather than merge all the data
-		h.merge(curr, errorRateMap)
+		h.merge(curr, errorRateMap, colStatsUsage)
 		if curr.deleted {
 			prev.next = curr.next
 			// Since the session is already closed, we can safely unlock it here.
@@ -419,6 +419,9 @@ func (h *Handle) sweepList() {
 	h.mu.rateMap.merge(errorRateMap)
 	h.mu.Unlock()
 	h.siftFeedbacks()
+	h.colStatsUsage.Lock()
+	h.colStatsUsage.mapper.merge(colStatsUsage)
+	h.colStatsUsage.Unlock()
 }
 
 // siftFeedbacks eliminates feedbacks which are overlapped with others. It is a tradeoff between
@@ -855,16 +858,56 @@ func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.Query
 	return errors.Trace(err)
 }
 
-func (h *Handle) DumpColStatsUsageToKV() error {
+func (h *Handle) DumpColStatsUsageToKV(is infoschema.InfoSchema) error {
 	h.sweepList()
-
-	for col, lastUsedAt := range h.colStatsUsage {
-		const sql = "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE last_used_at = GREATEST(last_used_at, %?)"
-		_, _, err := h.execRestrictedSQL(context.Background(), sql, col.TableID, col.ColumnID, lastUsedAt, lastUsedAt)
-		if err != nil {
-			return err
+	mapper := make(map[int64]map[int64]time.Time)
+	h.colStatsUsage.Lock()
+	for col, t := range h.colStatsUsage.mapper {
+		if _, ok := mapper[col.TableID]; !ok {
+			mapper[col.TableID] = make(map[int64]time.Time)
 		}
-		delete(h.colStatsUsage, col)
+		mapper[col.TableID][col.ColumnID] = t
+	}
+	h.colStatsUsage.Unlock()
+	for tblID, colID2t := range mapper {
+		h.mu.Lock()
+		tbl, ok := h.getTableByPhysicalID(is, tblID)
+		h.mu.Unlock()
+		if !ok {
+			delete(mapper, tblID)
+		}
+		tblInfo := tbl.Meta()
+		colIDs := make(map[int64]struct{}, len(tblInfo.Columns))
+		for _, col := range tblInfo.Columns {
+			colIDs[col.ID] = struct{}{}
+		}
+		for colID := range colID2t {
+			if _, ok := colIDs[colID]; !ok {
+				delete(mapper[tblID], colID)
+			}
+		}
+	}
+	defer func() {
+		colStatsUsage := make(colStatsUsageMap)
+		for tblID, colID2t := range mapper {
+			for colID, t := range colID2t {
+				tblColId := model.TableColumnID{TableID: tblID, ColumnID: colID}
+				colStatsUsage[tblColId] = t
+			}
+		}
+		h.colStatsUsage.Lock()
+		h.colStatsUsage.mapper.merge(colStatsUsage)
+		h.colStatsUsage.Unlock()
+	}()
+	for tblID, colID2t := range mapper {
+		for colID, t := range colID2t {
+			const sql = "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN %? ELSE GREATEST(last_used_at, %?) END"
+			_, _, err := h.execRestrictedSQL(context.Background(), sql, tblID, colID, t, t, t)
+			if err != nil {
+				return err
+			}
+			delete(mapper[tblID], colID)
+		}
 	}
 	return nil
 }
