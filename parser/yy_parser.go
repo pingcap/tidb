@@ -15,7 +15,6 @@ package parser
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/parser/charset"
 	"math"
 	"regexp"
 	"strconv"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 )
