@@ -739,9 +739,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	)
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
-			if err := do.ddl.Stop(); err != nil {
-				logutil.BgLogger().Error("stop DDL failed", zap.Error(err))
-			}
 			do.ddl = d
 		}
 	})
