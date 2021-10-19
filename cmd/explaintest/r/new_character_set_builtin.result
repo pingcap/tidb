@@ -53,25 +53,25 @@ drop table if exists t;
 create table t(a char(10));
 insert into t values ('中文'), ('啊'), ('a'), ('1'), ('ㅂ');
 set @@tidb_enable_vectorized_expression = true;
-select hex(convert(a using gbk)) from t;
-hex(convert(a using gbk))
-D6D0CEC4
-B0A1
-61
-31
-3F
-select hex(convert('中文' using gbk));
-hex(convert('中文' using gbk))
-D6D0CEC4
-select hex(convert('啊' using gbk));
-hex(convert('啊' using gbk))
-B0A1
-select hex(convert('a' using gbk));
-hex(convert('a' using gbk))
-61
-select hex(convert('1' using gbk));
-hex(convert('1' using gbk))
-31
-select hex(convert('ㅂ' using gbk));
-hex(convert('ㅂ' using gbk))
-3F
+select hex(convert(a using gbk)), convert(a using gbk) from t;
+hex(convert(a using gbk))	convert(a using gbk)
+D6D0CEC4	中文
+B0A1	啊
+61	a
+31	1
+3F	?
+select hex(convert('中文' using gbk)), convert('中文' using gbk);
+hex(convert('中文' using gbk))	convert('中文' using gbk)
+D6D0CEC4	中文
+select hex(convert('啊' using gbk)), convert('啊' using gbk);
+hex(convert('啊' using gbk))	convert('啊' using gbk)
+B0A1	啊
+select hex(convert('a' using gbk)), convert('a' using gbk);
+hex(convert('a' using gbk))	convert('a' using gbk)
+61	a
+select hex(convert('1' using gbk)), convert('1' using gbk);
+hex(convert('1' using gbk))	convert('1' using gbk)
+31	1
+select hex(convert('ㅂ' using gbk)), convert('ㅂ' using gbk);
+hex(convert('ㅂ' using gbk))	convert('ㅂ' using gbk)
+3F	?
