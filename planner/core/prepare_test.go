@@ -1019,15 +1019,13 @@ func (s *testPlanSerialSuite) TestIssue28867(c *C) {
 }
 
 func (s *testPlanSerialSuite) TestIssue28920(c *C) {
-	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		err = store.Close()
-		c.Assert(err, IsNil)
+		c.Assert(store.Close(), IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -1036,8 +1034,6 @@ func (s *testPlanSerialSuite) TestIssue28920(c *C) {
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
 	c.Assert(err, IsNil)
-	tk.GetConnectionID()
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists UK_GCOL_VIRTUAL_18928`)
@@ -1054,7 +1050,7 @@ func (s *testPlanSerialSuite) TestIssue28920(c *C) {
 	tk.MustExec(`insert into UK_GCOL_VIRTUAL_18928(col102,col2) values("-5175976006730879891", "屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖")`)
 	tk.MustExec(`prepare stmt from 'SELECT * FROM UK_GCOL_VIRTUAL_18928 WHERE col1 < ? AND col2 != ?'`)
 	tk.MustExec(`set @a=10, @b="aa"`)
-	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("-5175976006730879891 NULL 8 屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖 NULL NULL"))
+	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("-5175976006730879891 <nil> 8 屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖 <nil> <nil> <nil>"))
 }
 
 func (s *testPlanSerialSuite) TestIssue18066(c *C) {

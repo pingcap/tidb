@@ -200,7 +200,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 			prepared.UseCache = plannercore.Cacheable(stmt, ret.InfoSchema)
 		} else {
-			prepared.UseCache = plannercore.Cacheable(stmt, nil)
+			prepared.UseCache = plannercore.Cacheable(stmt, ret.InfoSchema)
 		}
 	}
 
