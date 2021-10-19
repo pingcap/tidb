@@ -64,7 +64,7 @@ func GetIntegrationSuiteData() testdata.TestData {
 // TestStatistics batches tests sharing a test suite to reduce the setups
 // overheads.
 func TestStatistics(t *testing.T) {
-	s := createTestStatisticsSuite(t)
+	s := createTestStatisticsSamples(t)
 
 	// fmsketch_test.go
 	t.Run("SubTestSketch", SubTestSketch(s))
@@ -82,7 +82,7 @@ func TestStatistics(t *testing.T) {
 
 }
 
-func createTestStatisticsSuite(t *testing.T) *testStatisticsSamples {
+func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 	s := new(testStatisticsSamples)
 
 	s.count = 100000
