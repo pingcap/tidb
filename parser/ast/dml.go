@@ -2578,6 +2578,7 @@ const (
 	ShowStatsTopN
 	ShowStatsBuckets
 	ShowStatsHealthy
+	ShowColumnStatsUsage
 	ShowPlugins
 	ShowProfile
 	ShowProfiles
@@ -2762,6 +2763,11 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case ShowStatsHealthy:
 		ctx.WriteKeyWord("STATS_HEALTHY")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
+	case ShowColumnStatsUsage:
+		ctx.WriteKeyWord("COLUMN_STATS_USAGE")
 		if err := restoreShowLikeOrWhereOpt(); err != nil {
 			return err
 		}
