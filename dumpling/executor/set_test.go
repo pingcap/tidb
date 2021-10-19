@@ -25,12 +25,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -345,19 +345,20 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows(strconv.Itoa(variable.DefWaitSplitRegionTimeout)))
 	tk.MustExec("set tidb_wait_split_region_timeout = 1")
 	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
-	_, err = tk.Exec("set tidb_wait_split_region_timeout = 0")
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, ".*Variable 'tidb_wait_split_region_timeout' can't be set to the value of '0'")
+	tk.MustExec("set tidb_wait_split_region_timeout = 0")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_wait_split_region_timeout value: '0'"))
+	tk.MustQuery(`select @@tidb_wait_split_region_timeout`).Check(testkit.Rows("1"))
+
 	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
 
 	tk.MustExec("set session tidb_backoff_weight = 3")
 	tk.MustQuery("select @@session.tidb_backoff_weight;").Check(testkit.Rows("3"))
 	tk.MustExec("set session tidb_backoff_weight = 20")
 	tk.MustQuery("select @@session.tidb_backoff_weight;").Check(testkit.Rows("20"))
-	_, err = tk.Exec("set session tidb_backoff_weight = -1")
-	c.Assert(err, NotNil)
-	_, err = tk.Exec("set global tidb_backoff_weight = 0")
-	c.Assert(err, NotNil)
+	tk.MustExec("set session tidb_backoff_weight = -1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_backoff_weight value: '-1'"))
+	tk.MustExec("set global tidb_backoff_weight = 0")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_backoff_weight value: '0'"))
 	tk.MustExec("set global tidb_backoff_weight = 10")
 	tk.MustQuery("select @@global.tidb_backoff_weight;").Check(testkit.Rows("10"))
 
@@ -378,17 +379,15 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_step = 120")
-	_, err = tk.Exec("set @@session.tidb_metric_query_step = 9")
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, ".*Variable 'tidb_metric_query_step' can't be set to the value of '9'")
-	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("120"))
+	tk.MustExec("set @@session.tidb_metric_query_step = 9")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_metric_query_step value: '9'"))
+	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("10"))
 
 	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_range_duration = 120")
-	_, err = tk.Exec("set @@session.tidb_metric_query_range_duration = 9")
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, ".*Variable 'tidb_metric_query_range_duration' can't be set to the value of '9'")
-	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("120"))
+	tk.MustExec("set @@session.tidb_metric_query_range_duration = 9")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_metric_query_range_duration value: '9'"))
+	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("10"))
 
 	tk.MustExec("set @@cte_max_recursion_depth=100")
 	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("100"))
@@ -408,12 +407,18 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
 	tk.MustExec("set session tidb_slow_log_masking = 1")
 	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
-
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
-	c.Assert(tk.ExecToErr("set @@session.tidb_dml_batch_size = -120"), NotNil)
-	c.Assert(tk.ExecToErr("set @@global.tidb_dml_batch_size = 200"), IsNil)  // now permitted due to TiDB #19809
+	tk.MustExec("set @@session.tidb_dml_batch_size = -120")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '?'")) // redacted because of tidb_slow_log_masking = 1 above
+	tk.MustQuery("select @@session.tidb_dml_batch_size").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_slow_log_masking = 0")
+	tk.MustExec("set session tidb_dml_batch_size = -120")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '-120'")) // without redaction
+
+	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
+	tk.MustExec("set @@global.tidb_dml_batch_size = 200")                    // now permitted due to TiDB #19809
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120")) // global only applies to new sessions
 
 	_, err = tk.Exec("set tidb_enable_parallel_apply=-1")
@@ -731,14 +736,14 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 
-	_, err = tk.Exec("set global tidb_distsql_scan_concurrency=-2;")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set global tidb_distsql_scan_concurrency=-2;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_distsql_scan_concurrency value: '-2'"))
 
 	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency='fff';")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 
-	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency=-2;")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@tidb_distsql_scan_concurrency=-2;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_distsql_scan_concurrency value: '-2'"))
 
 	_, err = tk.Exec("set @@tidb_batch_delete='ok';")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
@@ -1196,8 +1201,9 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	c.Assert(vars.StreamAggConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
 
-	_, err := tk.Exec("set @@tidb_executor_concurrency=-1;")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@tidb_executor_concurrency=-1;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_executor_concurrency value: '-1'"))
+	c.Assert(vars.ExecutorConcurrency, Equals, 1)
 }
 
 func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
@@ -1428,8 +1434,9 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	c.Assert(variable.TopSQLVariable.PrecisionSeconds.Load(), Equals, int64(2))
 	_, err := tk.Exec("set @@global.tidb_top_sql_precision_seconds='abc';")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_precision_seconds'")
-	_, err = tk.Exec("set @@global.tidb_top_sql_precision_seconds='-1';")
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_precision_seconds' can't be set to the value of '-1'")
+	tk.MustExec("set @@global.tidb_top_sql_precision_seconds='-1';")
+	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("1"))
+	tk.MustExec("set @@global.tidb_top_sql_precision_seconds=2;")
 	tk.MustQuery("select @@global.tidb_top_sql_precision_seconds;").Check(testkit.Rows("2"))
 	c.Assert(variable.TopSQLVariable.PrecisionSeconds.Load(), Equals, int64(2))
 
@@ -1438,10 +1445,13 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	c.Assert(variable.TopSQLVariable.MaxStatementCount.Load(), Equals, int64(20))
 	_, err = tk.Exec("set @@global.tidb_top_sql_max_statement_count='abc';")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_max_statement_count'")
-	_, err = tk.Exec("set @@global.tidb_top_sql_max_statement_count='-1';")
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_max_statement_count' can't be set to the value of '-1'")
-	_, err = tk.Exec("set @@global.tidb_top_sql_max_statement_count='5001';")
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_max_statement_count' can't be set to the value of '5001'")
+	tk.MustExec("set @@global.tidb_top_sql_max_statement_count='-1';")
+	tk.MustQuery("select @@global.tidb_top_sql_max_statement_count;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@global.tidb_top_sql_max_statement_count='5001';")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_top_sql_max_statement_count value: '5001'"))
+	tk.MustQuery("select @@global.tidb_top_sql_max_statement_count;").Check(testkit.Rows("5000"))
+
+	tk.MustExec("set @@global.tidb_top_sql_max_statement_count=20;")
 	tk.MustQuery("select @@global.tidb_top_sql_max_statement_count;").Check(testkit.Rows("20"))
 	c.Assert(variable.TopSQLVariable.MaxStatementCount.Load(), Equals, int64(20))
 
@@ -1450,10 +1460,15 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	c.Assert(variable.TopSQLVariable.MaxCollect.Load(), Equals, int64(20000))
 	_, err = tk.Exec("set @@global.tidb_top_sql_max_collect='abc';")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_max_collect'")
-	_, err = tk.Exec("set @@global.tidb_top_sql_max_collect='-1';")
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_max_collect' can't be set to the value of '-1'")
-	_, err = tk.Exec("set @@global.tidb_top_sql_max_collect='500001';")
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_max_collect' can't be set to the value of '500001'")
+	tk.MustExec("set @@global.tidb_top_sql_max_collect='-1';")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_top_sql_max_collect value: '-1'"))
+	tk.MustQuery("select @@global.tidb_top_sql_max_collect;").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.tidb_top_sql_max_collect='500001';")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_top_sql_max_collect value: '500001'"))
+	tk.MustQuery("select @@global.tidb_top_sql_max_collect;").Check(testkit.Rows("500000"))
+
+	tk.MustExec("set @@global.tidb_top_sql_max_collect=20000;")
 	tk.MustQuery("select @@global.tidb_top_sql_max_collect;").Check(testkit.Rows("20000"))
 	c.Assert(variable.TopSQLVariable.MaxCollect.Load(), Equals, int64(20000))
 
@@ -1462,8 +1477,11 @@ func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
 	c.Assert(variable.TopSQLVariable.ReportIntervalSeconds.Load(), Equals, int64(120))
 	_, err = tk.Exec("set @@global.tidb_top_sql_report_interval_seconds='abc';")
 	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'tidb_top_sql_report_interval_seconds'")
-	_, err = tk.Exec("set @@global.tidb_top_sql_report_interval_seconds='5000';")
-	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_top_sql_report_interval_seconds' can't be set to the value of '5000'")
+	tk.MustExec("set @@global.tidb_top_sql_report_interval_seconds='5000';")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_top_sql_report_interval_seconds value: '5000'"))
+	tk.MustQuery("select @@global.tidb_top_sql_report_interval_seconds;").Check(testkit.Rows("3600"))
+
+	tk.MustExec("set @@global.tidb_top_sql_report_interval_seconds=120;")
 	tk.MustQuery("select @@global.tidb_top_sql_report_interval_seconds;").Check(testkit.Rows("120"))
 	c.Assert(variable.TopSQLVariable.ReportIntervalSeconds.Load(), Equals, int64(120))
 

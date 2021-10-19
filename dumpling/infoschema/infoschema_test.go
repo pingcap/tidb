@@ -24,12 +24,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
@@ -297,6 +297,7 @@ func TestInfoTables(t *testing.T) {
 		"PROCESSLIST",
 		"TIDB_TRX",
 		"DEADLOCKS",
+		"PLACEMENT_RULES",
 	}
 	for _, tbl := range infoTables {
 		tb, err1 := is.TableByName(util.InformationSchemaName, model.NewCIStr(tbl))

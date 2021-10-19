@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
