@@ -298,6 +298,7 @@ func TestInfoTables(t *testing.T) {
 		"TIDB_TRX",
 		"DEADLOCKS",
 		"PLACEMENT_RULES",
+		"TRX_SUMMARY",
 	}
 	for _, tbl := range infoTables {
 		tb, err1 := is.TableByName(util.InformationSchemaName, model.NewCIStr(tbl))

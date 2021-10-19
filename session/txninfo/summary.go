@@ -16,6 +16,9 @@ package txninfo
 
 import (
 	"container/list"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"hash/fnv"
 	"sync"
@@ -25,16 +28,19 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-func digest(digests []string) uint32 {
-	hash := fnv.New32a()
+func digest(digests []string) uint64 {
+	// We use FNV-1a hash to generate the 64bit digest
+	// since 64bit digest use less memory and is FNV-1a is faster than most of other hash algorithms
+	// You can refer to https://softwareengineering.stackexchange.com/questions/49550/which-hashing-algorithm-is-best-for-uniqueness-and-speed
+	hash := fnv.New64a()
 	for _, digest := range digests {
 		hash.Write([]byte(digest))
 	}
-	return hash.Sum32()
+	return hash.Sum64()
 }
 
 type trxSummaryEntry struct {
-	trxDigest uint32
+	trxDigest uint64
 	digests   []string
 }
 
@@ -43,7 +49,7 @@ type trxSummaries struct {
 	size     uint
 
 	// digest -> trxSummaryEntry
-	elements map[uint32]*list.Element
+	elements map[uint64]*list.Element
 	cache    *list.List
 }
 
@@ -52,7 +58,7 @@ func newTrxSummaries(capacity uint) trxSummaries {
 		capacity: capacity,
 		size:     0,
 		cache:    list.New(),
-		elements: make(map[uint32]*list.Element),
+		elements: make(map[uint64]*list.Element),
 	}
 }
 
@@ -81,13 +87,19 @@ func (s *trxSummaries) dumpTrxSummary() [][]types.Datum {
 	var result [][]types.Datum
 	for ele := s.cache.Front(); ele != nil; ele = ele.Next() {
 		sqls := ele.Value.(trxSummaryEntry).digests
-		digest := ele.Value.(trxSummaryEntry).trxDigest
+		// for consistency with other digests in TiDB, we calculate sum256 here to generate varchar(64) digest
+		b := make([]byte, 8)
+		binary.LittleEndian.PutUint64(b, uint64(ele.Value.(trxSummaryEntry).trxDigest))
+		sum := sha256.Sum256(b)
+		digest := hex.EncodeToString(sum[:])
+
 		res, err := json.Marshal(sqls)
 		if err != nil {
 			panic(err)
 		}
+
 		result = append(result, []types.Datum{
-			types.NewUintDatum(uint64(digest)),
+			types.NewDatum(digest),
 			types.NewDatum(string(res)),
 		})
 	}
