@@ -17,7 +17,9 @@ package expression
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -25,35 +27,30 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testCollationSuites{})
-
-type testCollationSuites struct{}
-
-func (s *testCollationSuites) TestCompareString(c *C) {
+func TestCompareString(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
-	c.Assert(types.CompareString("a", "A", "utf8_general_ci"), Equals, 0)
-	c.Assert(types.CompareString("À", "A", "utf8_general_ci"), Equals, 0)
-	c.Assert(types.CompareString("😜", "😃", "utf8_general_ci"), Equals, 0)
-	c.Assert(types.CompareString("a ", "a  ", "utf8_general_ci"), Equals, 0)
-	c.Assert(types.CompareString("ß", "s", "utf8_general_ci"), Equals, 0)
-	c.Assert(types.CompareString("ß", "ss", "utf8_general_ci"), Not(Equals), 0)
+	assert.Equal(t, 0, types.CompareString("a", "A", "utf8_general_ci"))
+	assert.Equal(t, 0, types.CompareString("À", "A", "utf8_general_ci"))
+	assert.Equal(t, 0, types.CompareString("😜", "😃", "utf8_general_ci"))
+	assert.Equal(t, 0, types.CompareString("a ", "a  ", "utf8_general_ci"))
+	assert.Equal(t, 0, types.CompareString("ß", "s", "utf8_general_ci"))
+	assert.NotEqual(t, 0, types.CompareString("ß", "ss", "utf8_general_ci"))
 
-	c.Assert(types.CompareString("a", "A", "utf8_unicode_ci"), Equals, 0)
-	c.Assert(types.CompareString("À", "A", "utf8_unicode_ci"), Equals, 0)
-	c.Assert(types.CompareString("😜", "😃", "utf8_unicode_ci"), Equals, 0)
-	c.Assert(types.CompareString("a ", "a  ", "utf8_unicode_ci"), Equals, 0)
-	c.Assert(types.CompareString("ß", "s", "utf8_unicode_ci"), Not(Equals), 0)
-	c.Assert(types.CompareString("ß", "ss", "utf8_unicode_ci"), Equals, 0)
+	assert.Equal(t, 0, types.CompareString("a", "A", "utf8_unicode_ci"))
+	assert.Equal(t, 0, types.CompareString("À", "A", "utf8_unicode_ci"))
+	assert.Equal(t, 0, types.CompareString("😜", "😃", "utf8_unicode_ci"))
+	assert.Equal(t, 0, types.CompareString("a ", "a  ", "utf8_unicode_ci"))
+	assert.NotEqual(t, 0, types.CompareString("ß", "s", "utf8_unicode_ci"))
+	assert.Equal(t, 0, types.CompareString("ß", "ss", "utf8_unicode_ci"))
 
-	c.Assert(types.CompareString("a", "A", "binary"), Not(Equals), 0)
-	c.Assert(types.CompareString("À", "A", "binary"), Not(Equals), 0)
-	c.Assert(types.CompareString("😜", "😃", "binary"), Not(Equals), 0)
-	c.Assert(types.CompareString("a ", "a  ", "binary"), Not(Equals), 0)
+	assert.NotEqual(t, 0, types.CompareString("a", "A", "binary"))
+	assert.NotEqual(t, 0, types.CompareString("À", "A", "binary"))
+	assert.NotEqual(t, 0, types.CompareString("😜", "😃", "binary"))
+	assert.NotEqual(t, 0, types.CompareString("a ", "a  ", "binary"))
 
 	ctx := mock.NewContext()
 	ft := types.NewFieldType(mysql.TypeVarString)
@@ -76,9 +73,9 @@ func (s *testCollationSuites) TestCompareString(c *C) {
 	chk.Column(1).AppendString("a  ")
 	for i := 0; i < 4; i++ {
 		v, isNull, err := CompareStringWithCollationInfo(ctx, col1, col2, chk.GetRow(0), chk.GetRow(0), "utf8_general_ci")
-		c.Assert(err, IsNil)
-		c.Assert(isNull, IsFalse)
-		c.Assert(v, Equals, int64(0))
+		require.Nil(t, err)
+		assert.False(t, isNull)
+		assert.Equal(t, int64(0), v)
 	}
 }
 
