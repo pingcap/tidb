@@ -548,6 +548,31 @@ func (s *testPrepareSuite) TestPlanCacheXXX(c *C) {
 	}
 }
 
+func (s *testSerialSuite) TestIssue28782(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("prepare stmt from 'SELECT IF(?, 1, 0);';")
+	tk.MustExec("set @a=1, @b=null, @c=0")
+
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+}
+
 func (s *testSerialSuite) TestIssue28087And28162(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)

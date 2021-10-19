@@ -348,6 +348,14 @@ const (
 		key idx(filter_type),
 		primary key(id)
 	);`
+	// CreateColumnStatsUsageTable stores the column stats usage information.
+	CreateColumnStatsUsageTable = `CREATE TABLE IF NOT EXISTS mysql.column_stats_usage (
+		table_id BIGINT(64) NOT NULL,
+		column_id BIGINT(64) NOT NULL,
+		last_used_at TIMESTAMP,
+		last_analyzed_at TIMESTAMP,
+		PRIMARY KEY (table_id, column_id) CLUSTERED
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -515,13 +523,15 @@ const (
 	version75 = 75
 	// version76 update mysql.columns_priv from SET('Select','Insert','Update') to SET('Select','Insert','Update','References')
 	version76 = 76
-	// version77 updates mysql.stats_buckets.lower_bound, mysql.stats_buckets.upper_bound and mysql.stats_histograms.last_analyze_pos from BLOB to LONGBLOB,
+	// version77 adds mysql.column_stats_usage table
 	version77 = 77
+  // version78 updates mysql.stats_buckets.lower_bound, mysql.stats_buckets.upper_bound and mysql.stats_histograms.last_analyze_pos from BLOB to LONGBLOB.
+  version78 = 78
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version77
+var currentBootstrapVersion int64 = version78
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -602,6 +612,7 @@ var (
 		upgradeToVer75,
 		upgradeToVer76,
 		upgradeToVer77,
+    upgradeToVer78,
 	}
 )
 
@@ -1588,6 +1599,13 @@ func upgradeToVer77(s Session, ver int64) {
 	if ver >= version77 {
 		return
 	}
+	doReentrantDDL(s, CreateColumnStatsUsageTable)
+}
+
+func upgradeToVer78(s Session, ver int64) {
+	if ver >= version78 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY upper_bound LONGBLOB NOT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY lower_bound LONGBLOB")
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY last_analyze_pos LONGBLOB DEFAULT NULL")
@@ -1673,6 +1691,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGlobalGrantsTable)
 	// Create capture_plan_baselines_blacklist
 	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
+	// Create column_stats_usage table
+	mustExecute(s, CreateColumnStatsUsageTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
