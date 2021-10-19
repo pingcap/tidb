@@ -89,7 +89,7 @@ echo "expected 2, actual ${actual}"
 [ "$actual" = 2 ]
 
 # Test for tidb_mem_quota_query configuration
-export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/v4/export/PrintTiDBMemQuotaQuery=1*return"
+export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/PrintTiDBMemQuotaQuery=1*return"
 run_dumpling > ${DUMPLING_OUTPUT_DIR}/dumpling.log
 actual=$(grep -w "tidb_mem_quota_query == 1073741824" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
 echo "expected 1, actual ${actual}"

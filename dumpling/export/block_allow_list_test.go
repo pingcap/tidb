@@ -8,7 +8,7 @@ import (
 
 	"github.com/pingcap/tidb-tools/pkg/filter"
 	tf "github.com/pingcap/tidb-tools/pkg/table-filter"
-	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/stretchr/testify/require"
 )
 

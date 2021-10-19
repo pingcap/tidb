@@ -8,7 +8,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 
-	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
