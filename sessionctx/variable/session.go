@@ -1362,6 +1362,7 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 	return
 }
 
+// GetParseParams gets the parse parameters from session variables.
 func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	chs, coll := s.GetCharsetInfo()
 	cli, err := GetSessionOrGlobalSystemVar(s, CharacterSetClient)
