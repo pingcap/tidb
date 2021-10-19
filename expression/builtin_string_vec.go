@@ -458,13 +458,11 @@ func (b *builtinHexStrArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			continue
 		}
 		buf0Bytes := buf0.GetBytes(i)
-		if b.encoding.Enabled() {
-			encodedBuf, err = b.encoding.Encode(encodedBuf, buf0Bytes)
-			if err != nil {
-				return err
-			}
-			buf0Bytes = encodedBuf
+		encodedBuf, err = b.encoding.Encode(encodedBuf, buf0Bytes)
+		if err != nil {
+			return err
 		}
+		buf0Bytes = encodedBuf
 		result.AppendString(strings.ToUpper(hex.EncodeToString(buf0Bytes)))
 	}
 	return nil
