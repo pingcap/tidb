@@ -494,8 +494,6 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 				} else {
 					return s.scan()
 				}
-			case 0:
-				break
 			case '*':
 				currentCharIsStar = true
 				continue

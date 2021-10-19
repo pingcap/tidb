@@ -12,7 +12,7 @@ bin/revive:
 	go build -o $@ github.com/mgechev/revive
 
 bin/golangci-lint:
-	go build -o $@ github.com/golangci/golangci-lint/cmd/golangci-lint
+	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./bin v1.41.1
 
 bin/failpoint-ctl:
 	go build -o $@ github.com/pingcap/failpoint/failpoint-ctl
