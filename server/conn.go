@@ -846,10 +846,15 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, authPlugin *string) (
 	}
 	if userplugin == mysql.AuthSocket {
 		*authPlugin = mysql.AuthSocket
-		user, _ := user.LookupId(fmt.Sprint(cc.socketCredUID))
+		user, err := user.LookupId(fmt.Sprint(cc.socketCredUID))
+		if err != nil {
+			return nil, err
+		}
 		return []byte(user.Username), nil
 	}
 	if len(userplugin) == 0 {
+		logutil.Logger(ctx).Warn("No user plugin set, assuming MySQL Native Password",
+			zap.String("user", cc.user), zap.String("host", cc.peerHost))
 		*authPlugin = mysql.AuthNativePassword
 		return nil, nil
 	}
