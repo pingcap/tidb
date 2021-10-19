@@ -125,8 +125,8 @@ func regionTotalCount(storeTasks map[uint64]*batchCopTask, candidateRegionInfos 
 }
 
 const (
-	maxBalanceScore         = 100
-	balanceScoreThreshold   = 85
+	maxBalanceScore       = 100
+	balanceScoreThreshold = 85
 )
 
 // Select at most cnt RegionInfos from candidateRegionInfos that belong to storeID.
