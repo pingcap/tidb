@@ -525,8 +525,8 @@ const (
 	version76 = 76
 	// version77 adds mysql.column_stats_usage table
 	version77 = 77
-  // version78 updates mysql.stats_buckets.lower_bound, mysql.stats_buckets.upper_bound and mysql.stats_histograms.last_analyze_pos from BLOB to LONGBLOB.
-  version78 = 78
+	// version78 updates mysql.stats_buckets.lower_bound, mysql.stats_buckets.upper_bound and mysql.stats_histograms.last_analyze_pos from BLOB to LONGBLOB.
+	version78 = 78
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -612,7 +612,7 @@ var (
 		upgradeToVer75,
 		upgradeToVer76,
 		upgradeToVer77,
-    upgradeToVer78,
+		upgradeToVer78,
 	}
 )
 
