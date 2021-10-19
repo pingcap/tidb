@@ -324,12 +324,18 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	input.SetSel(nil)
 
 	n := input.NumRows()
-	selected = selected[:0]
-	nulls = nulls[:0]
-	for i := 0; i < n; i++ {
-		selected = append(selected, false)
-		nulls = append(nulls, false)
+	if len(selected) < n {
+		selected = append(selected, make([]bool, n-len(selected))...)
 	}
+	if len(nulls) < n {
+		nulls = append(nulls, make([]bool, n-len(nulls))...)
+	}
+	for i := 0; i < n; i++ {
+		selected[i] = false
+		nulls[i] = false
+	}
+	selected = selected[:n]
+	nulls = nulls[:n]
 
 	sel := allocSelSlice(n)
 	defer deallocateSelSlice(sel)
