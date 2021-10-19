@@ -375,6 +375,12 @@ func convertToPriv(roleOrPrivList []*ast.RoleOrPriv) ([]*ast.PrivElem, error) {
 	return privileges, nil
 }
 
+var (
+	_ ParseParam = CharsetConnection("")
+	_ ParseParam = CollationConnection("")
+	_ ParseParam = CharsetClient("")
+)
+
 func resetParams(p *Parser) {
 	p.charset = mysql.DefaultCharset
 	p.collation = mysql.DefaultCollationName
