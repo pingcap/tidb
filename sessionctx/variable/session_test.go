@@ -14,11 +14,6 @@
 package variable_test
 
 import (
-<<<<<<< HEAD
-=======
-	"sync"
-	"testing"
->>>>>>> b52f3efbe... sessionctx: Fix SET GLOBAL tidb_skip_isolation_level_check=1 (#27898)
 	"time"
 
 	. "github.com/pingcap/check"
@@ -42,13 +37,8 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 	v := variable.NewSessionVars()
 	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	v.TimeZone = time.UTC
-<<<<<<< HEAD
-	tests := []struct {
-=======
-	mtx := new(sync.Mutex)
 
-	testCases := []struct {
->>>>>>> b52f3efbe... sessionctx: Fix SET GLOBAL tidb_skip_isolation_level_check=1 (#27898)
+	tests := []struct {
 		key   string
 		value string
 		err   bool
@@ -67,7 +57,6 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", false},
 	}
-<<<<<<< HEAD
 	for _, t := range tests {
 		err := variable.SetSessionSystemVar(v, t.key, t.value)
 		if t.err {
@@ -75,21 +64,6 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 		} else {
 			c.Assert(err, IsNil)
 		}
-=======
-
-	for _, tc := range testCases {
-		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
-			mtx.Lock()
-			err := variable.SetSessionSystemVar(v, tc.key, tc.value)
-			mtx.Unlock()
-			if tc.err {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-			}
-		})
->>>>>>> b52f3efbe... sessionctx: Fix SET GLOBAL tidb_skip_isolation_level_check=1 (#27898)
 	}
 }
 
