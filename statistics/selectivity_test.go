@@ -20,12 +20,10 @@ import (
 	"math"
 	"os"
 	"runtime/pprof"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -43,57 +41,9 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 const eps = 1e-9
-
-// TODO call it
-func registerHook() {
-	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
-	_, r, _ := log.InitLogger(conf)
-	hook := &logHook{r.Core, ""}
-	lg := zap.New(hook)
-	log.ReplaceGlobals(lg, r)
-}
-
-type logHook struct {
-	zapcore.Core
-	results string
-}
-
-func (h *logHook) Write(entry zapcore.Entry, fields []zapcore.Field) error {
-	message := entry.Message
-	if idx := strings.Index(message, "[stats"); idx != -1 {
-		h.results = h.results + message
-		for _, f := range fields {
-			h.results = h.results + ", " + f.Key + "=" + h.field2String(f)
-		}
-	}
-	return nil
-}
-
-func (h *logHook) field2String(field zapcore.Field) string {
-	switch field.Type {
-	case zapcore.StringType:
-		return field.String
-	case zapcore.Int64Type, zapcore.Int32Type, zapcore.Uint32Type:
-		return fmt.Sprintf("%v", field.Integer)
-	case zapcore.Float64Type:
-		return fmt.Sprintf("%v", math.Float64frombits(uint64(field.Integer)))
-	case zapcore.StringerType:
-		return field.Interface.(fmt.Stringer).String()
-	}
-	return "not support"
-}
-
-func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
-	if h.Enabled(e.Level) {
-		return ce.AddCore(e, h)
-	}
-	return ce
-}
 
 // generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
 // If dimension is x, num is y, the total number of datum is y^x. And This slice is sorted.
