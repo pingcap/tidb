@@ -33,7 +33,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type testStatisticsSuite struct {
+type testStatisticsSamples struct {
 	count   int
 	samples []*SampleItem
 	rc      sqlexec.RecordSet
@@ -219,7 +219,7 @@ func buildCMSketch(values []types.Datum) *CMSketch {
 	return cms
 }
 
-func SubTestColumnRange(s *testStatisticsSuite) func(*testing.T) {
+func SubTestColumnRange(s *testStatisticsSamples) func(*testing.T) {
 	return func(t *testing.T) {
 		t.Parallel()
 		bucketCount := int64(256)
@@ -297,7 +297,7 @@ func SubTestColumnRange(s *testStatisticsSuite) func(*testing.T) {
 	}
 }
 
-func SubTestIntColumnRanges(s *testStatisticsSuite) func(*testing.T) {
+func SubTestIntColumnRanges(s *testStatisticsSamples) func(*testing.T) {
 	return func(t *testing.T) {
 		t.Parallel()
 		bucketCount := int64(256)
@@ -391,7 +391,7 @@ func SubTestIntColumnRanges(s *testStatisticsSuite) func(*testing.T) {
 	}
 }
 
-func SubTestIndexRanges(s *testStatisticsSuite) func(*testing.T) {
+func SubTestIndexRanges(s *testStatisticsSamples) func(*testing.T) {
 	return func(t *testing.T) {
 		t.Parallel()
 		bucketCount := int64(256)

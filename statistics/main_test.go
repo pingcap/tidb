@@ -82,8 +82,8 @@ func TestStatistics(t *testing.T) {
 
 }
 
-func createTestStatisticsSuite(t *testing.T) *testStatisticsSuite {
-	s := new(testStatisticsSuite)
+func createTestStatisticsSuite(t *testing.T) *testStatisticsSamples {
+	s := new(testStatisticsSamples)
 
 	s.count = 100000
 	samples := make([]*SampleItem, 10000)
