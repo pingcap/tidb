@@ -319,7 +319,7 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 
 // GetSequenceByName gets the sequence by name.
 func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
-	tbl, err := is.(InfoSchema).TableByName(schema, sequence)
+	tbl, err := is.TableByName(schema, sequence)
 	if err != nil {
 		return nil, err
 	}
