@@ -1800,8 +1800,8 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMPPBalanceWithContinuity, Type: TypeBool, Value: BoolToOnOff(DefEnableMPPBalanceWithContinuity), SetSession: func(s *SessionVars, val string) error {
-		s.EnableMPPBalanceWithContinuity = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMPPBalanceRegionWithContinuity, Type: TypeBool, Value: BoolToOnOff(DefEnableMPPBalanceRegionWithContinuity), SetSession: func(s *SessionVars, val string) error {
+		s.EnableMPPBalanceRegionWithContinuity = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMPPBalanceContinuousRegionCount, Value: strconv.Itoa(DefMPPBalanceContinuousRegionCount), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: 10000, AllowEmpty: true, SetSession: func(s *SessionVars, val string) error {

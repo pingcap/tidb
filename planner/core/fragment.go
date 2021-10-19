@@ -349,7 +349,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 func (e *mppTaskGenerator) constructMPPTasksForSinglePartitionTable(ctx context.Context, kvRanges []kv.KeyRange, tableID int64) ([]*kv.MPPTask, error) {
 	req := &kv.MPPBuildTasksRequest{
 		KeyRanges:                    kvRanges,
-		BalanceWithContinuity:        e.ctx.GetSessionVars().EnableMPPBalanceWithContinuity,
+		BalanceWithContinuity:        e.ctx.GetSessionVars().EnableMPPBalanceRegionWithContinuity,
 		BalanceContinuousRegionCount: e.ctx.GetSessionVars().MPPBalanceContinuousRegionCount,
 	}
 	ttl, err := time.ParseDuration(e.ctx.GetSessionVars().MPPStoreFailTTL)

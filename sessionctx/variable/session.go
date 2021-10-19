@@ -956,8 +956,8 @@ type SessionVars struct {
 		data [2]stmtctx.StatementContext
 	}
 
-	// EnableMPPBalanceWithContinuity indicates whether MPP balance logic will take account of region's continuity in TiFlash.
-	EnableMPPBalanceWithContinuity bool
+	// EnableMPPBalanceRegionWithContinuity indicates whether MPP balance logic will take account of region's continuity in TiFlash.
+	EnableMPPBalanceRegionWithContinuity bool
 	// MPPBalanceContinuousRegionCount indicates the continuous region count that balance logic assigns to a TiFlash instance each time.
 	MPPBalanceContinuousRegionCount int64
 }
