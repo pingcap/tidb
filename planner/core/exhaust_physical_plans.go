@@ -2691,10 +2691,10 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
 				ExpectedCnt: prop.ExpectedCnt,
 				TaskTp:      property.MppTaskType,
-				RejectSort: true,
+				RejectSort:  true,
 			})
 		} else {
-			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt})
+			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt, RejectSort: true})
 		}
 	}
 	ua := PhysicalUnionAll{
@@ -2707,7 +2707,7 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
 				ExpectedCnt: prop.ExpectedCnt,
 				TaskTp:      property.MppTaskType,
-				RejectSort: true,
+				RejectSort:  true,
 			})
 		}
 		mppUA := PhysicalUnionAll{mpp: true}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
@@ -2729,7 +2729,7 @@ func (p *LogicalPartitionUnionAll) exhaustPhysicalPlans(prop *property.PhysicalP
 }
 
 func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *PhysicalSort {
-	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, &property.PhysicalProperty{TaskTp: prop.TaskTp,ExpectedCnt: math.MaxFloat64, RejectSort: true})
+	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, RejectSort: true})
 	return ps
 }
 
@@ -2746,7 +2746,7 @@ func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *Nomin
 }
 
 func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	if prop.TaskTp == property.RootTaskType  {
+	if prop.TaskTp == property.RootTaskType {
 		if MatchItems(prop, ls.ByItems) {
 			ret := make([]PhysicalPlan, 0, 2)
 			ret = append(ret, ls.getPhysicalSort(prop))
