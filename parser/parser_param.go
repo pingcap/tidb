@@ -6,8 +6,8 @@ import (
 )
 
 func ResetParams(p *Parser) {
-	p.charset = ""
-	p.collation = ""
+	p.charset = mysql.DefaultCharset
+	p.collation = mysql.DefaultCollationName
 	p.lexer.encoding = charset.Encoding{}
 }
 
