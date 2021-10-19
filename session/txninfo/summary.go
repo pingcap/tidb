@@ -85,11 +85,11 @@ func (s *trxSummaries) onTrxEnd(digests []string) {
 
 func (s *trxSummaries) dumpTrxSummary() [][]types.Datum {
 	var result [][]types.Datum
-	for ele := s.cache.Front(); ele != nil; ele = ele.Next() {
-		sqls := ele.Value.(trxSummaryEntry).digests
+	for element := s.cache.Front(); element != nil; element = element.Next() {
+		sqls := element.Value.(trxSummaryEntry).digests
 		// for consistency with other digests in TiDB, we calculate sum256 here to generate varchar(64) digest
 		b := make([]byte, 8)
-		binary.LittleEndian.PutUint64(b, uint64(ele.Value.(trxSummaryEntry).trxDigest))
+		binary.LittleEndian.PutUint64(b, element.Value.(trxSummaryEntry).trxDigest)
 		sum := sha256.Sum256(b)
 		digest := hex.EncodeToString(sum[:])
 

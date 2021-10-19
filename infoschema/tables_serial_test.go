@@ -1426,10 +1426,9 @@ func TestTiDBTrxSummary(t *testing.T) {
 	// it is possible for TRX_SUMMARY to have other rows (due to parallel execution of tests)
 	for _, row := range tk.MustQuery("select * from information_schema.TRX_SUMMARY;").Rows() {
 		// so we just look for the row we are looking for
-		if row[0] == "643628328" {
-			if strings.TrimSpace(row[1].(string)) == "[\""+beginDigest.String()+"\",\""+digest.String()+"\",\""+digest.String()+"\",\""+commitDigest.String()+"\"]" {
-				return
-			}
+		if row[0] == "4c8c41e67c591a5781e4c89224b6801dd21804efe1e077935c2fce3d9089bce0" {
+			require.Equal(t, strings.TrimSpace(row[1].(string)), "[\""+beginDigest.String()+"\",\""+digest.String()+"\",\""+digest.String()+"\",\""+commitDigest.String()+"\"]")
+			return
 		}
 	}
 	t.Fatal("cannot find the expected row")
