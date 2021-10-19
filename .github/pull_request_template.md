@@ -41,7 +41,7 @@ Documentation
 
 ### Release note
 
-<!-- bugfixes or new feature needs a release note -->
+<!-- bugfix or new feature needs a release note -->
 
 ```release-note
 None
