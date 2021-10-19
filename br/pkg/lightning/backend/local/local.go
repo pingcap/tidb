@@ -123,6 +123,13 @@ var (
 	normalIterStartKey = []byte{1}
 )
 
+// getImportClientFn is a variable alias for getImportClient used for unit test.
+var getImportClientFn func(local *local, ctx context.Context, storeID uint64) (sst.ImportSSTClient, error)
+
+func init() {
+	getImportClientFn = getImportClient
+}
+
 // Range record start and end key for localStoreDir.DB
 // so we can write it to tikv in streaming
 type Range struct {
@@ -960,22 +967,22 @@ func NewLocalBackend(
 		errorMgr:                errorMgr,
 	}
 	local.conns = common.NewGRPCConns()
-	if err = local.checkMultiIngestSupport(ctx, pdCtl); err != nil {
+	if err = local.checkMultiIngestSupport(ctx); err != nil {
 		return backend.MakeBackend(nil), err
 	}
 
 	return backend.MakeBackend(local), nil
 }
 
-func (local *local) checkMultiIngestSupport(ctx context.Context, pdCtl *pdutil.PdController) error {
-	stores, err := pdCtl.GetPDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
+func (local *local) checkMultiIngestSupport(ctx context.Context) error {
+	stores, err := local.pdCtl.GetPDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	hasTiFlash := false
 	for _, s := range stores {
-		if version.IsTiFlash(s) {
+		if s.State == metapb.StoreState_Up && version.IsTiFlash(s) {
 			hasTiFlash = true
 			break
 		}
@@ -1362,6 +1369,10 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 }
 
 func (local *local) getImportClient(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
+	return getImportClientFn(local, ctx, storeID)
+}
+
+func getImportClient(local *local, ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
 	conn, err := local.getGrpcConn(ctx, storeID)
 	if err != nil {
 		return nil, err
