@@ -149,7 +149,8 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 			highLowVals = append(highLowVals, r.LowVal...)
 			pos, isNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(highLowVals).ToRow())
 			if err != nil {
-				return nil, nil, err
+				// If we failed to get the point position, we can just skip and ignore it.
+				continue
 			}
 			if isNull {
 				pos = 0
