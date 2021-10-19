@@ -421,7 +421,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 	if sessVars.EnableMutationChecker {
-		if err = CheckIndexConsistency(txn, sessVars, t, newData, oldData, memBuffer, sh); err != nil {
+		if err = CheckDataConsistency(txn, sessVars, t, newData, oldData, memBuffer, sh); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -842,7 +842,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 
 	if sessVars.EnableMutationChecker {
-		if err = CheckIndexConsistency(txn, sessVars, t, r, nil, memBuffer, sh); err != nil {
+		if err = CheckDataConsistency(txn, sessVars, t, r, nil, memBuffer, sh); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -1102,7 +1102,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	sessVars := ctx.GetSessionVars()
 	sc := sessVars.StmtCtx
 	if sessVars.EnableMutationChecker {
-		if err = CheckIndexConsistency(txn, sessVars, t, nil, r, memBuffer, sh); err != nil {
+		if err = CheckDataConsistency(txn, sessVars, t, nil, r, memBuffer, sh); err != nil {
 			return errors.Trace(err)
 		}
 	}
