@@ -348,6 +348,19 @@ func (s *testSuite5) TestIssue24547(c *C) {
 	tk.MustExec("delete a from a inner join b on a.k1 = b.k1 and a.k2 = b.k2 where b.k2 <> '333'")
 }
 
+func (s *testSuite5) TestIssue27893(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (a enum('x','y'))")
+	tk.MustExec("create table t2 (a int, key(a))")
+	tk.MustExec("insert into t1 values('x')")
+	tk.MustExec("insert into t2 values(1)")
+	tk.MustQuery("select /*+ inl_join(t2) */ count(*) from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ inl_hash_join(t2) */ count(*) from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("1"))
+}
+
 func (s *testSuite5) TestPartitionTableIndexJoinAndIndexReader(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
