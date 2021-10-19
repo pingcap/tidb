@@ -976,6 +976,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	cop.idxMergePartPlans = scans
 	cop.cst = totalCost
 	task = cop.convertToRootTask(ds.ctx)
+	ds.addSelection4PlanCache(task.(*rootTask), ds.tableStats.ScaleByExpectCnt(totalRowCount), prop)
 	return task, nil
 }
 

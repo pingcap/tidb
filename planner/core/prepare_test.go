@@ -934,6 +934,40 @@ func (s *testPlanSerialSuite) TestPlanCacheUnsignedHandleOverflow(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
+func (s *testPlanSerialSuite) TestIssue28942(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists IDT_MULTI15853STROBJSTROBJ`)
+	tk.MustExec(`
+	CREATE TABLE IDT_MULTI15853STROBJSTROBJ (
+	  COL1 enum('aa','bb','cc') DEFAULT NULL,
+	  COL2 mediumint(41) DEFAULT NULL,
+	  KEY U_M_COL4 (COL1,COL2)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustExec(`insert into IDT_MULTI15853STROBJSTROBJ values("aa", 1)`)
+	tk.MustExec(`prepare stmt from 'SELECT * FROM IDT_MULTI15853STROBJSTROBJ WHERE col1 = ? AND col1 != ?'`)
+	tk.MustExec(`set @a="mm", @b="aa"`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // empty result
+	tk.MustExec(`set @a="aa", @b="aa"`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // empty result
+}
+
 func (s *testPlanSerialSuite) TestIssue28254(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
