@@ -123,9 +123,27 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				checker.cacheable = false
 				return in, true
 			}
+			if checker.hasGeneratedCol(node) {
+				checker.cacheable = false
+				return in, true
+			}
 		}
 	}
 	return in, false
+}
+
+func (checker *cacheableChecker) hasGeneratedCol(tn *ast.TableName) bool {
+	tb, err := checker.schema.TableByName(tn.Schema, tn.Name)
+	if err != nil {
+		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
+		return false
+	}
+	for _, col := range tb.Cols() {
+		if col.IsGenerated() {
+			return true
+		}
+	}
+	return false
 }
 
 func (checker *cacheableChecker) isPartitionTable(tn *ast.TableName) bool {
