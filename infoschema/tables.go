@@ -1453,7 +1453,7 @@ var tableRegionLabelCols = []columnInfo{
 }
 
 var tableTrxSummaryCols = []columnInfo{
-	{name: "DIGEST", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, comment: "Digest of a transaction"},
+	{name: "DIGEST", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag, comment: "Digest of a transaction"},
 	{name: txninfo.AllSQLDigestsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
 }
 

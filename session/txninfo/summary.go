@@ -16,10 +16,8 @@ package txninfo
 
 import (
 	"container/list"
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"hash/fnv"
 	"sync"
 	"time"
@@ -88,10 +86,7 @@ func (s *trxSummaries) dumpTrxSummary() [][]types.Datum {
 	for element := s.cache.Front(); element != nil; element = element.Next() {
 		sqls := element.Value.(trxSummaryEntry).digests
 		// for consistency with other digests in TiDB, we calculate sum256 here to generate varchar(64) digest
-		b := make([]byte, 8)
-		binary.LittleEndian.PutUint64(b, element.Value.(trxSummaryEntry).trxDigest)
-		sum := sha256.Sum256(b)
-		digest := hex.EncodeToString(sum[:])
+		digest := fmt.Sprintf("%x", element.Value.(trxSummaryEntry).trxDigest)
 
 		res, err := json.Marshal(sqls)
 		if err != nil {
