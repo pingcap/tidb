@@ -22,10 +22,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -114,6 +114,7 @@ func (r *recordSet) Close() error {
 	return nil
 }
 
+// TODO replace createTestStatisticsSuite in main_test.go when migrate this file
 func (s *testStatisticsSuite) SetUpSuite(c *C) {
 	s.count = 100000
 	samples := make([]*SampleItem, 10000)
