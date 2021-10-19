@@ -317,7 +317,7 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 	return
 }
 
-// GetSequenceByName gets the sequence by name. It could be used in expression package without import cycle problem.
+// GetSequenceByName gets the sequence by name.
 func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
 	tbl, err := is.(InfoSchema).TableByName(schema, sequence)
 	if err != nil {
