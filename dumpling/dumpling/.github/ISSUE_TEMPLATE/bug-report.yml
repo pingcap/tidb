@@ -1,0 +1,60 @@
+name: "\U0001F41B Bug Report"
+description: Something isn't working as expected
+labels: ["type/bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please answer these questions before submitting your issue. Thanks!
+  - type: textarea
+    id: problem
+    attributes:
+      label: What did you do?
+      description: If possible, provide a recipe for reproducing the error.
+    validations:
+      required: true
+  - type: textarea
+    id: expect
+    attributes:
+      label: What did you expect to see?
+    validations:
+      required: false
+  - type: textarea
+    id: see
+    attributes:
+      label: What did you see instead?
+    validations:
+      required: false
+  - type: textarea
+    id: version
+    attributes:
+      label: Versions of the cluster
+      value: |-
+             Dumpling version (run `dumpling -V`):
+             ```console
+             (paste Dumpling version here)
+             ```
+             Source database version (execute `SELECT version();` in a MySQL client):
+             ```console
+             (paste source database version here)
+             ```
+             Other interesting information (system version, hardware config, etc):
+             ```console
+             >
+             >
+             ```
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        Operation logs
+          - Please upload `dumpling.log` for Dumpling if possible
+          - Other interesting logs
+  - type: markdown
+    attributes:
+      value: |
+        Configuration of the cluster and the task
+          - running command for Dumpling if possible
+ 
+

@@ -40,6 +40,27 @@ expected=$(seq 3 9)
 echo "expected ${expected}, actual ${actual}"
 [ "$actual" = "$expected" ]
 
+# Test for OR WHERE case. Better dump MySQL here because Dumpling has some special handle for concurrently dump TiDB tables.
+export DUMPLING_TEST_PORT=3306
+run_sql "drop database if exists \`$DB_NAME\`;"
+run_sql "create database \`$DB_NAME\`;"
+run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\` (a int primary key, b int);"
+
+seq 0 99 | xargs -I_ run_sql "insert into \`$DB_NAME\`.\`$TABLE_NAME\` (a,b) values (_, 99-_);"
+run_sql "analyze table \`$DB_NAME\`.\`$TABLE_NAME\`;"
+run_dumpling --where "b <= 4 or b >= 95" -f "$DB_NAME.$TABLE_NAME" --rows 10
+
+actual=$(grep -w "(.*)" ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}.000000000.sql | cut -c2-2)
+expected=$(seq 0 4)
+echo "expected ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}.000000000.sql ${expected}, actual ${actual}"
+[ "$actual" = "$expected" ]
+actual=$(grep -w "(.*)" ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}.000000009.sql | cut -c2-3)
+expected=$(seq 95 99)
+echo "expected ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}.000000009.sql ${expected}, actual ${actual}"
+[ "$actual" = "$expected" ]
+
+seq 1 8 | xargs -I\? file_not_exist ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}.00000000\?.sql
+
 # Test for specifying --filetype sql with --sql, should report an error
 set +e
 run_dumpling --sql "select * from \`$DB_NAME\`.\`$TABLE_NAME\`" --filetype sql > ${DUMPLING_OUTPUT_DIR}/dumpling.log
