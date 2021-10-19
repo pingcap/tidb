@@ -956,10 +956,10 @@ type SessionVars struct {
 		data [2]stmtctx.StatementContext
 	}
 
-	// EnableMPPBalanceRegionWithContinuity indicates whether MPP balance logic will take account of region's continuity in TiFlash.
-	EnableMPPBalanceRegionWithContinuity bool
-	// MPPBalanceContinuousRegionCount indicates the continuous region count that balance logic assigns to a TiFlash instance each time.
-	MPPBalanceContinuousRegionCount int64
+	// EnableMPPBalanceWithContinuousRegion indicates whether MPP balance logic will take account of region's continuity in TiFlash.
+	EnableMPPBalanceWithContinuousRegion bool
+	// EnableMPPBalanceWithContinuousRegionCount indicates the continuous region count that balance logic assigns to a TiFlash instance each time.
+	EnableMPPBalanceWithContinuousRegionCount int64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
