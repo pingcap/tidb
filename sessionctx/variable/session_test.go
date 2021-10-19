@@ -37,7 +37,6 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 	v := variable.NewSessionVars()
 	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	v.TimeZone = time.UTC
-
 	tests := []struct {
 		key   string
 		value string
