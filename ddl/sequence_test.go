@@ -99,8 +99,11 @@ func (s *testSequenceSuite) TestIssue28881(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists s")
 	tk.MustExec("create sequence s")
+	defer tk.MustExec("drop sequence s")
 	tk.MustExec("create temporary table tmp1 (id int)")
+
 	tk.MustQuery("select nextval(s)").Check(testkit.Rows("1"))
+	tk.MustQuery("select lastval(s)").Check(testkit.Rows("1"))
 }
 
 func (s *testSequenceSuite) TestDropSequence(c *C) {
