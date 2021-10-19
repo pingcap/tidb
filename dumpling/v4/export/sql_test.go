@@ -828,6 +828,43 @@ func TestBuildPartitionClauses(t *testing.T) {
 	}
 }
 
+func TestBuildWhereCondition(t *testing.T) {
+	t.Parallel()
+
+	conf := DefaultConfig()
+	testCases := []struct {
+		confWhere     string
+		chunkWhere    string
+		expectedWhere string
+	}{
+		{
+			"",
+			"",
+			"",
+		},
+		{
+			"a >= 1000000 and a <= 2000000",
+			"",
+			"WHERE a >= 1000000 and a <= 2000000 ",
+		},
+		{
+			"",
+			"(`a`>1 and `a`<3)or(`a`=1 and(`b`>=2))or(`a`=3 and(`b`<4))",
+			"WHERE (`a`>1 and `a`<3)or(`a`=1 and(`b`>=2))or(`a`=3 and(`b`<4)) ",
+		},
+		{
+			"a >= 1000000 and a <= 2000000",
+			"(`a`>1 and `a`<3)or(`a`=1 and(`b`>=2))or(`a`=3 and(`b`<4))",
+			"WHERE (a >= 1000000 and a <= 2000000) AND ((`a`>1 and `a`<3)or(`a`=1 and(`b`>=2))or(`a`=3 and(`b`<4))) ",
+		},
+	}
+	for _, testCase := range testCases {
+		conf.Where = testCase.confWhere
+		where := buildWhereCondition(conf, testCase.chunkWhere)
+		require.Equal(t, testCase.expectedWhere, where)
+	}
+}
+
 func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 	t.Parallel()
 

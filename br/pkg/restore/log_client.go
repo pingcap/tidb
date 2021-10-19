@@ -16,7 +16,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/cdclog"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	titable "github.com/pingcap/tidb/table"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"

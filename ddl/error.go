@@ -17,8 +17,8 @@ package ddl
 import (
 	"fmt"
 
-	parser_mysql "github.com/pingcap/parser/mysql"
 	mysql "github.com/pingcap/tidb/errno"
+	parser_mysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
@@ -290,7 +290,6 @@ var (
 	ErrOptOnTemporaryTable = dbterror.ClassDDL.NewStd(mysql.ErrOptOnTemporaryTable)
 
 	errUnsupportedOnCommitPreserve      = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support ON COMMIT PRESERVE ROWS for now", nil))
-	errUnsupportedEngineTemporary       = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support this kind of engine for temporary table", nil))
 	errUnsupportedClusteredSecondaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil))
 
 	// ErrUnsupportedLocalTempTableDDL returns when ddl operation unsupported for local temporary table
