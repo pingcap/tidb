@@ -737,9 +737,13 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
 	)
-	// step 1: prepare the info syncer which domain reload needed.
+	// step 1: prepare the info/schema syncer which domain reload needed.
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
+	if err != nil {
+		return err
+	}
+	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
 		return err
 	}
@@ -761,11 +765,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 			do.ddl = d
 		}
 	})
-
-	err = do.ddl.SchemaSyncer().Init(ctx)
-	if err != nil {
-		return err
-	}
 
 	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
 		if do.etcdClient != nil {
