@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,38 +17,38 @@ package executor
 import (
 	"archive/zip"
 	"context"
-	"crypto/md5" // #nosec G501
-	"encoding/hex"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
-
-const replayerPath string = "/tmp/replayer"
-
-// TTL of plan replayer files
-const remainedInterval float64 = 3
-
-// PlanReplayerInfo saves the information of plan replayer operation.
-type PlanReplayerInfo interface {
-	// Process dose the export/import work for reproducing sql queries.
-	Process() (string, error)
-}
 
 // PlanReplayerSingleExec represents a plan replayer executor.
 type PlanReplayerSingleExec struct {
 	baseExecutor
 	info *PlanReplayerSingleInfo
+
+	endFlag bool
 }
 
-// PlanReplayerSingleInfo saves the information of plan replayer operation.
+// PlanReplayerSingleInfo saves the information of plan replayer operation for single SQL statement.
 type PlanReplayerSingleInfo struct {
 	ExecStmt ast.StmtNode
 	Analyze  bool
@@ -57,50 +57,51 @@ type PlanReplayerSingleInfo struct {
 	Ctx      sessionctx.Context
 }
 
-type fileInfo struct {
-	StartTime time.Time
-	Token     [16]byte
+type tableNamePair struct {
+	DBName    string
+	TableName string
 }
 
-type fileList struct {
-	FileInfo map[string]fileInfo
-	TokenMap map[[16]byte]string
+type tableNameExtractor struct {
+	curDB string
+	names map[tableNamePair]struct{}
 }
 
-// planReplayerVarKeyType is a dummy type to avoid naming collision in context.
-type planReplayerVarKeyType int
-
-// String defines a Stringer function for debugging and pretty printing.
-func (k planReplayerVarKeyType) String() string {
-	return "plan_replayer_var"
+func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*ast.TableName); ok {
+		return in, true
+	}
+	return in, false
 }
 
-// planReplayerFileListType is a dummy type to avoid naming collision in context.
-type planReplayerFileListType int
-
-// String defines a Stringer function for debugging and pretty printing.
-func (k planReplayerFileListType) String() string {
-	return "plan_replayer_file_list"
+func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
+	if t, ok := in.(*ast.TableName); ok {
+		tp := tableNamePair{DBName: t.Schema.L, TableName: t.Name.L}
+		if tp.DBName == "" {
+			tp.DBName = tne.curDB
+		}
+		if _, ok := tne.names[tp]; !ok {
+			tne.names[tp] = struct{}{}
+		}
+	}
+	return in, true
 }
-
-// PlanReplayerVarKey is a variable key for plan replayer.
-const PlanReplayerVarKey planReplayerVarKeyType = 0
-
-// PlanReplayerFileList is a variable key for plan replayer's file list.
-const PlanReplayerFileList planReplayerFileListType = 0
 
 // Next implements the Executor Next interface.
 func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
+	if e.endFlag {
+		return nil
+	}
 	if e.info.ExecStmt == nil {
-		return errors.New("plan replayer: sql is empty")
+		return errors.New("plan Replayer: sql is empty")
 	}
-	val := e.ctx.Value(PlanReplayerVarKey)
-	if val != nil {
-		e.ctx.SetValue(PlanReplayerVarKey, nil)
-		return errors.New("plan replayer: previous plan replayer option isn't closed normally")
+	res, err := e.info.dumpSingle(filepath.Join(domain.GetPlanReplayerDirName(), fmt.Sprintf("%v", os.Getpid())))
+	if err != nil {
+		return err
 	}
-	e.ctx.SetValue(PlanReplayerVarKey, e.info)
+	req.AppendString(0, res)
+	e.endFlag = true
 	return nil
 }
 
@@ -114,51 +115,27 @@ func (e *PlanReplayerSingleExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Process dose the export/import work for reproducing sql queries.
-func (e *PlanReplayerSingleInfo) Process() (string, error) {
-	// TODO: plan replayer load will be developed later
-	if e.Load {
-		return "", nil
-	}
-	return e.dumpSingle()
-}
-
-func (e *PlanReplayerSingleInfo) dumpSingle() (string, error) {
+func (e *PlanReplayerSingleInfo) dumpSingle(path string) (string, error) {
 	// Create path
-	err := os.MkdirAll(replayerPath, os.ModePerm)
+	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
-		return "", errors.New("plan replayer: cannot create plan replayer path")
+		return "", errors.New("Plan Replayer: cannot create plan replayer path")
 	}
 
-	// Create zip file
+	// Generate key and create zip file
 	startTime := time.Now()
-	fileName := fmt.Sprintf("replayer_single_%v.zip", startTime.UnixNano())
-	zf, err := os.Create(replayerPath + "/" + fileName)
+	time := startTime.UnixNano()
+	b := make([]byte, 16)
+	_, err = rand.Read(b)
 	if err != nil {
-		return "", errors.New("plan replayer: cannot create zip file")
+		return "", err
 	}
-	val := e.Ctx.Value(PlanReplayerFileList)
-	if val == nil {
-		e.Ctx.SetValue(PlanReplayerFileList, fileList{FileInfo: make(map[string]fileInfo), TokenMap: make(map[[16]byte]string)})
-	} else {
-		// Clean outdated files
-		Flist := val.(fileList).FileInfo
-		TList := val.(fileList).TokenMap
-		for k, v := range Flist {
-			if time.Since(v.StartTime).Minutes() > remainedInterval {
-				err := os.Remove(replayerPath + "/" + k)
-				if err != nil {
-					logutil.BgLogger().Warn(fmt.Sprintf("Cleaning outdated file %s failed.", k))
-				}
-				delete(Flist, k)
-				delete(TList, v.Token)
-			}
-		}
+	key := base64.URLEncoding.EncodeToString(b)
+	fileName := fmt.Sprintf("replayer_single_%v_%v.zip", key, time)
+	zf, err := os.Create(filepath.Join(path, fileName))
+	if err != nil {
+		return "", errors.New("Plan Replayer: cannot create zip file")
 	}
-	// Generate Token
-	token := md5.Sum([]byte(fmt.Sprintf("%s%d", fileName, rand.Int63()))) // #nosec G401 G404
-	e.Ctx.Value(PlanReplayerFileList).(fileList).FileInfo[fileName] = fileInfo{StartTime: startTime, Token: token}
-	e.Ctx.Value(PlanReplayerFileList).(fileList).TokenMap[token] = fileName
 
 	// Create zip writer
 	zw := zip.NewWriter(zf)
@@ -173,6 +150,269 @@ func (e *PlanReplayerSingleInfo) dumpSingle() (string, error) {
 		}
 	}()
 
-	// TODO: DUMP PLAN REPLAYER FILES IN ZIP WRITER
-	return hex.EncodeToString(token[:]), nil
+	// Dump config
+	cf, err := zw.Create("config.toml")
+	if err != nil {
+		return "", err
+	}
+	if err := toml.NewEncoder(cf).Encode(config.GetGlobalConfig()); err != nil {
+		return "", err
+	}
+
+	// Dump meta
+	mt, err := zw.Create("meta.txt")
+	if err != nil {
+		return "", err
+	}
+	_, err = mt.Write([]byte(printer.GetTiDBInfo()))
+	if err != nil {
+		return "", err
+	}
+
+	// Retrieve current DB
+	sessionVars := e.Ctx.GetSessionVars()
+	dbName := model.NewCIStr(sessionVars.CurrentDB)
+	do := domain.GetDomain(e.Ctx)
+
+	// Retrieve all tables
+	pairs, err := extractTableNames(e.ExecStmt, dbName.L)
+	if err != nil {
+		return "", errors.New(fmt.Sprintf("Plan Replayer: invalid SQL text, err: %v", err))
+	}
+
+	// Dump stats
+	for pair := range pairs {
+		jsonTbl, err := getStatsForTable(do, pair)
+		if err != nil {
+			return "", err
+		}
+		statsFw, err := zw.Create(fmt.Sprintf("stats/%v.%v.json", pair.DBName, pair.TableName))
+		if err != nil {
+			return "", err
+		}
+		data, err := json.Marshal(jsonTbl)
+		if err != nil {
+			return "", err
+		}
+		_, err = statsFw.Write(data)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// Dump schema
+	for pair := range pairs {
+		err = getShowCreateTable(pair, zw, e.Ctx)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// Dump variables
+	varMap := make(map[string]string)
+	recordSets, err := e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show variables")
+	if err != nil {
+		return "", err
+	}
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
+	if err != nil {
+		return "", err
+	}
+	vf, err := zw.Create("variables.toml")
+	if err != nil {
+		return "", err
+	}
+	for _, row := range sRows {
+		varMap[row[0]] = row[1]
+	}
+	if err := toml.NewEncoder(vf).Encode(varMap); err != nil {
+		return "", err
+	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return "", err
+		}
+	}
+
+	// Dump sql
+	sql, err := zw.Create("sqls.sql")
+	if err != nil {
+		return "", nil
+	}
+	_, err = sql.Write([]byte(e.ExecStmt.Text()))
+	if err != nil {
+		return "", err
+	}
+
+	// Dump session bindings
+	recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show bindings")
+	if err != nil {
+		return "", err
+	}
+	sRows, err = resultSetToStringSlice(context.Background(), recordSets[0])
+	if err != nil {
+		return "", err
+	}
+	bf, err := zw.Create("session_bindings.sql")
+	if err != nil {
+		return "", err
+	}
+	for _, row := range sRows {
+		fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
+	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return "", err
+		}
+	}
+
+	// Dump global bindings
+	recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show global bindings")
+	if err != nil {
+		return "", err
+	}
+	sRows, err = resultSetToStringSlice(context.Background(), recordSets[0])
+	if err != nil {
+		return "", err
+	}
+	bf, err = zw.Create("global_bindings.sql")
+	if err != nil {
+		return "", err
+	}
+	for _, row := range sRows {
+		fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
+	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return "", err
+		}
+	}
+
+	// Dump explain
+	if e.Analyze {
+		// Explain analyze
+		recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain analyze %s", e.ExecStmt.Text()))
+		if err != nil {
+			return "", err
+		}
+	} else {
+		// Explain
+		recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain %s", e.ExecStmt.Text()))
+		if err != nil {
+			return "", err
+		}
+	}
+	sRows, err = resultSetToStringSlice(context.Background(), recordSets[0])
+	if err != nil {
+		return "", err
+	}
+	fw, err := zw.Create("explain.txt")
+	if err != nil {
+		return "", err
+	}
+	for _, row := range sRows {
+		fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
+	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(path, fileName), nil
+}
+
+func extractTableNames(ExecStmt ast.StmtNode, curDB string) (map[tableNamePair]struct{}, error) {
+	extractor := &tableNameExtractor{
+		curDB: curDB,
+		names: make(map[tableNamePair]struct{}),
+	}
+	ExecStmt.Accept(extractor)
+	return extractor.names, nil
+}
+
+func getStatsForTable(do *domain.Domain, pair tableNamePair) (*handle.JSONTable, error) {
+	is := do.InfoSchema()
+	h := do.StatsHandle()
+	tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+	if err != nil {
+		return nil, err
+	}
+	js, err := h.DumpStatsToJSON(pair.DBName, tbl.Meta(), nil)
+	return js, err
+}
+
+func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Context) error {
+	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
+	if err != nil {
+		return err
+	}
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
+	if err != nil {
+		return err
+	}
+	fw, err := zw.Create(fmt.Sprintf("schema/%v.%v.schema.txt", pair.DBName, pair.TableName))
+	if err != nil {
+		return err
+	}
+	for _, row := range sRows {
+		fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
+	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet) ([][]string, error) {
+	rows, err := getRows(ctx, rs)
+	if err != nil {
+		return nil, err
+	}
+	err = rs.Close()
+	if err != nil {
+		return nil, err
+	}
+	sRows := make([][]string, len(rows))
+	for i, row := range rows {
+		iRow := make([]string, row.Len())
+		for j := 0; j < row.Len(); j++ {
+			if row.IsNull(j) {
+				iRow[j] = "<nil>"
+			} else {
+				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
+				iRow[j], err = d.ToString()
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		sRows[i] = iRow
+	}
+	return sRows, nil
+}
+
+func getRows(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
+	if rs == nil {
+		return nil, nil
+	}
+	var rows []chunk.Row
+	req := rs.NewChunk()
+	// Must reuse `req` for imitating server.(*clientConn).writeChunks
+	for {
+		err := rs.Next(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+
+		iter := chunk.NewIterator4Chunk(req.CopyConstruct())
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			rows = append(rows, row)
+		}
+	}
+	return rows, nil
 }
