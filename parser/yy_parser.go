@@ -15,6 +15,7 @@ package parser
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/parser/charset"
 	"math"
 	"regexp"
 	"strconv"
@@ -135,7 +136,7 @@ func (parser *Parser) SetParserConfig(config ParserConfig) {
 }
 
 func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.StmtNode, warns []error, err error) {
-	ResetParams(parser)
+	resetParams(parser)
 	for _, p := range params {
 		if err := p.ApplyOn(parser); err != nil {
 			return nil, nil, err
@@ -372,4 +373,51 @@ func convertToPriv(roleOrPrivList []*ast.RoleOrPriv) ([]*ast.PrivElem, error) {
 		privileges = append(privileges, priv)
 	}
 	return privileges, nil
+}
+
+func resetParams(p *Parser) {
+	p.charset = mysql.DefaultCharset
+	p.collation = mysql.DefaultCollationName
+	p.lexer.encoding = charset.Encoding{}
+}
+
+// ParseParam represents the parameter of parsing.
+type ParseParam interface {
+	ApplyOn(*Parser) error
+}
+
+// CharsetConnection is used for literals specified without a character set.
+type CharsetConnection string
+
+// ApplyOn implements ParseParam interface.
+func (c CharsetConnection) ApplyOn(p *Parser) error {
+	if c == "" {
+		p.charset = mysql.DefaultCharset
+	} else {
+		p.charset = string(c)
+	}
+	return nil
+}
+
+// CollationConnection is used for literals specified without a collation.
+type CollationConnection string
+
+// ApplyOn implements ParseParam interface.
+func (c CollationConnection) ApplyOn(p *Parser) error {
+	if c == "" {
+		p.collation = mysql.DefaultCollationName
+	} else {
+		p.collation = string(c)
+	}
+	return nil
+}
+
+// CharsetClient specifies the charset of a SQL.
+// This is used to decode the SQL into a utf-8 string.
+type CharsetClient string
+
+// ApplyOn implements ParseParam interface.
+func (c CharsetClient) ApplyOn(p *Parser) error {
+	p.lexer.encoding = *charset.NewEncoding(string(c))
+	return nil
 }
