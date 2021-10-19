@@ -6401,17 +6401,6 @@ var (
 	ErrInvalidStatsOptionsFormat = errors.New("stats options should be in format 'key=value'")
 )
 
-type StatsOption struct {
-	Key   string `json:"key,omitempty"`
-	Value string `json:"value,omitempty"`
-}
-
-type StatsOptionList []StatsOption
-
-type StatsOptions struct {
-	Options StatsOptionList `json:"options"`
-}
-
 func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, spec *ast.StatsOptionsSpec) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
@@ -6427,8 +6416,7 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 		return err
 	}
 
-	statsOptions := StatsOptions{}
-	statsOptions.Options = make(StatsOptionList, 0, len(attrs))
+	optionMap := map[string]string{}
 	for _, attr := range attrs {
 		kv := strings.Split(attr, "=")
 		if len(kv) != 2 {
@@ -6442,8 +6430,7 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 		if val == "" {
 			return fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, val)
 		}
-		option := StatsOption{Key: key, Value: val}
-		statsOptions.Options = append(statsOptions.Options, option)
+		optionMap[key] = val
 	}
 
 	job := &model.Job{
@@ -6452,7 +6439,7 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAlterTableStatsOptions,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{statsOptions},
+		Args:       []interface{}{optionMap},
 	}
 
 	err = d.doDDLJob(ctx, job)

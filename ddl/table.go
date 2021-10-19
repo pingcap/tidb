@@ -1344,39 +1344,37 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 }
 
 func onAlterTableStatsOptions(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	statsOptions := StatsOptions{}
+	statsOptions := map[string]string{}
 	err = job.DecodeArgs(&statsOptions)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
-
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
-
 	if tblInfo.StatsOptions == nil {
 		tblInfo.StatsOptions = model.NewStatsOptions()
 	}
-	for _, statsOption := range statsOptions.Options {
-		switch strings.ToUpper(statsOption.Key) {
+	for k, v := range statsOptions {
+		switch strings.ToUpper(k) {
 		case "AUTO_RECALC":
-			autoRecalc, err0 := strconv.ParseBool(statsOption.Value)
+			autoRecalc, err0 := strconv.ParseBool(v)
 			if err0 != nil {
-				return 0, fmt.Errorf("%w: %s", errors.New("STATS_AUTO_RECALC should be a bool"), statsOption.Value)
+				return 0, fmt.Errorf("%w: %s", errors.New("STATS_AUTO_RECALC should be a bool"), v)
 			}
 			tblInfo.StatsOptions.AutoRecalc = autoRecalc
 		case "BUCKETS":
-			buckets, err0 := strconv.ParseUint(statsOption.Value, 0, 64)
+			buckets, err0 := strconv.ParseUint(v, 0, 64)
 			if err0 != nil {
-				return 0, fmt.Errorf("%w: %s", errors.New("STATS_BUCKETS should be a unit"), statsOption.Value)
+				return 0, fmt.Errorf("%w: %s", errors.New("STATS_BUCKETS should be a unit"), v)
 			}
 			tblInfo.StatsOptions.Buckets = buckets
 		case "TOPN":
-			topn, err0 := strconv.ParseUint(statsOption.Value, 0, 64)
+			topn, err0 := strconv.ParseUint(v, 0, 64)
 			if err0 != nil {
-				return 0, fmt.Errorf("%w: %s", errors.New("STATS_TOPN should be a unit"), statsOption.Value)
+				return 0, fmt.Errorf("%w: %s", errors.New("STATS_TOPN should be a unit"), v)
 			}
 			tblInfo.StatsOptions.TopN = topn
 		}
