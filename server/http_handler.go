@@ -737,6 +737,28 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			cfg.PessimisticTxn.DeadlockHistoryCollectRetryable = collectRetryable
 			config.StoreGlobalConfig(cfg)
 		}
+		if mutationChecker := req.Form.Get("tidb_enable_mutation_checker"); mutationChecker != "" {
+			s, err := session.CreateSession(h.Store)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			defer s.Close()
+
+			switch mutationChecker {
+			case "0":
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableMutationChecker, variable.Off)
+			case "1":
+				err = s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(variable.TiDBEnableMutationChecker, variable.On)
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}
