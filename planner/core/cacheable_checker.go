@@ -127,8 +127,10 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.TableName:
 		if checker.schema != nil {
-			if checker.isPartitionTable(node) &&
-				(checker.sctx != nil && !checker.sctx.GetSessionVars().UseDynamicPartitionPrune()) { // static-mode for partition tables cannot support plan-cache
+			if checker.isPartitionTable(node) {
+				if checker.sctx != nil && checker.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+					return in, false // dynamic-mode for partition tables can use plan-cache
+				}
 				checker.cacheable = false
 				return in, true
 			}
