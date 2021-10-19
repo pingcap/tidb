@@ -442,7 +442,7 @@ func (*testSysVarSuite) TestTxnIsolation(c *C) {
 
 	// Init TiDBSkipIsolationLevelCheck like what loadCommonGlobalVariables does
 	vars = NewSessionVars()
-	require.NoError(t, vars.SetSystemVarWithRelaxedValidation(TiDBSkipIsolationLevelCheck, "1"))
+	c.Assert(vars.SetSystemVarWithRelaxedValidation(TiDBSkipIsolationLevelCheck, "1"), IsNil)
 	val, err = sv.Validate(vars, "Serializable", ScopeSession)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "SERIALIZABLE")
