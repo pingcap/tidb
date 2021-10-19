@@ -1118,6 +1118,13 @@ func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, errUnknownCharacterSet.GenWithStackByArgs(transcodingName)
 	}
+	// convert function should always derive to CoercibilityImplicit
+	bf.SetCoercibility(CoercibilityImplicit)
+	if bf.tp.Charset == charset.CharsetASCII {
+		bf.SetRepertoire(ASCII)
+	} else {
+		bf.SetRepertoire(UNICODE)
+	}
 	// Result will be a binary string if converts charset to BINARY.
 	// See https://dev.mysql.com/doc/refman/5.7/en/charset-binary-set.html
 	if types.IsBinaryStr(bf.tp) {
@@ -1151,17 +1158,16 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, err
 	}
 
+	// Since charset is already validated and set from getFunction(), there's no
+	// need to get charset from args again.
+	encoding, _ := charset.Lookup(b.tp.Charset)
+	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
+	// return with error.
+	if encoding == nil {
+		return "", true, errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
+	}
 	// if expr is binary string and convert meet error, we should return NULL.
 	if types.IsBinaryStr(b.args[0].GetType()) {
-		// Since charset is already validated and set from getFunction(), there's no
-		// need to get charset from args again.
-		encoding, _ := charset.Lookup(b.tp.Charset)
-		// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
-		// return with error.
-		if encoding == nil {
-			return "", true, errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
-		}
-
 		target, _, err := transform.String(encoding.NewEncoder(), expr)
 		if err != nil {
 			return "", true, err
@@ -1172,8 +1178,8 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 		return exprInternal, false, nil
 	}
 
-	encoding := charset.NewEncoding(b.tp.Charset)
-	return string(encoding.EncodeInternal(nil, []byte(expr))), false, nil
+	enc := charset.NewEncoding(b.tp.Charset)
+	return string(enc.EncodeInternal(nil, []byte(expr))), false, nil
 }
 
 type substringFunctionClass struct {
