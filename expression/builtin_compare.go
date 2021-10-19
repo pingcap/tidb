@@ -1141,6 +1141,9 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 		lft.Tp == mysql.TypeYear && types.IsTemporalWithDate(rft.Tp)) {
 		return types.ETDatetime
 	} else if (lft.Tp == mysql.TypeLonglong && rhs == types.ETString) || (lhs == types.ETString && rft.Tp == mysql.TypeLonglong) {
+		// When we compare `types.ETInt <cmp> types.ETString`, we will get `types.ETReal`.
+		// But if the field type is `mysql.TypeLonglong`, the converted datum will lose precision.
+		// So we use the `types.ETDecimal` for `mysql.TypeLonglong` type.
 		return types.ETDecimal
 	}
 	return types.ETReal
