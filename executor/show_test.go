@@ -1102,7 +1102,7 @@ func (s *testSuite5) TestShowCreateStmtIgnoreLocalTemporaryTables(c *C) {
 		""+
 			"v1 CREATE TEMPORARY TABLE `v1` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("drop view v1")
 	err := tk.ExecToErr("show create view v1")
@@ -1415,6 +1415,19 @@ func (s *testSuite5) TestShowPerformanceSchema(c *C) {
 			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 }
 
+func (s *testSuite5) TestShowCreatePlacementPolicy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE PLACEMENT POLICY xyz PRIMARY_REGION='us-east-1' REGIONS='us-east-1,us-east-2' FOLLOWERS=4")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` PRIMARY_REGION=\"us-east-1\" REGIONS=\"us-east-1,us-east-2\" FOLLOWERS=4"))
+	// non existent policy
+	err := tk.QueryToErr("SHOW CREATE PLACEMENT POLICY doesnotexist")
+	c.Assert(err.Error(), Equals, infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs("doesnotexist").Error())
+	// alter and try second example
+	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4")
+	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4"))
+	tk.MustExec("DROP PLACEMENT POLICY xyz")
+}
+
 func (s *testSuite5) TestShowTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1423,13 +1436,13 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 	// For issue https://github.com/pingcap/tidb/issues/24752
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE GLOBAL TEMPORARY TABLE `t1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
 	// No panic, fix issue https://github.com/pingcap/tidb/issues/24788
 	expect := "CREATE GLOBAL TEMPORARY TABLE `t3` (\n" +
 		"  `i` int(11) NOT NULL,\n" +
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
 	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 " + expect))
 
 	// Verify that the `show create table` result can be used to build the table.
@@ -1449,7 +1462,7 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 		"  `pad` varbinary(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
 	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 " + expect))
 
 	tk.MustExec("create temporary table t6 (i int primary key, j int)")
@@ -1457,7 +1470,7 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 		"  `i` int(11) NOT NULL,\n" +
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 " + expect))
 	tk.MustExec("create temporary table t7 (i int primary key auto_increment, j int)")
 	defer func() {
@@ -1471,6 +1484,6 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 		"  `i` int(11) NOT NULL AUTO_INCREMENT,\n" +
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2"
 	tk.MustQuery("show create table t7").Check(testkit.Rows("t7 " + expect))
 }
