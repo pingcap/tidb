@@ -9,7 +9,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-tools/pkg/dbutil"
-	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"go.uber.org/zap"
 )
 

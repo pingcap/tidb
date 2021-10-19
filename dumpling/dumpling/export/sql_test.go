@@ -21,7 +21,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
-	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 var showIndexHeaders = []string{

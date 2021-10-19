@@ -16,8 +16,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
-	"github.com/pingcap/tidb/dumpling/v4/log"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
