@@ -7227,11 +7227,11 @@ FunctionCallNonKeyword:
 	}
 |	builtinTrim '(' TrimDirection "FROM" Expression ')'
 	{
-		nilVal := ast.NewValueExpr(nil, parser.charset, parser.collation)
+		spaceVal := ast.NewValueExpr(" ", parser.charset, parser.collation)
 		direction := &ast.TrimDirectionExpr{Direction: $3.(ast.TrimDirectionType)}
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
-			Args:   []ast.ExprNode{$5, nilVal, direction},
+			Args:   []ast.ExprNode{$5, spaceVal, direction},
 		}
 	}
 |	builtinTrim '(' TrimDirection Expression "FROM" Expression ')'
