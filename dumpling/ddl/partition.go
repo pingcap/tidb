@@ -26,11 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -40,6 +35,11 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -387,6 +387,38 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 	return nil, nil
 }
 
+func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, options []*ast.TableOption) error {
+	// the partition inheritance of placement rules don't have to copy the placement elements to themselves.
+	// For example:
+	// t placement policy x (p1 placement policy y, p2)
+	// p2 will share the same rule as table t does, but it won't copy the meta to itself. we will
+	// append p2 range to the coverage of table t's rules. This mechanism is good for cascading change
+	// when policy x is altered.
+	for _, opt := range options {
+		switch opt.Tp {
+		case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
+			ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
+			ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
+			ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
+			ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
+			ast.TableOptionPlacementVoterConstraints:
+			if partition.DirectPlacementOpts == nil {
+				partition.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			err := SetDirectPlacementOpt(partition.DirectPlacementOpts, ast.PlacementOptionType(opt.Tp), opt.StrValue, opt.UintValue)
+			if err != nil {
+				return err
+			}
+		case ast.TableOptionPlacementPolicy:
+			partition.PlacementPolicyRef = &model.PolicyRefInfo{
+				Name: model.NewCIStr(opt.StrValue),
+			}
+		}
+	}
+
+	return nil
+}
+
 func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	if err := checkAddPartitionTooManyPartitions(tbInfo.Partition.Num); err != nil {
 		return nil, err
@@ -434,6 +466,10 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
 			Comment: comment,
+		}
+
+		if err = setPartitionPlacementFromOptions(&piDef, def.Options); err != nil {
+			return nil, err
 		}
 
 		buf := new(bytes.Buffer)
@@ -487,44 +523,17 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 			}
 		}
 		comment, _ := def.Comment()
-		var directPlacementOpts *model.PlacementSettings
-		var placementPolicyRef *model.PolicyRefInfo
-		// the partition inheritance of placement rules don't have to copy the placement elements to themselves.
-		// For example:
-		// t placement policy x (p1 placement policy y, p2)
-		// p2 will share the same rule as table t does, but it won't copy the meta to itself. we will
-		// append p2 range to the coverage of table t's rules. This mechanism is good for cascading change
-		// when policy x is altered.
-		for _, opt := range def.Options {
-			switch opt.Tp {
-			case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
-				ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
-				ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
-				ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
-				ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
-				ast.TableOptionPlacementVoterConstraints:
-				if directPlacementOpts == nil {
-					directPlacementOpts = &model.PlacementSettings{}
-				}
-				err := SetDirectPlacementOpt(directPlacementOpts, ast.PlacementOptionType(opt.Tp), opt.StrValue, opt.UintValue)
-				if err != nil {
-					return nil, err
-				}
-			case ast.TableOptionPlacementPolicy:
-				placementPolicyRef = &model.PolicyRefInfo{
-					Name: model.NewCIStr(opt.StrValue),
-				}
-			}
-		}
 		err := checkTooLongTable(def.Name)
 		if err != nil {
 			return nil, err
 		}
 		piDef := model.PartitionDefinition{
-			Name:                def.Name,
-			Comment:             comment,
-			DirectPlacementOpts: directPlacementOpts,
-			PlacementPolicyRef:  placementPolicyRef,
+			Name:    def.Name,
+			Comment: comment,
+		}
+
+		if err = setPartitionPlacementFromOptions(&piDef, def.Options); err != nil {
+			return nil, err
 		}
 
 		buf := new(bytes.Buffer)

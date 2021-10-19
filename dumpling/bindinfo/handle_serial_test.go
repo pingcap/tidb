@@ -19,11 +19,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/testkit"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	dto "github.com/prometheus/client_model/go"

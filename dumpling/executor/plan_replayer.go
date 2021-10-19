@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,31 +25,31 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
-const recreatorPath string = "/tmp/recreator"
+const replayerPath string = "/tmp/replayer"
 
-// TTL of plan recreator files
+// TTL of plan replayer files
 const remainedInterval float64 = 3
 
-// PlanRecreatorInfo saves the information of plan recreator operation.
-type PlanRecreatorInfo interface {
+// PlanReplayerInfo saves the information of plan replayer operation.
+type PlanReplayerInfo interface {
 	// Process dose the export/import work for reproducing sql queries.
 	Process() (string, error)
 }
 
-// PlanRecreatorSingleExec represents a plan recreator executor.
-type PlanRecreatorSingleExec struct {
+// PlanReplayerSingleExec represents a plan replayer executor.
+type PlanReplayerSingleExec struct {
 	baseExecutor
-	info *PlanRecreatorSingleInfo
+	info *PlanReplayerSingleInfo
 }
 
-// PlanRecreatorSingleInfo saves the information of plan recreator operation.
-type PlanRecreatorSingleInfo struct {
+// PlanReplayerSingleInfo saves the information of plan replayer operation.
+type PlanReplayerSingleInfo struct {
 	ExecStmt ast.StmtNode
 	Analyze  bool
 	Load     bool
@@ -67,86 +67,86 @@ type fileList struct {
 	TokenMap map[[16]byte]string
 }
 
-// planRecreatorVarKeyType is a dummy type to avoid naming collision in context.
-type planRecreatorVarKeyType int
+// planReplayerVarKeyType is a dummy type to avoid naming collision in context.
+type planReplayerVarKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k planRecreatorVarKeyType) String() string {
-	return "plan_recreator_var"
+func (k planReplayerVarKeyType) String() string {
+	return "plan_replayer_var"
 }
 
-// planRecreatorFileListType is a dummy type to avoid naming collision in context.
-type planRecreatorFileListType int
+// planReplayerFileListType is a dummy type to avoid naming collision in context.
+type planReplayerFileListType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k planRecreatorFileListType) String() string {
-	return "plan_recreator_file_list"
+func (k planReplayerFileListType) String() string {
+	return "plan_replayer_file_list"
 }
 
-// PlanRecreatorVarKey is a variable key for plan recreator.
-const PlanRecreatorVarKey planRecreatorVarKeyType = 0
+// PlanReplayerVarKey is a variable key for plan replayer.
+const PlanReplayerVarKey planReplayerVarKeyType = 0
 
-// PlanRecreatorFileList is a variable key for plan recreator's file list.
-const PlanRecreatorFileList planRecreatorFileListType = 0
+// PlanReplayerFileList is a variable key for plan replayer's file list.
+const PlanReplayerFileList planReplayerFileListType = 0
 
 // Next implements the Executor Next interface.
-func (e *PlanRecreatorSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.info.ExecStmt == nil {
-		return errors.New("plan Recreator: sql is empty")
+		return errors.New("plan replayer: sql is empty")
 	}
-	val := e.ctx.Value(PlanRecreatorVarKey)
+	val := e.ctx.Value(PlanReplayerVarKey)
 	if val != nil {
-		e.ctx.SetValue(PlanRecreatorVarKey, nil)
-		return errors.New("plan Recreator: previous plan recreator option isn't closed normally")
+		e.ctx.SetValue(PlanReplayerVarKey, nil)
+		return errors.New("plan replayer: previous plan replayer option isn't closed normally")
 	}
-	e.ctx.SetValue(PlanRecreatorVarKey, e.info)
+	e.ctx.SetValue(PlanReplayerVarKey, e.info)
 	return nil
 }
 
 // Close implements the Executor Close interface.
-func (e *PlanRecreatorSingleExec) Close() error {
+func (e *PlanReplayerSingleExec) Close() error {
 	return nil
 }
 
 // Open implements the Executor Open interface.
-func (e *PlanRecreatorSingleExec) Open(ctx context.Context) error {
+func (e *PlanReplayerSingleExec) Open(ctx context.Context) error {
 	return nil
 }
 
 // Process dose the export/import work for reproducing sql queries.
-func (e *PlanRecreatorSingleInfo) Process() (string, error) {
-	// TODO: plan recreator load will be developed later
+func (e *PlanReplayerSingleInfo) Process() (string, error) {
+	// TODO: plan replayer load will be developed later
 	if e.Load {
 		return "", nil
 	}
 	return e.dumpSingle()
 }
 
-func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
+func (e *PlanReplayerSingleInfo) dumpSingle() (string, error) {
 	// Create path
-	err := os.MkdirAll(recreatorPath, os.ModePerm)
+	err := os.MkdirAll(replayerPath, os.ModePerm)
 	if err != nil {
-		return "", errors.New("plan Recreator: cannot create plan recreator path")
+		return "", errors.New("plan replayer: cannot create plan replayer path")
 	}
 
 	// Create zip file
 	startTime := time.Now()
-	fileName := fmt.Sprintf("recreator_single_%v.zip", startTime.UnixNano())
-	zf, err := os.Create(recreatorPath + "/" + fileName)
+	fileName := fmt.Sprintf("replayer_single_%v.zip", startTime.UnixNano())
+	zf, err := os.Create(replayerPath + "/" + fileName)
 	if err != nil {
-		return "", errors.New("plan Recreator: cannot create zip file")
+		return "", errors.New("plan replayer: cannot create zip file")
 	}
-	val := e.Ctx.Value(PlanRecreatorFileList)
+	val := e.Ctx.Value(PlanReplayerFileList)
 	if val == nil {
-		e.Ctx.SetValue(PlanRecreatorFileList, fileList{FileInfo: make(map[string]fileInfo), TokenMap: make(map[[16]byte]string)})
+		e.Ctx.SetValue(PlanReplayerFileList, fileList{FileInfo: make(map[string]fileInfo), TokenMap: make(map[[16]byte]string)})
 	} else {
 		// Clean outdated files
 		Flist := val.(fileList).FileInfo
 		TList := val.(fileList).TokenMap
 		for k, v := range Flist {
 			if time.Since(v.StartTime).Minutes() > remainedInterval {
-				err := os.Remove(recreatorPath + "/" + k)
+				err := os.Remove(replayerPath + "/" + k)
 				if err != nil {
 					logutil.BgLogger().Warn(fmt.Sprintf("Cleaning outdated file %s failed.", k))
 				}
@@ -157,8 +157,8 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
 	}
 	// Generate Token
 	token := md5.Sum([]byte(fmt.Sprintf("%s%d", fileName, rand.Int63()))) // #nosec G401 G404
-	e.Ctx.Value(PlanRecreatorFileList).(fileList).FileInfo[fileName] = fileInfo{StartTime: startTime, Token: token}
-	e.Ctx.Value(PlanRecreatorFileList).(fileList).TokenMap[token] = fileName
+	e.Ctx.Value(PlanReplayerFileList).(fileList).FileInfo[fileName] = fileInfo{StartTime: startTime, Token: token}
+	e.Ctx.Value(PlanReplayerFileList).(fileList).TokenMap[token] = fileName
 
 	// Create zip writer
 	zw := zip.NewWriter(zf)
@@ -173,6 +173,6 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
 		}
 	}()
 
-	// TODO: DUMP PLAN RECREATOR FILES IN ZIP WRITER
+	// TODO: DUMP PLAN REPLAYER FILES IN ZIP WRITER
 	return hex.EncodeToString(token[:]), nil
 }

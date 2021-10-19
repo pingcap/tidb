@@ -27,11 +27,11 @@ import (
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -246,17 +246,6 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	if res != nil {
 		tk.c.Assert(res.Close(), check.IsNil)
 	}
-}
-
-// HasPseudoStats checks if the plan for this SQL used pseudo stats.
-func (tk *TestKit) HasPseudoStats(sql string, args ...interface{}) bool {
-	rs := tk.MustQuery("explain "+sql, args...)
-	for i := range rs.rows {
-		if strings.Contains(rs.rows[i][4], "stats:pseudo") {
-			return true
-		}
-	}
-	return false
 }
 
 // HasPlan checks if the result execution plan contains specific plan.
