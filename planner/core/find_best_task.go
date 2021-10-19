@@ -1254,10 +1254,22 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	is.addPushedDownSelection(cop, ds, path, finalStats)
 	if prop.TaskTp == property.RootTaskType {
 		task = task.convertToRootTask(ds.ctx)
+		ds.addSelection4PlanCache(task.(*rootTask), finalStats, prop)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
 	return task, nil
+}
+
+// addSelection4PlanCache adds an extra safeguard selection upon this root task for safety.
+// When reusing cached plans and rebuilding range for them, the range builder may return an loose range after parameters change.
+func (ds *DataSource) addSelection4PlanCache(task *rootTask, stats *property.StatsInfo, prop *property.PhysicalProperty) {
+	if !ds.ctx.GetSessionVars().StmtCtx.UseCache {
+		return
+	}
+	sel := PhysicalSelection{Conditions: ds.pushedDownConds}.Init(ds.ctx, stats, ds.blockOffset, prop)
+	sel.SetChildren(task.p)
+	task.p = sel
 }
 
 func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSource, isForScan bool) float64 {
@@ -1778,12 +1790,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		}
 	}
 	ts.cost = task.cost()
-	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	finalStats := ds.stats.ScaleByExpectCnt(prop.ExpectedCnt)
+	ts.addPushedDownSelection(copTask, finalStats)
 	if prop.IsFlashProp() && len(copTask.rootTaskConds) != 0 {
 		return invalidTask, nil
 	}
 	if prop.TaskTp == property.RootTaskType {
 		task = task.convertToRootTask(ds.ctx)
+		ds.addSelection4PlanCache(task.(*rootTask), finalStats, prop)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
