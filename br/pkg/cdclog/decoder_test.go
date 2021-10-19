@@ -110,6 +110,8 @@ func buildEncodeDDLData(events []*MessageDDL) []byte {
 }
 
 func TestDecoder(t *testing.T) {
+	t.Parallel()
+
 	var item *SortItem
 
 	data := buildEncodeDDLData(s.ddlEvents)
@@ -145,6 +147,8 @@ func TestDecoder(t *testing.T) {
 }
 
 func TestColumn(t *testing.T) {
+	t.Parallel()
+
 	// test varbinary columns (same type with varchar 15)
 	col1 := Column{Type: mysql.TypeVarchar, Flag: BinaryFlag, Value: "\\x00\\x01"}
 	col1 = formatColumnVal(col1)
