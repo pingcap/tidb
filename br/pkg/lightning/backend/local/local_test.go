@@ -61,7 +61,7 @@ import (
 type localSuite struct{}
 
 var _ = Suite(&localSuite{})
-var _ = Suite(&testMultiIngestSuite{})
+var _ = SerialSuites(&testMultiIngestSuite{})
 
 func Test(t *testing.T) {
 	TestingT(t)
@@ -934,6 +934,10 @@ func (s *testMultiIngestSuite) SetUpSuite(c *C) {
 }
 
 func (s *testMultiIngestSuite) TestMultiIngest(c *C) {
+	defer func() {
+		getImportClientFn = getImportClient
+	}()
+
 	allStores := []*metapb.Store{
 		{
 			Id:    1,
