@@ -802,19 +802,18 @@ func (s *testPrepareSerialSuite) TestIssue28696(c *C) {
 	tkProcess := tk.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 5)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
-	c.Assert(res.Rows()[3][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[4][0], Matches, ".*TableRowIDScan.*")
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows("Projection_4 1.00 root  test.t1.a",
+		"└─Selection_9 1.00 root  eq(test.t1.b, \"bbcsa\")",
+		"  └─IndexLookUp_8 1.00 root  ",
+		"    ├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t1, index:b(b) range:[\"bbc\",\"bbc\"], keep order:false, stats:pseudo",
+		"    └─Selection_7(Probe) 1.00 cop[tikv]  eq(test.t1.b, \"bbcsa\")",
+		"      └─TableRowIDScan_6 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 
-	res = tk.MustQuery("explain format = 'brief' select a from t1 where b = 'bbcsa';")
-	c.Assert(len(res.Rows()), Equals, 5)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
-	c.Assert(res.Rows()[3][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[4][0], Matches, ".*TableRowIDScan.*")
+	tk.MustQuery("explain format = 'brief' select a from t1 where b = 'bbcsa';").Check(testkit.Rows("Projection 1.00 root  test.t1.a",
+		"└─IndexLookUp 1.00 root  ",
+		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, index:b(b) range:[\"bbc\",\"bbc\"], keep order:false, stats:pseudo",
+		"  └─Selection(Probe) 1.00 cop[tikv]  eq(test.t1.b, \"bbcsa\")",
+		"    └─TableRowIDScan 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 }
 
 func (s *testPrepareSerialSuite) TestIssue28710(c *C) {
