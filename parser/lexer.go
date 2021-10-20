@@ -21,7 +21,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	tidbfeature "github.com/pingcap/tidb/parser/tidb"
@@ -139,14 +138,6 @@ func (s *Scanner) AppendError(err error) {
 }
 
 func (s *Scanner) tryDecodeToUTF8String(sql string) string {
-	if !s.encoding.Enabled() {
-		name := s.encoding.Name()
-		if len(name) > 0 {
-			s.AppendError(errors.Errorf("Encoding %s is not supported", name))
-			s.lastErrorAsWarn()
-		}
-		return sql
-	}
 	utf8Lit, err := s.encoding.Decode(nil, Slice(sql))
 	if err != nil {
 		s.AppendError(err)

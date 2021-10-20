@@ -97,6 +97,7 @@ var (
 	errInvalidType             = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
 	errNotAllowedCommand       = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
 	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
+	errAccessDeniedNoPassword  = dbterror.ClassServer.NewStd(errno.ErrAccessDeniedNoPassword)
 	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
 	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
 	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
@@ -405,7 +406,20 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 
 		clientConn := s.newConn(conn)
 		if isUnixSocket {
+
+			uc, ok := conn.(*net.UnixConn)
+			if !ok {
+				logutil.BgLogger().Error("Expected UNIX socket, but got something else")
+				return
+			}
+
 			clientConn.isUnixSocket = true
+			clientConn.peerHost = "localhost"
+			clientConn.socketCredUID, err = linux.GetSockUID(*uc)
+			if err != nil {
+				logutil.BgLogger().Error("Failed to get UNIX socket peer credentials", zap.Error(err))
+				return
+			}
 		}
 
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
