@@ -398,9 +398,9 @@ func CETrace(sc *stmtctx.StatementContext, tableID int64, colNames []string, ran
 		}
 	}
 	if allPoint {
-		tp = tp + "-point"
+		tp = tp + "-Point"
 	} else {
-		tp = tp + "-range"
+		tp = tp + "-Range"
 	}
 	CERecord := trace.CETraceRecord{
 		TableID:  tableID,
