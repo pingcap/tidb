@@ -412,8 +412,16 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			err = w.deleteRange(w.ddlJobCtx, job)
 		}
 	}
-	if job.Type == model.ActionRecoverTable {
+
+	switch job.Type {
+	case model.ActionRecoverTable:
 		err = finishRecoverTable(w, job)
+	case model.ActionCreateTables:
+		if job.IsCancelled() {
+			// it may be too large that it can not be added to the history queue, too
+			// delete its arguments
+			job.Args = nil
+		}
 	}
 	if err != nil {
 		return errors.Trace(err)
