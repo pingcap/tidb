@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
-	"github.com/pingcap/tidb/util/testutil"
 	"math"
 	"strconv"
 	"strings"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 // mockSessionManager is a mocked session manager which is used for test.
@@ -526,7 +526,7 @@ func (s *testPrepareSerialSuite) runSuiteCase(c *C, caseName string) {
 		SQL string
 	}
 	var output []struct {
-		SQL string
+		SQL    string
 		Result []string
 	}
 
