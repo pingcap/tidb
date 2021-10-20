@@ -1,0 +1,384 @@
+[
+  {
+    "name": "TestIssue28259",
+    "cases": [
+      {
+        "SQL": "use test"
+      },
+      {
+        "SQL": "set @@tidb_enable_collect_execution_info=0"
+      },
+      {
+        "SQL": "drop table if exists UK_GCOL_VIRTUAL_18588"
+      },
+      {
+        "SQL": "CREATE TABLE `UK_GCOL_VIRTUAL_18588` (`COL1` bigint(20), UNIQUE KEY `UK_COL1` (`COL1`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+      },
+      {
+        "SQL": "insert into UK_GCOL_VIRTUAL_18588 values('8502658334322817163')"
+      },
+      {
+        "SQL": "prepare stmt from 'select col1 from UK_GCOL_VIRTUAL_18588 where col1 between ? and ? or col1 < ?'"
+      },
+      {
+        "SQL": "set @a=5516958330762833919, @b=8551969118506051323, @c=2887622822023883594"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c"
+      },
+      {
+        "SQL": "explain for connection"
+      },
+      {
+        "SQL": "set @a=-1696020282760139948, @b=-2619168038882941276, @c=-4004648990067362699"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c"
+      },
+      {
+        "SQL": "select @@last_plan_from_cache"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c"
+      },
+      {
+        "SQL": "explain for connection"
+      },
+      {
+        "SQL": "explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) where col1 between -1696020282760139948 and -2619168038882941276 or col1 < -4004648990067362699"
+      },
+      {
+        "SQL": "explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) where col1 between 5516958330762833919 and 8551969118506051323 or col1 < 2887622822023883594"
+      },
+      {
+        "SQL": "drop table if exists t"
+      },
+      {
+        "SQL": "CREATE TABLE t (a int, b int, index idx(a, b))"
+      },
+      {
+        "SQL": "insert into t values(1, 0)"
+      },
+      {
+        "SQL": "prepare stmt from 'select a from t where (a between ? and ? or a < ?) and b < 1'"
+      },
+      {
+        "SQL": "set @a=0, @b=2, @c=2"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c"
+      },
+      {
+        "SQL": "explain for connection"
+      },
+      {
+        "SQL": "set @a=2, @b=1, @c=1"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c"
+      },
+      {
+        "SQL": "select @@last_plan_from_cache"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c"
+      },
+      {
+        "SQL": "explain for connection"
+      },
+      {
+        "SQL": "explain format = 'brief' select a from t use index(idx) where (a between 0 and 2 or a < 2) and b < 1"
+      },
+      {
+        "SQL": "explain format = 'brief' select a from t use index(idx) where (a between 2 and 1 or a < 1) and b < 1"
+      },
+      {
+        "SQL": "drop table if exists t"
+      },
+      {
+        "SQL": "CREATE TABLE t (a int, b int, index idx(a))"
+      },
+      {
+        "SQL": "insert into t values(1, 0)"
+      },
+      {
+        "SQL": "prepare stmt from 'select /*+ USE_INDEX(t, idx) */ a from t where (a between ? and ? or a < ?) and b < 1'"
+      },
+      {
+        "SQL": "set @a=0, @b=2, @c=2"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c"
+      },
+      {
+        "SQL": "explain for connection"
+      },
+      {
+        "SQL": "set @a=2, @b=1, @c=1"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c"
+      },
+      {
+        "SQL": "select @@last_plan_from_cache"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c"
+      },
+      {
+        "SQL": "explain for connection"
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ USE_INDEX(t, idx) */ a from t use index(idx) where (a between 0 and 2 or a < 2) and b < 1"
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ USE_INDEX(t, idx) */ a from t use index(idx) where (a between 2 and 1 or a < 1) and b < 1"
+      },
+      {
+        "SQL": "drop table if exists t;"
+      },
+      {
+        "SQL": "CREATE TABLE t (a int PRIMARY KEY CLUSTERED, b int);"
+      },
+      {
+        "SQL": "insert into t values(1, 0);"
+      },
+      {
+        "SQL": "prepare stmt from 'select a from t where (a between ? and ? or a < ?) and b < 1'"
+      },
+      {
+        "SQL": "set @a=0, @b=2, @c=2;"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c"
+      },
+      {
+        "SQL": "explain for connection"
+      },
+      {
+        "SQL": "set @a=2, @b=1, @c=1"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c"
+      },
+      {
+        "SQL": "select @@last_plan_from_cache"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c"
+      },
+      {
+        "SQL": "explain for connection"
+      },
+      {
+        "SQL": "explain format = 'brief' select a from t where (a between 0 and 2 or a < 2) and b < 1"
+      },
+      {
+        "SQL": "explain format = 'brief' select a from t where (a between 2 and 1 or a < 1) and b < 1"
+      },
+      {
+        "SQL": "drop table if exists t"
+      },
+      {
+        "SQL": "CREATE TABLE t (a int primary key, b int, c int, d int)"
+      },
+      {
+        "SQL": "prepare stmt from 'select * from t where ((a > ? and a < 5 and b > 2) or (a > ? and a < 10 and c > 3)) and d = 5;';"
+      },
+      {
+        "SQL": "set @a=1, @b=8"
+      },
+      {
+        "SQL": "execute stmt using @a,@b"
+      },
+      {
+        "SQL": "explain for connection"
+      }
+    ]
+  },
+  {
+    "name": "TestIssue28696",
+    "cases": [
+      {
+        "SQL": "use test"
+      },
+      {
+        "SQL": "set @@tidb_enable_collect_execution_info=0"
+      },
+      {
+        "SQL": "drop table if exists t1"
+      },
+      {
+        "SQL": "create table t1(a int primary key, b varchar(255), c int)"
+      },
+      {
+        "SQL": "create unique index b on t1(b(3))"
+      },
+      {
+        "SQL": "insert into t1 values(1,'abcdfsafd',1),(2,'addfdsafd',2),(3,'ddcdsaf',3),(4,'bbcsa',4)"
+      },
+      {
+        "SQL": "prepare stmt from \"select a from t1 where b = ?\""
+      },
+      {
+        "SQL": "set @a='bbcsa'"
+      },
+      {
+        "SQL": "execute stmt using @a"
+      },
+      {
+        "SQL": "explain for connection"
+      },
+      {
+        "SQL": "explain format = 'brief' select a from t1 where b = 'bbcsa'"
+      }
+    ]
+  },
+  {
+    "name": "TestIssue28710",
+    "cases": [
+      {
+        "SQL": "use test"
+      },
+      {
+        "SQL": "set @@tidb_enable_collect_execution_info=0"
+      },
+      {
+        "SQL": "drop table if exists IDT_MULTI15858STROBJSTROBJ"
+      },
+      {
+        "SQL": "CREATE TABLE `IDT_MULTI15858STROBJSTROBJ` (`COL1` enum('aa','bb','cc','dd','ee','ff','gg','hh','ii','mm') DEFAULT NULL, `COL2` int(41) DEFAULT NULL, `COL3` datetime DEFAULT NULL, KEY `U_M_COL4` (`COL1`,`COL2`), KEY `U_M_COL5` (`COL3`,`COL2`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+      },
+      {
+        "SQL": "insert into IDT_MULTI15858STROBJSTROBJ values('aa', 1333053589,'1037-12-26 01:38:52')"
+      },
+      {
+        "SQL": "set tidb_enable_index_merge=on"
+      },
+      {
+        "SQL": "prepare stmt from 'select * from IDT_MULTI15858STROBJSTROBJ where col2 <> ? and col1 not in (?, ?, ?) or col3 = ? order by 2;'"
+      },
+      {
+        "SQL": "set @a=2134549621, @b='aa', @c='aa', @d='aa', @e='9941-07-07 01:08:48'"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c,@d,@e"
+      },
+      {
+        "SQL": "set @a=-2144294194, @b='mm', @c='mm', @d='mm', @e='0198-09-29 20:19:49'"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c,@d,@e"
+      },
+      {
+        "SQL": "select @@last_plan_from_cache"
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c,@d,@e"
+      },
+      {
+        "SQL": "explain for connection"
+      },
+      {
+        "SQL": "drop table if exists t"
+      },
+      {
+        "SQL": "set @@tidb_enable_clustered_index = 1"
+      },
+      {
+        "SQL": "create table t(a int, b int, c int, primary key(a), index idx_b(b))"
+      },
+      {
+        "SQL": "prepare stmt from 'select * from t where ((a > ? and a < ?) or b > 1) and c > 1;'"
+      },
+      {
+        "SQL": "set @a = 0, @b = 3"
+      },
+      {
+        "SQL": "execute stmt using @a, @b"
+      },
+      {
+        "SQL": "explain for connection"
+      }
+    ]
+  },
+  {
+    "name": "TestExpressionIndexPreparePlanCache",
+    "cases": [
+      {
+        "SQL": "use test"
+      },
+      {
+        "SQL": "set @@tidb_enable_collect_execution_info=0"
+      },
+      {
+        "SQL": "drop table if exists t"
+      },
+      {
+        "SQL": "create table t(a int, b int, key ((a+b)))"
+      },
+      {
+        "SQL": "prepare stmt from 'select * from t where a+b = ?'"
+      },
+      {
+        "SQL": "set @a = 123"
+      },
+      {
+        "SQL": "execute stmt using @a"
+      },
+      {
+        "SQL": "explain for connection"
+      }
+    ]
+  },
+  {
+    "name": "TestPointGetUserVarPlanCache",
+    "cases": [
+      {
+        "SQL": "use test"
+      },
+      {
+        "SQL": "set @@tidb_enable_collect_execution_info=0"
+      },
+      {
+        "SQL": "drop table if exists t1"
+      },
+      {
+        "SQL": "CREATE TABLE t1 (a BIGINT, b VARCHAR(40), PRIMARY KEY (a, b))"
+      },
+      {
+        "SQL": "INSERT INTO t1 VALUES (1,'3'),(2,'4')"
+      },
+      {
+        "SQL": "drop table if exists t2"
+      },
+      {
+        "SQL": "CREATE TABLE t2 (a BIGINT, b VARCHAR(40), UNIQUE KEY idx_a (a))"
+      },
+      {
+        "SQL": "INSERT INTO t2 VALUES (1,'1'),(2,'2')"
+      },
+      {
+        "SQL": "prepare stmt from 'select * from t1, t2 where t1.a = t2.a and t2.a = ?'"
+      },
+      {
+        "SQL": "set @a=1"
+      },
+      {
+        "SQL": "execute stmt using @a"
+      },
+      {
+        "SQL": "explain for connection"
+      },
+      {
+        "SQL": "set @a=2"
+      },
+      {
+        "SQL": "execute stmt using @a"
+      },
+      {
+        "SQL": "explain for connection"
+      }
+    ]
+  }
+]

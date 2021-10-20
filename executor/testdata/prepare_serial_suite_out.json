@@ -1,0 +1,664 @@
+[
+  {
+    "Name": "TestIssue28259",
+    "Cases": [
+      {
+        "SQL": "use test",
+        "Result": null
+      },
+      {
+        "SQL": "set @@tidb_enable_collect_execution_info=0",
+        "Result": null
+      },
+      {
+        "SQL": "drop table if exists UK_GCOL_VIRTUAL_18588",
+        "Result": null
+      },
+      {
+        "SQL": "CREATE TABLE `UK_GCOL_VIRTUAL_18588` (`COL1` bigint(20), UNIQUE KEY `UK_COL1` (`COL1`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+        "Result": null
+      },
+      {
+        "SQL": "insert into UK_GCOL_VIRTUAL_18588 values('8502658334322817163')",
+        "Result": null
+      },
+      {
+        "SQL": "prepare stmt from 'select col1 from UK_GCOL_VIRTUAL_18588 where col1 between ? and ? or col1 < ?'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=5516958330762833919, @b=8551969118506051323, @c=2887622822023883594",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c",
+        "Result": [
+          "8502658334322817163"
+        ]
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "IndexReader_7 0.00 root  index:Selection_6",
+          "└─Selection_6 0.00 cop[tikv]  or(and(ge(test.uk_gcol_virtual_18588.col1, 5516958330762833919), le(test.uk_gcol_virtual_18588.col1, 8551969118506051323)), lt(test.uk_gcol_virtual_18588.col1, 2887622822023883594))",
+          "  └─IndexRangeScan_5 3573.33 cop[tikv] table:uk_gcol_virtual_18588, index:uk_col1(col1) range:[-inf,2887622822023883594), [5516958330762833919,8551969118506051323], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "set @a=-1696020282760139948, @b=-2619168038882941276, @c=-4004648990067362699",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c",
+        "Result": null
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "IndexReader_7 0.00 root  index:Selection_6",
+          "└─Selection_6 0.00 cop[tikv]  or(and(ge(test.uk_gcol_virtual_18588.col1, -1696020282760139948), le(test.uk_gcol_virtual_18588.col1, -2619168038882941276)), lt(test.uk_gcol_virtual_18588.col1, -4004648990067362699))",
+          "  └─IndexFullScan_5 3573.33 cop[tikv] table:uk_gcol_virtual_18588, index:uk_col1(col1) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) where col1 between -1696020282760139948 and -2619168038882941276 or col1 < -4004648990067362699",
+        "Result": [
+          "IndexReader 3323.33 root  index:Selection",
+          "└─Selection 3323.33 cop[tikv]  or(and(ge(test.uk_gcol_virtual_18588.col1, -1696020282760139948), le(test.uk_gcol_virtual_18588.col1, -2619168038882941276)), lt(test.uk_gcol_virtual_18588.col1, -4004648990067362699))",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:uk_gcol_virtual_18588, index:uk_col1(col1) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) where col1 between 5516958330762833919 and 8551969118506051323 or col1 < 2887622822023883594",
+        "Result": [
+          "IndexReader 3573.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3573.33 cop[tikv] table:uk_gcol_virtual_18588, index:uk_col1(col1) range:[-inf,2887622822023883594), [5516958330762833919,8551969118506051323], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "drop table if exists t",
+        "Result": null
+      },
+      {
+        "SQL": "CREATE TABLE t (a int, b int, index idx(a, b))",
+        "Result": null
+      },
+      {
+        "SQL": "insert into t values(1, 0)",
+        "Result": null
+      },
+      {
+        "SQL": "prepare stmt from 'select a from t where (a between ? and ? or a < ?) and b < 1'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=0, @b=2, @c=2",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "Projection_4 1104.45 root  test.t.a",
+          "└─IndexReader_7 1104.45 root  index:Selection_6",
+          "  └─Selection_6 1104.45 cop[tikv]  lt(test.t.b, 1), or(and(ge(test.t.a, 0), le(test.t.a, 2)), lt(test.t.a, 2))",
+          "    └─IndexRangeScan_5 3323.33 cop[tikv] table:t, index:idx(a, b) range:[-inf,2], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "set @a=2, @b=1, @c=1",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c",
+        "Result": null
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "Projection_4 1104.45 root  test.t.a",
+          "└─IndexReader_7 1104.45 root  index:Selection_6",
+          "  └─Selection_6 1104.45 cop[tikv]  lt(test.t.b, 1), or(and(ge(test.t.a, 2), le(test.t.a, 1)), lt(test.t.a, 1))",
+          "    └─IndexFullScan_5 3323.33 cop[tikv] table:t, index:idx(a, b) keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select a from t use index(idx) where (a between 0 and 2 or a < 2) and b < 1",
+        "Result": [
+          "Projection 1104.45 root  test.t.a",
+          "└─IndexReader 1104.45 root  index:Selection",
+          "  └─Selection 1104.45 cop[tikv]  lt(test.t.b, 1)",
+          "    └─IndexRangeScan 3323.33 cop[tikv] table:t, index:idx(a, b) range:[-inf,2], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select a from t use index(idx) where (a between 2 and 1 or a < 1) and b < 1",
+        "Result": [
+          "Projection 1104.45 root  test.t.a",
+          "└─IndexReader 1104.45 root  index:Selection",
+          "  └─Selection 1104.45 cop[tikv]  lt(test.t.b, 1)",
+          "    └─IndexRangeScan 3323.33 cop[tikv] table:t, index:idx(a, b) range:[-inf,1), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "drop table if exists t",
+        "Result": null
+      },
+      {
+        "SQL": "CREATE TABLE t (a int, b int, index idx(a))",
+        "Result": null
+      },
+      {
+        "SQL": "insert into t values(1, 0)",
+        "Result": null
+      },
+      {
+        "SQL": "prepare stmt from 'select /*+ USE_INDEX(t, idx) */ a from t where (a between ? and ? or a < ?) and b < 1'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=0, @b=2, @c=2",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "Projection_4 1104.45 root  test.t.a",
+          "└─IndexLookUp_8 1104.45 root  ",
+          "  ├─IndexRangeScan_5(Build) 3323.33 cop[tikv] table:t, index:idx(a) range:[-inf,2], keep order:false, stats:pseudo",
+          "  └─Selection_7(Probe) 1104.45 cop[tikv]  lt(test.t.b, 1), or(and(ge(test.t.a, 0), le(test.t.a, 2)), lt(test.t.a, 2))",
+          "    └─TableRowIDScan_6 3323.33 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "set @a=2, @b=1, @c=1",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c",
+        "Result": null
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "Projection_4 1104.45 root  test.t.a",
+          "└─IndexLookUp_8 1104.45 root  ",
+          "  ├─IndexFullScan_5(Build) 3323.33 cop[tikv] table:t, index:idx(a) keep order:false, stats:pseudo",
+          "  └─Selection_7(Probe) 1104.45 cop[tikv]  lt(test.t.b, 1), or(and(ge(test.t.a, 2), le(test.t.a, 1)), lt(test.t.a, 1))",
+          "    └─TableRowIDScan_6 3323.33 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ USE_INDEX(t, idx) */ a from t use index(idx) where (a between 0 and 2 or a < 2) and b < 1",
+        "Result": [
+          "Projection 1104.45 root  test.t.a",
+          "└─IndexLookUp 1104.45 root  ",
+          "  ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t, index:idx(a) range:[-inf,2], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 1104.45 cop[tikv]  lt(test.t.b, 1)",
+          "    └─TableRowIDScan 3323.33 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ USE_INDEX(t, idx) */ a from t use index(idx) where (a between 2 and 1 or a < 1) and b < 1",
+        "Result": [
+          "Projection 1104.45 root  test.t.a",
+          "└─IndexLookUp 1104.45 root  ",
+          "  ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t, index:idx(a) range:[-inf,1), keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 1104.45 cop[tikv]  lt(test.t.b, 1)",
+          "    └─TableRowIDScan 3323.33 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "drop table if exists t;",
+        "Result": null
+      },
+      {
+        "SQL": "CREATE TABLE t (a int PRIMARY KEY CLUSTERED, b int);",
+        "Result": null
+      },
+      {
+        "SQL": "insert into t values(1, 0);",
+        "Result": null
+      },
+      {
+        "SQL": "prepare stmt from 'select a from t where (a between ? and ? or a < ?) and b < 1'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=0, @b=2, @c=2;",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "Projection_4 0.66 root  test.t.a",
+          "└─TableReader_7 0.66 root  data:Selection_6",
+          "  └─Selection_6 0.66 cop[tikv]  lt(test.t.b, 1), or(and(ge(test.t.a, 0), le(test.t.a, 2)), lt(test.t.a, 2))",
+          "    └─TableRangeScan_5 3333.33 cop[tikv] table:t range:[-inf,2], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "set @a=2, @b=1, @c=1",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c",
+        "Result": null
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "Projection_4 0.66 root  test.t.a",
+          "└─TableReader_7 0.66 root  data:Selection_6",
+          "  └─Selection_6 0.66 cop[tikv]  lt(test.t.b, 1), or(and(ge(test.t.a, 2), le(test.t.a, 1)), lt(test.t.a, 1))",
+          "    └─TableRangeScan_5 3333.33 cop[tikv] table:t range:[-inf,1), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select a from t where (a between 0 and 2 or a < 2) and b < 1",
+        "Result": [
+          "Projection 0.66 root  test.t.a",
+          "└─TableReader 0.66 root  data:Selection",
+          "  └─Selection 0.66 cop[tikv]  lt(test.t.b, 1)",
+          "    └─TableRangeScan 3333.33 cop[tikv] table:t range:[-inf,2], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select a from t where (a between 2 and 1 or a < 1) and b < 1",
+        "Result": [
+          "Projection 0.33 root  test.t.a",
+          "└─TableReader 0.33 root  data:Selection",
+          "  └─Selection 0.33 cop[tikv]  lt(test.t.b, 1)",
+          "    └─TableRangeScan 3333.33 cop[tikv] table:t range:[-inf,1), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "drop table if exists t",
+        "Result": null
+      },
+      {
+        "SQL": "CREATE TABLE t (a int primary key, b int, c int, d int)",
+        "Result": null
+      },
+      {
+        "SQL": "prepare stmt from 'select * from t where ((a > ? and a < 5 and b > 2) or (a > ? and a < 10 and c > 3)) and d = 5;';",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1, @b=8",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a,@b",
+        "Result": null
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "TableReader_7 0.00 root  data:Selection_6",
+          "└─Selection_6 0.00 cop[tikv]  eq(test.t.d, 5), or(and(gt(test.t.a, 1), and(lt(test.t.a, 5), gt(test.t.b, 2))), and(gt(test.t.a, 8), and(lt(test.t.a, 10), gt(test.t.c, 3)))), or(and(gt(test.t.a, 1), lt(test.t.a, 5)), and(gt(test.t.a, 8), lt(test.t.a, 10)))",
+          "  └─TableRangeScan_5 6.00 cop[tikv] table:t range:(1,5), (8,10), keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue28696",
+    "Cases": [
+      {
+        "SQL": "use test",
+        "Result": null
+      },
+      {
+        "SQL": "set @@tidb_enable_collect_execution_info=0",
+        "Result": null
+      },
+      {
+        "SQL": "drop table if exists t1",
+        "Result": null
+      },
+      {
+        "SQL": "create table t1(a int primary key, b varchar(255), c int)",
+        "Result": null
+      },
+      {
+        "SQL": "create unique index b on t1(b(3))",
+        "Result": null
+      },
+      {
+        "SQL": "insert into t1 values(1,'abcdfsafd',1),(2,'addfdsafd',2),(3,'ddcdsaf',3),(4,'bbcsa',4)",
+        "Result": null
+      },
+      {
+        "SQL": "prepare stmt from \"select a from t1 where b = ?\"",
+        "Result": null
+      },
+      {
+        "SQL": "set @a='bbcsa'",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a",
+        "Result": [
+          "4"
+        ]
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "Projection_4 1.00 root  test.t1.a",
+          "└─IndexLookUp_8 1.00 root  ",
+          "  ├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t1, index:b(b) range:[\"bbc\",\"bbc\"], keep order:false, stats:pseudo",
+          "  └─Selection_7(Probe) 1.00 cop[tikv]  eq(test.t1.b, \"bbcsa\")",
+          "    └─TableRowIDScan_6 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select a from t1 where b = 'bbcsa'",
+        "Result": [
+          "Projection 1.00 root  test.t1.a",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, index:b(b) range:[\"bbc\",\"bbc\"], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  eq(test.t1.b, \"bbcsa\")",
+          "    └─TableRowIDScan 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue28710",
+    "Cases": [
+      {
+        "SQL": "use test",
+        "Result": null
+      },
+      {
+        "SQL": "set @@tidb_enable_collect_execution_info=0",
+        "Result": null
+      },
+      {
+        "SQL": "drop table if exists IDT_MULTI15858STROBJSTROBJ",
+        "Result": null
+      },
+      {
+        "SQL": "CREATE TABLE `IDT_MULTI15858STROBJSTROBJ` (`COL1` enum('aa','bb','cc','dd','ee','ff','gg','hh','ii','mm') DEFAULT NULL, `COL2` int(41) DEFAULT NULL, `COL3` datetime DEFAULT NULL, KEY `U_M_COL4` (`COL1`,`COL2`), KEY `U_M_COL5` (`COL3`,`COL2`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+        "Result": null
+      },
+      {
+        "SQL": "insert into IDT_MULTI15858STROBJSTROBJ values('aa', 1333053589,'1037-12-26 01:38:52')",
+        "Result": null
+      },
+      {
+        "SQL": "set tidb_enable_index_merge=on",
+        "Result": null
+      },
+      {
+        "SQL": "prepare stmt from 'select * from IDT_MULTI15858STROBJSTROBJ where col2 <> ? and col1 not in (?, ?, ?) or col3 = ? order by 2;'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=2134549621, @b='aa', @c='aa', @d='aa', @e='9941-07-07 01:08:48'",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c,@d,@e",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=-2144294194, @b='mm', @c='mm', @d='mm', @e='0198-09-29 20:19:49'",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c,@d,@e",
+        "Result": [
+          "aa 1333053589 1037-12-26 01:38:52"
+        ]
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "execute stmt using @a,@b,@c,@d,@e",
+        "Result": [
+          "aa 1333053589 1037-12-26 01:38:52"
+        ]
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "Sort_5 2392.92 root  test.idt_multi15858strobjstrobj.col2",
+          "└─IndexMerge_15 2392.92 root  ",
+          "  ├─Selection_12(Build) 2385.31 cop[tikv]  ne(test.idt_multi15858strobjstrobj.col2, -2144294194)",
+          "  │ └─IndexRangeScan_11 3583.33 cop[tikv] table:idt_multi15858strobjstrobj, index:u_m_col4(col1, col2) range:(NULL,\"mm\"), (\"mm\",+inf], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan_13(Build) 10.00 cop[tikv] table:idt_multi15858strobjstrobj, index:u_m_col5(col3, col2) range:[0198-09-29 20:19:49,0198-09-29 20:19:49], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_14(Probe) 2392.92 cop[tikv] table:idt_multi15858strobjstrobj keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "drop table if exists t",
+        "Result": null
+      },
+      {
+        "SQL": "set @@tidb_enable_clustered_index = 1",
+        "Result": null
+      },
+      {
+        "SQL": "create table t(a int, b int, c int, primary key(a), index idx_b(b))",
+        "Result": null
+      },
+      {
+        "SQL": "prepare stmt from 'select * from t where ((a > ? and a < ?) or b > 1) and c > 1;'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a = 0, @b = 3",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "IndexMerge_12 1111.78 root  ",
+          "├─TableRangeScan_8(Build) 3.00 cop[tikv] table:t range:(0,3), keep order:false, stats:pseudo",
+          "├─IndexRangeScan_9(Build) 3333.33 cop[tikv] table:t, index:idx_b(b) range:(1,+inf], keep order:false, stats:pseudo",
+          "└─Selection_11(Probe) 1111.78 cop[tikv]  gt(test.t.c, 1)",
+          "  └─TableRowIDScan_10 3335.33 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestExpressionIndexPreparePlanCache",
+    "Cases": [
+      {
+        "SQL": "use test",
+        "Result": null
+      },
+      {
+        "SQL": "set @@tidb_enable_collect_execution_info=0",
+        "Result": null
+      },
+      {
+        "SQL": "drop table if exists t",
+        "Result": null
+      },
+      {
+        "SQL": "create table t(a int, b int, key ((a+b)))",
+        "Result": null
+      },
+      {
+        "SQL": "prepare stmt from 'select * from t where a+b = ?'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a = 123",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a",
+        "Result": null
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "Projection_4 10.00 root  test.t.a, test.t.b",
+          "└─IndexLookUp_10 10.00 root  ",
+          "  ├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:t, index:expression_index(`a` + `b`) range:[123,123], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPointGetUserVarPlanCache",
+    "Cases": [
+      {
+        "SQL": "use test",
+        "Result": null
+      },
+      {
+        "SQL": "set @@tidb_enable_collect_execution_info=0",
+        "Result": null
+      },
+      {
+        "SQL": "drop table if exists t1",
+        "Result": null
+      },
+      {
+        "SQL": "CREATE TABLE t1 (a BIGINT, b VARCHAR(40), PRIMARY KEY (a, b))",
+        "Result": null
+      },
+      {
+        "SQL": "INSERT INTO t1 VALUES (1,'3'),(2,'4')",
+        "Result": null
+      },
+      {
+        "SQL": "drop table if exists t2",
+        "Result": null
+      },
+      {
+        "SQL": "CREATE TABLE t2 (a BIGINT, b VARCHAR(40), UNIQUE KEY idx_a (a))",
+        "Result": null
+      },
+      {
+        "SQL": "INSERT INTO t2 VALUES (1,'1'),(2,'2')",
+        "Result": null
+      },
+      {
+        "SQL": "prepare stmt from 'select * from t1, t2 where t1.a = t2.a and t2.a = ?'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a",
+        "Result": [
+          "1 3 1 1"
+        ]
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b",
+          "└─IndexJoin_26 1.00 root  inner join, inner:IndexLookUp_25, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "  ├─IndexReader_52(Build) 0.00 root  index:Selection_51",
+          "  │ └─Selection_51 0.00 cop[tikv]  eq(test.t1.a, 1)",
+          "  │   └─IndexRangeScan_50 10.00 cop[tikv] table:t1, index:PRIMARY(a, b) range:[1,1], keep order:false, stats:pseudo",
+          "  └─IndexLookUp_25(Probe) 0.10 root  ",
+          "    ├─Selection_24(Build) 0.10 cop[tikv]  eq(test.t2.a, 1), not(isnull(test.t2.a))",
+          "    │ └─IndexRangeScan_22 1.00 cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "    └─TableRowIDScan_23(Probe) 0.10 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "set @a=2",
+        "Result": null
+      },
+      {
+        "SQL": "execute stmt using @a",
+        "Result": [
+          "2 4 2 2"
+        ]
+      },
+      {
+        "SQL": "explain for connection",
+        "Result": [
+          "Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b",
+          "└─IndexJoin_26 1.00 root  inner join, inner:IndexLookUp_25, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "  ├─IndexReader_52(Build) 0.00 root  index:Selection_51",
+          "  │ └─Selection_51 0.00 cop[tikv]  eq(test.t1.a, 2)",
+          "  │   └─IndexRangeScan_50 10.00 cop[tikv] table:t1, index:PRIMARY(a, b) range:[2,2], keep order:false, stats:pseudo",
+          "  └─IndexLookUp_25(Probe) 0.10 root  ",
+          "    ├─Selection_24(Build) 0.10 cop[tikv]  eq(test.t2.a, 2), not(isnull(test.t2.a))",
+          "    │ └─IndexRangeScan_22 1.00 cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "    └─TableRowIDScan_23(Probe) 0.10 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]
