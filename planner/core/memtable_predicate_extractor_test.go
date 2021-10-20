@@ -1363,15 +1363,15 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where is_learner in(3,4)",
-			isLearners:     []bool{false, false},
+			isLearners:     []bool{false},
 			isLeaders:      []bool{false, true},
 			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
 		},
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where is_learner in(3,4) and is_leader in(0,1,true,false,3,4)",
 			hotRegionTypes: set.NewStringSet(plannercore.HotRegionTypeRead, plannercore.HotRegionTypeWrite),
-			isLearners:     []bool{false, false},
-			isLeaders:      []bool{false, true, false, false},
+			isLearners:     []bool{false},
+			isLeaders:      []bool{false, true},
 		},
 		{
 			sql:         "select * from information_schema.tidb_hot_regions_history where is_learner=1 and is_learner=0",

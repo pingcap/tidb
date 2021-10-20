@@ -541,6 +541,24 @@ func (helper extractHelper) convertToTime(t int64) time.Time {
 	return time.Unix(0, t)
 }
 
+func (helper extractHelper) extractRoleBoolSliceFromUint64Slice(uint64Slice []uint64) []bool {
+	if len(uint64Slice) == 0 {
+		return []bool{false, true}
+	}
+	var res []bool
+	// use to keep res unique
+	b := make(map[bool]struct{}, 2)
+	for _, l := range uint64Slice {
+		tmpBool := (l == 1)
+		_, ok := b[tmpBool]
+		if !ok {
+			b[tmpBool] = struct{}{}
+			res = append(res, tmpBool)
+		}
+	}
+	return res
+}
+
 // ClusterTableExtractor is used to extract some predicates of cluster table.
 type ClusterTableExtractor struct {
 	extractHelper
@@ -748,7 +766,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	// Extract the `region_id/store_id/peer_id` columns.
+	// Extract the `region_id/store_id/peer_id` columns
 	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false)
 	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
 	remained, peerIDSkipRequest, peerIDs := e.extractCol(schema, names, remained, "peer_id", false)
@@ -758,7 +776,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 		return nil
 	}
 
-	// Extract the is_learner/is_leader columns.
+	// Extract the is_learner/is_leader columns
 	remained, isLearnerSkipRequest, isLearners := e.extractCol(schema, names, remained, "is_learner", false)
 	remained, isLeaderSkipRequest, isLeaders := e.extractCol(schema, names, remained, "is_leader", false)
 	isLearnersUint64, isLeadersUint64 := e.parseUint64(isLearners), e.parseUint64(isLeaders)
@@ -766,22 +784,11 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	if e.SkipRequest {
 		return nil
 	}
-	// Request all if no conditions
-	if len(isLearnersUint64) == 0 {
-		isLearnersUint64 = []uint64{0, 1}
-	}
-	if len(isLeadersUint64) == 0 {
-		isLeadersUint64 = []uint64{0, 1}
-	}
-	// Change uint to ture false slice
-	for _, l := range isLearnersUint64 {
-		e.IsLearners = append(e.IsLearners, l == 1)
-	}
-	for _, l := range isLeadersUint64 {
-		e.IsLeaders = append(e.IsLeaders, l == 1)
-	}
+	//
+	e.IsLearners = e.extractRoleBoolSliceFromUint64Slice(isLearnersUint64)
+	e.IsLeaders = e.extractRoleBoolSliceFromUint64Slice(isLeadersUint64)
 
-	// Extract the `type` column.
+	// Extract the `type` column
 	remained, typeSkipRequest, types := e.extractCol(schema, names, remained, "type", false)
 	e.HotRegionTypes = types
 	e.SkipRequest = typeSkipRequest
@@ -796,7 +803,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	}
 
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time", ctx.GetSessionVars().StmtCtx.TimeZone)
-	// The time unit for search hot regions is millisecond.
+	// The time unit for search hot regions is millisecond
 	startTime = startTime / int64(time.Millisecond)
 	endTime = endTime / int64(time.Millisecond)
 	e.StartTime = startTime
@@ -835,10 +842,10 @@ func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) strin
 		r.WriteString(fmt.Sprintf("peer_ids:[%s], ", extractStringFromUint64Slice(e.PeerIDs)))
 	}
 	if len(e.IsLearners) > 0 {
-		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromBoolSlice(e.IsLearners)))
+		r.WriteString(fmt.Sprintf("learner_roles:[%s], ", extractStringFromBoolSlice(e.IsLearners)))
 	}
 	if len(e.IsLeaders) > 0 {
-		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromBoolSlice(e.IsLeaders)))
+		r.WriteString(fmt.Sprintf("leader_roles:[%s], ", extractStringFromBoolSlice(e.IsLeaders)))
 	}
 	if len(e.HotRegionTypes) > 0 {
 		r.WriteString(fmt.Sprintf("hot_region_types:[%s], ", extractStringFromStringSet(e.HotRegionTypes)))
