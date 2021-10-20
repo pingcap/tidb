@@ -857,13 +857,13 @@ func (s *testPrepareSerialSuite) TestIssue28710(c *C) {
 	tkProcess := tk.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 6)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexMerge.*")
-	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
-	c.Assert(res.Rows()[3][4], Equals, "range:(NULL,\"mm\"), (\"mm\",+inf], keep order:false, stats:pseudo")
-	c.Assert(res.Rows()[4][0], Matches, ".*IndexRangeScan.*")
-	c.Assert(res.Rows()[4][4], Equals, "range:[0198-09-29 20:19:49,0198-09-29 20:19:49], keep order:false, stats:pseudo")
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows("Sort_5 2392.92 root  test.idt_multi15858strobjstrobj.col2",
+		"└─Selection_17 2392.92 root  or(and(ne(test.idt_multi15858strobjstrobj.col2, -2144294194), not(in(test.idt_multi15858strobjstrobj.col1, \"mm\", \"mm\", \"mm\"))), eq(test.idt_multi15858strobjstrobj.col3, 0198-09-29 20:19:49.000000))",
+		"  └─IndexMerge_16 2392.92 root  ",
+		"    ├─Selection_13(Build) 2385.31 cop[tikv]  ne(test.idt_multi15858strobjstrobj.col2, -2144294194)",
+		"    │ └─IndexRangeScan_12 3583.33 cop[tikv] table:IDT_MULTI15858STROBJSTROBJ, index:U_M_COL4(COL1, COL2) range:(NULL,\"mm\"), (\"mm\",+inf], keep order:false, stats:pseudo",
+		"    ├─IndexRangeScan_14(Build) 10.00 cop[tikv] table:IDT_MULTI15858STROBJSTROBJ, index:U_M_COL5(COL3, COL2) range:[0198-09-29 20:19:49,0198-09-29 20:19:49], keep order:false, stats:pseudo",
+		"    └─TableRowIDScan_15(Probe) 2392.92 cop[tikv] table:IDT_MULTI15858STROBJSTROBJ keep order:false, stats:pseudo"))
 
 	// test for cluster index in indexMerge
 	tk.MustExec("drop table if exists t;")
@@ -876,11 +876,10 @@ func (s *testPrepareSerialSuite) TestIssue28710(c *C) {
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 5)
-	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
-	c.Assert(res.Rows()[1][0], Matches, ".*TableRangeScan.*")
-	c.Assert(res.Rows()[1][4], Equals, "range:(0,3), keep order:false, stats:pseudo")
-	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
-	c.Assert(res.Rows()[2][4], Equals, "range:(1,+inf], keep order:false, stats:pseudo")
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows("Selection_14 3335.33 root  gt(test.t.c, 1), or(and(gt(test.t.a, 0), lt(test.t.a, 3)), gt(test.t.b, 1))",
+		"└─IndexMerge_13 1111.78 root  ",
+		"  ├─TableRangeScan_9(Build) 3.00 cop[tikv] table:t range:(0,3), keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan_10(Build) 3333.33 cop[tikv] table:t, index:idx_b(b) range:(1,+inf], keep order:false, stats:pseudo",
+		"  └─Selection_12(Probe) 1111.78 cop[tikv]  gt(test.t.c, 1)",
+		"    └─TableRowIDScan_11 3335.33 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
