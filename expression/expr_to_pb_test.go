@@ -22,10 +22,10 @@ import (
 	"github.com/gogo/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -609,6 +609,9 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	datetimeColumn := dg.genColumn(mysql.TypeDatetime, 6)
 	binaryStringColumn := dg.genColumn(mysql.TypeString, 7)
 	binaryStringColumn.RetType.Collate = charset.CollationBin
+	int32Column := dg.genColumn(mysql.TypeLong, 8)
+	float32Column := dg.genColumn(mysql.TypeFloat, 9)
+	enumColumn := dg.genColumn(mysql.TypeEnum, 10)
 
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	c.Assert(err, IsNil)
@@ -656,28 +659,31 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	validDecimalType := types.NewFieldType(mysql.TypeNewDecimal)
+	validDecimalType.Flen = 20
+	validDecimalType.Decimal = 2
 	// CastIntAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), intColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, intColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastRealAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), realColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, realColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastDecimalAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, decimalColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastStringAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), stringColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, stringColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastTimeAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), datetimeColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, datetimeColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
@@ -961,6 +967,36 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_StrToDateDatetime)
 	exprs = append(exprs, function)
 
+	// cast Int32 to Int32
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLong), int32Column)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast float32 to float32
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeFloat), float32Column)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// upper string
+	function, err = NewFunction(mock.NewContext(), ast.Upper, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ucase string
+	function, err = NewFunction(mock.NewContext(), ast.Ucase, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// lower string
+	function, err = NewFunction(mock.NewContext(), ast.Lower, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// lcase string
+	function, err = NewFunction(mock.NewContext(), ast.Lcase, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
 	c.Assert(canPush, Equals, true)
 
@@ -985,9 +1021,71 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// Cast to Int32: not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLong), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Cast to Float: not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeFloat), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Cast to invalid Decimal Type: not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast Int32 to UInt32
+	unsignedInt32Type := types.NewFieldType(mysql.TypeLong)
+	unsignedInt32Type.Flag = mysql.UnsignedFlag
+	function, err = NewFunction(mock.NewContext(), ast.Cast, unsignedInt32Type, int32Column)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast Enum as String : not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), enumColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiFlash)
 	c.Assert(len(pushed), Equals, 0)
 	c.Assert(len(remained), Equals, len(exprs))
+
+	pushed, remained = PushDownExprsWithExtraInfo(sc, exprs, client, kv.TiFlash, true)
+	c.Assert(len(pushed), Equals, 0)
+	c.Assert(len(remained), Equals, len(exprs))
+
+	exprs = exprs[:0]
+	// cast Enum as UInt : supported
+	unsignedInt := types.NewFieldType(mysql.TypeLonglong)
+	unsignedInt.Flag = mysql.UnsignedFlag
+	function, err = NewFunction(mock.NewContext(), ast.Cast, unsignedInt, enumColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast Enum as Int : supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), enumColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast Enum as Double : supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDouble), enumColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast Enum as Decimal : supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, enumColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
+	c.Assert(len(pushed), Equals, len(exprs))
+	c.Assert(len(remained), Equals, 0)
+
+	pushed, remained = PushDownExprsWithExtraInfo(sc, exprs, client, kv.TiFlash, true)
+	c.Assert(len(pushed), Equals, len(exprs))
+	c.Assert(len(remained), Equals, 0)
 }
 
 func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
