@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
@@ -255,17 +256,20 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	tk.MustExec("create placement policy x primary_region=\"cn-east-1\" regions=\"cn-east-1,cn-east\"")
 	defer tk.MustExec("drop placement policy if exists x")
 
+	policy, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("x"))
+	c.Assert(ok, IsTrue)
+
 	// test for normal cases
 	tk.MustExec("alter placement policy x PRIMARY_REGION=\"bj\" REGIONS=\"bj,sh\"")
 	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj,sh\""))
-	tk.MustQuery("select * from information_schema.placement_rules where policy_name = 'x'").Check(testkit.Rows("3 def x <nil> <nil> <nil> bj bj,sh      0 0"))
+	tk.MustQuery("select * from information_schema.placement_rules where policy_name = 'x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x <nil> <nil> <nil> bj bj,sh      0 0"))
 
 	tk.MustExec("alter placement policy x " +
 		"PRIMARY_REGION=\"bj\" " +
 		"REGIONS=\"bj\" " +
 		"SCHEDULE=\"EVEN\"")
 	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj\" SCHEDULE=\"EVEN\""))
-	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_RULES WHERE POLICY_NAME='x'").Check(testkit.Rows("3 def x <nil> <nil> <nil> bj bj     EVEN 0 0"))
+	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_RULES WHERE POLICY_NAME='x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x <nil> <nil> <nil> bj bj     EVEN 0 0"))
 
 	tk.MustExec("alter placement policy x " +
 		"LEADER_CONSTRAINTS=\"[+region=us-east-1]\" " +
