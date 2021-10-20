@@ -1066,6 +1066,7 @@ func (c *Column) MemoryUsage() (sum int64) {
 var HistogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
 
 // IsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
+// as need histogram.
 func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 	if collPseudo && c.NotAccurate() {
 		return true
