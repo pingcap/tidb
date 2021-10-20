@@ -17,6 +17,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	handle2 "github.com/pingcap/tidb/planner/trace/handle"
 	"math/rand"
 	"strconv"
 	"sync"
@@ -44,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/planner/trace"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -87,7 +87,7 @@ type Domain struct {
 	statsUpdating        sync2.AtomicInt32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
-	OptTraceHandle       *trace.Handle
+	OptTraceHandle       *handle2.Handle
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -1143,39 +1143,14 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 }
 
 func (do *Domain) OptimizerTraceWorker(ctx sessionctx.Context) {
-	h := trace.NewHandle(ctx)
+	h := handle2.NewHandle(ctx)
 	do.OptTraceHandle = h
 	go func() {
 		for {
 			select {
-			case received := <-h.RecordCh:
-				records, ok := received.([]interface{})
-				if !ok {
-					logutil.BgLogger().Warn("[CE Trace] channel receive invalid records",
-						zap.String("received", fmt.Sprintf("%v", received)))
-				}
-				for _, recI := range records {
-					rec, ok := recI.(*trace.CETraceRecord)
-					if !ok {
-						logutil.BgLogger().Warn("[CE Trace] channel receive invalid record",
-							zap.String("received", fmt.Sprintf("%v", recI)))
-					}
-					is := h.Session.GetInfoSchema().(infoschema.InfoSchema)
-					tbl, ok := is.TableByID(rec.TableID)
-					if !ok {
-						logutil.BgLogger().Warn("[CE Trace] Failed to find table in infoschema",
-							zap.Int64("table id", rec.TableID))
-					}
-					tblInfo := tbl.Meta()
-					tableName := tblInfo.Name.O
-					dbInfo, ok := is.SchemaByTable(tblInfo)
-					if !ok {
-						logutil.BgLogger().Warn("[CE Trace] Failed to find db in infoschema",
-							zap.Int64("table id", rec.TableID),
-							zap.String("table name", tableName))
-					}
-					dbName := dbInfo.Name.O
-					h.Run(rec, dbName, tableName)
+			case records := <-h.RecordCh:
+				for _, record := range records {
+					h.Run(record)
 				}
 			case <-do.exit:
 				return

@@ -15,6 +15,7 @@
 package stmtctx
 
 import (
+	"github.com/pingcap/tidb/planner/trace"
 	"math"
 	"sort"
 	"strconv"
@@ -188,7 +189,7 @@ type StatementContext struct {
 
 	// EnableCETrace indicate if Cardinality Estimation module need to trace its internal progress.
 	EnableCETrace   bool
-	CETraceRecords []interface{}
+	CETraceRecords []*trace.CETraceRecord
 }
 
 // StmtHints are SessionVars related sql hints.

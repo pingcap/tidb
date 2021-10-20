@@ -16,6 +16,10 @@ package ranger
 
 import (
 	"bytes"
+	"github.com/pingcap/parser/format"
+	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"sort"
 	"unicode/utf8"
@@ -594,4 +598,138 @@ func DetachCondAndBuildRangeForPartition(sctx sessionctx.Context, conditions []e
 		mergeConsecutive: false,
 	}
 	return d.detachCondAndBuildRangeForCols()
+}
+
+func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []string) string {
+	for _, ran := range rans {
+		if len(ran.LowVal) != len(ran.HighVal) {
+			logutil.BgLogger().Warn("[CE Trace] RangeToString", zap.String("err", "length mismatch"))
+			return ""
+		}
+	}
+	var buffer bytes.Buffer
+	for i, ran := range rans {
+		buffer.WriteString("(")
+		for j := range ran.LowVal {
+			buffer.WriteString("(")
+			lowExclude := false
+			if ran.LowExclude && j == len(ran.LowVal)-1 {
+				lowExclude = true
+			}
+			highExclude := false
+			if ran.HighExclude && j == len(ran.LowVal)-1 {
+				highExclude = true
+			}
+
+			// some checks against unexpected ranges
+			if j < len(ran.LowVal)-1 {
+				cmp, err := ran.LowVal[j].CompareDatum(sc, &ran.HighVal[j])
+				if err != nil {
+					logutil.BgLogger().Warn("[CE Trace] Error when comparing values", zap.Error(err))
+					return ""
+				}
+				if cmp != 0 {
+					logutil.BgLogger().Warn("[CE Trace] unexpected range", zap.String("range", ran.String()))
+					return ""
+				}
+			}
+
+			buffer.WriteString(RangeSingleColToString(sc, ran.LowVal[j], ran.HighVal[j], lowExclude, highExclude, colNames[j]))
+			buffer.WriteString(")")
+			if j < len(ran.LowVal)-1 {
+				buffer.WriteString(" and ")
+			}
+		}
+		buffer.WriteString(")")
+		if i < len(rans)-1 {
+			buffer.WriteString(" or ")
+		}
+	}
+	return buffer.String()
+}
+
+func RangeSingleColToString(sc *stmtctx.StatementContext, lowVal, highVal types.Datum, lowExclude, highExclude bool, colName string) string {
+	// low and high are both special values(null, min not null, max value)
+	lowKind := lowVal.Kind()
+	highKind := highVal.Kind()
+	if (lowKind == types.KindNull || lowKind == types.KindMinNotNull || lowKind == types.KindMaxValue) &&
+		(highKind == types.KindNull || highKind == types.KindMinNotNull || highKind == types.KindMaxValue) {
+		if lowKind == types.KindNull && highKind == types.KindNull && !lowExclude && !highExclude {
+			return colName + " is null"
+		}
+		if lowKind == types.KindNull && highKind == types.KindMaxValue && !lowExclude {
+			return "true"
+		}
+		if lowKind == types.KindMinNotNull && highKind == types.KindMaxValue {
+			return colName + " is not null"
+		}
+		return "false"
+	}
+
+	var buf bytes.Buffer
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+
+	// low value and high value are the same
+	cmp, err := lowVal.CompareDatum(sc, &highVal)
+	if err != nil {
+		logutil.BgLogger().Warn("[CE Trace] Error when comparing values", zap.Error(err))
+		return "false"
+	}
+	if cmp == 0 && !lowExclude && !highExclude && !lowVal.IsNull() {
+		buf.WriteString(colName)
+		buf.WriteString(" = ")
+		lowValExpr := driver.ValueExpr{Datum: lowVal}
+		err := lowValExpr.Restore(restoreCtx)
+		if err != nil {
+			logutil.BgLogger().Warn("[CE Trace] Error when restoring value expr", zap.Error(err))
+		}
+		return buf.String()
+	}
+
+	useOR := false
+
+	// low value part
+	if lowKind == types.KindNull {
+		buf.WriteString(colName + " is null")
+		useOR = true
+	} else if lowKind == types.KindMinNotNull {
+		buf.WriteString("true")
+	} else {
+		buf.WriteString(colName)
+		if lowExclude {
+			buf.WriteString(" > ")
+		} else {
+			buf.WriteString(" >= ")
+		}
+		lowValExpr := driver.ValueExpr{Datum: lowVal}
+		err := lowValExpr.Restore(restoreCtx)
+		if err != nil {
+			logutil.BgLogger().Warn("[CE Trace] Error when restoring value expr", zap.Error(err))
+		}
+	}
+
+	if useOR {
+		buf.WriteString(" or ")
+	} else {
+		buf.WriteString(" and ")
+	}
+
+	// high value part
+	if highKind == types.KindMaxValue {
+		buf.WriteString("true")
+	} else {
+		buf.WriteString(colName)
+		if highExclude {
+			buf.WriteString(" < ")
+		} else {
+			buf.WriteString(" <= ")
+		}
+		highValExpr := driver.ValueExpr{Datum: highVal}
+		err := highValExpr.Restore(restoreCtx)
+		if err != nil {
+			logutil.BgLogger().Warn("[CE Trace] Error when restoring value expr", zap.Error(err))
+		}
+	}
+
+	return buf.String()
 }

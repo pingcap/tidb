@@ -17,8 +17,6 @@ package statistics
 import (
 	"fmt"
 	"github.com/pingcap/tidb/planner/trace"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"math"
 	"sort"
 	"strings"
@@ -346,16 +344,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 	}
 	result, err := c.GetColumnRowCount(sc, intRanges, coll.Count, true)
 	if sc.EnableCETrace {
-		logutil.BgLogger().Info(">>> CE Trace: GetRowCountByIntColumnRanges",
-			zap.String("ranges", trace.RangesToString(intRanges, []string{c.Info.Name.O})),
-			zap.Float64("Row count", result))
-		CERecord := trace.CETraceRecord{
-			TableID: coll.PhysicalID,
-			Type:     "Int Column Ranges",
-			Expr:     trace.RangesToString(intRanges, []string{c.Info.Name.O}),
-			RowCount: uint64(result),
-		}
-		sc.CETraceRecords = append(sc.CETraceRecords, &CERecord)
+		CETrace(sc, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Int Column Stats", uint64(result))
 	}
 	return result, errors.Trace(err)
 }
@@ -368,16 +357,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 	}
 	result, err := c.GetColumnRowCount(sc, colRanges, coll.Count, false)
 	if sc.EnableCETrace {
-		logutil.BgLogger().Info(">>> CE Trace: GetRowCountByColumnRanges",
-			zap.String("ranges", trace.RangesToString(colRanges, []string{c.Info.Name.O})),
-			zap.Float64("Row count", result))
-		CERecord := trace.CETraceRecord{
-			TableID: coll.PhysicalID,
-			Type:     "Column Ranges",
-			Expr:     trace.RangesToString(colRanges, []string{c.Info.Name.O}),
-			RowCount: uint64(result),
-		}
-		sc.CETraceRecords = append(sc.CETraceRecords, &CERecord)
+		CETrace(sc, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
 	}
 	return result, errors.Trace(err)
 }
@@ -404,18 +384,31 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 		for _, col := range idx.Info.Columns {
 			colNames = append(colNames, idx.Info.Table.O+col.Name.O)
 		}
-		logutil.BgLogger().Info(">>> CE Trace: GetRowCountByIndexRanges",
-			zap.String("ranges", trace.RangesToString(indexRanges, colNames)),
-			zap.Float64("Row count", result))
-		CERecord := trace.CETraceRecord{
-			TableID: coll.PhysicalID,
-			Type:     "Index Ranges",
-			Expr:     trace.RangesToString(indexRanges, colNames),
-			RowCount: uint64(result),
-		}
-		sc.CETraceRecords = append(sc.CETraceRecords, &CERecord)
+		CETrace(sc, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
 	}
 	return result, errors.Trace(err)
+}
+
+func CETrace(sc *stmtctx.StatementContext, tableID int64, colNames []string, ranges []*ranger.Range, tp string, rowCount uint64) {
+	allPoint := true
+	for _, ran := range ranges {
+		if !ran.IsPointNullable(sc) {
+			allPoint = false
+			break
+		}
+	}
+	if allPoint {
+		tp = tp + "-point"
+	} else {
+		tp = tp + "-range"
+	}
+	CERecord := trace.CETraceRecord{
+		TableID:  tableID,
+		Type:     tp,
+		Expr:     ranger.RangesToString(sc, ranges, colNames),
+		RowCount: rowCount,
+	}
+	sc.CETraceRecords = append(sc.CETraceRecords, &CERecord)
 }
 
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.

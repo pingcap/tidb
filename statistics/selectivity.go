@@ -366,10 +366,9 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	}
 	if ctx.GetSessionVars().EnableCETrace {
 		totalExpr := expression.ComposeCNFCondition(ctx, exprs...)
-		logutil.BgLogger().Info(">>> CE Trace: Selectivity", zap.String("expr", ExprToString(totalExpr)), zap.Float64("Row count", ret*float64(coll.Count)))
 		CERecord := trace.CETraceRecord{
 			TableID: coll.PhysicalID,
-			Type:     "Selectivity",
+			Type:     "Table Stats-Expression",
 			Expr:     ExprToString(totalExpr),
 			RowCount: uint64(ret * float64(coll.Count)),
 		}
