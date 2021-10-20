@@ -134,6 +134,7 @@ func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statisti
 }
 
 func TestSelectivity(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -229,6 +230,7 @@ func TestSelectivity(t *testing.T) {
 // TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
 // consists several columns, and the first column has small NDV.
 func TestDiscreteDistribution(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -260,6 +262,7 @@ func TestDiscreteDistribution(t *testing.T) {
 }
 
 func TestSelectCombinedLowBound(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -294,6 +297,7 @@ func getRange(start, end int64) []*ranger.Range {
 }
 
 func TestOutOfRangeEstimation(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -345,6 +349,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 }
 
 func TestEstimationForUnknownValues(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -424,6 +429,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 }
 
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -458,6 +464,7 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 }
 
 func TestPrimaryKeySelectivity(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -526,6 +533,7 @@ func BenchmarkSelectivity(b *testing.B) {
 }
 
 func TestStatsVer2(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -595,6 +603,7 @@ func TestStatsVer2(t *testing.T) {
 }
 
 func TestTopNOutOfHist(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -634,6 +643,7 @@ func TestTopNOutOfHist(t *testing.T) {
 }
 
 func TestColumnIndexNullEstimation(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -669,6 +679,7 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 }
 
 func TestUniqCompEqualEst(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -696,6 +707,7 @@ func TestUniqCompEqualEst(t *testing.T) {
 }
 
 func TestSelectivityGreedyAlgo(t *testing.T) {
+	t.Parallel()
 	nodes := make([]*statistics.StatsNode, 3)
 	nodes[0] = statistics.MockStatsNode(1, 3, 2)
 	nodes[1] = statistics.MockStatsNode(2, 5, 2)
@@ -714,6 +726,7 @@ func TestSelectivityGreedyAlgo(t *testing.T) {
 }
 
 func TestCollationColumnEstimate(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -746,6 +759,7 @@ func TestCollationColumnEstimate(t *testing.T) {
 
 // TestDNFCondSelectivity tests selectivity calculation with DNF conditions covered by using independence assumption.
 func TestDNFCondSelectivity(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -816,6 +830,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 }
 
 func TestIndexEstimationCrossValidate(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -846,6 +861,7 @@ func TestIndexEstimationCrossValidate(t *testing.T) {
 }
 
 func TestRangeStepOverflow(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -865,6 +881,7 @@ func TestRangeStepOverflow(t *testing.T) {
 }
 
 func TestSmallRangeEstimation(t *testing.T) {
+	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
