@@ -2170,6 +2170,8 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			continue
 		}
 
+		// if jobs.Type == model.ActionCreateTables, it is initialized
+		// if not, initialize jobs by job.XXXX
 		if jobs.Type != model.ActionCreateTables {
 			jobs.Type = model.ActionCreateTables
 			jobs.SchemaID = job.SchemaID
