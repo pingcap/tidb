@@ -1217,8 +1217,14 @@ type StatsOptions struct {
 
 func NewStatsOptions() *StatsOptions {
 	return &StatsOptions{
-		AutoRecalc: true,
-		// TODO use global settings as default
+		AutoRecalc:   true,
+		ColumnChoice: AllColumns,
+		ColumnList:   []int64{},
+		SampleNum:    uint64(0),
+		SampleRate:   0.0,
+		Buckets:      uint64(0),
+		TopN:         uint64(0),
+		Concurrency:  uint(0),
 	}
 }
 

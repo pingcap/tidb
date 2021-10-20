@@ -6406,30 +6406,52 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(err)
 	}
 	meta := tb.Meta()
-
-	// construct a string list
-	attrBytes := []byte("[" + spec.StatsOptions + "]")
-	var attrs []string
-	err = yaml.UnmarshalStrict(attrBytes, &attrs)
-	if err != nil {
-		return err
-	}
-
-	optionMap := map[string]string{}
-	for _, attr := range attrs {
-		kv := strings.Split(attr, "=")
-		if len(kv) != 2 {
-			return fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, kv)
+	statsOptions := model.NewStatsOptions()
+	if !spec.Default {
+		if spec.StatsOptions == "" && meta.StatsOptions != nil {
+			statsOptions = meta.StatsOptions
+		} else {
+			attrBytes := []byte("[" + spec.StatsOptions + "]")
+			var attrs []string
+			err = yaml.UnmarshalStrict(attrBytes, &attrs)
+			if err != nil {
+				return err
+			}
+			for _, attr := range attrs {
+				kv := strings.Split(attr, "=")
+				if len(kv) != 2 {
+					return fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, kv)
+				}
+				key := strings.TrimSpace(kv[0])
+				if key == "" {
+					return fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, key)
+				}
+				val := strings.TrimSpace(kv[1])
+				if val == "" {
+					return fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, val)
+				}
+				switch strings.ToUpper(key) {
+				case "AUTO_RECALC":
+					autoRecalc, err0 := strconv.ParseBool(val)
+					if err0 != nil {
+						return fmt.Errorf("%w: %s", errors.New("STATS_AUTO_RECALC should be a bool"), val)
+					}
+					statsOptions.AutoRecalc = autoRecalc
+				case "BUCKETS":
+					buckets, err0 := strconv.ParseUint(val, 0, 64)
+					if err0 != nil {
+						return fmt.Errorf("%w: %s", errors.New("STATS_BUCKETS should be a unit"), val)
+					}
+					statsOptions.Buckets = buckets
+				case "TOPN":
+					topn, err0 := strconv.ParseUint(val, 0, 64)
+					if err0 != nil {
+						return fmt.Errorf("%w: %s", errors.New("STATS_TOPN should be a unit"), val)
+					}
+					statsOptions.TopN = topn
+				}
+			}
 		}
-		key := strings.TrimSpace(kv[0])
-		if key == "" {
-			return fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, key)
-		}
-		val := strings.TrimSpace(kv[1])
-		if val == "" {
-			return fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, val)
-		}
-		optionMap[key] = val
 	}
 
 	job := &model.Job{
@@ -6438,7 +6460,7 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAlterTableStatsOptions,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{optionMap},
+		Args:       []interface{}{statsOptions},
 	}
 
 	err = d.doDDLJob(ctx, job)

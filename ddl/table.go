@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -1344,7 +1343,7 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 }
 
 func onAlterTableStatsOptions(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	statsOptions := map[string]string{}
+	statsOptions := model.NewStatsOptions()
 	err = job.DecodeArgs(&statsOptions)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -1354,31 +1353,7 @@ func onAlterTableStatsOptions(t *meta.Meta, job *model.Job) (ver int64, err erro
 	if err != nil {
 		return 0, err
 	}
-	if tblInfo.StatsOptions == nil {
-		tblInfo.StatsOptions = model.NewStatsOptions()
-	}
-	for k, v := range statsOptions {
-		switch strings.ToUpper(k) {
-		case "AUTO_RECALC":
-			autoRecalc, err0 := strconv.ParseBool(v)
-			if err0 != nil {
-				return 0, fmt.Errorf("%w: %s", errors.New("STATS_AUTO_RECALC should be a bool"), v)
-			}
-			tblInfo.StatsOptions.AutoRecalc = autoRecalc
-		case "BUCKETS":
-			buckets, err0 := strconv.ParseUint(v, 0, 64)
-			if err0 != nil {
-				return 0, fmt.Errorf("%w: %s", errors.New("STATS_BUCKETS should be a unit"), v)
-			}
-			tblInfo.StatsOptions.Buckets = buckets
-		case "TOPN":
-			topn, err0 := strconv.ParseUint(v, 0, 64)
-			if err0 != nil {
-				return 0, fmt.Errorf("%w: %s", errors.New("STATS_TOPN should be a unit"), v)
-			}
-			tblInfo.StatsOptions.TopN = topn
-		}
-	}
+	tblInfo.StatsOptions = statsOptions
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)

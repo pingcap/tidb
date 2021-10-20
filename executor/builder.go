@@ -2460,7 +2460,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 		wg:           &sync.WaitGroup{},
-		opts:         v.Opts,
+		tableOpts:    v.TableOpts,
 	}
 	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	autoAnalyze := ""
@@ -2468,11 +2468,12 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		autoAnalyze = "auto "
 	}
 	for _, task := range v.ColTasks {
+		opts := v.TableOpts[task.TblInfo.ID]
 		if task.Incremental {
-			e.tasks = append(e.tasks, b.buildAnalyzePKIncremental(task, v.Opts))
+			e.tasks = append(e.tasks, b.buildAnalyzePKIncremental(task, opts))
 		} else {
 			if enableFastAnalyze {
-				b.buildAnalyzeFastColumn(e, task, v.Opts)
+				b.buildAnalyzeFastColumn(e, task, opts)
 			} else {
 				columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx, model.NewCIStr(task.AnalyzeInfo.DBName), task.TblInfo.Name, task.ColsInfo, task.TblInfo)
 				if err != nil {
@@ -2480,7 +2481,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 					return nil
 				}
 				schema := expression.NewSchema(columns...)
-				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.Opts, autoAnalyze, schema))
+				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, opts, autoAnalyze, schema))
 			}
 		}
 		if b.err != nil {
@@ -2488,13 +2489,14 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		}
 	}
 	for _, task := range v.IdxTasks {
+		opts := v.TableOpts[task.TblInfo.ID]
 		if task.Incremental {
-			e.tasks = append(e.tasks, b.buildAnalyzeIndexIncremental(task, v.Opts))
+			e.tasks = append(e.tasks, b.buildAnalyzeIndexIncremental(task, opts))
 		} else {
 			if enableFastAnalyze {
-				b.buildAnalyzeFastIndex(e, task, v.Opts)
+				b.buildAnalyzeFastIndex(e, task, opts)
 			} else {
-				e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
+				e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, opts, autoAnalyze))
 			}
 		}
 		if b.err != nil {

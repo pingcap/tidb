@@ -1832,8 +1832,8 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	return taskSlice
 }
 
-func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
-	p := &Analyze{Opts: opts}
+func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, tableOpts map[int64]map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
+	p := &Analyze{TableOpts: tableOpts}
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
 			return nil, errors.Errorf("analyze view %s is not supported now.", tbl.Name.O)
@@ -1915,8 +1915,8 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 	return p, nil
 }
 
-func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
-	p := &Analyze{Opts: opts}
+func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, tableOpts map[int64]map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
+	p := &Analyze{TableOpts: tableOpts}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
@@ -1935,7 +1935,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	}
 	if version == statistics.Version2 {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
-		return b.buildAnalyzeTable(as, opts, version)
+		return b.buildAnalyzeTable(as, tableOpts, version)
 	}
 	for _, idxName := range as.IndexNames {
 		if isPrimaryIndex(idxName) {
@@ -1980,8 +1980,8 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	return p, nil
 }
 
-func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
-	p := &Analyze{Opts: opts}
+func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, tableOpts map[int64]map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
+	p := &Analyze{TableOpts: tableOpts}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
@@ -2000,7 +2000,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	}
 	if version == statistics.Version2 {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 would collect all statistics not only the selected indexes"))
-		return b.buildAnalyzeTable(as, opts, version)
+		return b.buildAnalyzeTable(as, tableOpts, version)
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
@@ -2067,17 +2067,8 @@ var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumSamples:    100000,
 }
 
-func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
+func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int, statsOptions *model.StatsOptions) (map[ast.AnalyzeOptionType]uint64, error) {
 	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
-	if statsVer == statistics.Version1 {
-		for key, val := range analyzeOptionDefault {
-			optMap[key] = val
-		}
-	} else {
-		for key, val := range analyzeOptionDefaultV2 {
-			optMap[key] = val
-		}
-	}
 	for _, opt := range opts {
 		if opt.Type == ast.AnalyzeOptNumTopN {
 			if opt.Value > analyzeOptionLimit[opt.Type] {
@@ -2093,6 +2084,34 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > CMSketchSizeLimit {
 		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", CMSketchSizeLimit)
 	}
+	for key, v1Default := range analyzeOptionDefault {
+		// set values with table-level options or global default
+		if _, ok := optMap[key]; !ok {
+			valToSet := v1Default
+			if statsVer == statistics.Version2 {
+				valToSet = analyzeOptionDefaultV2[key]
+			}
+			switch key {
+			case ast.AnalyzeOptNumBuckets:
+				if statsOptions.Buckets > 0 {
+					valToSet = statsOptions.Buckets
+				}
+			case ast.AnalyzeOptNumTopN:
+				if statsOptions.TopN > 0 {
+					valToSet = statsOptions.TopN
+				}
+			case ast.AnalyzeOptNumSamples:
+				if statsOptions.SampleNum > 0 {
+					valToSet = statsOptions.SampleNum
+				}
+			}
+			// analyzeOptionLimit could change, we can only check at planning instead of create/alter table
+			if valToSet > analyzeOptionLimit[key] {
+				return nil, errors.Errorf("value of analyze option %s should not be larger than %d", ast.AnalyzeOptionString[key], analyzeOptionLimit[key])
+			}
+			optMap[key] = valToSet
+		}
+	}
 	return optMap, nil
 }
 
@@ -2105,6 +2124,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion >= statistics.Version2 {
 		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
 	}
+	tableOpts := map[int64]map[ast.AnalyzeOptionType]uint64{}
 	for _, tbl := range as.TableNames {
 		user := b.ctx.GetSessionVars().User
 		var insertErr, selectErr error
@@ -2114,18 +2134,19 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
-	}
-	opts, err := handleAnalyzeOptions(as.AnalyzeOpts, statsVersion)
-	if err != nil {
-		return nil, err
+		opts, err := handleAnalyzeOptions(as.AnalyzeOpts, statsVersion, tbl.TableInfo.StatsOptions)
+		if err != nil {
+			return nil, err
+		}
+		tableOpts[tbl.TableInfo.ID] = opts
 	}
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
-			return b.buildAnalyzeAllIndex(as, opts, statsVersion)
+			return b.buildAnalyzeAllIndex(as, tableOpts, statsVersion)
 		}
-		return b.buildAnalyzeIndex(as, opts, statsVersion)
+		return b.buildAnalyzeIndex(as, tableOpts, statsVersion)
 	}
-	return b.buildAnalyzeTable(as, opts, statsVersion)
+	return b.buildAnalyzeTable(as, tableOpts, statsVersion)
 }
 
 func buildShowNextRowID() (*expression.Schema, types.NameSlice) {

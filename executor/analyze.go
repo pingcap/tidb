@@ -67,9 +67,9 @@ var _ Executor = &AnalyzeExec{}
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
 	baseExecutor
-	tasks []*analyzeTask
-	wg    *sync.WaitGroup
-	opts  map[ast.AnalyzeOptionType]uint64
+	tasks     []*analyzeTask
+	wg        *sync.WaitGroup
+	tableOpts map[int64]map[ast.AnalyzeOptionType]uint64
 }
 
 var (
@@ -184,7 +184,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if needGlobalStats {
 		for globalStatsID, info := range globalStatsMap {
-			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, e.opts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.idxID)
+			opts := e.tableOpts[globalStatsID.tableID]
+			globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(e.ctx, opts, e.ctx.GetInfoSchema().(infoschema.InfoSchema), globalStatsID.tableID, info.isIndex, info.idxID)
 			if err != nil {
 				if types.ErrPartitionStatsMissing.Equal(err) {
 					// When we find some partition-level stats are missing, we need to report warning.

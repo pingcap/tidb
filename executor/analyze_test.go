@@ -1133,11 +1133,11 @@ func (s *testSuite10) TestSnapshotAnalyze(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"), IsNil)
 }
 
-func (s *testSuite10) TestAutoAnalyzeWithSavedOptions(c *C) {
+func (s *testSuite10) TestTableAnalyzeOptions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int) STATS_TOPN=10")
+	tk.MustExec("create table t(a int) STATS_TOPN=3,STATS_BUCKETS=5")
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 	}
@@ -1150,10 +1150,11 @@ func (s *testSuite10) TestAutoAnalyzeWithSavedOptions(c *C) {
 	h := s.domain.StatsHandle()
 
 	// manual-analyze still uses the options after with
-	tk.MustExec("analyze table t with 20 topn")
+	tk.MustExec("analyze table t with 2 topn, 2 buckets")
 	tbl := h.GetTableStats(tableInfo)
 	col := tbl.Columns[1]
-	c.Assert(len(col.TopN.TopN), Equals, 20)
+	c.Assert(len(col.TopN.TopN), Equals, 2)
+	c.Assert(len(col.Buckets), Equals, 2)
 
 	// auto-analyze uses the table-level options
 	tk.MustExec("insert into t values (20)")
@@ -1162,32 +1163,93 @@ func (s *testSuite10) TestAutoAnalyzeWithSavedOptions(c *C) {
 	h.HandleAutoAnalyze(is)
 	tbl = h.GetTableStats(tableInfo)
 	col = tbl.Columns[1]
-	c.Assert(len(col.TopN.TopN), Equals, 10)
+	c.Assert(len(col.TopN.TopN), Equals, 3)
+	c.Assert(len(col.Buckets), Equals, 5)
 
 	// options changed after alter table
-	tk.MustExec("alter table t STATS_OPTIONS=\"TOPN=15\"")
-	// refresh infoschema
-	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	tk.MustExec("alter table t STATS_OPTIONS=\"TOPN=4,BUCKETS=4\"")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = table.Meta()
 	c.Assert(tableInfo.StatsOptions, NotNil)
-	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(15))
+	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(4))
 	tk.MustExec("insert into t values (21)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	h.HandleAutoAnalyze(is)
 	tbl = h.GetTableStats(tableInfo)
 	col = tbl.Columns[1]
-	c.Assert(len(col.TopN.TopN), Equals, 15)
+	c.Assert(len(col.TopN.TopN), Equals, 4)
+	c.Assert(len(col.Buckets), Equals, 4)
 
-	// TODO manual-analyze without options to use the table-level options
+	// manual-analyze without options to use the table-level options
+	tk.MustExec("analyze table t with 2 buckets")
+	tbl = h.GetTableStats(tableInfo)
+	col = tbl.Columns[1]
+	c.Assert(len(col.TopN.TopN), Equals, 4)
+	c.Assert(len(col.Buckets), Equals, 2) // buckets num is overwritten by sql-level options
+
+	// manual-analyze for multiple tables without options should use table-level options for each
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(b int) STATS_TOPN=12")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t2 values (%d)", i))
+	}
+	tk.MustExec("analyze table t,t2")
+	tbl = h.GetTableStats(tableInfo)
+	col = tbl.Columns[1]
+	c.Assert(len(col.TopN.TopN), Equals, 4)
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	table2, err2 := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err2, IsNil)
+	tableInfo2 := table2.Meta()
+	tbl2 := h.GetTableStats(tableInfo2)
+	col2 := tbl2.Columns[1]
+	c.Assert(len(col2.TopN.TopN), Equals, 12)
+
+	// TODO partition table
+
+	// alter table with empty
+	tk.MustExec("alter table t STATS_OPTIONS=\"\"")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(4))
+
+	// alter table with default
+	tk.MustExec("alter table t STATS_OPTIONS=default")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(0))
+	// use global settings as default
+	tk.MustExec("insert into t values (22)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	h.HandleAutoAnalyze(is)
+	tbl = h.GetTableStats(tableInfo)
+	col = tbl.Columns[1]
+	c.Assert(len(col.TopN.TopN), Equals, int(col.Count))
 	tk.MustExec("analyze table t")
 	tbl = h.GetTableStats(tableInfo)
 	col = tbl.Columns[1]
-	c.Assert(len(col.TopN.TopN), Equals, 15)
+	c.Assert(len(col.TopN.TopN), Equals, int(col.Count))
 
-	// TODO manual-analyze for multiple tables without options should use table-level options for each
-
-	// TODO partition table
+	// alter table with value exceeds limit
+	tk.MustExec("alter table t STATS_OPTIONS=\"TOPN=200000\"")
+	// refresh infoschema
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(200000))
+	c.Assert(tableInfo.StatsOptions.Buckets, Equals, uint64(0)) // buckets-num is overwritten to 0
+	execErr := tk.ExecToErr("analyze table t")                  // error occurs at planning since limit could change
+	c.Assert(execErr, NotNil)
 }
