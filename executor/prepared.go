@@ -197,11 +197,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
 	} else {
-		if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-			prepared.UseCache = plannercore.Cacheable(stmt, ret.InfoSchema)
-		} else {
-			prepared.UseCache = plannercore.Cacheable(stmt, nil)
-		}
+		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
 	}
 
 	// We try to build the real statement of preparedStmt.
