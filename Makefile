@@ -28,7 +28,7 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check explaintest devgotest gogenerate br_unit_test
+dev: checklist check explaintest devgotest gogenerate br_unit_test test_part_parser_dev
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
@@ -44,7 +44,7 @@ goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
 check-static: tools/bin/golangci-lint
-	tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES_WITHOUT_BR))
+	tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES_TIDB_TESTS))
 
 unconvert:tools/bin/unconvert
 	@echo "unconvert check(skip check the genenrated or copied code in lightning)"
@@ -60,11 +60,11 @@ errdoc:tools/bin/errdoc-gen
 
 lint:tools/bin/revive
 	@echo "linting"
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_WITHOUT_BR)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
 
 vet:
 	@echo "vet"
-	$(GO) vet -all $(PACKAGES_WITHOUT_BR) 2>&1 | $(FAIL_ON_STDOUT)
+	$(GO) vet -all $(PACKAGES_TIDB_TESTS) 2>&1 | $(FAIL_ON_STDOUT)
 
 tidy:
 	@echo "go mod tidy"
@@ -83,7 +83,20 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: gotest gogenerate br_unit_test
+test_part_2: test_part_parser gotest gogenerate br_unit_test
+
+test_part_parser: parser_yacc test_part_parser_dev
+
+test_part_parser_dev: parser_fmt parser_unit_test
+
+parser_yacc:
+	@cd parser && mv parser.go parser.go.committed && make parser && diff -u parser.go.committed parser.go && rm parser.go.committed
+
+parser_fmt:
+	@cd parser && make fmt
+
+parser_unit_test:
+	@cd parser && make test
 
 test_part_br: br_unit_test br_integration_test
 
@@ -101,44 +114,20 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 endif
 
 devgotest: failpoint-enable
-ifeq ("$(TRAVIS_COVERAGE)", "1")
-	@echo "Running in TRAVIS_COVERAGE mode."
-	$(GO) get github.com/go-playground/overalls
-	@export log_level=info; \
-	$(OVERALLS) -project=github.com/pingcap/tidb \
-			-covermode=count \
-			-ignore='.git,br,vendor,cmd,docs,tests,LICENSES' \
-			-concurrency=4 \
-			-- -coverpkg=./... \
-			|| { $(FAILPOINT_DISABLE); exit 1; }
-else
 # grep regex: Filter out all tidb logs starting with:
 # - '[20' (like [2021/09/15 ...] [INFO]..)
 # - 'PASS:' to ignore passed tests
 # - 'ok ' to ignore passed directories
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
-endif
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
 
 gotest: failpoint-enable
-ifeq ("$(TRAVIS_COVERAGE)", "1")
-	@echo "Running in TRAVIS_COVERAGE mode."
-	$(GO) get github.com/go-playground/overalls
-	@export log_level=info; \
-	$(OVERALLS) -project=github.com/pingcap/tidb \
-			-covermode=count \
-			-ignore='.git,br,vendor,cmd,docs,tests,LICENSES' \
-			-concurrency=4 \
-			-- -coverpkg=./... \
-			|| { $(FAILPOINT_DISABLE); exit 1; }
-else
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
-endif
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
 race: failpoint-enable
@@ -264,13 +253,14 @@ endif
 # Usage:
 #	make bench-daily TO=/path/to/file.json
 bench-daily:
-	go test github.com/pingcap/tidb/session -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/executor -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/tablecodec -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/expression -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/util/codec -run TestBenchDaily --outfile bench_daily.json
-	go test github.com/pingcap/tidb/util/benchdaily -run TestBenchDaily \
+	go test github.com/pingcap/tidb/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/executor -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/tablecodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/codec -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/distsql -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/benchdaily -run TestBenchDaily -bench Ignore \
 		-date `git log -n1 --date=unix --pretty=format:%cd` \
 		-commit `git log -n1 --pretty=format:%h` \
 		-outfile $(TO)

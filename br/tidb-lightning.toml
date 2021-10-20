@@ -82,9 +82,12 @@ driver = "file"
 # For "mysql" driver, the DSN is a URL in the form "USER:PASS@tcp(HOST:PORT)/".
 # If not specified, the TiDB server from the [tidb] section will be used to store the checkpoints.
 #dsn = "/tmp/tidb_lightning_checkpoint.pb"
-# Whether to keep the checkpoints after all data are imported. If false, the checkpoints will be deleted. The schema
-# needs to be dropped manually, however.
-#keep-after-success = false
+# Whether to keep the checkpoints after all data are imported.
+# valid options:
+# - remove(default). the checkpoints will be deleted
+# - rename. the checkpoints data will be kept, but will change the checkpoint data schema name with `schema.{taskID}.bak`
+# - origin. keep the checkpoints data unchanged.
+#keep-after-success = "remove"
 
 [tikv-importer]
 # Delivery backend, can be "importer", "local" or "tidb".

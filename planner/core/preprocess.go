@@ -21,12 +21,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -34,8 +28,15 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
@@ -733,8 +734,23 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 	if stmt.TemporaryKeyword != ast.TemporaryNone {
 		for _, opt := range stmt.Options {
-			if opt.Tp == ast.TableOptionShardRowID {
+			switch opt.Tp {
+			case ast.TableOptionShardRowID:
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+				return
+			case ast.TableOptionPlacementPrimaryRegion,
+				ast.TableOptionPlacementRegions,
+				ast.TableOptionPlacementFollowerCount,
+				ast.TableOptionPlacementVoterCount,
+				ast.TableOptionPlacementLearnerCount,
+				ast.TableOptionPlacementSchedule,
+				ast.TableOptionPlacementConstraints,
+				ast.TableOptionPlacementLeaderConstraints,
+				ast.TableOptionPlacementLearnerConstraints,
+				ast.TableOptionPlacementFollowerConstraints,
+				ast.TableOptionPlacementVoterConstraints,
+				ast.TableOptionPlacementPolicy:
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("PLACEMENT")
 				return
 			}
 		}
@@ -975,11 +991,16 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 }
 
 func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
-	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
+	noopFuncsMode := p.ctx.GetSessionVars().NoopFuncsMode
 	for _, item := range stmt.Items {
-		if !item.NullOrder && !enableNoopFuncs {
-			p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("GROUP BY expr ASC|DESC")
-			return
+		if !item.NullOrder && noopFuncsMode != variable.OnInt {
+			err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("GROUP BY expr ASC|DESC")
+			if noopFuncsMode == variable.OffInt {
+				p.err = err
+				return
+			}
+			// NoopFuncsMode is Warn, append an error
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}
 }
@@ -1147,6 +1168,9 @@ func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 	}
 	if tableMetaInfo.ShardRowIDBits != 0 {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+	}
+	if tableMetaInfo.DirectPlacementOpts != nil || tableMetaInfo.PlacementPolicyRef != nil {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("placement")
 	}
 
 	return nil
