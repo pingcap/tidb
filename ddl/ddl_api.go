@@ -2181,11 +2181,11 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 
 		// append table job args
 		if len(job.Args) != 1 {
-			return fmt.Errorf("except only one argument")
+			return errors.Trace(fmt.Errorf("except only one argument"))
 		}
 		info, ok := job.Args[0].(*model.TableInfo)
 		if !ok {
-			return fmt.Errorf("except table info")
+			return errors.Trace(fmt.Errorf("except table info"))
 		}
 		args = append(args, info)
 	}
