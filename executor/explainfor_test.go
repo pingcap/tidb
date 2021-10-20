@@ -285,10 +285,12 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	executeQuery := "execute stmt using @p0"
 	explainQuery := "explain for connection " + strconv.FormatUint(tk1.Se.ShowProcess().ID, 10)
+
 	explainResult := testkit.Rows(
-		"TableReader_7 8000.00 root  data:Selection_6",
-		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a, double BINARY), 1)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"Selection_8 8000.00 root  eq(cast(test.t.a, double BINARY), 1)",
+		"└─TableReader_7 8000.00 root  data:Selection_6",
+		"  └─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a, double BINARY), 1)",
+		"    └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	)
 
 	// Now the ProcessInfo held by mockSessionManager1 will not be updated in real time.
