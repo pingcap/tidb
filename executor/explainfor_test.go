@@ -596,10 +596,7 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	tkProcess := tk.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 3)
-	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows(""))
 
 	tk.MustExec("set @a=-1696020282760139948, @b=-2619168038882941276, @c=-4004648990067362699;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
@@ -608,20 +605,12 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 3)
-	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*IndexFullScan.*")
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows(""))
 
-	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
-		"where col1 between -1696020282760139948 and -2619168038882941276 or col1 < -4004648990067362699;")
-	c.Assert(len(res.Rows()), Equals, 3)
-	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*IndexFullScan.*")
-	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
-		"where col1 between 5516958330762833919 and 8551969118506051323 or col1 < 2887622822023883594;")
-	c.Assert(len(res.Rows()), Equals, 2)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexRangeScan.*")
+	tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
+		"where col1 between -1696020282760139948 and -2619168038882941276 or col1 < -4004648990067362699;").Check(testkit.Rows(""))
+	tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
+		"where col1 between 5516958330762833919 and 8551969118506051323 or col1 < 2887622822023883594;").Check(testkit.Rows(""))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (a int, b int, index idx(a, b));")
@@ -632,12 +621,7 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexReader.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1), or(and(ge(test.t.a, 0), le(test.t.a, 2)), lt(test.t.a, 2))")
-	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows(""))
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
@@ -646,27 +630,12 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexReader.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1), or(and(ge(test.t.a, 2), le(test.t.a, 1)), lt(test.t.a, 1))")
-	c.Assert(res.Rows()[3][0], Matches, ".*IndexFullScan.*")
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows(""))
 
-	res = tk.MustQuery("explain format = 'brief' select a from t use index(idx) " +
-		"where (a between 0 and 2 or a < 2) and b < 1;")
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexReader.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1)")
-	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
-	res = tk.MustQuery("explain format = 'brief' select a from t use index(idx) " +
-		"where (a between 2 and 1 or a < 1) and b < 1;")
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexReader.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1)")
-	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
+	tk.MustQuery("explain format = 'brief' select a from t use index(idx) " +
+		"where (a between 0 and 2 or a < 2) and b < 1;").Check(testkit.Rows(""))
+	tk.MustQuery("explain format = 'brief' select a from t use index(idx) " +
+		"where (a between 2 and 1 or a < 1) and b < 1;").Check(testkit.Rows(""))
 
 	// test for indexLookUp
 	tk.MustExec("drop table if exists t;")
@@ -678,12 +647,7 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 5)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
-	c.Assert(res.Rows()[3][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[4][0], Matches, ".*TableRowIDScan.*")
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows(""))
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
@@ -692,23 +656,12 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 5)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*IndexFullScan.*")
-	c.Assert(res.Rows()[3][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[4][0], Matches, ".*TableRowIDScan.*")
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows(""))
 
-	res = tk.MustQuery("explain format = 'brief' select /*+ USE_INDEX(t, idx) */ a from t use index(idx) " +
-		"where (a between 0 and 2 or a < 2) and b < 1;")
-	c.Assert(len(res.Rows()), Equals, 5)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
-	res = tk.MustQuery("explain format = 'brief' select /*+ USE_INDEX(t, idx) */ a from t use index(idx) " +
-		"where (a between 2 and 1 or a < 1) and b < 1;")
-	c.Assert(len(res.Rows()), Equals, 5)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexLookUp.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*IndexRangeScan.*")
+	tk.MustQuery("explain format = 'brief' select /*+ USE_INDEX(t, idx) */ a from t use index(idx) " +
+		"where (a between 0 and 2 or a < 2) and b < 1;").Check(testkit.Rows(""))
+	tk.MustQuery("explain format = 'brief' select /*+ USE_INDEX(t, idx) */ a from t use index(idx) " +
+		"where (a between 2 and 1 or a < 1) and b < 1;").Check(testkit.Rows(""))
 
 	// test for tableReader
 	tk.MustExec("drop table if exists t;")
@@ -720,12 +673,7 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[1][0], Matches, ".*TableReader.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1), or(and(ge(test.t.a, 0), le(test.t.a, 2)), lt(test.t.a, 2))")
-	c.Assert(res.Rows()[3][0], Matches, ".*TableRangeScan.*")
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows(""))
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
@@ -734,27 +682,12 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[1][0], Matches, ".*TableReader.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1), or(and(ge(test.t.a, 2), le(test.t.a, 1)), lt(test.t.a, 1))")
-	c.Assert(res.Rows()[3][0], Matches, ".*TableRangeScan.*")
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows(""))
 
-	res = tk.MustQuery("explain format = 'brief' select a from t " +
-		"where (a between 0 and 2 or a < 2) and b < 1;")
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[1][0], Matches, ".*TableReader.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1)")
-	c.Assert(res.Rows()[3][0], Matches, ".*TableRangeScan.*")
-	res = tk.MustQuery("explain format = 'brief' select a from t " +
-		"where (a between 2 and 1 or a < 1) and b < 1;")
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[1][0], Matches, ".*TableReader.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][4], Equals, "lt(test.t.b, 1)")
-	c.Assert(res.Rows()[3][0], Matches, ".*TableRangeScan.*")
+	tk.MustQuery("explain format = 'brief' select a from t " +
+		"where (a between 0 and 2 or a < 2) and b < 1;").Check(testkit.Rows(""))
+	tk.MustQuery("explain format = 'brief' select a from t " +
+		"where (a between 2 and 1 or a < 1) and b < 1;").Check(testkit.Rows(""))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t (a int primary key, b int, c int, d int);")
@@ -764,14 +697,7 @@ func (s *testPrepareSerialSuite) TestIssue28259(c *C) {
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 3)
-	c.Assert(res.Rows()[0][0], Matches, ".*TableReader.*")
-	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
-	// The duplicate expressions can not be eliminated because the conditions are not the same.
-	// So this may be a bad case in some situations.
-	c.Assert(res.Rows()[1][4], Equals, "eq(test.t.d, 5), or(and(gt(test.t.a, 1), and(lt(test.t.a, 5), gt(test.t.b, 2))), and(gt(test.t.a, 8), and(lt(test.t.a, 10), gt(test.t.c, 3)))), or(and(gt(test.t.a, 1), lt(test.t.a, 5)), and(gt(test.t.a, 8), lt(test.t.a, 10)))")
-	c.Assert(res.Rows()[2][0], Matches, ".*TableRangeScan.*")
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows(""))
 }
 
 func (s *testPrepareSerialSuite) TestIssue28696(c *C) {
