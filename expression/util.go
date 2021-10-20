@@ -920,7 +920,7 @@ func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bo
 	return containMutableConst(ctx, exprs)
 }
 
-func unCacheAndSimplify4MutableConstant(ctx sessionctx.Context, con *Constant) {
+func UnCacheAndSimplify4MutableConstant(ctx sessionctx.Context, con *Constant) {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
 		ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 		con.DeferredExpr = nil
