@@ -1137,6 +1137,7 @@ func (s *testSuite10) TestTableAnalyzeOptions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("create table t(a int) STATS_TOPN=3,STATS_BUCKETS=5")
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
@@ -1183,7 +1184,7 @@ func (s *testSuite10) TestTableAnalyzeOptions(c *C) {
 	c.Assert(len(col.TopN.TopN), Equals, 4)
 	c.Assert(len(col.Buckets), Equals, 4)
 
-	// manual-analyze without options to use the table-level options
+	// manual-analyze to combine table-level and sql-level options
 	tk.MustExec("analyze table t with 2 buckets")
 	tbl = h.GetTableStats(tableInfo)
 	col = tbl.Columns[1]
@@ -1207,8 +1208,6 @@ func (s *testSuite10) TestTableAnalyzeOptions(c *C) {
 	tbl2 := h.GetTableStats(tableInfo2)
 	col2 := tbl2.Columns[1]
 	c.Assert(len(col2.TopN.TopN), Equals, 12)
-
-	// TODO partition table
 
 	// alter table with empty
 	tk.MustExec("alter table t STATS_OPTIONS=\"\"")
@@ -1252,4 +1251,59 @@ func (s *testSuite10) TestTableAnalyzeOptions(c *C) {
 	c.Assert(tableInfo.StatsOptions.Buckets, Equals, uint64(0)) // buckets-num is overwritten to 0
 	execErr := tk.ExecToErr("analyze table t")                  // error occurs at planning since limit could change
 	c.Assert(execErr, NotNil)
+}
+
+func (s *testSuite10) TestAnalyzeOptionsForPartitionTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b)) STATS_TOPN=1
+PARTITION BY RANGE ( a ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+)`
+	tk.MustExec(createTable)
+	for i := 1; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
+	}
+
+	handle.AutoAnalyzeMinCnt = 0
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	h := s.domain.StatsHandle()
+	pi := tableInfo.GetPartitionInfo()
+	c.Assert(pi, NotNil)
+
+	// manual analyze first
+	tk.MustExec("analyze table t")
+	for _, def := range pi.Definitions {
+		partition := h.GetPartitionStats(table.Meta(), def.ID)
+		pcol := partition.Columns[1]
+		c.Assert(len(pcol.TopN.TopN), Equals, 1)
+	}
+
+	// alter table & auto-analyze uses the table-level options
+	tk.MustExec("alter table t STATS_OPTIONS=\"TOPN=2\"")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(2))
+	tk.MustExec("insert into t values (20, 20, \"hello\")")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	h.HandleAutoAnalyze(is)
+	for _, def := range pi.Definitions {
+		partition := h.GetPartitionStats(table.Meta(), def.ID)
+		pcol := partition.Columns[1]
+		c.Assert(len(pcol.TopN.TopN), Equals, 2)
+	}
+
 }
