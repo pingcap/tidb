@@ -4,10 +4,28 @@ on:
     branches:
       - master
       - release-*
+    paths:
+      - 'dumpling/**'
+      - 'br/pkg/storage/**'
+      - 'br/pkg/utils/**'
+      - 'br/pkg/summary/**'
+      - 'store/helper/**'
+      - 'tablecodec/**'
+      - 'util/codec/**'
+      - 'parser/model/**'
   pull_request:
     branches:
       - master
       - release-*
+    paths:
+      - 'dumpling/**'
+      - 'br/pkg/storage/**'
+      - 'br/pkg/utils/**'
+      - 'br/pkg/summary/**'
+      - 'store/helper/**'
+      - 'tablecodec/**'
+      - 'util/codec/**'
+      - 'parser/model/**'
 
 jobs:
   unit-test:
