@@ -41,8 +41,6 @@ jobs:
         uses: actions/setup-go@v2
         with:
           go-version: 1.16
-      - name: Check
-        run: make check
       - name: Unit test
         run: make dumpling_unit_test WITH_RACE=1
       - uses: codecov/codecov-action@v1
