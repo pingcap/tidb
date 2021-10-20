@@ -142,6 +142,10 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 		return ver, errors.Trace(err)
 	}
 
+	// We don't construct jobs for every table, but only tableInfo
+	// The following loop creates a stub job for every table
+	//
+	// &*job clones a stub job from the ActionCreateTables job
 	stubJob := &*job
 	stubJob.Args = make([]interface{}, 1)
 	for i := range args {
