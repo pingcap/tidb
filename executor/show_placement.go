@@ -191,7 +191,8 @@ func (e *ShowExec) fetchShowPlacementForPartition(_ context.Context) (err error)
 	}
 
 	var partition *model.PartitionDefinition
-	for _, par := range tblInfo.Partition.Definitions {
+	for i := range tblInfo.Partition.Definitions {
+		par := tblInfo.Partition.Definitions[i]
 		if par.Name.L == e.Partition.L {
 			partition = &par
 			break
@@ -303,7 +304,8 @@ func (e *ShowExec) fetchAllTablePlacements() error {
 			}
 
 			if tblInfo.Partition != nil {
-				for _, partition := range tblInfo.Partition.Definitions {
+				for i := range tblInfo.Partition.Definitions {
+					partition := tblInfo.Partition.Definitions[i]
 					partitionPlacement, err := e.getPartitionPlacement(tblPlacement, &partition)
 					if err != nil {
 						return err
