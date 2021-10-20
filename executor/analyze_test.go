@@ -1147,56 +1147,47 @@ func (s *testSuite10) TestAutoAnalyzeWithSavedOptions(c *C) {
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
-
-	tk.MustExec("analyze table t")
-	tk.MustExec("insert into t values (20)")
 	h := s.domain.StatsHandle()
+
+	// manual-analyze still uses the options after with
+	tk.MustExec("analyze table t with 20 topn")
+	tbl := h.GetTableStats(tableInfo)
+	col := tbl.Columns[1]
+	c.Assert(len(col.TopN.TopN), Equals, 20)
+
+	// auto-analyze uses the table-level options
+	tk.MustExec("insert into t values (20)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	h.HandleAutoAnalyze(is)
-	tbl := h.GetTableStats(tableInfo)
-	col := tbl.Columns[1]
-	c.Assert(len(col.TopN.TopN), Equals, 10)
-
-	tk.MustExec("analyze table t with 20 topn")
 	tbl = h.GetTableStats(tableInfo)
 	col = tbl.Columns[1]
-	c.Assert(len(col.TopN.TopN), Equals, 20)
+	c.Assert(len(col.TopN.TopN), Equals, 10)
 
-	// TODO should manual analyze without options use the table-level options?
-	//tk.MustExec("analyze table t")
-	//tbl = h.GetTableStats(tableInfo)
-	//col = tbl.Columns[1]
-	//c.Assert(len(col.TopN.TopN), Equals, 10)
+	// options changed after alter table
+	tk.MustExec("alter table t STATS_OPTIONS=\"TOPN=15\"")
+	// refresh infoschema
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(15))
+	tk.MustExec("insert into t values (21)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	h.HandleAutoAnalyze(is)
+	tbl = h.GetTableStats(tableInfo)
+	col = tbl.Columns[1]
+	c.Assert(len(col.TopN.TopN), Equals, 15)
 
-	// TODO alter table
-	//tk.MustExec("alter table t(a int) STATS_TOPN=15")
-	//tk.MustExec("insert into t values (21)")
-	//c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	//c.Assert(h.Update(is), IsNil)
-	//h.HandleAutoAnalyze(is)
-	//tbl = h.GetTableStats(tableInfo)
-	//col = tbl.Columns[1]
-	//c.Assert(len(col.TopN.TopN), Equals, 15)
-	//
-	//tk.MustExec("analyze table t with 20 topn")
-	//tbl = h.GetTableStats(tableInfo)
-	//col = tbl.Columns[1]
-	//c.Assert(len(col.TopN.TopN), Equals, 20)
-	//
-	//tk.MustExec("analyze table t")
-	//tbl = h.GetTableStats(tableInfo)
-	//col = tbl.Columns[1]
-	//c.Assert(len(col.TopN.TopN), Equals, 15)
+	// TODO manual-analyze without options to use the table-level options
+	tk.MustExec("analyze table t")
+	tbl = h.GetTableStats(tableInfo)
+	col = tbl.Columns[1]
+	c.Assert(len(col.TopN.TopN), Equals, 15)
+
+	// TODO manual-analyze for multiple tables without options should use table-level options for each
 
 	// TODO partition table
-}
-
-func (s *testSuite10) TestAlterTableSyntax(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("alter table t STATS_OPTIONS=\"BUCKETS=10,TOPN=10\"")
-	tk.MustExec("alter table t STATS_OPTIONS=\"\"")
 }

@@ -2490,15 +2490,14 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			}
 		case ast.TableOptionStatsAutoRecalc:
 			if tbInfo.StatsOptions == nil {
-				tbInfo.StatsOptions = &model.StatsOptions{}
+				tbInfo.StatsOptions = model.NewStatsOptions()
 			}
 			tbInfo.StatsOptions.AutoRecalc = op.BoolValue
 		case ast.TableOptionStatsBuckets, ast.TableOptionStatsTopN,
 			ast.TableOptionStatsColsChoice, ast.TableOptionStatsColList,
 			ast.TableOptionStatsSampleRate:
 			if tbInfo.StatsOptions == nil {
-				tbInfo.StatsOptions = &model.StatsOptions{}
-				tbInfo.StatsOptions.AutoRecalc = true
+				tbInfo.StatsOptions = model.NewStatsOptions()
 			}
 			err := SetStatsOption(tbInfo.StatsOptions, ast.StatsOptionType(op.Tp), op.StrValue, op.UintValue)
 			if err != nil {
