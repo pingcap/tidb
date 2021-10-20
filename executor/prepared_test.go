@@ -603,11 +603,11 @@ func (s *testSerialSuite) TestIssue28828(c *C) {
 	// When the type of parameters have been changed, the plan cache can not be used.
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("3 0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @d;").Check(testkit.Rows("3 0"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @e;").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func (s *testSerialSuite) TestIssue28087And28162(c *C) {

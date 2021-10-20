@@ -113,11 +113,6 @@ func (c *Constant) GetType() *types.FieldType {
 		tp := types.NewFieldType(mysql.TypeUnspecified)
 		dt := c.ParamMarker.GetUserVar()
 		types.DefaultParamTypeForValue(dt.GetValue(), tp)
-		if tp != c.RetType {
-			// When the constant have been optimized, it's type may be changed.
-			// So we need use the new type to return.
-			return c.RetType
-		}
 		return tp
 	}
 	return c.RetType

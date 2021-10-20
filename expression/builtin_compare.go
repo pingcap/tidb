@@ -1314,9 +1314,6 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 			ParamMarker:  con.ParamMarker,
 		}, false
 	}
-	if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
-		return con, false
-	}
 	switch op {
 	case opcode.LT, opcode.GE:
 		resultExpr := NewFunctionInternal(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
@@ -1381,6 +1378,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isPositiveInfinite, isNegativeInfinite := false, false
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
+		unCacheAndSimplify4MutableConstant(ctx, arg1)
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
 		// Why check not null flag
 		// eg: int_col > const_val(which is less than min_int32)
@@ -1408,6 +1406,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
+		unCacheAndSimplify4MutableConstant(ctx, arg0)
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
 		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.Flag)) {
 			finalArg0 = arg0
@@ -1425,6 +1424,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// int constant [cmp] year type
 	if arg0IsCon && arg0IsInt && arg1Type.Tp == mysql.TypeYear && !arg0.Value.IsNull() {
+		unCacheAndSimplify4MutableConstant(ctx, arg0)
 		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
 		if failed == nil {
 			arg0.Value.SetInt64(adjusted)
@@ -1433,6 +1433,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// year type [cmp] int constant
 	if arg1IsCon && arg1IsInt && arg0Type.Tp == mysql.TypeYear && !arg1.Value.IsNull() {
+		unCacheAndSimplify4MutableConstant(ctx, arg1)
 		adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), false)
 		if failed == nil {
 			arg1.Value.SetInt64(adjusted)
@@ -1481,6 +1482,7 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, 
 	}
 	for i := 0; i < 2; i++ {
 		if con, col := constArgs[1-i], colArgs[i]; con != nil && col != nil {
+			unCacheAndSimplify4MutableConstant(ctx, con)
 			v, isNull, err := con.EvalInt(ctx, chunk.Row{})
 			if err != nil || isNull || v > 0 {
 				return args

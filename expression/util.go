@@ -914,10 +914,18 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // TODO: Do more careful check here.
 func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
-	if !ctx.GetSessionVars().StmtCtx.UseCache {
+	if !ctx.GetSessionVars().StmtCtx.UseCache || ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
 		return false
 	}
 	return containMutableConst(ctx, exprs)
+}
+
+func unCacheAndSimplify4MutableConstant(ctx sessionctx.Context, con *Constant) {
+	if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
+		ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+		con.DeferredExpr = nil
+		con.ParamMarker = nil
+	}
 }
 
 // containMutableConst checks if the expressions contain a lazy constant.
