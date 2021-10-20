@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -268,7 +268,7 @@ func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *domain.Doma
 	return nil
 }
 
-func dumpVariables(ctx sessionctx.Context, zw *zip.Writer) error {
+func dumpVariables(ctx sessionctx.Context,zw *zip.Writer) error {
 	varMap := make(map[string]string)
 	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show variables")
 	if err != nil {
