@@ -1255,6 +1255,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 	dt, err = dt.ConvertTo(sc, targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
+			// If we use the new constant, we should uncache the plan.
 			unCacheAndSimplify4MutableConstant(ctx, con)
 			return &Constant{
 				Value:        dt,
@@ -1265,6 +1266,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 		}
 		return con, false
 	}
+	// If we use the new constant, we should uncache the plan.
 	unCacheAndSimplify4MutableConstant(ctx, con)
 	return &Constant{
 		Value:        dt,
@@ -1295,6 +1297,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
+			// If we use the new constant, we should uncache the plan.
 			unCacheAndSimplify4MutableConstant(ctx, con)
 			return &Constant{
 				Value:        intDatum,
@@ -1310,6 +1313,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		return con, false
 	}
 	if c == 0 {
+		// If we use the new constant, we should uncache the plan.
 		unCacheAndSimplify4MutableConstant(ctx, con)
 		return &Constant{
 			Value:        intDatum,
@@ -1441,6 +1445,8 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{finalArg0, finalArg1}) {
+		// Shouldn't do more optimization because of the parameter may be changed
+		// and the optimization may not work for other parameters.
 		return []Expression{finalArg0, finalArg1}
 	}
 
