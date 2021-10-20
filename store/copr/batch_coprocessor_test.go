@@ -18,11 +18,10 @@ import (
 	"math/rand"
 	"sort"
 	"strconv"
-	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/pingcap/tidb/store/tikv"
 )
 
 // StoreID: [1, storeCount]
@@ -93,8 +92,7 @@ func calcReginCount(tasks []*batchCopTask) int {
 	return count
 }
 
-func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
-	t.Parallel()
+func (s *testCoprocessorSuite) TestBalanceBatchCopTaskWithContinuity(c *C) {
 
 	for replicaNum := 1; replicaNum < 6; replicaNum++ {
 		storeCount := 10
@@ -102,8 +100,8 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 		storeTasks := buildStoreTaskMap(storeCount)
 		regionInfos := buildRegionInfos(storeCount, regionCount, replicaNum)
 		tasks, score := balanceBatchCopTaskWithContinuity(storeTasks, regionInfos, 20)
-		require.True(t, isBalance(score))
-		require.Equal(t, regionCount, calcReginCount(tasks))
+		c.Assert(isBalance(score), Equals, true)
+		c.Assert(regionCount, Equals, calcReginCount(tasks))
 	}
 
 	{
@@ -113,11 +111,11 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 		storeTasks := buildStoreTaskMap(storeCount)
 		regionInfos := buildRegionInfos(storeCount, regionCount, replicaNum)
 		tasks, _ := balanceBatchCopTaskWithContinuity(storeTasks, regionInfos, 20)
-		require.True(t, tasks == nil)
+		c.Assert(tasks == nil, Equals, true)
 	}
 }
 
-func TestDeepCopyStoreTaskMap(t *testing.T) {
+func (s *testCoprocessorSuite) TestDeepCopyStoreTaskMap(c *C) {
 	storeTasks1 := buildStoreTaskMap(10)
 	for _, task := range storeTasks1 {
 		task.regionInfos = append(task.regionInfos, RegionInfo{})
@@ -129,10 +127,10 @@ func TestDeepCopyStoreTaskMap(t *testing.T) {
 	}
 
 	for _, task := range storeTasks1 {
-		require.Equal(t, 1, len(task.regionInfos))
+		c.Assert(len(task.regionInfos), Equals, 1)
 	}
 
 	for _, task := range storeTasks2 {
-		require.Equal(t, 2, len(task.regionInfos))
+		c.Assert(len(task.regionInfos), Equals, 2)
 	}
 }
