@@ -282,12 +282,12 @@ func (s *testSuiteP1) TestLoadStats(c *C) {
 	c.Assert(tk.ExecToErr("load stats ./xxx.json"), NotNil)
 }
 
-func (s *testSuiteP1) TestPlanRecreator(c *C) {
+func (s *testSuiteP1) TestPlanReplayer(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
-	tk.MustExec("plan recreator dump explain select * from t where a=10")
+	tk.MustExec("plan replayer dump explain select * from t where a=10")
 }
 
 func (s *testSuiteP1) TestShow(c *C) {
@@ -9140,4 +9140,17 @@ func (s *testSuite) TestGetResultRowsCount(c *C) {
 		cnt := executor.GetResultRowsCount(tk.Se, p)
 		c.Assert(ca.row, Equals, cnt, Commentf("sql: %v", ca.sql))
 	}
+}
+
+func (s *testSuiteP1) TestIssue28935(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_vectorized_expression=true")
+	tk.MustQuery(`select trim(leading from " a "), trim(both from " a "), trim(trailing from " a ")`).Check(testkit.Rows("a  a  a"))
+	tk.MustQuery(`select trim(leading null from " a "), trim(both null from " a "), trim(trailing null from " a ")`).Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustQuery(`select trim(null from " a ")`).Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("set @@tidb_enable_vectorized_expression=false")
+	tk.MustQuery(`select trim(leading from " a "), trim(both from " a "), trim(trailing from " a ")`).Check(testkit.Rows("a  a  a"))
+	tk.MustQuery(`select trim(leading null from " a "), trim(both null from " a "), trim(trailing null from " a ")`).Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustQuery(`select trim(null from " a ")`).Check(testkit.Rows("<nil>"))
 }
