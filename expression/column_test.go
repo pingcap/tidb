@@ -173,8 +173,7 @@ func (s *testEvaluatorSuite) TestColHybird(c *C) {
 		c.Assert(err, IsNil)
 		input.AppendBytes(0, num)
 	}
-	result, err := newBuffer(types.ETInt, 1024)
-	c.Assert(err, IsNil)
+	result := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
 	c.Assert(col.VecEvalInt(ctx, input, result), IsNil)
 
 	it := chunk.NewIterator4Chunk(input)
@@ -185,8 +184,7 @@ func (s *testEvaluatorSuite) TestColHybird(c *C) {
 	}
 
 	// use a container which has the different field type with bit
-	result, err = newBuffer(types.ETString, 1024)
-	c.Assert(err, IsNil)
+	result = chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1024)
 	c.Assert(col.VecEvalInt(ctx, input, result), IsNil)
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
 		v, _, err := col.EvalInt(ctx, row)
@@ -201,8 +199,7 @@ func (s *testEvaluatorSuite) TestColHybird(c *C) {
 	for i := 0; i < 1024; i++ {
 		input.AppendEnum(0, types.Enum{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
 	}
-	result, err = newBuffer(types.ETString, 1024)
-	c.Assert(err, IsNil)
+	result = chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1024)
 	c.Assert(col.VecEvalString(ctx, input, result), IsNil)
 
 	it = chunk.NewIterator4Chunk(input)
@@ -219,8 +216,7 @@ func (s *testEvaluatorSuite) TestColHybird(c *C) {
 	for i := 0; i < 1024; i++ {
 		input.AppendSet(0, types.Set{Name: fmt.Sprintf("%v", i), Value: uint64(i)})
 	}
-	result, err = newBuffer(types.ETString, 1024)
-	c.Assert(err, IsNil)
+	result = chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1024)
 	c.Assert(col.VecEvalString(ctx, input, result), IsNil)
 
 	it = chunk.NewIterator4Chunk(input)
