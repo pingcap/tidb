@@ -34,20 +34,27 @@ import (
 )
 
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
-		return err
-	}
-	if types.IsBinaryStr(b.args[0].GetType()) {
-		return nil
-	}
-
-	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(strings.ToLower(result.GetString(i))))
-	}
-	return nil
+	// if error is not nil return error, or builtinLowerSig is for binary strings (do nothing)
+	return b.args[0].VecEvalString(b.ctx, input, result)
 }
 
 func (b *builtinLowerSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLowerUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	for i := 0; i < input.NumRows(); i++ {
+		result.SetRaw(i, []byte(b.encoding.ToLower(result.GetString(i))))
+	}
+
+	return nil
+}
+
+func (b *builtinLowerUTF8Sig) vectorized() bool {
 	return true
 }
 
@@ -141,7 +148,7 @@ func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	}
 
 	for i := 0; i < input.NumRows(); i++ {
-		result.SetRaw(i, []byte(strings.ToUpper(result.GetString(i))))
+		result.SetRaw(i, []byte(b.encoding.ToUpper(result.GetString(i))))
 	}
 	return nil
 }
@@ -451,13 +458,11 @@ func (b *builtinHexStrArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			continue
 		}
 		buf0Bytes := buf0.GetBytes(i)
-		if b.encoding.Enabled() {
-			encodedBuf, err = b.encoding.Encode(encodedBuf, buf0Bytes)
-			if err != nil {
-				return err
-			}
-			buf0Bytes = encodedBuf
+		encodedBuf, err = b.encoding.Encode(encodedBuf, buf0Bytes)
+		if err != nil {
+			return err
 		}
+		buf0Bytes = encodedBuf
 		result.AppendString(strings.ToUpper(hex.EncodeToString(buf0Bytes)))
 	}
 	return nil
@@ -2015,33 +2020,21 @@ func (b *builtinTrim3ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	}
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf2.IsNull(i) {
+		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		useDefaultRemStr := buf1.IsNull(i)
 		direction := ast.TrimDirectionType(buf2.GetInt64(i))
 		baseStr := buf0.GetString(i)
 		remStr := buf1.GetString(i)
-		if direction == ast.TrimLeading {
-			if useDefaultRemStr {
-				result.AppendString(strings.TrimLeft(baseStr, spaceChars))
-			} else {
-				result.AppendString(trimLeft(baseStr, remStr))
-			}
-		} else if direction == ast.TrimTrailing {
-			if useDefaultRemStr {
-				result.AppendString(strings.TrimRight(baseStr, spaceChars))
-			} else {
-				result.AppendString(trimRight(baseStr, remStr))
-			}
-		} else {
-			if useDefaultRemStr {
-				result.AppendString(strings.Trim(baseStr, spaceChars))
-			} else {
-				tmpStr := trimLeft(baseStr, remStr)
-				result.AppendString(trimRight(tmpStr, remStr))
-			}
+		switch direction {
+		case ast.TrimLeading:
+			result.AppendString(trimLeft(baseStr, remStr))
+		case ast.TrimTrailing:
+			result.AppendString(trimRight(baseStr, remStr))
+		default:
+			tmpStr := trimLeft(baseStr, remStr)
+			result.AppendString(trimRight(tmpStr, remStr))
 		}
 	}
 	return nil
