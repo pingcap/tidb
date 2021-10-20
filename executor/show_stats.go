@@ -478,14 +478,18 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 			if !ok {
 				continue
 			}
-			e.appendRow([]interface{}{
-				dbName,
-				tbl.Name.O,
-				partitionName,
-				col.Name.O,
-				colStatsUsage.LastUsedAt,
-				colStatsUsage.LastAnalyzedAt,
-			})
+			row := []interface{}{dbName, tbl.Name.O, partitionName, col.Name.O}
+			if colStatsUsage.LastUsedAt != nil {
+				row = append(row, colStatsUsage.LastUsedAt)
+			} else {
+				row = append(row, nil)
+			}
+			if colStatsUsage.LastAnalyzedAt != nil {
+				row = append(row, colStatsUsage.LastAnalyzedAt)
+			} else {
+				row = append(row, nil)
+			}
+			e.appendRow(row)
 		}
 	}
 
@@ -494,7 +498,6 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				appendTableForColumnStatsUsage(db.Name.O, tbl, pi != nil, nil)
-				// TODO: do we need to show partition-level column stats usage?
 				if pi != nil {
 					for _, def := range pi.Definitions {
 						appendTableForColumnStatsUsage(db.Name.O, tbl, false, &def)

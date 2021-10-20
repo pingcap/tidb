@@ -140,10 +140,10 @@ func (h *Handle) merge(s *SessionStatsCollector, rateMap errorRateDeltaMap) {
 type SessionStatsCollector struct {
 	sync.Mutex
 
-	mapper        tableDeltaMap
-	feedback      *statistics.QueryFeedbackMap
-	rateMap       errorRateDeltaMap
-	next          *SessionStatsCollector
+	mapper   tableDeltaMap
+	feedback *statistics.QueryFeedbackMap
+	rateMap  errorRateDeltaMap
+	next     *SessionStatsCollector
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
 }
@@ -203,10 +203,10 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
-		mapper:        make(tableDeltaMap),
-		rateMap:       make(errorRateDeltaMap),
-		next:          h.listHead.next,
-		feedback:      statistics.NewQueryFeedbackMap(),
+		mapper:   make(tableDeltaMap),
+		rateMap:  make(errorRateDeltaMap),
+		next:     h.listHead.next,
+		feedback: statistics.NewQueryFeedbackMap(),
 	}
 	h.listHead.next = newCollector
 	return newCollector

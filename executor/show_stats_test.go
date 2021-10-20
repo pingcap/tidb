@@ -19,6 +19,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
@@ -338,21 +340,30 @@ func (s *testShowStatsSuite) TestShowStatsExtended(c *C) {
 
 func (s *testShowStatsSuite) TestShowColumnStatsUsage(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	h := s.domain.StatsHandle()
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int, c int)")
-	tk.MustExec("insert into t values (1,2,3), (4,5,6), (7,8,9)")
-	tk.MustExec("select * from t where a = 3")
-	// Here we execute `select 1` so that ResetContextOfStmt is called and StatementContext.ColStatsUsage is merged to session.statsCollector.
-	tk.MustExec("select 1")
-	c.Assert(h.DumpColStatsUsageToKV(), IsNil)
-	result := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't'").Sort()
-	c.Assert(len(result.Rows()), Equals, 1)
-	c.Assert(len(result.Rows()[0]), Equals, 6)
-	c.Assert(result.Rows()[0][0], Equals, "test")
-	c.Assert(result.Rows()[0][1], Equals, "t")
-	c.Assert(result.Rows()[0][2], Equals, "")
-	c.Assert(result.Rows()[0][3], Equals, "a")
-	c.Assert(result.Rows()[0][5], Equals, "0000-00-00 00:00:00")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx_a_b(a, b))")
+	tk.MustExec("create table t2 (a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
+
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	t2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, null, '2021-10-20 08:00:00')", t1.Meta().ID, t1.Meta().Columns[0].ID))
+	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, '2021-10-20 09:00:00', null)", t2.Meta().ID, t2.Meta().Columns[0].ID))
+	p0 := t2.Meta().GetPartitionInfo().Definitions[0]
+	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, '2021-10-20 09:00:00', null)", p0.ID, t2.Meta().Columns[0].ID))
+
+	result := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Sort()
+	rows := result.Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0], DeepEquals, []string{"test", "t1", "", t1.Meta().Columns[0].Name.O, "NULL", "2021-10-20 08:00:00"})
+
+	result = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Sort()
+	rows = result.Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0], DeepEquals, []string{"test", "t2", "global", t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "NULL"})
+	c.Assert(rows[1], DeepEquals, []string{"test", "t2", p0.Name.O, t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "NULL"})
 }

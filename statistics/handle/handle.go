@@ -1776,20 +1776,31 @@ func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int
 }
 
 type colStatsUsage struct {
-	LastUsedAt     types.Time
-	LastAnalyzedAt types.Time
+	LastUsedAt     *types.Time
+	LastAnalyzedAt *types.Time
 }
 
 func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsUsage, error) {
-	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, last_used_at, last_analyzed_at from mysql.column_stats_usage")
+	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, last_used_at, last_analyzed_at FROM mysql.column_stats_usage")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	colStatsMap := make(map[model.TableColumnID]colStatsUsage, len(rows))
 	for _, row := range rows {
-		key := model.TableColumnID{TableID: row.GetInt64(0), ColumnID: row.GetInt64(1)}
-		value := colStatsUsage{LastUsedAt: row.GetTime(2), LastAnalyzedAt: row.GetTime(3)}
-		colStatsMap[key] = value
+		if row.IsNull(0) || row.IsNull(1) {
+			continue
+		}
+		tblColID := model.TableColumnID{TableID: row.GetInt64(0), ColumnID: row.GetInt64(1)}
+		var statsUsage colStatsUsage
+		if !row.IsNull(2) {
+			t := row.GetTime(2)
+			statsUsage.LastUsedAt = &t
+		}
+		if !row.IsNull(3) {
+			t := row.GetTime(3)
+			statsUsage.LastAnalyzedAt = &t
+		}
+		colStatsMap[tblColID] = statsUsage
 	}
 	return colStatsMap, nil
 }
