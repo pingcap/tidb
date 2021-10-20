@@ -33,14 +33,32 @@ func getHdfsBin() (string, error) {
 	return filepath.Join(hadoop_home, "bin/hdfs"), nil
 }
 
+func getLinuxUser() (string, bool) {
+	return os.LookupEnv("HADOOP_LINUX_USER")
+}
+
+func dfsCommand(args ...string) (*exec.Cmd, error) {
+	bin, err := getHdfsBin()
+	if err != nil {
+		return nil, err
+	}
+	cmd := []string{}
+	user, ok := getLinuxUser()
+	if ok {
+		cmd = append(cmd, "sudo", "-u", user)
+	}
+	cmd = append(cmd, bin, "dfs")
+	cmd = append(cmd, args...)
+	return exec.Command(cmd[0], cmd[1:]...), nil
+}
+
 // WriteFile writes a complete file to storage, similar to os.WriteFile
 func (s *HDFSStorage) WriteFile(ctx context.Context, name string, data []byte) error {
-	bin, err := getHdfsBin()
+	file_path := fmt.Sprintf("%s/%s", s.remote, name)
+	cmd, err := dfsCommand("-put", "-", file_path)
 	if err != nil {
 		return err
 	}
-	file_path := fmt.Sprintf("%s/%s", s.remote, name)
-	cmd := exec.Command(bin, "dfs", "-put", "-", file_path)
 
 	buf := bytes.Buffer{}
 	buf.Write(data)
@@ -60,19 +78,20 @@ func (s *HDFSStorage) ReadFile(ctx context.Context, name string) ([]byte, error)
 
 // FileExists return true if file exists
 func (s *HDFSStorage) FileExists(ctx context.Context, name string) (bool, error) {
-	bin, err := getHdfsBin()
+	file_path := fmt.Sprintf("%s/%s", s.remote, name)
+	cmd, err := dfsCommand("-ls", file_path)
 	if err != nil {
 		return false, err
 	}
-	file_path := fmt.Sprintf("%s/%s", s.remote, name)
-	cmd := exec.Command(bin, "dfs", "-ls", file_path)
 	out, err := cmd.CombinedOutput()
 	if _, ok := err.(*exec.ExitError); ok {
+		// Successfully exit with non-zero value
 		return false, nil
 	}
 	if err != nil {
 		return false, errors.Annotate(err, string(out))
 	}
+	// Successfully exit with zero value
 	return true, nil
 }
 
