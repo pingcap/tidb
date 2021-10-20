@@ -7661,7 +7661,7 @@ func (s *testDBSuite2) TestCreateTables(c *C) {
 		Name: model.NewCIStr("tables_3"),
 	})
 
-	err := d.CreateTablesWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError, false)
+	err := d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError, false)
 	c.Check(err, IsNil)
 
 	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
