@@ -93,6 +93,19 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1142]CREATE command denied to user 'myuser'@'localhost' for table 'my_seq'")
 }
 
+// Test for sequence still works with a infoschema attached by temporary table
+func (s *testSequenceSuite) TestIssue28881(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop sequence if exists s")
+	tk.MustExec("create sequence s")
+	defer tk.MustExec("drop sequence s")
+	tk.MustExec("create temporary table tmp1 (id int)")
+
+	tk.MustQuery("select nextval(s)").Check(testkit.Rows("1"))
+	tk.MustQuery("select lastval(s)").Check(testkit.Rows("1"))
+}
+
 func (s *testSequenceSuite) TestDropSequence(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
