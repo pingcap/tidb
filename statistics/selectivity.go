@@ -17,7 +17,7 @@ package statistics
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/parser/format"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/planner/trace"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -367,7 +367,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	if ctx.GetSessionVars().EnableCETrace {
 		totalExpr := expression.ComposeCNFCondition(ctx, exprs...)
 		CERecord := trace.CETraceRecord{
-			TableID: coll.PhysicalID,
+			TableID:  coll.PhysicalID,
 			Type:     "Table Stats-Expression",
 			Expr:     ExprToString(totalExpr),
 			RowCount: uint64(ret * float64(coll.Count)),

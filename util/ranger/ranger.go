@@ -16,7 +16,7 @@ package ranger
 
 import (
 	"bytes"
-	"github.com/pingcap/parser/format"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
