@@ -784,7 +784,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	if e.SkipRequest {
 		return nil
 	}
-	//
+	// uint64 slice to unique bool slice
 	e.IsLearners = e.extractRoleBoolSliceFromUint64Slice(isLearnersUint64)
 	e.IsLeaders = e.extractRoleBoolSliceFromUint64Slice(isLeadersUint64)
 
