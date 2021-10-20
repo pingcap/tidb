@@ -16,6 +16,11 @@ package statistics
 
 import (
 	"fmt"
+	"math"
+	"sort"
+	"strings"
+	"sync"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -30,10 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
-	"math"
-	"sort"
-	"strings"
-	"sync"
 )
 
 const (
