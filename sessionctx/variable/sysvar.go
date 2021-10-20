@@ -1809,10 +1809,9 @@ var defaultSysVars = []*SysVar{
 		s.EnableMPPBalanceWithContinuousRegionCount = tidbOptInt64(val, DefEnableMPPBalanceWithContinuousRegionCount)
 		return nil
 	}},
-  
+
 	{Scope: ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
 	{Scope: ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},
-
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
