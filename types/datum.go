@@ -25,13 +25,19 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
+)
+
+var (
+	ErrCannotConvertString = dbterror.ClassExpression.NewStd(errno.ErrCannotConvertString)
 )
 
 // Kind constants.
@@ -100,6 +106,18 @@ func (d *Datum) Kind() byte {
 // Collation gets the collation of the datum.
 func (d *Datum) Collation() string {
 	return d.collation
+}
+
+// Charset gets the charset of the datum.
+func (d *Datum) Charset() string {
+	collation, err := charset.GetCollationByName(d.collation)
+	if err != nil {
+		if IsString(d.Kind()) {
+			return charset.CharsetUTF8MB4
+		}
+		return charset.CharsetBin
+	}
+	return collation.CharsetName
 }
 
 // SetCollation sets the collation of the datum.
@@ -979,7 +997,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	s, err := ProduceStrWithSpecifiedTp(s, target, sc, true)
+	s, err := ProduceStrWithSpecifiedTp(d.Charset(), s, target, sc, true)
 	ret.SetString(s, target.Collate)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
@@ -987,18 +1005,25 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	return ret, errors.Trace(err)
 }
 
-// ProduceStrWithSpecifiedTp produces a new string according to `flen` and `chs`. Param `padZero` indicates
-// whether we should pad `\0` for `binary(flen)` type.
-func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
+func ProduceStrWithSpecifiedTp(oChs string, s string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
 	flen, chs := tp.Flen, tp.Charset
+	originalV := s
+	if tp.Charset == charset.CharsetBin && oChs != charset.CharsetBin {
+		s, err = charset.NewEncoding(oChs).EncodeString(s)
+	} else if tp.Charset != charset.CharsetBin && oChs == charset.CharsetBin {
+		s, err = charset.NewEncoding(tp.Charset).DecodeString(s)
+	}
+	if err != nil {
+		return s, ErrCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", originalV), oChs, tp.Charset)
+	}
 	if flen >= 0 {
 		// overflowed stores the part of the string that is out of the length contraint, it is later checked to see if the
 		// overflowed part is all whitespaces
 		var overflowed string
 		var characterLen int
-		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
+		// Flen is the rune length, not binary length, for Non-binary charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
-		if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
+		if chs != charset.CharsetBin {
 			characterLen = utf8.RuneCountInString(s)
 			if characterLen > flen {
 				// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.

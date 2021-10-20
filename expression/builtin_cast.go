@@ -557,7 +557,7 @@ func (b *builtinCastIntAsStringSig) evalString(row chunk.Row) (res string, isNul
 	if tp.Tp == mysql.TypeYear && res == "0" {
 		res = "0000"
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+	res, err = types.ProduceStrWithSpecifiedTp(tp.Charset, res, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 	if err != nil {
 		return res, false, err
 	}
@@ -856,7 +856,7 @@ func (b *builtinCastRealAsStringSig) evalString(row chunk.Row) (res string, isNu
 		// If we strconv.FormatFloat the value with 64bits, the result is incorrect!
 		bits = 32
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, bits), b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+	res, err = types.ProduceStrWithSpecifiedTp(b.args[0].GetType().Charset, strconv.FormatFloat(val, 'f', -1, bits), b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1002,7 +1002,7 @@ func (b *builtinCastDecimalAsStringSig) evalString(row chunk.Row) (res string, i
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(string(val.ToString()), b.tp, sc, false)
+	res, err = types.ProduceStrWithSpecifiedTp(b.args[0].GetType().Charset, string(val.ToString()), b.tp, sc, false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1113,7 +1113,7 @@ func (b *builtinCastStringAsStringSig) evalString(row chunk.Row) (res string, is
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, sc, false)
+	res, err = types.ProduceStrWithSpecifiedTp(b.args[0].GetType().Charset, res, b.tp, sc, false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1428,7 +1428,7 @@ func (b *builtinCastTimeAsStringSig) evalString(row chunk.Row) (res string, isNu
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc, false)
+	res, err = types.ProduceStrWithSpecifiedTp(b.args[0].GetType().Charset, val.String(), b.tp, sc, false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1561,7 +1561,7 @@ func (b *builtinCastDurationAsStringSig) evalString(row chunk.Row) (res string, 
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc, false)
+	res, err = types.ProduceStrWithSpecifiedTp(b.args[0].GetType().Charset, val.String(), b.tp, sc, false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1907,13 +1907,22 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
+func WrapWithCastAsStringWithTp(ctx sessionctx.Context, expr Expression, toTp *types.FieldType) Expression {
+	if expr.GetType().EvalType() == types.ETString {
+		if expr.GetType().Charset == toTp.Charset {
+			return expr
+		}
+
+		return BuildCastFunction(ctx, expr, toTp)
+	}
+
+	return WrapWithCastAsString(ctx, expr)
+}
+
 // WrapWithCastAsString wraps `expr` with `cast` if the return type of expr is
 // not type string, otherwise, returns `expr` directly.
 func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	exprTp := expr.GetType()
-	if exprTp.EvalType() == types.ETString {
-		return expr
-	}
 	argLen := exprTp.Flen
 	// If expr is decimal, we should take the decimal point and negative sign
 	// into consideration, so we set `expr.GetType().Flen + 2` as the `argLen`.

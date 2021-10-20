@@ -243,14 +243,8 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		charsetInfo, collation := ctx.GetSessionVars().GetCharsetInfo()
 		return &ExprCollation{args[1].Coercibility(), args[1].Repertoire(), charsetInfo, collation}, nil
 	case ast.Cast:
-		// We assume all the cast are implicit.
-		ec = &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), args[0].GetType().Charset, args[0].GetType().Collate}
-		// Non-string type cast to string type should use @@character_set_connection and @@collation_connection.
-		// String type cast to string type should keep its original charset and collation. It should not happen.
-		if retType == types.ETString && argTps[0] != types.ETString {
-			ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
-		}
-		return ec, nil
+		// We assume all the cast are implicit, keep the collation related fields to its original value.
+		return &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), args[0].GetType().Charset, args[0].GetType().Collate}, nil
 	case ast.Case:
 		// FIXME: case function aggregate collation is not correct.
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
@@ -322,7 +316,11 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 			if err != nil {
 				return false
 			}
-			if !isNull && !isValidString(str, ec.Charset) {
+			// if value is NULL or binary string, just skip it.
+			if isNull || types.IsBinaryStr(c.GetType()) {
+				continue
+			}
+			if !isValidString(str, ec.Charset) {
 				return false
 			}
 		} else {

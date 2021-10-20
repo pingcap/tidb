@@ -222,7 +222,7 @@ func (b *builtinCastRealAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 			result.AppendNull()
 			continue
 		}
-		res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(v, 'f', -1, bits), b.tp, sc, false)
+		res, err = types.ProduceStrWithSpecifiedTp(b.args[0].GetType().Charset, strconv.FormatFloat(v, 'f', -1, bits), b.tp, sc, false)
 		if err != nil {
 			return err
 		}
@@ -262,7 +262,7 @@ func (b *builtinCastDecimalAsStringSig) vecEvalString(input *chunk.Chunk, result
 			result.AppendNull()
 			continue
 		}
-		res, e := types.ProduceStrWithSpecifiedTp(string(v.ToString()), b.tp, sc, false)
+		res, e := types.ProduceStrWithSpecifiedTp(b.args[0].GetType().Charset, string(v.ToString()), b.tp, sc, false)
 		if e != nil {
 			return e
 		}
@@ -667,7 +667,7 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 		if isYearType && str == "0" {
 			str = "0000"
 		}
-		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+		str, err = types.ProduceStrWithSpecifiedTp(b.args[0].GetType().Charset, str, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 		if err != nil {
 			return err
 		}
@@ -1320,7 +1320,7 @@ func (b *builtinCastDurationAsStringSig) vecEvalString(input *chunk.Chunk, resul
 			result.AppendNull()
 			continue
 		}
-		res, err = types.ProduceStrWithSpecifiedTp(buf.GetDuration(i, fsp).String(), b.tp, sc, false)
+		res, err = types.ProduceStrWithSpecifiedTp(b.args[0].GetType().Charset, buf.GetDuration(i, fsp).String(), b.tp, sc, false)
 		if err != nil {
 			return err
 		}
@@ -1525,7 +1525,7 @@ func (b *builtinCastTimeAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 			result.AppendNull()
 			continue
 		}
-		res, err = types.ProduceStrWithSpecifiedTp(v.String(), b.tp, sc, false)
+		res, err = types.ProduceStrWithSpecifiedTp(b.args[0].GetType().Charset, v.String(), b.tp, sc, false)
 		if err != nil {
 			return err
 		}
@@ -1827,7 +1827,7 @@ func (b *builtinCastStringAsStringSig) vecEvalString(input *chunk.Chunk, result 
 			result.AppendNull()
 			continue
 		}
-		res, err = types.ProduceStrWithSpecifiedTp(buf.GetString(i), b.tp, sc, false)
+		res, err = types.ProduceStrWithSpecifiedTp(b.args[0].GetType().Charset, buf.GetString(i), b.tp, sc, false)
 		if err != nil {
 			return err
 		}
