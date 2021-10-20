@@ -268,7 +268,7 @@ func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *domain.Doma
 	return nil
 }
 
-func dumpVariables(ctx sessionctx.Context,zw *zip.Writer) error {
+func dumpVariables(ctx sessionctx.Context, zw *zip.Writer) error {
 	varMap := make(map[string]string)
 	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show variables")
 	if err != nil {
