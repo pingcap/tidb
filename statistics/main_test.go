@@ -29,7 +29,7 @@ import (
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.BookKeeper, 1)
+var testDataMap = make(testdata.BookKeeper, 2)
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
@@ -44,6 +44,7 @@ func TestMain(m *testing.M) {
 	})
 
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
+	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
@@ -59,6 +60,10 @@ func TestMain(m *testing.M) {
 
 func GetIntegrationSuiteData() testdata.TestData {
 	return testDataMap["integration_suite"]
+}
+
+func GetStatsSuiteData() testdata.TestData {
+	return testDataMap["stats_suite"]
 }
 
 // TestStatistics batches tests sharing a test suite to reduce the setups

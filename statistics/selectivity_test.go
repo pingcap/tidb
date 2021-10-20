@@ -98,14 +98,6 @@ func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
 	return statsTbl
 }
 
-func loadTestCases(t *testing.T, input interface{}, output interface{}) {
-	var testDataMap = make(testdata.BookKeeper, 1)
-	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
-	defer testDataMap.GenerateOutputIfNeeded()
-	testData := testDataMap["stats_suite"]
-	testData.GetTestCases(t, input, output)
-}
-
 func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statistics.Table, error) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -256,7 +248,8 @@ func TestDiscreteDistribution(t *testing.T) {
 		output [][]string
 	)
 
-	loadTestCases(t, &input, &output)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
 
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -281,7 +274,8 @@ func TestSelectCombinedLowBound(t *testing.T) {
 		output [][]string
 	)
 
-	loadTestCases(t, &input, &output)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
 
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -334,7 +328,8 @@ func TestOutOfRangeEstimation(t *testing.T) {
 		End   int64
 		Count float64
 	}
-	loadTestCases(t, &input, &output)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
 	increasedTblRowCount := int64(float64(statsTbl.Count) * 1.5)
 	for i, ran := range input {
 		count, err = col.GetColumnRowCount(sc, getRange(ran.Start, ran.End), increasedTblRowCount, false)
@@ -472,7 +467,8 @@ func TestPrimaryKeySelectivity(t *testing.T) {
 	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	testKit.MustExec("create table t(a char(10) primary key, b int)")
 	var input, output [][]string
-	loadTestCases(t, &input, &output)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
 	for i, ts := range input {
 		for j, tt := range ts {
 			if j != len(ts)-1 {
@@ -588,7 +584,8 @@ func TestStatsVer2(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	loadTestCases(t, &input, &output)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -626,7 +623,8 @@ func TestTopNOutOfHist(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	loadTestCases(t, &input, &output)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -651,7 +649,8 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	loadTestCases(t, &input, &output)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
 	for i := 0; i < 5; i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -686,7 +685,8 @@ func TestUniqCompEqualEst(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	loadTestCases(t, &input, &output)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
 	for i := 0; i < 1; i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
@@ -734,7 +734,8 @@ func TestCollationColumnEstimate(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	loadTestCases(t, &input, &output)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
 	for i := 0; i < len(input); i++ {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
@@ -772,7 +773,8 @@ func TestDNFCondSelectivity(t *testing.T) {
 			Selectivity float64
 		}
 	)
-	loadTestCases(t, &input, &output)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
 		sctx := testKit.Session().(sessionctx.Context)
 		stmts, err := session.Parse(sctx, tt)
@@ -891,7 +893,8 @@ func TestSmallRangeEstimation(t *testing.T) {
 		End   int64
 		Count float64
 	}
-	loadTestCases(t, &input, &output)
+	statsSuiteData := statistics.GetStatsSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
 	for i, ran := range input {
 		count, err := col.GetColumnRowCount(sc, getRange(ran.Start, ran.End), statsTbl.Count, false)
 		require.NoError(t, err)
