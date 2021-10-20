@@ -20,21 +20,22 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -247,17 +248,36 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
-	var charOpt *ast.CharsetOpt
+	var opt *ast.CharsetOpt
 	var directPlacementOpts *model.PlacementSettings
 	var placementPolicyRef *model.PolicyRefInfo
+	var err error
+	sessionVars := e.ctx.GetSessionVars()
+
+	// If no charset and/or collation is specified use collation_server and character_set_server
+	opt = &ast.CharsetOpt{}
+	if sessionVars.GlobalVarsAccessor != nil {
+		opt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
+		if err != nil {
+			return err
+		}
+		opt.Chs, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CharacterSetServer)
+		if err != nil {
+			return err
+		}
+	}
+
+	explicitCharset := false
+	explicitCollation := false
 	if len(s.Options) != 0 {
-		charOpt = &ast.CharsetOpt{}
 		for _, val := range s.Options {
 			switch val.Tp {
 			case ast.DatabaseOptionCharset:
-				charOpt.Chs = val.Value
+				opt.Chs = val.Value
+				explicitCharset = true
 			case ast.DatabaseOptionCollate:
-				charOpt.Col = val.Value
+				opt.Col = val.Value
+				explicitCollation = true
 			case ast.DatabaseOptionPlacementPrimaryRegion, ast.DatabaseOptionPlacementRegions,
 				ast.DatabaseOptionPlacementFollowerCount, ast.DatabaseOptionPlacementLeaderConstraints,
 				ast.DatabaseOptionPlacementLearnerCount, ast.DatabaseOptionPlacementVoterCount,
@@ -278,7 +298,29 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 			}
 		}
 	}
-	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), charOpt, directPlacementOpts, placementPolicyRef)
+
+	if opt.Col != "" {
+		coll, err := collate.GetCollationByName(opt.Col)
+		if err != nil {
+			return err
+		}
+
+		// The collation is not valid for the specified character set.
+		// Try to remove any of them, but not if they are explicitly defined.
+		if coll.CharsetName != opt.Chs {
+			if explicitCollation && !explicitCharset {
+				// Use the explicitly set collation, not the implicit charset.
+				opt.Chs = ""
+			}
+			if !explicitCollation && explicitCharset {
+				// Use the explicitly set charset, not the (session) collation.
+				opt.Col = ""
+			}
+		}
+
+	}
+
+	err = domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt, directPlacementOpts, placementPolicyRef)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
 			err = nil

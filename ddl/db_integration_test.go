@@ -26,12 +26,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -39,6 +33,12 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -2881,17 +2881,36 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustExec("drop table if exists t;")
 
 	// Grammar error.
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustGetErrCode("create global temporary table t(a double(0, 0))", errno.ErrParse)
 	tk.MustGetErrCode("create temporary table t(id int) on commit delete rows", errno.ErrParse)
 	tk.MustGetErrCode("create temporary table t(id int) on commit preserve rows", errno.ErrParse)
 	tk.MustGetErrCode("create table t(id int) on commit delete rows", errno.ErrParse)
 	tk.MustGetErrCode("create table t(id int) on commit preserve rows", errno.ErrParse)
 
+	tk.MustGetErrCode("create global temporary table tplacement (id int) followers=4  on commit delete rows", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create global temporary table tplacement (id int) primary_region='us-east-1' regions='us-east-1,us-west-1' on commit delete rows", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create global temporary table tplacement (id int) placement policy='x' on commit delete rows", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create temporary table tplacement (id int) followers=4", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create temporary table tplacement (id int) primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create temporary table tplacement (id int) placement policy='x'", errno.ErrOptOnTemporaryTable)
+
 	// Not support yet.
 	tk.MustGetErrCode("create global temporary table t (id int) on commit preserve rows", errno.ErrUnsupportedDDLOperation)
-	// Engine type can only be 'memory' or empty for now.
-	tk.MustGetErrCode("create global temporary table t (id int) engine = 'innodb' on commit delete rows", errno.ErrUnsupportedDDLOperation)
+
+	// Engine type can be anyone, see https://github.com/pingcap/tidb/issues/28541.
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create global temporary table tengine (id int) engine = 'innodb' on commit delete rows")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create global temporary table tengine (id int) engine = 'memory' on commit delete rows")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create global temporary table tengine (id int) engine = 'myisam' on commit delete rows")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create temporary table tengine (id int) engine = 'innodb'")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create temporary table tengine (id int) engine = 'memory'")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create temporary table tengine (id int) engine = 'myisam'")
+	tk.MustExec("drop table if exists tengine")
 
 	// Create local temporary table.
 	tk.MustExec("create database tmp_db")
@@ -2932,9 +2951,6 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	_, err = tk.Exec("create temporary table b_local_temp_table (id int)")
 	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
 	tk.MustExec("create temporary table if not exists b_local_temp_table (id int)")
-
-	// Engine type can only be 'memory' or empty for now.
-	tk.MustGetErrCode("create temporary table te (id int) engine = 'innodb'", errno.ErrUnsupportedDDLOperation)
 
 	// Stale read see the local temporary table but can't read on it.
 	tk.MustExec("START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3)")
@@ -3157,7 +3173,6 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	clearSQL := "drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2"
 	tk.MustExec(clearSQL)
 	defer tk.MustExec(clearSQL)
@@ -3231,7 +3246,6 @@ func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
 func (s *testIntegrationSuite3) TestDropWithLocalTemporaryTableKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	clearSQL := "drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2, testt.ltemp3"
 	tk.MustExec(clearSQL)
 	defer tk.MustExec(clearSQL)

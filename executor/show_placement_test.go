@@ -18,8 +18,8 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
@@ -28,7 +28,7 @@ import (
 func (s *testSuite5) TestShowPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2, t3, db2.t2")
+	tk.MustExec("drop table if exists t1, t2, t3, t4, db2.t2")
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop database if exists db3")
 	tk.MustExec("drop placement policy if exists pa1")
@@ -73,6 +73,13 @@ func (s *testSuite5) TestShowPlacement(c *C) {
 	tk.MustExec("create table t3 (id int)")
 	defer tk.MustExec("drop table if exists t3")
 
+	tk.MustExec("CREATE TABLE t4 (id INT) placement policy pa1 PARTITION BY RANGE (id) (" +
+		"PARTITION p0 VALUES LESS THAN (100) placement policy pa2," +
+		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"," +
+		"PARTITION p2 VALUES LESS THAN (10000)" +
+		")")
+	defer tk.MustExec("drop table if exists t4")
+
 	tk.MustExec("create table db2.t2 (id int) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2")
 	defer tk.MustExec("drop table if exists db2.t2")
 
@@ -85,6 +92,10 @@ func (s *testSuite5) TestShowPlacement(c *C) {
 		"TABLE db2.t2 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2",
 		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 		"TABLE test.t2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2",
+		"TABLE test.t4 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
+		"TABLE test.t4 PARTITION p0 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\"",
+		"TABLE test.t4 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
+		"TABLE test.t4 PARTITION p2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 	))
 
 	tk.MustQuery("show placement like 'POLICY%'").Check(testkit.Rows(
@@ -106,7 +117,7 @@ func (s *testSuite5) TestShowPlacement(c *C) {
 func (s *testSuite5) TestShowPlacementPrivilege(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2, db2.t1")
+	tk.MustExec("drop table if exists t1,t2,t3, db2.t1, db2.t3")
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop database if exists db3")
 	tk.MustExec("drop user if exists user1")
@@ -135,8 +146,14 @@ func (s *testSuite5) TestShowPlacementPrivilege(c *C) {
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t2 (id int) LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2")
 	defer tk.MustExec("drop table if exists t2")
+	tk.MustExec("CREATE TABLE t3 (id INT) PARTITION BY RANGE (id) (" +
+		"PARTITION p1 VALUES LESS THAN (100) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"" +
+		")")
+	defer tk.MustExec("drop table if exists t3")
 	tk.MustExec("create table db2.t1 (id int) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2")
 	defer tk.MustExec("drop table if exists db2.t1")
+	tk.MustExec("create table db2.t3 (id int) LEADER_CONSTRAINTS=\"[+region=gz]\" FOLLOWERS=2")
+	defer tk.MustExec("drop table if exists db2.t3")
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err := session.CreateSession4Test(s.store)
@@ -151,6 +168,7 @@ func (s *testSuite5) TestShowPlacementPrivilege(c *C) {
 
 	// do some grant
 	tk.MustExec(`grant select on test.t1 to 'user1'@'%'`)
+	tk.MustExec(`grant select on test.t3 to 'user1'@'%'`)
 	tk.MustExec(`grant select on db2.t1 to 'user1'@'%'`)
 
 	// after grant
@@ -159,6 +177,7 @@ func (s *testSuite5) TestShowPlacementPrivilege(c *C) {
 		"DATABASE db2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 		"TABLE db2.t1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2",
 		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
+		"TABLE test.t3 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
 	))
 }
 
@@ -180,6 +199,9 @@ func (s *testSuite5) TestShowPlacementForDB(c *C) {
 	tk.MustExec("create database db2 placement policy p1")
 	defer tk.MustExec("drop database if exists db2")
 
+	err := tk.QueryToErr("show placement for database dbnoexist")
+	c.Assert(err.Error(), Equals, "[schema:1049]Unknown database 'dbnoexist'")
+
 	tk.MustQuery("show placement for database test").Check(testkit.Rows())
 	tk.MustQuery("show placement for database db2").Check(testkit.Rows(
 		"DATABASE db2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
@@ -189,11 +211,11 @@ func (s *testSuite5) TestShowPlacementForDB(c *C) {
 	))
 }
 
-func (s *testSuite5) TestShowPlacementForTable(c *C) {
+func (s *testSuite5) TestShowPlacementForTableAndPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists p1")
-	tk.MustExec("drop table if exists t1,t2,t3,db2.t1")
+	tk.MustExec("drop table if exists t1,t2,t3,t4,db2.t1")
 	tk.MustExec("drop database if exists db2")
 
 	tk.MustExec("create placement policy p1 " +
@@ -202,24 +224,54 @@ func (s *testSuite5) TestShowPlacementForTable(c *C) {
 		"SCHEDULE=\"EVEN\"")
 	defer tk.MustExec("drop placement policy p1")
 
-	// ref a policy
+	// table ref a policy
 	tk.MustExec("create table t1 (id int) placement policy p1")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustQuery("show placement for table t1").Check(testkit.Rows(
 		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 	))
 
-	// direct setting
+	// table direct setting
 	tk.MustExec("create table t2 (id int) LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2")
 	defer tk.MustExec("drop table if exists t2")
 	tk.MustQuery("show placement for table t2").Check(testkit.Rows(
 		"TABLE test.t2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2",
 	))
 
-	// no placement
+	// table no placement
 	tk.MustExec("create table t3 (id int)")
 	defer tk.MustExec("drop table if exists t3")
 	tk.MustQuery("show placement for table t3").Check(testkit.Rows())
+
+	// table do not display partition placement
+	tk.MustExec("create table t4 (id int) LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 PARTITION BY RANGE (id) (" +
+		"PARTITION p0 VALUES LESS THAN (100), " +
+		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"," +
+		"PARTITION p2 VALUES LESS THAN (10000) PLACEMENT POLICY p1" +
+		")")
+	defer tk.MustExec("drop table if exists t4")
+	tk.MustQuery("show placement for table t4").Check(testkit.Rows(
+		"TABLE test.t4 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2",
+	))
+
+	// partition inherent table
+	tk.MustQuery("show placement for table t4 partition p0").Check(testkit.Rows(
+		"TABLE test.t4 PARTITION p0 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2",
+	))
+
+	// partition custom placement
+	tk.MustQuery("show placement for table t4 partition p1").Check(testkit.Rows(
+		"TABLE test.t4 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
+	))
+	tk.MustQuery("show placement for table t4 partition p2").Check(testkit.Rows(
+		"TABLE test.t4 PARTITION p2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
+	))
+
+	// partition without placement
+	tk.MustExec("create table t5 (id int) PARTITION BY RANGE (id) (" +
+		"PARTITION p0 VALUES LESS THAN (100)" +
+		")")
+	tk.MustQuery("show placement for table t5 partition p0").Check(testkit.Rows())
 
 	// table name with format db.table
 	tk.MustExec("create database db2")
@@ -235,6 +287,12 @@ func (s *testSuite5) TestShowPlacementForTable(c *C) {
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.tn' doesn't exist")
 	err = tk.ExecToErr("show placement for table dbn.t1")
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'dbn.t1' doesn't exist")
+	err = tk.ExecToErr("show placement for table tn partition pn")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.tn' doesn't exist")
+	err = tk.QueryToErr("show placement for table t1 partition pn")
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'pn' in table 't1'")
+	err = tk.QueryToErr("show placement for table t4 partition pn")
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'pn' in table 't4'")
 }
 
 func (s *testSuite5) TestShowPlacementForDBPrivilege(c *C) {
@@ -303,11 +361,11 @@ func (s *testSuite5) TestShowPlacementForDBPrivilege(c *C) {
 	}
 }
 
-func (s *testSuite5) TestShowPlacementForTablePrivilege(c *C) {
+func (s *testSuite5) TestShowPlacementForTableAndPartitionPrivilege(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists p1")
-	tk.MustExec("drop table if exists t1,t2,t3,db2.t1")
+	tk.MustExec("drop table if exists t1,t2,t3,t4,db2.t1")
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("drop user if exists user1")
 
@@ -327,7 +385,9 @@ func (s *testSuite5) TestShowPlacementForTablePrivilege(c *C) {
 	defer tk.MustExec("drop placement policy p1")
 
 	// prepare tables
-	tk.MustExec("create table t1 (id int) placement policy p1")
+	tk.MustExec("create table t1 (id int) placement policy p1 PARTITION BY RANGE (id) (" +
+		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"" +
+		")")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t2 (id int) LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2")
 	defer tk.MustExec("drop table if exists t2")
@@ -344,6 +404,9 @@ func (s *testSuite5) TestShowPlacementForTablePrivilege(c *C) {
 
 	// before grant
 	err = tk1.ExecToErr("show placement for table test.t1")
+	c.Assert(err.Error(), Equals, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
+
+	err = tk1.ExecToErr("show placement for table test.t1 partition p1")
 	c.Assert(err.Error(), Equals, core.ErrTableaccessDenied.GenWithStackByArgs("SHOW", "user1", "%", "t1").Error())
 
 	err = tk1.ExecToErr("show placement for table test.t2")
@@ -375,10 +438,15 @@ func (s *testSuite5) TestShowPlacementForTablePrivilege(c *C) {
 		tk1.MustQuery("show placement").Check(testkit.Rows(
 			"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 			"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
+			"TABLE test.t1 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
 		))
 
 		tk1.MustQuery("show placement for table test.t1").Check(testkit.Rows(
 			"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
+		))
+
+		tk1.MustQuery("show placement for table test.t1 partition p1").Check(testkit.Rows(
+			"TABLE test.t1 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
 		))
 
 		err = tk1.ExecToErr("show placement for table test.t2")
