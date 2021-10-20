@@ -1178,7 +1178,7 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.C
 // addSelection4PlanCache adds an extra safeguard selection upon this root task for safety.
 // When reusing cached plans and rebuilding range for them, the range builder may return an loose range after parameters change.
 func (ds *DataSource) addSelection4PlanCache(task *rootTask, stats *property.StatsInfo, prop *property.PhysicalProperty) {
-	if !ds.ctx.GetSessionVars().StmtCtx.UseCache {
+	if !ds.ctx.GetSessionVars().StmtCtx.UseCache || ds.ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
 		return
 	}
 	sel := PhysicalSelection{Conditions: ds.pushedDownConds}.Init(ds.ctx, stats, ds.blockOffset, prop)
