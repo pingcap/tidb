@@ -2149,7 +2149,7 @@ func (d *ddl) CreateTableWithInfo(
 	return errors.Trace(err)
 }
 
-func (d *ddl) CreateTablesWithInfo(ctx sessionctx.Context,
+func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	dbName model.CIStr,
 	infos []*model.TableInfo,
 	onExist OnExist,
