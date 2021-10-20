@@ -149,8 +149,8 @@ type DDL interface {
 		onExist OnExist,
 		tryRetainID bool) error
 
-	// CreateTablesWithInfo is like CreateTableWithInfo, but can handle multiple tables.
-	CreateTablesWithInfo(ctx sessionctx.Context,
+	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
+	BatchCreateTableWithInfo(ctx sessionctx.Context,
 		schema model.CIStr,
 		info []*model.TableInfo,
 		onExist OnExist,
