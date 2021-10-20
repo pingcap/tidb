@@ -1237,7 +1237,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	}
 	form = make(url.Values)
 	form.Set("tidb_deadlock_history_capacity", "5")
-	resp, err = ts.formStatus("/settings", form)
+	resp, _ = ts.formStatus("/settings", form)
 	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 5)
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(6))
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[4].ID, Equals, uint64(10))
