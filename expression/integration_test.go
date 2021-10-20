@@ -1067,8 +1067,7 @@ func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select trim(''), trim('x' from '')`)
 	result.Check(testutil.RowsWithSep(",", ","))
 	result = tk.MustQuery(`select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar')`)
-	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
-	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 
 	// for locate
 	tk.MustExec("drop table if exists t")
