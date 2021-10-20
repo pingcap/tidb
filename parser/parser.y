@@ -1597,14 +1597,7 @@ DirectPlacementOption:
 
 PlacementOption:
 	DirectPlacementOption
-|	"PLACEMENT" "POLICY" EqOpt stringLit
-	{
-		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
-	}
-|	"PLACEMENT" "POLICY" EqOpt PolicyName
-	{
-		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
-	}
+|	PlacementPolicyOption
 
 PlacementPolicyOption:
 	"PLACEMENT" "POLICY" EqOpt stringLit
@@ -1612,6 +1605,14 @@ PlacementPolicyOption:
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
 	}
 |	"PLACEMENT" "POLICY" EqOpt PolicyName
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
+	}
+|	"PLACEMENT" "POLICY" EqOpt "DEFAULT"
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
+	}
+|	"PLACEMENT" "POLICY" "SET" "DEFAULT"
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
 	}
@@ -7246,11 +7247,11 @@ FunctionCallNonKeyword:
 	}
 |	builtinTrim '(' TrimDirection "FROM" Expression ')'
 	{
-		nilVal := ast.NewValueExpr(nil, parser.charset, parser.collation)
+		spaceVal := ast.NewValueExpr(" ", parser.charset, parser.collation)
 		direction := &ast.TrimDirectionExpr{Direction: $3.(ast.TrimDirectionType)}
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
-			Args:   []ast.ExprNode{$5, nilVal, direction},
+			Args:   []ast.ExprNode{$5, spaceVal, direction},
 		}
 	}
 |	builtinTrim '(' TrimDirection Expression "FROM" Expression ')'
