@@ -655,7 +655,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 		for e.tblIdx < len(schema.Tables) {
 			table := schema.Tables[e.tblIdx]
 			e.tblIdx++
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.InsertPriv|mysql.SelectPriv|mysql.UpdatePriv|mysql.ReferencesPriv) {
 				continue
 			}
 
@@ -674,6 +674,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return
 	}
+	privileges := e.getPrivilegesOfTable(sctx, schema, tbl)
 	for i, col := range tbl.Columns {
 		if col.Hidden {
 			continue
@@ -750,7 +751,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			columnType,                           // COLUMN_TYPE
 			columnDesc.Key,                       // COLUMN_KEY
 			columnDesc.Extra,                     // EXTRA
-			"select,insert,update,references",    // PRIVILEGES
+			privileges,                           // PRIVILEGES
 			columnDesc.Comment,                   // COLUMN_COMMENT
 			col.GeneratedExprString,              // GENERATION_EXPRESSION
 		)
@@ -764,6 +765,24 @@ func calcCharOctLength(lenInChar int, cs string) int {
 		lenInBytes = desc.Maxlen * lenInChar
 	}
 	return lenInBytes
+}
+
+func (e *hugeMemTableRetriever) getPrivilegesOfTable(sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo) string {
+	checker := privilege.GetPrivilegeManager(sctx)
+	var privileges []string
+	if checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", mysql.SelectPriv) {
+		privileges = append(privileges, "select")
+	}
+	if checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", mysql.InsertPriv) {
+		privileges = append(privileges, "insert")
+	}
+	if checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", mysql.UpdatePriv) {
+		privileges = append(privileges, "update")
+	}
+	if checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, tbl.Name.L, "", mysql.ReferencesPriv) {
+		privileges = append(privileges, "references")
+	}
+	return strings.Join(privileges, ",")
 }
 
 func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
