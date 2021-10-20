@@ -175,10 +175,14 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 		}
 	}
 	p.replaceExprColumns(replace)
-	if isProj && canEliminate {
+	if isProj {
 		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
 			for i := range proj.Exprs {
-				proj.Exprs[i] = expression.FoldConstant(ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema()))
+				if canEliminate {
+					proj.Exprs[i] = expression.FoldConstant(ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema()))
+				} else {
+					proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
+				}
 			}
 			p.Children()[0] = child.Children()[0]
 		}
