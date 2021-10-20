@@ -59,7 +59,7 @@ const (
 			raw_value   mediumblob NOT NULL COMMENT 'the value of the conflicted key',
 			raw_handle  mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
 			raw_row     mediumblob NOT NULL COMMENT 'the data retrieved from the handle',
-			KEY (task_id, table_name, create_time)
+			KEY (task_id, table_name)
 		);
 	`
 
