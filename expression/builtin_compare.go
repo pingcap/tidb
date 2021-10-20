@@ -1255,6 +1255,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 	dt, err = dt.ConvertTo(sc, targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
+			unCacheAndSimplify4MutableConstant(ctx, con)
 			return &Constant{
 				Value:        dt,
 				RetType:      targetFieldType,
@@ -1264,6 +1265,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 		}
 		return con, false
 	}
+	unCacheAndSimplify4MutableConstant(ctx, con)
 	return &Constant{
 		Value:        dt,
 		RetType:      targetFieldType,
@@ -1293,6 +1295,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
+			unCacheAndSimplify4MutableConstant(ctx, con)
 			return &Constant{
 				Value:        intDatum,
 				RetType:      &targetFieldType,
@@ -1307,6 +1310,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		return con, false
 	}
 	if c == 0 {
+		unCacheAndSimplify4MutableConstant(ctx, con)
 		return &Constant{
 			Value:        intDatum,
 			RetType:      &targetFieldType,
@@ -1378,7 +1382,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isPositiveInfinite, isNegativeInfinite := false, false
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		UnCacheAndSimplify4MutableConstant(ctx, arg1)
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
 		// Why check not null flag
 		// eg: int_col > const_val(which is less than min_int32)
@@ -1406,7 +1409,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		UnCacheAndSimplify4MutableConstant(ctx, arg0)
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
 		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.Flag)) {
 			finalArg0 = arg0
@@ -1424,7 +1426,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// int constant [cmp] year type
 	if arg0IsCon && arg0IsInt && arg1Type.Tp == mysql.TypeYear && !arg0.Value.IsNull() {
-		UnCacheAndSimplify4MutableConstant(ctx, arg0)
 		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), false)
 		if failed == nil {
 			arg0.Value.SetInt64(adjusted)
@@ -1433,13 +1434,16 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	// year type [cmp] int constant
 	if arg1IsCon && arg1IsInt && arg0Type.Tp == mysql.TypeYear && !arg1.Value.IsNull() {
-		UnCacheAndSimplify4MutableConstant(ctx, arg1)
 		adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), false)
 		if failed == nil {
 			arg1.Value.SetInt64(adjusted)
 			finalArg1 = arg1
 		}
 	}
+	if MaybeOverOptimized4PlanCache(ctx, []Expression{finalArg0, finalArg1}) {
+		return []Expression{finalArg0, finalArg1}
+	}
+
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
 		// This will always be false.
 		return []Expression{NewZero(), NewOne()}
@@ -1465,7 +1469,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, args []Expression) []Expression {
 	// Only handle int cases, cause MySQL declares that `UNSIGNED` is deprecated for FLOAT, DOUBLE and DECIMAL types,
 	// and support for it would be removed in a future version.
-	if args[0].GetType().EvalType() != types.ETInt || args[1].GetType().EvalType() != types.ETInt {
+	if args[0].GetType().EvalType() != types.ETInt || args[1].GetType().EvalType() != types.ETInt || MaybeOverOptimized4PlanCache(ctx, args) {
 		return args
 	}
 	colArgs := make([]*Column, 2)
@@ -1482,7 +1486,6 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, 
 	}
 	for i := 0; i < 2; i++ {
 		if con, col := constArgs[1-i], colArgs[i]; con != nil && col != nil {
-			UnCacheAndSimplify4MutableConstant(ctx, con)
 			v, isNull, err := con.EvalInt(ctx, chunk.Row{})
 			if err != nil || isNull || v > 0 {
 				return args

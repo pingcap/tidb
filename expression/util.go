@@ -914,13 +914,17 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // TODO: Do more careful check here.
 func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
-	if !ctx.GetSessionVars().StmtCtx.UseCache || ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
+	if !ctx.GetSessionVars().StmtCtx.UseCache {
+		return false
+	}
+	if ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
+		simplifyMutableConst(ctx, exprs)
 		return false
 	}
 	return containMutableConst(ctx, exprs)
 }
 
-func UnCacheAndSimplify4MutableConstant(ctx sessionctx.Context, con *Constant) {
+func unCacheAndSimplify4MutableConstant(ctx sessionctx.Context, con *Constant) {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
 		ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 		con.DeferredExpr = nil
@@ -943,6 +947,18 @@ func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 		}
 	}
 	return false
+}
+
+func simplifyMutableConst(ctx sessionctx.Context, exprs []Expression) {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Constant:
+			v.ParamMarker = nil
+			v.DeferredExpr = nil
+		case *ScalarFunction:
+			containMutableConst(ctx, v.GetArgs())
+		}
+	}
 }
 
 const (
