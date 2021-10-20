@@ -15,7 +15,7 @@ package charset_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/tidb/parser/charset"
 	"golang.org/x/text/transform"
 )
 
@@ -71,6 +71,26 @@ func (s *testEncodingSuite) TestEncoding(c *C) {
 		} else {
 			c.Assert(err, NotNil, cmt)
 		}
-		c.Assert(string(result), Equals, tc.result, Commentf("%v", tc))
+		c.Assert(string(result), Equals, tc.result, cmt)
+	}
+
+	utf8Cases := []struct {
+		utf8Str string
+		result  string
+		isValid bool
+	}{
+		{"一二三", "һ\xb6\xfe\xc8\xfd", true},
+		{"🀁", "?", false},
+		{"valid_string_🀁", "valid_string_?", false},
+	}
+	for _, tc := range utf8Cases {
+		cmt := Commentf("%v", tc)
+		result, err = enc.Encode(nil, []byte(tc.utf8Str))
+		if tc.isValid {
+			c.Assert(err, IsNil, cmt)
+		} else {
+			c.Assert(err, NotNil, cmt)
+		}
+		c.Assert(string(result), Equals, tc.result, cmt)
 	}
 }

@@ -19,9 +19,9 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -238,19 +238,19 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
-			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), nil},
+			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), newRangeInt64Gener(0, 4)},
 			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimBoth), RetType: types.NewFieldType(mysql.TypeLonglong)}},
 		},
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
-			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), nil},
+			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), newRangeInt64Gener(0, 4)},
 			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimLeading), RetType: types.NewFieldType(mysql.TypeLonglong)}},
 		},
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
-			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), nil},
+			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), newRangeInt64Gener(0, 4)},
 			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimTrailing), RetType: types.NewFieldType(mysql.TypeLonglong)}},
 		},
 	},

@@ -44,9 +44,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
@@ -354,9 +354,6 @@ func (d *resultEncoder) encodeData(src []byte) []byte {
 }
 
 func (d *resultEncoder) encodeWith(src []byte, enc *charset.Encoding) []byte {
-	if !enc.Enabled() {
-		return src
-	}
 	result, err := enc.Encode(d.buffer, src)
 	if err != nil {
 		logutil.BgLogger().Debug("encode error", zap.Error(err))

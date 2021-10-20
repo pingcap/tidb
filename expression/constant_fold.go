@@ -15,8 +15,8 @@
 package expression
 
 import (
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -154,7 +154,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return expr, false
 		}
-		if function := specialFoldHandler[x.FuncName.L]; function != nil {
+		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(x.GetCtx(), []Expression{expr}) {
 			return function(x)
 		}
 

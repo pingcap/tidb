@@ -15,8 +15,8 @@ package ast
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
 )
 
 var (
@@ -39,7 +39,10 @@ type AnalyzeTableStmt struct {
 	Incremental bool
 	// HistogramOperation is set in "ANALYZE TABLE ... UPDATE/DROP HISTOGRAM ..." statement.
 	HistogramOperation HistogramOperationType
-	ColumnNames        []*ColumnName
+	// ColumnNames indicate the columns whose statistics need to be collected.
+	ColumnNames []*ColumnName
+	// PredicateColumns is true when we only collect statistics of predicate columns and indexed columns.
+	PredicateColumns bool
 }
 
 // AnalyzeOptType is the type for analyze options.
@@ -119,15 +122,25 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(" ")
 		ctx.WriteKeyWord(n.HistogramOperation.String())
 		ctx.WritePlain(" ")
-	}
-	if len(n.ColumnNames) > 0 {
-		ctx.WriteKeyWord("ON ")
+		if len(n.ColumnNames) > 0 {
+			ctx.WriteKeyWord("ON ")
+			for i, columnName := range n.ColumnNames {
+				if i != 0 {
+					ctx.WritePlain(",")
+				}
+				ctx.WriteName(columnName.Name.O)
+			}
+		}
+	} else if len(n.ColumnNames) > 0 {
+		ctx.WriteKeyWord(" COLUMNS ")
 		for i, columnName := range n.ColumnNames {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
 			ctx.WriteName(columnName.Name.O)
 		}
+	} else if n.PredicateColumns {
+		ctx.WriteKeyWord(" PREDICATE COLUMNS")
 	}
 	if n.IndexFlag {
 		ctx.WriteKeyWord(" INDEX")

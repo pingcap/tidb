@@ -24,18 +24,17 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -456,6 +455,7 @@ func prepareSlowLogfile(t *testing.T, slowLogFileName string) {
 # Mem_max: 70724
 # Disk_max: 65536
 # Plan_from_cache: true
+# Result_rows: 10
 # Succ: true
 # Plan: abcd
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
@@ -556,14 +556,13 @@ func TestSlowQuery(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|",
-		"2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0||0|1|1|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;",
-		"2021-09-08|14:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0||0|1|0|0||||INSERT INTO ...;",
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|1|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;",
+		"2021-09-08|14:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0||||INSERT INTO ...;",
 	))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0||0|1|1|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;",
-		"2021-09-08|06:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0||0|1|0|0||||INSERT INTO ...;",
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|1|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;",
+		"2021-09-08|06:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0||||INSERT INTO ...;",
 	))
 
 	// Test for long query.
@@ -1329,90 +1328,6 @@ func TestServerInfoResolveLoopBackAddr(t *testing.T) {
 		require.Equal(t, "192.168.130.22:4000", n.Address)
 		require.Equal(t, "192.168.130.22:10080", n.StatusAddr)
 	}
-}
-
-func TestPlacementPolicy(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	tk := newTestKitWithRoot(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table test_placement(id int primary key) partition by hash(id) partitions 2")
-
-	is := dom.InfoSchema()
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_placement"))
-	require.NoError(t, err)
-	partDefs := tb.Meta().GetPartitionInfo().Definitions
-
-	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
-
-	bundleID := "pd"
-	is.SetBundle(&placement.Bundle{
-		ID: bundleID,
-		Rules: []*placement.Rule{
-			{
-				GroupID: bundleID,
-				ID:      "default",
-				Role:    "voter",
-				Count:   3,
-			},
-		},
-	})
-	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
-
-	bundleID = fmt.Sprintf("%s%d", placement.BundleIDPrefix, partDefs[0].ID)
-	bundle := &placement.Bundle{
-		ID:       bundleID,
-		Index:    3,
-		Override: true,
-		Rules: []*placement.Rule{
-			{
-				GroupID: bundleID,
-				ID:      "0",
-				Role:    "voter",
-				Count:   3,
-				Constraints: []placement.Constraint{
-					{
-						Key:    "zone",
-						Op:     "in",
-						Values: []string{"bj"},
-					},
-				},
-			},
-		},
-	}
-	is.SetBundle(bundle)
-	expected := fmt.Sprintf(`%s 3 0 test test_placement p0 <nil> voter 3 "+zone=bj"`, bundleID)
-	tk.MustQuery(`select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name,
-		role, replicas, constraints from information_schema.placement_policy`).Check(testkit.Rows(expected))
-
-	rule1 := bundle.Rules[0].Clone()
-	rule1.ID = "1"
-	bundle.Rules = append(bundle.Rules, rule1)
-	tk.MustQuery("select rule_id, schema_name, table_name, partition_name from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
-		"0 test test_placement p0", "1 test test_placement p0"))
-
-	bundleID = fmt.Sprintf("%s%d", placement.BundleIDPrefix, partDefs[1].ID)
-	bundle1 := bundle.Clone()
-	bundle1.ID = bundleID
-	bundle1.Rules[0].GroupID = bundleID
-	bundle1.Rules[1].GroupID = bundleID
-	is.SetBundle(bundle1)
-	tk.MustQuery("select rule_id, schema_name, table_name, partition_name from information_schema.placement_policy order by partition_name, rule_id").Check(testkit.Rows(
-		"0 test test_placement p0", "1 test test_placement p0", "0 test test_placement p1", "1 test test_placement p1"))
-
-	// do not report error for invalid ObjectID
-	// check pingcap/tidb/issues/22950
-	bundle1.ID = placement.GroupID(1)
-	tk.MustQuery("select rule_id from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
-		"0", "1"))
-
-	// test the failpoint for testing
-	fpName := "github.com/pingcap/tidb/executor/outputInvalidPlacementRules"
-	require.NoError(t, failpoint.Enable(fpName, "return(true)"))
-	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
-	tk.MustQuery("select rule_id from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
-		"0", "0", "1", "1"))
 }
 
 func TestInfoSchemaClientErrors(t *testing.T) {
