@@ -44,6 +44,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os/user"
 	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
@@ -166,29 +167,29 @@ func newClientConn(s *Server) *clientConn {
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
 type clientConn struct {
-	pkt          *packetIO         // a helper to read and write data in packet format.
-	bufReadConn  *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
-	tlsConn      *tls.Conn         // TLS connection, nil if not TLS.
-	server       *Server           // a reference of server instance.
-	capability   uint32            // client capability affects the way server handles client request.
-	connectionID uint64            // atomically allocated by a global variable, unique in process scope.
-	user         string            // user of the client.
-	dbname       string            // default database name.
-	salt         []byte            // random bytes used for authentication.
-	alloc        arena.Allocator   // an memory allocator for reducing memory allocation.
-	lastPacket   []byte            // latest sql query string, currently used for logging error.
-	ctx          *TiDBContext      // an interface to execute sql statements.
-	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
-	peerHost     string            // peer host
-	peerPort     string            // peer port
-	status       int32             // dispatching/reading/shutdown/waitshutdown
-	lastCode     uint16            // last error code
-	collation    uint8             // collation used by client, may be different from the collation used by database.
-	lastActive   time.Time         // last active time
-	authPlugin   string            // default authentication plugin
-	isUnixSocket bool              // connection is Unix Socket file
-	rsEncoder    *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
-
+	pkt           *packetIO         // a helper to read and write data in packet format.
+	bufReadConn   *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
+	tlsConn       *tls.Conn         // TLS connection, nil if not TLS.
+	server        *Server           // a reference of server instance.
+	capability    uint32            // client capability affects the way server handles client request.
+	connectionID  uint64            // atomically allocated by a global variable, unique in process scope.
+	user          string            // user of the client.
+	dbname        string            // default database name.
+	salt          []byte            // random bytes used for authentication.
+	alloc         arena.Allocator   // an memory allocator for reducing memory allocation.
+	lastPacket    []byte            // latest sql query string, currently used for logging error.
+	ctx           *TiDBContext      // an interface to execute sql statements.
+	attrs         map[string]string // attributes parsed from client handshake response, not used for now.
+	peerHost      string            // peer host
+	peerPort      string            // peer port
+	status        int32             // dispatching/reading/shutdown/waitshutdown
+	lastCode      uint16            // last error code
+	collation     uint8             // collation used by client, may be different from the collation used by database.
+	lastActive    time.Time         // last active time
+	authPlugin    string            // default authentication plugin
+	isUnixSocket  bool              // connection is Unix Socket file
+	rsEncoder     *resultEncoder    // rsEncoder is used to encode the string result to different charsets.
+	socketCredUID uint32            // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
@@ -686,7 +687,19 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
-	err = cc.openSessionAndDoAuth(resp.Auth)
+	switch resp.AuthPlugin {
+	case mysql.AuthCachingSha2Password:
+		resp.Auth, err = cc.authSha(ctx)
+		if err != nil {
+			return err
+		}
+	case mysql.AuthNativePassword:
+	case mysql.AuthSocket:
+	default:
+		return errors.New("Unknown auth plugin")
+	}
+
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
 	if err != nil {
 		logutil.Logger(ctx).Warn("open new session or authentication failure", zap.Error(err))
 	}
@@ -710,6 +723,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 				return err
 			}
 		case mysql.AuthNativePassword:
+		case mysql.AuthSocket:
 		default:
 			logutil.Logger(ctx).Warn("Unknown Auth Plugin", zap.String("plugin", resp.AuthPlugin))
 		}
@@ -780,7 +794,7 @@ func (cc *clientConn) openSession() error {
 	return nil
 }
 
-func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
+func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) error {
 	// Open a context unless this was done before.
 	if cc.ctx == nil {
 		err := cc.openSession()
@@ -797,6 +811,11 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	if err != nil {
 		return err
 	}
+
+	if !cc.isUnixSocket && authPlugin == mysql.AuthSocket {
+		return errAccessDeniedNoPassword.FastGenByArgs(cc.user, host)
+	}
+
 	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
 		return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 	}
@@ -825,7 +844,17 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, authPlugin *string) (
 	if err != nil {
 		return nil, err
 	}
+	if userplugin == mysql.AuthSocket {
+		*authPlugin = mysql.AuthSocket
+		user, err := user.LookupId(fmt.Sprint(cc.socketCredUID))
+		if err != nil {
+			return nil, err
+		}
+		return []byte(user.Username), nil
+	}
 	if len(userplugin) == 0 {
+		logutil.Logger(ctx).Warn("No user plugin set, assuming MySQL Native Password",
+			zap.String("user", cc.user), zap.String("host", cc.peerHost))
 		*authPlugin = mysql.AuthNativePassword
 		return nil, nil
 	}
@@ -1647,13 +1676,13 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 	return nil
 }
 
-// handlePlanRecreator dose the export/import work for reproducing sql queries.
-func (cc *clientConn) handlePlanRecreator(ctx context.Context, info executor.PlanRecreatorInfo) (string, error) {
+// handlePlanReplayer dose the export/import work for reproducing sql queries.
+func (cc *clientConn) handlePlanReplayer(ctx context.Context, info executor.PlanReplayerInfo) (string, error) {
 	switch info.(type) {
-	case *executor.PlanRecreatorSingleInfo:
+	case *executor.PlanReplayerSingleInfo:
 		return info.Process()
 	}
-	return "", errors.New("plan recreator: not supporting info type")
+	return "", errors.New("plan replayer: not supporting info type")
 }
 
 func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
@@ -1935,11 +1964,11 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 		}
 	}
 
-	planRecreator := cc.ctx.Value(executor.PlanRecreatorVarKey)
-	if planRecreator != nil {
+	planReplayer := cc.ctx.Value(executor.PlanReplayerVarKey)
+	if planReplayer != nil {
 		handled = true
-		defer cc.ctx.SetValue(executor.PlanRecreatorVarKey, nil)
-		token, err := cc.handlePlanRecreator(ctx, planRecreator.(executor.PlanRecreatorInfo))
+		defer cc.ctx.SetValue(executor.PlanReplayerVarKey, nil)
+		token, err := cc.handlePlanReplayer(ctx, planReplayer.(executor.PlanReplayerInfo))
 		if err != nil {
 			return handled, err
 		}
@@ -2221,7 +2250,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
 	}
-	err = cc.openSessionAndDoAuth(pass)
+	err = cc.openSessionAndDoAuth(pass, "")
 	if err != nil {
 		return err
 	}
