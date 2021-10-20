@@ -21,10 +21,10 @@ import (
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	txninfo "github.com/pingcap/tidb/session/txninfo"
@@ -281,7 +281,7 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	c.Assert(strings.Index(rows[1][0].(string), `Point_Get`), Equals, 6)
+	c.Assert(strings.Contains(rows[3][0].(string), `TableRangeScan`), IsTrue)
 
 	// case 3:
 	tk.MustExec(`drop table if exists ta, tb`)
@@ -546,6 +546,31 @@ func (s *testPrepareSuite) TestPlanCacheXXX(c *C) {
 			tk.MustQuery(query).Sort().Check(results)
 		}
 	}
+}
+
+func (s *testSerialSuite) TestIssue28782(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("prepare stmt from 'SELECT IF(?, 1, 0);';")
+	tk.MustExec("set @a=1, @b=null, @c=0")
+
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
 func (s *testSerialSuite) TestIssue28087And28162(c *C) {
