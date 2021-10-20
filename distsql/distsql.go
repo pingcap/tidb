@@ -137,14 +137,14 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int, rootPlanID int) (SelectResult, error) {
 	sr, err := Select(ctx, sctx, kvReq, fieldTypes, fb)
 	if err != nil {
-		return sr, err
+		return nil, err
 	}
 	if selectResult, ok := sr.(*selectResult); ok {
 		selectResult.copPlanIDs = copPlanIDs
 		selectResult.rootPlanID = rootPlanID
 	}
 	return sr, nil
-}   
+}
 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
@@ -195,8 +195,8 @@ func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
 	if canUseChunkRPC(ctx) {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 		setChunkMemoryLayout(dagReq)
-		return 
-	} 
+		return
+	}
 	dagReq.EncodeType = tipb.EncodeType_TypeDefault
 }
 
@@ -240,6 +240,6 @@ func init() {
 	if 0x01 == *(*byte)(ptr) {
 		systemEndian = tipb.Endian_BigEndian
 		return
-	} 
+	}
 	systemEndian = tipb.Endian_LittleEndian
 }
