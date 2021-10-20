@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -1799,6 +1800,8 @@ var defaultSysVars = []*SysVar{
 		s.EnableStableResultMode = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
+	{Scope: ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
