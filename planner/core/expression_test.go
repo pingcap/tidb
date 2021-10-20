@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/testkit/trequire"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
@@ -108,7 +108,6 @@ func TestCast(t *testing.T) {
 		Tp:   f,
 	}
 
-	stmtCtx := new(stmtctx.StatementContext)
 	ctx := MockContext()
 
 	ast.SetFlag(expr)
@@ -125,19 +124,13 @@ func TestCast(t *testing.T) {
 	f.Charset = charset.CharsetBin
 	v, err = evalAstExpr(ctx, expr)
 	require.NoError(t, err)
-	expectedByte := types.NewDatum([]byte("1"))
-	res, err := v.CompareDatum(stmtCtx, &expectedByte)
-	require.NoError(t, err)
-	require.Equal(t, 0, res)
+	trequire.DatumEqual(t, types.NewDatum([]byte("1")), v)
 
 	f.Tp = mysql.TypeString
 	f.Charset = charset.CharsetUTF8
 	v, err = evalAstExpr(ctx, expr)
 	require.NoError(t, err)
-	expectedString := types.NewDatum(("1"))
-	res, err = v.CompareDatum(stmtCtx, &expectedString)
-	require.NoError(t, err)
-	require.Equal(t, 0, res)
+	trequire.DatumEqual(t, types.NewDatum([]byte("1")), v)
 
 	expr.Expr = ast.NewValueExpr(nil, "", "")
 	v, err = evalAstExpr(ctx, expr)
