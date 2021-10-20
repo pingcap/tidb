@@ -1267,11 +1267,11 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
 		er.err = variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
-		if variable.IsRemovedSysVar(name) {
+		if err := variable.CheckSysVarIsRemoved(name); err != nil {
 			// Removed vars still return an error, but we customize it from
-			// "unknown" to "no longer supported, check the manual". This is important
-			// so users at least know they had the variable name correct.
-			er.err = variable.ErrVariableNoLongerSupported.GenWithStackByArgs(name)
+			// "unknown" to an explanation of why it is not supported.
+			// This is important so users at least know they had the name correct.
+			er.err = err
 		}
 		return
 	}

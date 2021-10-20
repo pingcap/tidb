@@ -2033,6 +2033,6 @@ snapshot is older than GC safe point %s
 
 ["variable:8136"]
 error = '''
-the system variable '%s' is no longer supported. Check the manual for your TiDB version
+option '%s' is no longer supported. Reason: %s
 '''
 

@@ -21,17 +21,21 @@ package variable
 // This helps ensure some compatibility for applications while being
 // careful not to return dummy data.
 
-var removedSysVars = []string{
-	TiDBEnableGlobalTemporaryTable,
-	TiDBSlowLogMasking,
+var removedSysVars = map[string]string{
+	TiDBEnableGlobalTemporaryTable: "temporary table support is now always enabled",
+	TiDBSlowLogMasking:             "use tidb_redact_log instead",
 }
 
 // IsRemovedSysVar returns true if the sysvar has been removed
 func IsRemovedSysVar(varName string) bool {
-	for _, v := range removedSysVars {
-		if varName == v {
-			return true
-		}
+	_, ok := removedSysVars[varName]
+	return ok
+}
+
+// CheckSysVarIsRemoved returns an error if the sysvar has been removed
+func CheckSysVarIsRemoved(varName string) error {
+	if reason, ok := removedSysVars[varName]; ok {
+		return ErrVariableNoLongerSupported.GenWithStackByArgs(varName, reason)
 	}
-	return false
+	return nil
 }
