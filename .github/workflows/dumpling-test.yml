@@ -12,7 +12,7 @@ on:
 jobs:
   unit-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     strategy:
       fail-fast: true
     steps:
