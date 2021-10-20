@@ -14,6 +14,7 @@
 
 package main
 
+// #nosec G108
 import (
 	"context"
 	"flag"
@@ -129,7 +130,12 @@ func main() {
 	resp, err := http.Get("http://localhost:9191/metrics")
 	terror.MustNil(err)
 
-	defer terror.Call(resp.Body.Close)
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Error("function call errored", zap.Error(err), zap.Stack("stack"))
+		}
+	}()
+
 	text, err1 := io.ReadAll(resp.Body)
 	terror.Log(errors.Trace(err1))
 
