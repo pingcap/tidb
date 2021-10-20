@@ -21,25 +21,25 @@ This feature needs `parser` to support the `ATTRIBUTES` keyword. And we need to 
 For the table, we can use the following SQL to add one or multiple attributes for the table `t`:
 
 ```sql
-ALTER TABLE t ATTRIBUTES[=]"key=value[, key1=value1...]"
+ALTER TABLE t ATTRIBUTES[=]'key=value[, key1=value1...]'
 ```
 
 And reset it by using:
 
 ```sql
-ALTER TABLE t ATTRIBUTES[=]DEFAULT"
+ALTER TABLE t ATTRIBUTES[=]DEFAULT
 ```
 
 For partition `p`, the way is almost the same as the table:
 
 ```sql
-ALTER TABLE t PARTITION p ATTRIBUTES[=]"key=value[, key1=value1...]"
+ALTER TABLE t PARTITION p ATTRIBUTES[=]'key=value[, key1=value1...]'
 ```
 
 And reset it by using:
 
 ```sql
-ALTER TABLE t PARTITION p ATTRIBUTES[=]DEFAULT"
+ALTER TABLE t PARTITION p ATTRIBUTES[=]DEFAULT
 ```
 
 The attributes here can be any string that doesn't contain the reserved words. 
@@ -95,7 +95,7 @@ Just the same as the placement rule is enough.
 Consider that if we add attributes for a table, all partitions of that table will inherit the attributes by default.
 
 ### Priority
-We may support adding different attributes for both tables and partitions at the same time. e.g., The attribute could be `merge_option=deny` on the table level but `merge_option=allow` on the partition level in the same table.
+We may support adding different attributes for both tables and partitions at the same time. For example, the attribute could be `merge_option=deny` on the table level but `merge_option=allow` on the partition level in the same table.
 In this case, we assume that the priority of the partition is higher than the table, so the final results could be that only some partitions can be merged, but the rest cannot.
 
 Another thing that should be noticed is that if we have already set the attributes for a partition, then setting the new attributes for the table which includes the partition will override the attributes of the partition.
