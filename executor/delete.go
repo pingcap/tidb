@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -95,6 +96,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		logutil.BgLogger().Error("schema columns and fields mismatch",
 			zap.Int("len(columns)", len(columns)),
 			zap.Int("len(fields)", len(fields)))
+		// Should never run here, so the error code is not defined.
+		return errors.New("schema columns and fields mismatch")
 	}
 	memUsageOfChk := int64(0)
 	for {
