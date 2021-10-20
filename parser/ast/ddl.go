@@ -2295,6 +2295,22 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			StrValue:  n.StrValue,
 		}
 		return placementOpt.Restore(ctx)
+	case TableOptionStatsBuckets:
+		ctx.WriteKeyWord("STATS_BUCKETS ")
+		ctx.WritePlain("= ")
+		if n.Default {
+			ctx.WriteKeyWord("DEFAULT")
+		} else {
+			ctx.WritePlainf("%d", n.UintValue)
+		}
+	case TableOptionStatsTopN:
+		ctx.WriteKeyWord("STATS_TOPN ")
+		ctx.WritePlain("= ")
+		if n.Default {
+			ctx.WriteKeyWord("DEFAULT")
+		} else {
+			ctx.WritePlainf("%d", n.UintValue)
+		}
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
