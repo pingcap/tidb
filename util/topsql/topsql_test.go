@@ -116,7 +116,8 @@ func TestTopSQLReporter(t *testing.T) {
 	})
 
 	client := reporter.NewGRPCReportClient(mockPlanBinaryDecoderFunc)
-	report := reporter.NewRemoteTopSQLReporter(client)
+	cr := reporter.NewReportClientRegistry()
+	report := reporter.NewRemoteTopSQLReporter(cr, client)
 	defer report.Close()
 
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})

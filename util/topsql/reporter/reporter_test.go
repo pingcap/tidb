@@ -72,7 +72,8 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int, addr string) *Rem
 	})
 
 	rc := NewGRPCReportClient(mockPlanBinaryDecoderFunc)
-	ts := NewRemoteTopSQLReporter(rc)
+	cr := NewReportClientRegistry()
+	ts := NewRemoteTopSQLReporter(cr, rc)
 	return ts
 }
 

@@ -16,6 +16,7 @@ package reporter
 
 import (
 	"context"
+	"github.com/pingcap/tidb/config"
 	"math"
 	"sync"
 	"time"
@@ -29,8 +30,37 @@ import (
 
 // ReportClient send data to the target server.
 type ReportClient interface {
-	Send(ctx context.Context, addr string, data reportData) error
+	Send(ctx context.Context, data reportData) error
+	IsPending() bool
+	IsDown() bool
 	Close()
+}
+
+type ReportClientRegistry struct {
+	sync.Mutex
+	newClients []ReportClient
+}
+
+func NewReportClientRegistry() *ReportClientRegistry {
+	return &ReportClientRegistry{}
+}
+
+func (r *ReportClientRegistry) visitAndClear(visit func(client ReportClient)) {
+	r.Lock()
+	defer r.Unlock()
+
+	for i := range r.newClients {
+		visit(r.newClients[i])
+	}
+	r.newClients = r.newClients[:0]
+	return
+}
+
+func (r *ReportClientRegistry) register(client ReportClient) {
+	r.Lock()
+	defer r.Unlock()
+
+	r.newClients = append(r.newClients, client)
 }
 
 // GRPCReportClient reports data to grpc servers.
@@ -52,7 +82,9 @@ var _ ReportClient = &GRPCReportClient{}
 
 // Send implements the ReportClient interface.
 // Currently the implementation will establish a new connection every time, which is suitable for a per-minute sending period
-func (r *GRPCReportClient) Send(ctx context.Context, targetRPCAddr string, data reportData) error {
+func (r *GRPCReportClient) Send(ctx context.Context, data reportData) error {
+	targetRPCAddr := config.GetGlobalConfig().TopSQL.ReceiverAddress
+
 	if targetRPCAddr == "" {
 		return nil
 	}
@@ -87,6 +119,14 @@ func (r *GRPCReportClient) Send(ctx context.Context, targetRPCAddr string, data 
 	return nil
 }
 
+func (r *GRPCReportClient) IsPending() bool {
+	return len(config.GetGlobalConfig().TopSQL.ReceiverAddress) == 0
+}
+
+func (r *GRPCReportClient) IsDown() bool {
+	return false
+}
+
 // Close uses to close grpc connection.
 func (r *GRPCReportClient) Close() {
 	if r.conn == nil {
@@ -94,7 +134,7 @@ func (r *GRPCReportClient) Close() {
 	}
 	err := r.conn.Close()
 	if err != nil {
-		logutil.BgLogger().Warn("[top-sql] grpc client close connection failed", zap.Error(err))
+		logutil.BgLogger().Warn("[top-sql] grpc clients close connection failed", zap.Error(err))
 	}
 	r.conn = nil
 }

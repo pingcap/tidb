@@ -21,12 +21,16 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -36,14 +40,31 @@ const (
 	MaxPlanTextSize = 32 * 1024
 )
 
-var globalTopSQLReport reporter.TopSQLReporter
+var (
+	globalTopSQLReport        reporter.TopSQLReporter
+	globalTopSQLPubSubService tipb.TopSQLPubSubServer
+)
 
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
 	rc := reporter.NewGRPCReportClient(plancodec.DecodeNormalizedPlan)
-	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(rc)
+	cr := reporter.NewReportClientRegistry()
+	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(cr, rc)
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
+
+	publisher := reporter.NewTopSQLPublisher(plancodec.DecodeNormalizedPlan, cr)
+	globalTopSQLPubSubService = publisher
+
+	if config.GetGlobalConfig().TopSQL.ReceiverAddress != "" {
+		variable.TopSQLVariable.Enable.Store(true)
+	}
+}
+
+func RegisterPubSubServer(s *grpc.Server) {
+	if globalTopSQLPubSubService != nil {
+		tipb.RegisterTopSQLPubSubServer(s, globalTopSQLPubSubService)
+	}
 }
 
 // Close uses to close and release the top sql resource.
