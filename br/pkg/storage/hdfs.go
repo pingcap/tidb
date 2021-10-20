@@ -28,7 +28,7 @@ func NewHDFSStorage(remote string) *HDFSStorage {
 func getHdfsBin() (string, error) {
 	hadoop_home, ok := os.LookupEnv("HADOOP_HOME")
 	if !ok {
-		return "", errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify environment variable HADOOP_HOME")
+		return "", errors.Annotatef(berrors.ErrEnvNotSpecified, "please specify environment variable HADOOP_HOME")
 	}
 	return filepath.Join(hadoop_home, "bin/hdfs"), nil
 }
