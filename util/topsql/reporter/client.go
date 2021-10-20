@@ -16,11 +16,11 @@ package reporter
 
 import (
 	"context"
-	"github.com/pingcap/tidb/config"
 	"math"
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -53,7 +53,6 @@ func (r *ReportClientRegistry) visitAndClear(visit func(client ReportClient)) {
 		visit(r.newClients[i])
 	}
 	r.newClients = r.newClients[:0]
-	return
 }
 
 func (r *ReportClientRegistry) register(client ReportClient) {

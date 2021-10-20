@@ -2,6 +2,7 @@ package reporter
 
 import (
 	"context"
+	"sync"
 
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -10,21 +11,35 @@ import (
 )
 
 type TopSQLPublisher struct {
-	decodePlan planBinaryDecodeFunc
+	decodePlan     planBinaryDecodeFunc
 	clientRegistry *ReportClientRegistry
 }
 
-func NewTopSQLPublisher(decodePlan planBinaryDecodeFunc, clientRegistry *ReportClientRegistry) *TopSQLPublisher {
-	return &TopSQLPublisher{decodePlan: decodePlan, clientRegistry: clientRegistry}
+func NewTopSQLPublisher(
+	decodePlan planBinaryDecodeFunc,
+	clientRegistry *ReportClientRegistry,
+) *TopSQLPublisher {
+	return &TopSQLPublisher{
+		decodePlan:     decodePlan,
+		clientRegistry: clientRegistry,
+	}
 }
 
 var _ tipb.TopSQLPubSubServer = &TopSQLPublisher{}
 
-func (t *TopSQLPublisher) Subscribe(_ *tipb.TopSQLSubRequest, stream tipb.TopSQLPubSub_SubscribeServer) error {
+func (t *TopSQLPublisher) Subscribe(
+	_ *tipb.TopSQLSubRequest,
+	stream tipb.TopSQLPubSub_SubscribeServer,
+) error {
 	sc := newSubClient(stream, t.decodePlan)
-	go sc.run()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go sc.run(&wg)
 
 	t.clientRegistry.register(sc)
+
+	wg.Wait()
 	return nil
 }
 
@@ -36,7 +51,10 @@ type subClient struct {
 	decodePlan planBinaryDecodeFunc
 }
 
-func newSubClient(stream tipb.TopSQLPubSub_SubscribeServer, decodePlan planBinaryDecodeFunc) *subClient {
+func newSubClient(
+	stream tipb.TopSQLPubSub_SubscribeServer,
+	decodePlan planBinaryDecodeFunc,
+) *subClient {
 	dataCh := make(chan reportData)
 	return &subClient{
 		stream: stream,
@@ -47,8 +65,11 @@ func newSubClient(stream tipb.TopSQLPubSub_SubscribeServer, decodePlan planBinar
 	}
 }
 
-func (s *subClient) run() {
-	defer s.isDown.Store(true)
+func (s *subClient) run(wg *sync.WaitGroup) {
+	defer func() {
+		wg.Done()
+		s.isDown.Store(true)
+	}()
 
 	for data := range s.dataCh {
 		var err error
