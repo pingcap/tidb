@@ -901,29 +901,25 @@ func (h *Handle) getAutoAnalyzeParameters() map[string]string {
 }
 
 func (h *Handle) getAutoAnalyzeOptions(statsOptions *model.StatsOptions) string {
-	if !statsOptions.AutoRecalc {
-		return ""
-	} else {
-		var optBuilder strings.Builder
-		buckets := statsOptions.Buckets
-		if buckets > 0 {
-			optBuilder.WriteString(" WITH ")
-			optBuilder.WriteString(strconv.FormatUint(buckets, 10))
-			optBuilder.WriteString(" BUCKETS")
-		}
-		topN := statsOptions.TopN
-		if topN > 0 {
-			if optBuilder.Len() > 0 {
-				optBuilder.WriteString(", ")
-			} else {
-				optBuilder.WriteString(" WITH ")
-			}
-			optBuilder.WriteString(strconv.FormatUint(topN, 10))
-			optBuilder.WriteString(" TOPN")
-		}
-		// TODO handle sample_ratio, columns later
-		return optBuilder.String()
+	var optBuilder strings.Builder
+	buckets := statsOptions.Buckets
+	if buckets > 0 {
+		optBuilder.WriteString(" WITH ")
+		optBuilder.WriteString(strconv.FormatUint(buckets, 10))
+		optBuilder.WriteString(" BUCKETS")
 	}
+	topN := statsOptions.TopN
+	if topN > 0 {
+		if optBuilder.Len() > 0 {
+			optBuilder.WriteString(", ")
+		} else {
+			optBuilder.WriteString(" WITH ")
+		}
+		optBuilder.WriteString(strconv.FormatUint(topN, 10))
+		optBuilder.WriteString(" TOPN")
+	}
+	// TODO handle sample_ratio, columns later
+	return optBuilder.String()
 }
 
 func parseAutoAnalyzeRatio(ratio string) float64 {
