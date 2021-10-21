@@ -35,5 +35,5 @@ func SetAffinity(cpus []int) error {
 
 // GetSockUID gets the uid of the other end of the UNIX domain socket
 func GetSockUID(uc net.UnixConn) (uid uint32, err error) {
-	return 0, errors.New("UNIX domain socket is not supporte on Windows")
+	return 0, errors.New("UNIX domain socket is not supported on Windows")
 }
