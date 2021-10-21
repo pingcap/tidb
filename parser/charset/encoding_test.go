@@ -27,12 +27,10 @@ type testEncodingSuite struct {
 func (s *testEncodingSuite) TestEncoding(c *C) {
 	enc := charset.NewEncoding("gbk")
 	c.Assert(enc.Name(), Equals, "gbk")
-	c.Assert(enc.Enabled(), IsTrue)
 	enc.UpdateEncoding("utf-8")
 	c.Assert(enc.Name(), Equals, "utf-8")
 	enc.UpdateEncoding("gbk")
 	c.Assert(enc.Name(), Equals, "gbk")
-	c.Assert(enc.Enabled(), IsTrue)
 
 	txt := []byte("一二三四")
 	e, _ := charset.Lookup("gbk")

@@ -2227,6 +2227,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (a.b, b);", false, ""},
 		{"CREATE TABLE foo (a, b.c);", false, ""},
 		{"CREATE TABLE (name CHAR(50) BINARY)", false, ""},
+		// test enable or disable cached table
+		{"ALTER TABLE tmp CACHE", true, "ALTER TABLE `tmp` CACHE"},
+		{"ALTER TABLE tmp NOCACHE", true, "ALTER TABLE `tmp` NOCACHE"},
 		// for create temporary table
 		{"CREATE TEMPORARY TABLE t (a varchar(50), b int);", true, "CREATE TEMPORARY TABLE `t` (`a` VARCHAR(50),`b` INT)"},
 		{"CREATE TEMPORARY TABLE t LIKE t1", true, "CREATE TEMPORARY TABLE `t` LIKE `t1`"},
@@ -6399,17 +6402,17 @@ func (s *testParserSuite) TestGBKEncoding(c *C) {
 	sql, err := encoder.String("create table 测试表 (测试列 varchar(255) default 'GBK测试用例');")
 	c.Assert(err, IsNil)
 
-	stmt, err := p.ParseOneStmt(sql, "", "")
+	stmt, _, err := p.ParseSQL(sql)
 	c.Assert(err, IsNil)
 	checker := &gbkEncodingChecker{}
-	_, _ = stmt.Accept(checker)
+	_, _ = stmt[0].Accept(checker)
 	c.Assert(checker.tblName, Not(Equals), "测试表")
 	c.Assert(checker.colName, Not(Equals), "测试列")
 
-	p.SetParserConfig(parser.ParserConfig{CharsetClient: "gbk"})
-	stmt, err = p.ParseOneStmt(sql, "", "")
+	gbkOpt := parser.CharsetClient("gbk")
+	stmt, _, err = p.ParseSQL(sql, gbkOpt)
 	c.Assert(err, IsNil)
-	_, _ = stmt.Accept(checker)
+	_, _ = stmt[0].Accept(checker)
 	c.Assert(checker.tblName, Equals, "测试表")
 	c.Assert(checker.colName, Equals, "测试列")
 	c.Assert(checker.expr, Equals, "GBK测试用例")
@@ -6417,13 +6420,14 @@ func (s *testParserSuite) TestGBKEncoding(c *C) {
 	utf8SQL := "select '芢' from `玚`;"
 	sql, err = encoder.String(utf8SQL)
 	c.Assert(err, IsNil)
-	stmt, err = p.ParseOneStmt(sql, "", "")
+	stmt, _, err = p.ParseSQL(sql, gbkOpt)
 	c.Assert(err, IsNil)
-	stmt, err = p.ParseOneStmt("select '\xc6\x5c' from `\xab\x60`;", "", "")
+	stmt, _, err = p.ParseSQL("select '\xc6\x5c' from `\xab\x60`;", gbkOpt)
+	c.Assert(err, IsNil)
+	stmt, _, err = p.ParseSQL(`prepare p1 from "insert into t values ('中文');";`, gbkOpt)
 	c.Assert(err, IsNil)
 
-	p.SetParserConfig(parser.ParserConfig{CharsetClient: ""})
-	stmt, err = p.ParseOneStmt("select _gbk '\xc6\x5c' from dual;", "", "")
+	stmt, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
 	c.Assert(err, NotNil)
 }
 
