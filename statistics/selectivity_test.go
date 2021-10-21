@@ -207,9 +207,9 @@ func TestSelectivity(t *testing.T) {
 
 		ret := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-		require.NoErrorf(t, err, "for %s", tt.exprs)
+		require.NoErrorf(t, err, "for expr %s", tt.exprs)
 		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
-		require.NoErrorf(t, err, "error %v, for building plan, expr %s", err, tt.exprs)
+		require.NoErrorf(t, err, "for building plan, expr %s", err, tt.exprs)
 
 		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		ds := sel.Children()[0].(*plannercore.DataSource)
