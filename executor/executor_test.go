@@ -8652,8 +8652,6 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	tk.MustExec("create table t(a int, b int, unique index idx(a));")
 	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
 
-	// Enable Top SQL
-	variable.TopSQLVariable.Enable.Store(true)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})

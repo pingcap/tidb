@@ -278,14 +278,14 @@ func (sp *sqlCPUProfiler) hasExportProfileTask() bool {
 
 // IsEnabled return true if it is(should be) enabled. It exports for tests.
 func (sp *sqlCPUProfiler) IsEnabled() bool {
-	return variable.TopSQLEnabled() || sp.hasExportProfileTask()
+	return variable.TopSQLInstanceEnabled() || sp.hasExportProfileTask()
 }
 
 // StartCPUProfile same like pprof.StartCPUProfile.
 // Because the GlobalSQLCPUProfiler keep calling pprof.StartCPUProfile to fetch SQL cpu stats, other place (such pprof profile HTTP API handler) call pprof.StartCPUProfile will be failed,
 // other place should call tracecpu.StartCPUProfile instead of pprof.StartCPUProfile.
 func StartCPUProfile(w io.Writer) error {
-	if variable.TopSQLEnabled() {
+	if variable.TopSQLInstanceEnabled() {
 		return GlobalSQLCPUProfiler.startExportCPUProfile(w)
 	}
 	return pprof.StartCPUProfile(w)

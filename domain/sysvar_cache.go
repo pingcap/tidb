@@ -179,7 +179,7 @@ func checkEnableServerGlobalVar(name, sVal string) {
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(sVal, false)
 	case variable.TiDBEnableTopSQL:
-		variable.TopSQLVariable.Enable.Store(variable.TiDBOptOn(sVal))
+		// TODO: whether the topsql global variable is enabled or not doesn't affect instance enabled
 	case variable.TiDBTopSQLPrecisionSeconds:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)

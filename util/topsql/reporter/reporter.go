@@ -368,9 +368,8 @@ func (tsr *RemoteTopSQLReporter) handleClientRegistry() {
 	tsr.clients, tmpSlice = tmpSlice, tsr.clients
 	tmpSlice = tmpSlice[:0]
 
-	if len(tsr.clients) == 0 {
-		variable.TopSQLVariable.Enable.Store(false)
-		return
+	if len(tsr.clients) > 256 {
+		logutil.BgLogger().Warn("[top-sql] too many clients", zap.Int("count", len(tsr.clients)))
 	}
 
 	pendingCnt := 0
@@ -381,7 +380,7 @@ func (tsr *RemoteTopSQLReporter) handleClientRegistry() {
 		}
 	}
 	runningCnt := len(tsr.clients) - pendingCnt
-	variable.TopSQLVariable.Enable.Store(runningCnt > 0)
+	variable.TopSQLVariable.InstanceEnable.Store(runningCnt > 0)
 }
 
 func encodeKey(buf *bytes.Buffer, sqlDigest, planDigest []byte) string {

@@ -468,7 +468,7 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 }
 
 func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
-	if !variable.TopSQLEnabled() || job == nil {
+	if !variable.TopSQLInstanceEnabled() || job == nil {
 		return
 	}
 

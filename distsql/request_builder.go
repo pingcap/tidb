@@ -284,7 +284,7 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 
 // SetResourceGroupTag sets the request resource group tag.
 func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext) *RequestBuilder {
-	if variable.TopSQLEnabled() {
+	if variable.TopSQLInstanceEnabled() {
 		builder.Request.ResourceGroupTag = sc.GetResourceGroupTag()
 	}
 	return builder

@@ -1743,9 +1743,9 @@ var defaultSysVars = []*SysVar{
 	}},
 	// variable for top SQL feature.
 	{Scope: ScopeGlobal, Name: TiDBEnableTopSQL, Value: BoolToOnOff(DefTiDBTopSQLEnable), Type: TypeBool, Hidden: true, AllowEmpty: true, GetGlobal: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(TopSQLVariable.Enable.Load()), nil
+		return Off, nil
 	}, SetGlobal: func(vars *SessionVars, s string) error {
-		TopSQLVariable.Enable.Store(TiDBOptOn(s))
+		// TODO: call pd to enable topsql globally. Not to affect the current instance directly.
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBTopSQLPrecisionSeconds, Value: strconv.Itoa(DefTiDBTopSQLPrecisionSeconds), Type: TypeInt, Hidden: true, MinValue: 1, MaxValue: math.MaxInt64, GetGlobal: func(s *SessionVars) (string, error) {

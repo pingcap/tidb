@@ -769,7 +769,7 @@ var (
 	DefExecutorConcurrency                = 5
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 	TopSQLVariable                        = TopSQL{
-		Enable:                atomic.NewBool(DefTiDBTopSQLEnable),
+		InstanceEnable:        atomic.NewBool(DefTiDBTopSQLEnable),
 		PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
 		MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
 		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
@@ -781,8 +781,8 @@ var (
 
 // TopSQL is the variable for control top sql feature.
 type TopSQL struct {
-	// Enable top-sql or not.
-	Enable *atomic.Bool
+	// InstanceEnable represents if TopSQL is enabled on the current instance or not.
+	InstanceEnable *atomic.Bool
 	// The refresh interval of top-sql.
 	PrecisionSeconds *atomic.Int64
 	// The maximum number of statements kept in memory.
@@ -793,7 +793,7 @@ type TopSQL struct {
 	ReportIntervalSeconds *atomic.Int64
 }
 
-// TopSQLEnabled uses to check whether enabled the top SQL feature.
-func TopSQLEnabled() bool {
-	return TopSQLVariable.Enable.Load()
+// TopSQLInstanceEnabled is used to check if TopSQL is enabled on the current instance.
+func TopSQLInstanceEnabled() bool {
+	return TopSQLVariable.InstanceEnable.Load()
 }

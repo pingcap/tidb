@@ -211,7 +211,7 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 }
 
 func setTopSQLEnable(enabled bool) {
-	variable.TopSQLVariable.Enable.Store(enabled)
+	variable.TopSQLVariable.InstanceEnable.Store(enabled)
 }
 
 func mockExecuteSQL(sql, plan string) {

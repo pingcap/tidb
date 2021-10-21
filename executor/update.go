@@ -271,7 +271,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			}
 		}
-		if variable.TopSQLEnabled() {
+		if variable.TopSQLInstanceEnabled() {
 			txn, err := e.ctx.Txn(true)
 			if err == nil {
 				txn.SetOption(kv.ResourceGroupTag, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTag())

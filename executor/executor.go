@@ -970,7 +970,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
 	var planDigest *parser.Digest
 	_, sqlDigest := seVars.StmtCtx.SQLDigest()
-	if variable.TopSQLEnabled() {
+	if variable.TopSQLInstanceEnabled() {
 		_, planDigest = seVars.StmtCtx.GetPlanDigest()
 	}
 	lockCtx := tikvstore.NewLockCtx(seVars.TxnCtx.GetForUpdateTS(), lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
@@ -1715,7 +1715,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", util.QueryStrForLog(prepareStmt.NormalizedSQL)))
 			pprof.SetGoroutineLabels(goCtx)
 		}
-		if variable.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
+		if variable.TopSQLInstanceEnabled() && prepareStmt.SQLDigest != nil {
 			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
 		}
 	}
@@ -1895,7 +1895,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 }
 
 func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
-	if snapshot != nil && variable.TopSQLEnabled() {
+	if snapshot != nil && variable.TopSQLInstanceEnabled() {
 		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag())
 	}
 }

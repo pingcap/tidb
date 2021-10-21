@@ -28,7 +28,7 @@ func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
 
 	// set up
-	variable.TopSQLVariable.Enable.Store(true)
+	variable.TopSQLVariable.InstanceEnable.Store(true)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "mock"
 	})

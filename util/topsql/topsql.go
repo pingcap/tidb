@@ -57,7 +57,7 @@ func SetupTopSQL() {
 	globalTopSQLPubSubService = publisher
 
 	if config.GetGlobalConfig().TopSQL.ReceiverAddress != "" {
-		variable.TopSQLVariable.Enable.Store(true)
+		variable.TopSQLVariable.InstanceEnable.Store(true)
 	}
 }
 

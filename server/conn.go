@@ -1165,7 +1165,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	if variable.TopSQLEnabled() {
+	if variable.TopSQLInstanceEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
 	}
 	if variable.EnablePProfSQLCPU.Load() {
