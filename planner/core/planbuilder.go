@@ -2050,7 +2050,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
 	ast.AnalyzeOptNumSamples:    500000,
-	ast.AnalyzeOptSampleRate:    math.Float64bits(0),
+	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
 }
 
 var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
@@ -2103,7 +2103,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 			}
 			limit := math.Float64frombits(analyzeOptionLimit[opt.Type])
 			if fVal <= 0 || fVal > limit {
-				return nil, errors.Errorf("Value of analyze option %s should not larger than %f, and should be greater than 0", limit, analyzeOptionLimit[opt.Type])
+				return nil, errors.Errorf("Value of analyze option %s should not larger than %f, and should be greater than 0", analyzeOptionLimit[opt.Type], limit)
 			}
 			sampleRate = fVal
 			optMap[opt.Type] = math.Float64bits(fVal)
