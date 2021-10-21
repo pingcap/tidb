@@ -364,7 +364,7 @@ type StringValidatorOther struct {
 // It returns the first invalid byte offset.
 func (s StringValidatorOther) Validate(str string) (invalidPos int) {
 	enc := NewEncoding(s.Charset)
-	if !enc.Enabled() {
+	if !enc.enabled() {
 		return -1
 	}
 	return enc.IsValid([]byte(str))

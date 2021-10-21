@@ -27,12 +27,10 @@ type testEncodingSuite struct {
 func (s *testEncodingSuite) TestEncoding(c *C) {
 	enc := charset.NewEncoding("gbk")
 	c.Assert(enc.Name(), Equals, "gbk")
-	c.Assert(enc.Enabled(), IsTrue)
 	enc.UpdateEncoding("utf-8")
 	c.Assert(enc.Name(), Equals, "utf-8")
 	enc.UpdateEncoding("gbk")
 	c.Assert(enc.Name(), Equals, "gbk")
-	c.Assert(enc.Enabled(), IsTrue)
 
 	txt := []byte("一二三四")
 	e, _ := charset.Lookup("gbk")
@@ -71,7 +69,27 @@ func (s *testEncodingSuite) TestEncoding(c *C) {
 		} else {
 			c.Assert(err, NotNil, cmt)
 		}
-		c.Assert(string(result), Equals, tc.result, Commentf("%v", tc))
+		c.Assert(string(result), Equals, tc.result, cmt)
+	}
+
+	utf8Cases := []struct {
+		utf8Str string
+		result  string
+		isValid bool
+	}{
+		{"一二三", "һ\xb6\xfe\xc8\xfd", true},
+		{"🀁", "?", false},
+		{"valid_string_🀁", "valid_string_?", false},
+	}
+	for _, tc := range utf8Cases {
+		cmt := Commentf("%v", tc)
+		result, err = enc.Encode(nil, []byte(tc.utf8Str))
+		if tc.isValid {
+			c.Assert(err, IsNil, cmt)
+		} else {
+			c.Assert(err, NotNil, cmt)
+		}
+		c.Assert(string(result), Equals, tc.result, cmt)
 	}
 }
 
