@@ -2139,7 +2139,7 @@ func (b *builtinLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		str := buf.GetBytes(i)
-		if isBinaryStr != true {
+		if !isBinaryStr {
 			dBytes, err := enc.Encode(nil, str)
 			if err == nil {
 				i64s[i] = int64(len(dBytes))
