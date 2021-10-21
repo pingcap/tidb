@@ -1744,6 +1744,7 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 			}
 			partition.PlacementPolicyRef.ID = policy.ID
 		}
+	}
 
 	return nil
 }
