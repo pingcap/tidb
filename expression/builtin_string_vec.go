@@ -2020,33 +2020,21 @@ func (b *builtinTrim3ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	}
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf2.IsNull(i) {
+		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		useDefaultRemStr := buf1.IsNull(i)
 		direction := ast.TrimDirectionType(buf2.GetInt64(i))
 		baseStr := buf0.GetString(i)
 		remStr := buf1.GetString(i)
-		if direction == ast.TrimLeading {
-			if useDefaultRemStr {
-				result.AppendString(strings.TrimLeft(baseStr, spaceChars))
-			} else {
-				result.AppendString(trimLeft(baseStr, remStr))
-			}
-		} else if direction == ast.TrimTrailing {
-			if useDefaultRemStr {
-				result.AppendString(strings.TrimRight(baseStr, spaceChars))
-			} else {
-				result.AppendString(trimRight(baseStr, remStr))
-			}
-		} else {
-			if useDefaultRemStr {
-				result.AppendString(strings.Trim(baseStr, spaceChars))
-			} else {
-				tmpStr := trimLeft(baseStr, remStr)
-				result.AppendString(trimRight(tmpStr, remStr))
-			}
+		switch direction {
+		case ast.TrimLeading:
+			result.AppendString(trimLeft(baseStr, remStr))
+		case ast.TrimTrailing:
+			result.AppendString(trimRight(baseStr, remStr))
+		default:
+			tmpStr := trimLeft(baseStr, remStr)
+			result.AppendString(trimRight(tmpStr, remStr))
 		}
 	}
 	return nil
