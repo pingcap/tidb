@@ -1218,7 +1218,12 @@ func convertUint(val []byte) (*Constant, error) {
 func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	var d types.Datum
 	d.SetBytesAsString(val, protoToCollation(tp.Collate), uint32(tp.Flen))
-	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeVarString)}, nil
+	return &Constant{Value: d, RetType: &types.FieldType{
+		Tp:      mysql.TypeString,
+		Flag:    uint(tp.Flag),
+		Charset: tp.Charset,
+		Flen:    int(tp.Flen),
+	}}, nil
 }
 
 func convertFloat(val []byte, f32 bool) (*Constant, error) {

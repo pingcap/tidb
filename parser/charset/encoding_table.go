@@ -175,14 +175,14 @@ var encodings = map[string]struct {
 	"cp819":               {charmap.Windows1252, "windows-1252"},
 	"csisolatin1":         {charmap.Windows1252, "windows-1252"},
 	"ibm819":              {charmap.Windows1252, "windows-1252"},
-	"iso-8859-1":          {charmap.Windows1252, "windows-1252"},
+	"iso-8859-1":          {charmap.ISO8859_1, "iso-8859-1"},
 	"iso-ir-100":          {charmap.Windows1252, "windows-1252"},
 	"iso8859-1":           {charmap.Windows1252, "windows-1252"},
 	"iso88591":            {charmap.Windows1252, "windows-1252"},
 	"iso_8859-1":          {charmap.Windows1252, "windows-1252"},
 	"iso_8859-1:1987":     {charmap.Windows1252, "windows-1252"},
 	"l1":                  {charmap.Windows1252, "windows-1252"},
-	"latin1":              {charmap.Windows1252, "windows-1252"},
+	"latin1":              {charmap.ISO8859_1, "iso-8859-1"},
 	"us-ascii":            {charmap.Windows1252, "windows-1252"},
 	"windows-1252":        {charmap.Windows1252, "windows-1252"},
 	"x-cp1252":            {charmap.Windows1252, "windows-1252"},
@@ -273,6 +273,9 @@ func FindNextCharacterLength(label string) func([]byte) int {
 
 var encodingNextCharacterLength = map[string]func([]byte) int{
 	// https://en.wikipedia.org/wiki/GBK_(character_encoding)#Layout_diagram
+	"windows-1252": func(bs []byte) int {
+		return 1
+	},
 	"gbk":   characterLengthGBK,
 	"utf-8": characterLengthUTF8,
 	"binary": func(bs []byte) int {

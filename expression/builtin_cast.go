@@ -23,12 +23,16 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -37,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -106,6 +111,11 @@ var (
 	_ builtinFunc = &builtinCastJSONAsTimeSig{}
 	_ builtinFunc = &builtinCastJSONAsDurationSig{}
 	_ builtinFunc = &builtinCastJSONAsJSONSig{}
+)
+
+var (
+	// errCannotConvertString returns when the string can not convert to other charset.
+	errCannotConvertString = dbterror.ClassExpression.NewStd(errno.ErrCannotConvertString)
 )
 
 type castAsIntFunctionClass struct {
@@ -1112,6 +1122,23 @@ func (b *builtinCastStringAsStringSig) evalString(row chunk.Row) (res string, is
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+	ov := res
+	fromChs := b.args[0].GetType().Charset
+	toChs := b.tp.Charset
+	if toChs == charset.CharsetBin && fromChs != charset.CharsetBin {
+		res, err = charset.NewEncoding(fromChs).EncodeString(res)
+	} else if toChs != charset.CharsetBin && fromChs == charset.CharsetBin {
+		res, err = charset.NewEncoding(toChs).DecodeString(res)
+		// If toChs is utf8 or utf8mb4, DecodeString will do nothing and return nil error, but we need check if the binary literal is able to convert to utf8.
+		if toChs == charset.CharsetUTF8 || toChs == charset.CharsetUTF8MB4 {
+			if !utf8.ValidString(res) {
+				return "", false, errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", ov), fromChs, toChs)
+			}
+		}
+	}
+	if err != nil {
+		return "", false, errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", ov), fromChs, toChs)
+	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, sc, false)
 	if err != nil {
@@ -1905,6 +1932,25 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	types.SetBinChsClnFlag(tp)
 	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
 	return BuildCastFunction(ctx, expr, tp)
+}
+
+// WrapWithCastAsStringWithTp wraps `expr` with `cast`.
+func WrapWithCastAsStringWithTp(ctx sessionctx.Context, expr Expression, toTp *types.FieldType) Expression {
+	if expr.GetType().EvalType() == types.ETString && toTp != nil {
+		if expr.GetType().Charset == toTp.Charset {
+			return expr
+		}
+		toTp = &types.FieldType{
+			Tp:      mysql.TypeVarString,
+			Decimal: expr.GetType().Decimal, // keep original Decimal
+			Charset: toTp.Charset,
+			Collate: toTp.Collate,
+			Flen:    expr.GetType().Flen, // keep original Flen
+		}
+		return BuildCastFunction(ctx, expr, toTp)
+	}
+
+	return WrapWithCastAsString(ctx, expr)
 }
 
 // WrapWithCastAsString wraps `expr` with `cast` if the return type of expr is

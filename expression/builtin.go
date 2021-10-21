@@ -91,7 +91,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
-	ec, err := deriveCollation(ctx, funcName, args, retType, retType)
+	ec, _, err := deriveCollation(ctx, funcName, args, retType, retType)
 	if err != nil {
 		return baseBuiltinFunc{}, err
 	}
@@ -125,7 +125,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 
 	// derive collation information for string function, and we must do it
 	// before doing implicit cast.
-	ec, err := deriveCollation(ctx, funcName, args, retType, argTps...)
+	ec, retTp, err := deriveCollation(ctx, funcName, args, retType, argTps...)
 	if err != nil {
 		return
 	}
@@ -139,7 +139,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		case types.ETDecimal:
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
-			args[i] = WrapWithCastAsString(ctx, args[i])
+			args[i] = WrapWithCastAsStringWithTp(ctx, args[i], retTp)
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:

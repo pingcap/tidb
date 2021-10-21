@@ -1210,7 +1210,7 @@ func GetCmpFunction(ctx sessionctx.Context, lhs, rhs Expression) CompareFunc {
 	case types.ETDecimal:
 		return CompareDecimal
 	case types.ETString:
-		coll, _ := CheckAndDeriveCollationFromExprs(ctx, "", types.ETInt, lhs, rhs)
+		coll, _, _ := CheckAndDeriveCollationFromExprs(ctx, "", types.ETInt, lhs, rhs)
 		return genCompareString(coll.Collation)
 	case types.ETDuration:
 		return CompareDuration

@@ -2972,6 +2972,10 @@ func (c *quoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	bf.tp.Flen = 2*args[0].GetType().Flen + 2
+	// If arg is NULL, quote function will return 'NULL', the Flen should be 4.
+	if args[0].GetType().Tp == mysql.TypeNull {
+		bf.tp.Flen = 4
+	}
 	if bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}

@@ -192,7 +192,7 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 	return CoercibilityImplicit
 }
 
-func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (ec *ExprCollation, err error) {
+func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (ec *ExprCollation, retTp *types.FieldType, err error) {
 	switch funcName {
 	case ast.Concat, ast.ConcatWS, ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote, ast.Coalesce:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
@@ -215,53 +215,48 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 	case ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ, ast.Strcmp:
 		// if compare type is string, we should determine which collation should be used.
 		if argTps[0] == types.ETString {
-			ec, err = CheckAndDeriveCollationFromExprs(ctx, funcName, types.ETInt, args...)
+			ec, retTp, err = CheckAndDeriveCollationFromExprs(ctx, funcName, types.ETInt, args...)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			ec.Coer = CoercibilityNumeric
 			ec.Repe = ASCII
-			return ec, nil
+			return ec, retTp, nil
 		}
 	case ast.If:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[1], args[2])
 	case ast.Ifnull:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args[0], args[1])
 	case ast.Like:
-		ec, err = CheckAndDeriveCollationFromExprs(ctx, funcName, types.ETInt, args[0], args[1])
+		ec, retTp, err = CheckAndDeriveCollationFromExprs(ctx, funcName, types.ETInt, args[0], args[1])
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		ec.Coer = CoercibilityNumeric
 		ec.Repe = ASCII
-		return ec, nil
+		return ec, retTp, nil
 	case ast.In:
 		if args[0].GetType().EvalType() == types.ETString {
 			return CheckAndDeriveCollationFromExprs(ctx, funcName, types.ETInt, args...)
 		}
 	case ast.DateFormat, ast.TimeFormat:
 		charsetInfo, collation := ctx.GetSessionVars().GetCharsetInfo()
-		return &ExprCollation{args[1].Coercibility(), args[1].Repertoire(), charsetInfo, collation}, nil
+		return &ExprCollation{args[1].Coercibility(), args[1].Repertoire(), charsetInfo, collation}, nil, nil
 	case ast.Cast:
-		// We assume all the cast are implicit.
-		ec = &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), args[0].GetType().Charset, args[0].GetType().Collate}
-		// Non-string type cast to string type should use @@character_set_connection and @@collation_connection.
-		// String type cast to string type should keep its original charset and collation. It should not happen.
-		if retType == types.ETString && argTps[0] != types.ETString {
-			ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
-		}
-		return ec, nil
+		// We assume all the cast are implicit, keep the collation related fields to its original value.
+		return &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), args[0].GetType().Charset, args[0].GetType().Collate}, nil, nil
 	case ast.Case:
 		// FIXME: case function aggregate collation is not correct.
-		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
+		ec, _, err = CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
+		return ec, nil, err
 	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion:
 		chs, coll := charset.GetDefaultCharsetAndCollate()
-		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil
+		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil, nil
 	case ast.Format, ast.Space, ast.ToBase64, ast.UUID, ast.Hex, ast.MD5, ast.SHA, ast.SHA2:
 		// should return ASCII repertoire, MySQL's doc says it depends on character_set_connection, but it not true from its source code.
 		ec = &ExprCollation{Coer: CoercibilityCoercible, Repe: ASCII}
 		ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
-		return ec, nil
+		return ec, nil, nil
 	}
 
 	ec = &ExprCollation{CoercibilityNumeric, ASCII, charset.CharsetBin, charset.CollationBin}
@@ -272,7 +267,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 			ec.Repe = UNICODE
 		}
 	}
-	return ec, nil
+	return ec, nil, nil
 }
 
 // DeriveCollationFromExprs derives collation information from these expressions.
@@ -284,14 +279,14 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 }
 
 // CheckAndDeriveCollationFromExprs derives collation information from these expressions, return error if derives collation error.
-func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, evalType types.EvalType, args ...Expression) (et *ExprCollation, err error) {
+func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, evalType types.EvalType, args ...Expression) (et *ExprCollation, retTp *types.FieldType, err error) {
 	ec := inferCollation(args...)
 	if ec == nil {
-		return nil, illegalMixCollationErr(funcName, args)
+		return nil, nil, illegalMixCollationErr(funcName, args)
 	}
 
 	if evalType != types.ETString && ec.Coer == CoercibilityNone {
-		return nil, illegalMixCollationErr(funcName, args)
+		return nil, nil, illegalMixCollationErr(funcName, args)
 	}
 
 	if evalType == types.ETString && ec.Coer == CoercibilityNumeric {
@@ -301,10 +296,9 @@ func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, e
 	}
 
 	if !safeConvert(ctx, ec, args...) {
-		return nil, illegalMixCollationErr(funcName, args)
+		return nil, nil, illegalMixCollationErr(funcName, args)
 	}
-
-	return ec, nil
+	return ec, &types.FieldType{Charset: ec.Charset, Collate: ec.Collation}, nil
 }
 
 func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) bool {
@@ -322,7 +316,11 @@ func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) 
 			if err != nil {
 				return false
 			}
-			if !isNull && !isValidString(str, ec.Charset) {
+			// if value is NULL or binary string, just skip it.
+			if isNull || types.IsBinaryStr(c.GetType()) {
+				continue
+			}
+			if !isValidString(str, ec.Charset) {
 				return false
 			}
 		} else {

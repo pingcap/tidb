@@ -622,13 +622,13 @@ func TestDeriveCollation(t *testing.T) {
 			[]types.EvalType{types.ETInt},
 			types.ETString,
 			false,
-			&ExprCollation{CoercibilityExplicit, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+			&ExprCollation{CoercibilityExplicit, ASCII, charset.CharsetBinary, charset.CollationBin},
 		},
 	}
 
 	for i, test := range tests {
 		for _, fc := range test.fcs {
-			ec, err := deriveCollation(ctx, fc, test.args, test.retTp, test.argTps...)
+			ec, _, err := deriveCollation(ctx, fc, test.args, test.retTp, test.argTps...)
 			if test.err {
 				require.Error(t, err, "Number: %d, function: %s", i, fc)
 				require.Nil(t, ec, i)

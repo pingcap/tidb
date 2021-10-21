@@ -15,10 +15,13 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -1820,6 +1823,24 @@ func (b *builtinCastStringAsStringSig) vecEvalString(input *chunk.Chunk, result 
 
 	var res string
 	var isNull bool
+
+	fromChs := b.args[0].GetType().Charset
+	toChs := b.tp.Charset
+	transferString := func(s string) (string, error) { return s, nil }
+	if toChs == charset.CharsetBin && fromChs != charset.CharsetBin {
+		transferString = charset.NewEncoding(fromChs).EncodeString
+	} else if toChs != charset.CharsetBin && fromChs == charset.CharsetBin {
+		transferString = charset.NewEncoding(toChs).DecodeString
+		if toChs == charset.CharsetUTF8 || toChs == charset.CharsetUTF8MB4 {
+			transferString = func(s string) (string, error) {
+				if !utf8.ValidString(s) {
+					return "", errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", s), fromChs, toChs)
+				}
+				return s, nil
+			}
+		}
+	}
+
 	sc := b.ctx.GetSessionVars().StmtCtx
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
@@ -1827,7 +1848,11 @@ func (b *builtinCastStringAsStringSig) vecEvalString(input *chunk.Chunk, result 
 			result.AppendNull()
 			continue
 		}
-		res, err = types.ProduceStrWithSpecifiedTp(buf.GetString(i), b.tp, sc, false)
+		res, err = transferString(buf.GetString(i))
+		if err != nil {
+			return errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", buf.GetString(i)), fromChs, toChs)
+		}
+		res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, sc, false)
 		if err != nil {
 			return err
 		}
