@@ -37,7 +37,8 @@ import (
 )
 
 var (
-	ErrCannotConvertString = dbterror.ClassExpression.NewStd(errno.ErrCannotConvertString)
+	// errCannotConvertString returns when the string can not convert to other charset.
+	errCannotConvertString = dbterror.ClassExpression.NewStd(errno.ErrCannotConvertString)
 )
 
 // Kind constants.
@@ -1002,6 +1003,8 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	return ret, errors.Trace(err)
 }
 
+// ProduceStrWithSpecifiedTp produces a new string according to `flen` and `chs`. Param `padZero` indicates
+// whether we should pad `\0` for `binary(flen)` type.
 func ProduceStrWithSpecifiedTp(oChs string, s string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
 	flen, chs := tp.Flen, tp.Charset
 	originalV := s
@@ -1011,7 +1014,7 @@ func ProduceStrWithSpecifiedTp(oChs string, s string, tp *FieldType, sc *stmtctx
 		s, err = charset.NewEncoding(tp.Charset).DecodeString(s)
 	}
 	if err != nil {
-		return s, ErrCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", originalV), oChs, tp.Charset)
+		return s, errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", originalV), oChs, tp.Charset)
 	}
 	if flen >= 0 {
 		// overflowed stores the part of the string that is out of the length contraint, it is later checked to see if the

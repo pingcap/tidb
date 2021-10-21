@@ -1907,6 +1907,7 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
+// WrapWithCastAsStringWithTp wraps `expr` with `cast`.
 func WrapWithCastAsStringWithTp(ctx sessionctx.Context, expr Expression, toTp *types.FieldType) Expression {
 	if expr.GetType().EvalType() == types.ETString {
 		if expr.GetType().Charset == toTp.Charset {
