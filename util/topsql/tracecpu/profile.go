@@ -281,8 +281,6 @@ func (sp *sqlCPUProfiler) IsEnabled() bool {
 	return variable.TopSQLEnabled() || sp.hasExportProfileTask()
 }
 
-var inPProfProfiling int64 = 0
-
 // StartCPUProfile same like pprof.StartCPUProfile.
 // Because the GlobalSQLCPUProfiler keep calling pprof.StartCPUProfile to fetch SQL cpu stats, other place (such pprof profile HTTP API handler) call pprof.StartCPUProfile will be failed,
 // other place should call tracecpu.StartCPUProfile instead of pprof.StartCPUProfile.
@@ -294,15 +292,13 @@ func StartCPUProfile(w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	atomic.StoreInt64(&inPProfProfiling, 1)
 	return nil
 }
 
 // StopCPUProfile same like pprof.StopCPUProfile.
 // other place should call tracecpu.StopCPUProfile instead of pprof.StopCPUProfile.
 func StopCPUProfile() error {
-	hasPProfProfiling := atomic.SwapInt64(&inPProfProfiling, 0)
-	if hasPProfProfiling == 0 && GlobalSQLCPUProfiler.IsEnabled() {
+	if GlobalSQLCPUProfiler.hasExportProfileTask() {
 		return GlobalSQLCPUProfiler.stopExportCPUProfile()
 	}
 	pprof.StopCPUProfile()
@@ -333,9 +329,6 @@ func (sp *sqlCPUProfiler) stopExportCPUProfile() error {
 	ept := sp.mu.ept
 	sp.mu.ept = nil
 	sp.mu.Unlock()
-	if ept == nil {
-		return nil
-	}
 	if ept.err != nil {
 		return ept.err
 	}
