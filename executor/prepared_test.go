@@ -789,6 +789,7 @@ func (s *testSerialSuite) TestPreparePlanCache4Blacklist(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	// Plans that have been cached will not be affected by the blacklist.
 	c.Assert(res.Rows()[1][0], Matches, ".*TopN.*")
 
 	res = tk.MustQuery("explain format = 'brief' select min(a) from t")
