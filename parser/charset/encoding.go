@@ -16,11 +16,14 @@ package charset
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"strings"
+	"unicode"
+	"unsafe"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/transform"
 )
@@ -43,13 +46,14 @@ func Formatted(label string) EncodingLabel {
 
 // Encoding provide a interface to encode/decode a string with specific encoding.
 type Encoding struct {
-	enc        encoding.Encoding
-	name       string
-	charLength func([]byte) int
+	enc         encoding.Encoding
+	name        string
+	charLength  func([]byte) int
+	specialCase unicode.SpecialCase
 }
 
-// Enabled indicates whether the non-utf8 encoding is used.
-func (e *Encoding) Enabled() bool {
+// enabled indicates whether the non-utf8 encoding is used.
+func (e *Encoding) enabled() bool {
 	return e.enc != nil && e.charLength != nil
 }
 
@@ -66,9 +70,10 @@ func NewEncoding(label string) *Encoding {
 	e, name := Lookup(label)
 	if e != nil && name != encodingLegacy {
 		return &Encoding{
-			enc:        e,
-			name:       name,
-			charLength: FindNextCharacterLength(name),
+			enc:         e,
+			name:        name,
+			charLength:  FindNextCharacterLength(name),
+			specialCase: LookupSpecialCase(name),
 		}
 	}
 	return &Encoding{name: name}
@@ -85,16 +90,41 @@ func (e *Encoding) UpdateEncoding(label EncodingLabel) {
 		e.enc = nil
 		e.charLength = nil
 	}
+	e.specialCase = LookupSpecialCase(e.name)
 }
 
 // Encode convert bytes from utf-8 charset to a specific charset.
 func (e *Encoding) Encode(dest, src []byte) ([]byte, error) {
+	if !e.enabled() {
+		return src, nil
+	}
 	return e.transform(e.enc.NewEncoder(), dest, src, false)
+}
+
+// EncodeString convert a string from utf-8 charset to a specific charset.
+func (e *Encoding) EncodeString(src string) (string, error) {
+	if !e.enabled() {
+		return src, nil
+	}
+	bs, err := e.transform(e.enc.NewEncoder(), nil, Slice(src), false)
+	return string(bs), err
 }
 
 // Decode convert bytes from a specific charset to utf-8 charset.
 func (e *Encoding) Decode(dest, src []byte) ([]byte, error) {
+	if !e.enabled() {
+		return src, nil
+	}
 	return e.transform(e.enc.NewDecoder(), dest, src, true)
+}
+
+// DecodeString convert a string from a specific charset to utf-8 charset.
+func (e *Encoding) DecodeString(src string) (string, error) {
+	if !e.enabled() {
+		return src, nil
+	}
+	bs, err := e.transform(e.enc.NewDecoder(), nil, Slice(src), true)
+	return string(bs), err
 }
 
 func (e *Encoding) transform(transformer transform.Transformer, dest, src []byte, isDecoding bool) ([]byte, error) {
@@ -126,10 +156,13 @@ func (e *Encoding) transform(transformer transform.Transformer, dest, src []byte
 }
 
 func (e *Encoding) nextCharLenInSrc(srcRest []byte, isDecoding bool) int {
-	if isDecoding && e.charLength != nil {
-		return e.charLength(srcRest)
+	if isDecoding {
+		if e.charLength != nil {
+			return e.charLength(srcRest)
+		}
+		return len(srcRest)
 	}
-	return len(srcRest)
+	return characterLengthUTF8(srcRest)
 }
 
 func enlargeCapacity(dest []byte) []byte {
@@ -150,4 +183,15 @@ var replacementBytes = []byte{0xEF, 0xBF, 0xBD}
 // beginWithReplacementChar check if dst has the prefix '0xEFBFBD'.
 func beginWithReplacementChar(dst []byte) bool {
 	return bytes.HasPrefix(dst, replacementBytes)
+}
+
+// Slice converts string to slice without copy.
+// Use at your own risk.
+func Slice(s string) (b []byte) {
+	pBytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pString := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pBytes.Data = pString.Data
+	pBytes.Len = pString.Len
+	pBytes.Cap = pString.Len
+	return
 }

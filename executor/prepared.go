@@ -22,11 +22,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -117,19 +117,18 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return nil
 		}
 	}
-	charset, collation := vars.GetCharsetInfo()
 	var (
 		stmts []ast.StmtNode
 		err   error
 	)
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
-		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, charset, collation)
+		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, vars.GetParseParams()...)
 	} else {
 		p := parser.New()
 		p.SetParserConfig(vars.BuildParserConfig())
 		var warns []error
-		stmts, warns, err = p.Parse(e.sqlText, charset, collation)
+		stmts, warns, err = p.ParseSQL(e.sqlText, vars.GetParseParams()...)
 		for _, warn := range warns {
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 		}
@@ -197,11 +196,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
 	} else {
-		if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-			prepared.UseCache = plannercore.Cacheable(stmt, ret.InfoSchema)
-		} else {
-			prepared.UseCache = plannercore.Cacheable(stmt, nil)
-		}
+		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
 	}
 
 	// We try to build the real statement of preparedStmt.

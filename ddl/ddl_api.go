@@ -31,13 +31,6 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -45,6 +38,13 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	field_types "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -1730,6 +1730,21 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 		}
 		tbInfo.PlacementPolicyRef.ID = policy.ID
 	}
+
+	if tbInfo.Partition != nil {
+		for _, partition := range tbInfo.Partition.Definitions {
+			if partition.PlacementPolicyRef == nil {
+				continue
+			}
+
+			policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(partition.PlacementPolicyRef.Name)
+			if !ok {
+				return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(partition.PlacementPolicyRef.Name))
+			}
+			partition.PlacementPolicyRef.ID = policy.ID
+		}
+	}
+
 	return nil
 }
 
@@ -1984,7 +1999,7 @@ func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.Cr
 	case ast.TemporaryGlobal:
 		tbInfo.TempTableType = model.TempTableGlobal
 		if !ctx.GetSessionVars().EnableGlobalTemporaryTable {
-			return errors.New("global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table")
+			return errors.New("SET tidb_enable_global_temporary_table=1 to enable temporary tables")
 		}
 		// "create global temporary table ... on commit preserve rows"
 		if !s.OnCommitDelete {
@@ -2432,12 +2447,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.PreSplitRegions = op.UintValue
 		case ast.TableOptionCharset, ast.TableOptionCollate:
 			// We don't handle charset and collate here since they're handled in `getCharsetAndCollateInTableOption`.
-		case ast.TableOptionEngine:
-			if tbInfo.TempTableType != model.TempTableNone {
-				if op.StrValue != "" && !strings.EqualFold(op.StrValue, "memory") {
-					return errors.Trace(errUnsupportedEngineTemporary)
-				}
-			}
 		case ast.TableOptionPlacementPolicy:
 			tbInfo.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(op.StrValue),
@@ -6482,6 +6491,9 @@ func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*model.P
 
 func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {
 	policyName := stmt.PolicyName
+	if policyName.L == "default" {
+		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(policyName))
+	}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check policy existence.
 	_, ok := is.PolicyByName(policyName)
