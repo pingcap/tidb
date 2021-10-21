@@ -198,12 +198,26 @@ func (s *testDBSuite6) TestSkipPlacementValidation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("drop placement policy if exists y")
 	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create placement policy `y` followers=4;")
+	tk.MustExec("alter database test placement policy='y'")
+
 	tk.MustQuery(`select @@PLACEMENT_CHECKS;`).Check(testkit.Rows("1"))
 	tk.MustGetErrCode("create table t(a int) PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
+
 	tk.MustExec("SET PLACEMENT_CHECKS = 0;")
 	tk.MustQuery(`select @@PLACEMENT_CHECKS;`).Check(testkit.Rows("0"))
+
+	// Skip the check, and inherit from the database placement policy
 	tk.MustExec("create table t(a int) PLACEMENT POLICY=\"x\"")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("alter database test placement policy='default'")
 }
 
 func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {

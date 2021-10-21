@@ -1713,43 +1713,37 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 		}
 	}
 
-	if !ctx.GetSessionVars().EnablePlacementChecks {
-		tbInfo.DirectPlacementOpts = nil
-		tbInfo.PlacementPolicyRef = nil
-	} else {
-		// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
-		if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
-			return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
-		}
-		if tbInfo.DirectPlacementOpts != nil {
-			// check the direct placement option compatibility.
-			if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		if tbInfo.PlacementPolicyRef != nil {
-			// placement policy reference will override the direct placement options.
-			policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(tbInfo.PlacementPolicyRef.Name)
-			if !ok {
-				return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
-			}
-			tbInfo.PlacementPolicyRef.ID = policy.ID
-		}
-
-		if tbInfo.Partition != nil {
-			for _, partition := range tbInfo.Partition.Definitions {
-				if partition.PlacementPolicyRef == nil {
-					continue
-				}
-
-				policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(partition.PlacementPolicyRef.Name)
-				if !ok {
-					return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(partition.PlacementPolicyRef.Name))
-				}
-				partition.PlacementPolicyRef.ID = policy.ID
-			}
+	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
+	if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
+		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+	}
+	if tbInfo.DirectPlacementOpts != nil {
+		// check the direct placement option compatibility.
+		if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
+			return errors.Trace(err)
 		}
 	}
+	if tbInfo.PlacementPolicyRef != nil {
+		// placement policy reference will override the direct placement options.
+		policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(tbInfo.PlacementPolicyRef.Name)
+		if !ok {
+			return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+		}
+		tbInfo.PlacementPolicyRef.ID = policy.ID
+	}
+
+	if tbInfo.Partition != nil {
+		for _, partition := range tbInfo.Partition.Definitions {
+			if partition.PlacementPolicyRef == nil {
+				continue
+			}
+
+			policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(partition.PlacementPolicyRef.Name)
+			if !ok {
+				return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(partition.PlacementPolicyRef.Name))
+			}
+			partition.PlacementPolicyRef.ID = policy.ID
+		}
 
 	return nil
 }
