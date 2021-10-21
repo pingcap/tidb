@@ -17,14 +17,13 @@
 package kv
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
 	"sort"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
@@ -33,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -376,13 +377,13 @@ func (kvcodec *tableKVEncoder) Encode(
 		if isAutoRandom && isPk {
 			incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoRandomType)
-			if err := alloc.Rebase(value.GetInt64()&((1<<incrementalBits)-1), false); err != nil {
+			if err := alloc.Rebase(context.Background(), value.GetInt64()&((1<<incrementalBits)-1), false); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
 		if isAutoIncCol {
 			alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.AutoIncrementType)
-			if err := alloc.Rebase(getAutoRecordID(value, &col.FieldType), false); err != nil {
+			if err := alloc.Rebase(context.Background(), getAutoRecordID(value, &col.FieldType), false); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -403,7 +404,7 @@ func (kvcodec *tableKVEncoder) Encode(
 		}
 		record = append(record, value)
 		alloc := kvcodec.tbl.Allocators(kvcodec.se).Get(autoid.RowIDAllocType)
-		if err := alloc.Rebase(rowValue, false); err != nil {
+		if err := alloc.Rebase(context.Background(), rowValue, false); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
