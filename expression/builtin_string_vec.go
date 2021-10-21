@@ -333,6 +333,7 @@ func (b *builtinConcatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	}
 	defer b.bufAllocator.put(buf)
 
+	castToBin := argsContainBinary(b.getArgs())
 	strs := make([][]byte, n)
 	isNulls := make([]bool, n)
 	result.ReserveString(n)
@@ -341,6 +342,7 @@ func (b *builtinConcatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		if err := b.args[j].VecEvalString(b.ctx, input, buf); err != nil {
 			return err
 		}
+		enc := charset.NewEncoding(b.args[j].GetType().Charset)
 		for i := 0; i < n; i++ {
 			if isNulls[i] {
 				continue
@@ -354,6 +356,13 @@ func (b *builtinConcatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat", b.maxAllowedPacket))
 				isNulls[i] = true
 				continue
+			}
+			if castToBin {
+				rs, err := enc.Encode(nil, byteBuf)
+				if err != nil {
+					rs = byteBuf
+				}
+				byteBuf = rs
 			}
 			strs[i] = append(strs[i], byteBuf...)
 		}

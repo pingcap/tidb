@@ -324,6 +324,7 @@ func (b *builtinConcatSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
 func (b *builtinConcatSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
 	var s []byte
+	castToBin := argsContainBinary(b.getArgs())
 	for _, a := range b.getArgs() {
 		d, isNull, err = a.EvalString(b.ctx, row)
 		if isNull || err != nil {
@@ -333,9 +334,27 @@ func (b *builtinConcatSig) evalString(row chunk.Row) (d string, isNull bool, err
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat", b.maxAllowedPacket))
 			return "", true, nil
 		}
-		s = append(s, []byte(d)...)
+		if castToBin {
+			enc := charset.NewEncoding(a.GetType().Charset)
+			rs, err := enc.Encode(nil, hack.Slice(d))
+			if err != nil {
+				b.ctx.GetSessionVars()
+			}
+			s = append(s, rs...)
+		} else {
+			s = append(s, []byte(d)...)
+		}
 	}
 	return string(s), false, nil
+}
+
+func argsContainBinary(args []Expression) bool {
+	for _, a := range args {
+		if a.GetType().Charset == charset.CharsetBinary {
+			return true
+		}
+	}
+	return false
 }
 
 type concatWSFunctionClass struct {
