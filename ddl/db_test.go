@@ -5880,6 +5880,7 @@ func (s *testDBSuite2) TestTableLocksLostCommit(c *C) {
 
 	tk.MustExec("unlock tables")
 }
+
 // test alter table cache
 func (s *testDBSuite2) TestAlterTableCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -5907,6 +5908,7 @@ func (s *testDBSuite2) TestAlterTableCache(c *C) {
 	tk2.MustExec("alter table t2 cache")
 	tk.MustExec("commit")
 }
+
 // test write local lock
 func (s *testDBSuite2) TestWriteLocal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
