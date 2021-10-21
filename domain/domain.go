@@ -933,6 +933,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
 // it should be called only once in BootstrapSession.
 func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
+	ctx.GetSessionVars().InRestrictedSQL = true
 	err := do.rebuildSysVarCache(ctx)
 	if err != nil {
 		return err
@@ -1143,7 +1144,7 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 }
 
 // PlanReplayerLoop creates a goroutine that handles `exit` and `gc`.
-func (do *Domain) PlanReplayerLoop(ctx sessionctx.Context) {
+func (do *Domain) PlanReplayerLoop() {
 	do.wg.Add(1)
 	go func() {
 		gcTicker := time.NewTicker(do.planReplayer.planReplayerGCLease)

@@ -2435,10 +2435,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		runInBootstrapSession(store, upgrade)
 	}
 
-	se, err := createInitSession(store)
+	se, err := createSession(store)
 	if err != nil {
 		return nil, err
 	}
+	se.GetSessionVars().InRestrictedSQL = true
 
 	// get system tz from mysql.tidb
 	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
@@ -2482,11 +2483,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	dom := domain.GetDomain(se)
 
-	se2, err := createInitSession(store)
+	se2, err := createSession(store)
 	if err != nil {
 		return nil, err
 	}
-	se3, err := createInitSession(store)
+	se3, err := createSession(store)
 	if err != nil {
 		return nil, err
 	}
@@ -2499,7 +2500,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
-		se4, err := createInitSession(store)
+		se4, err := createSession(store)
 		if err != nil {
 			return nil, err
 		}
@@ -2510,7 +2511,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	//  Rebuild sysvar cache in a loop
-	se5, err := createInitSession(store)
+	se5, err := createSession(store)
 	if err != nil {
 		return nil, err
 	}
@@ -2551,11 +2552,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	se8, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	dom.PlanReplayerLoop(se8)
+	dom.PlanReplayerLoop()
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
@@ -2577,14 +2574,16 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
 func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
-	s, err := createInitSession(store)
+	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
 
+	s.SetValue(sessionctx.Initing, true)
 	bootstrap(s)
 	finishBootstrap(store)
+	s.ClearValue(sessionctx.Initing)
 
 	dom := domain.GetDomain(s)
 	dom.Close()
@@ -2593,15 +2592,6 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 
 func createSession(store kv.Storage) (*session, error) {
 	return createSessionWithOpt(store, nil)
-}
-
-func createInitSession(store kv.Storage) (*session, error) {
-	s, err := createSessionWithOpt(store, nil)
-	if err != nil {
-		return nil, err
-	}
-	s.SetValue(sessionctx.Initing, true)
-	return s, nil
 }
 
 func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
