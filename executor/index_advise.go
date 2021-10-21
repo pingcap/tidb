@@ -92,7 +92,7 @@ func (e *IndexAdviseInfo) getStmtNodes(data []byte) error {
 	e.StmtNodes = make([][]ast.StmtNode, len(sqls))
 	sqlParser := parser.New()
 	for i, sql := range sqls {
-		stmtNodes, warns, err := sqlParser.Parse(sql, "", "")
+		stmtNodes, warns, err := sqlParser.ParseSQL(sql)
 		if err != nil {
 			return err
 		}
