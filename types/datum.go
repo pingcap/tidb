@@ -112,10 +112,7 @@ func (d *Datum) Collation() string {
 func (d *Datum) Charset() string {
 	collation, err := charset.GetCollationByName(d.collation)
 	if err != nil {
-		if IsString(d.Kind()) {
-			return charset.CharsetUTF8MB4
-		}
-		return charset.CharsetBin
+		return ""
 	}
 	return collation.CharsetName
 }
