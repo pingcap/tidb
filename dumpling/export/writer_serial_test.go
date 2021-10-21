@@ -12,7 +12,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 func TestWriteMeta(t *testing.T) {

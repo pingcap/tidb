@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 
 	"github.com/docker/go-units"
 	"go.uber.org/zap"

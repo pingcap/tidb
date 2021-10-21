@@ -9,7 +9,7 @@ import (
 	"fmt"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 type mockPoisonWriter struct {

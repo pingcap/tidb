@@ -15,8 +15,8 @@ import (
 	"github.com/go-sql-driver/mysql"
 
 	"github.com/pingcap/errors"
-	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
-	"github.com/pingcap/tidb/dumpling/v4/log"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"go.uber.org/zap"
