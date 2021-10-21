@@ -165,7 +165,7 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, uniqueMap 
 			utils.EncloseName(table.Info.Name.O),
 			table.Info.AutoIncID)
 	}
-	if uniqueMap[UniqueName{table.DB.Name.String(), table.Info.Name.String()}]{
+	if uniqueMap[UniqueName{table.DB.Name.String(), table.Info.Name.String()}] {
 		err = db.se.Execute(ctx, restoreMetaSQL)
 		if err != nil {
 			log.Error("restore meta sql failed",

@@ -97,13 +97,33 @@ func (s *testRestoreSchemaSuite) TestRestoreAutoIncID(c *C) {
 	table.DB.Collate = "utf8mb4_bin"
 	err = db.CreateDatabase(context.Background(), table.DB)
 	c.Assert(err, IsNil, Commentf("Error create empty charset db: %s %s", err, s.mock.DSN))
-	err = db.CreateTable(context.Background(), &table, false)
+	uniqueMap := make(map[restore.UniqueName]bool)
+	err = db.CreateTable(context.Background(), &table, uniqueMap)
 	c.Assert(err, IsNil, Commentf("Error create table: %s %s", err, s.mock.DSN))
+
 	tk.MustExec("use test")
-	// Check if AutoIncID is altered successfully
+	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
+	c.Assert(err, IsNil, Commentf("Error query auto inc id: %s", err))
+	// Check if AutoIncID is altered successfully.
+	c.Assert(autoIncID, Equals, uint64(globalAutoID+100))
+
+	// try again, failed due to table exists.
+	table.Info.AutoIncID = globalAutoID + 200
+	err = db.CreateTable(context.Background(), &table, uniqueMap)
+	// Check if AutoIncID is not altered.
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
 	c.Assert(err, IsNil, Commentf("Error query auto inc id: %s", err))
 	c.Assert(autoIncID, Equals, uint64(globalAutoID+100))
+
+	// try again, success because we use alter sql in map.
+	table.Info.AutoIncID = globalAutoID + 300
+	uniqueMap[restore.UniqueName{"test", "\"t\""}] = true
+	err = db.CreateTable(context.Background(), &table, uniqueMap)
+	// Check if AutoIncID is not altered.
+	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
+	c.Assert(err, IsNil, Commentf("Error query auto inc id: %s", err))
+	c.Assert(autoIncID, Equals, uint64(globalAutoID+300))
+
 }
 
 func (s *testRestoreSchemaSuite) TestFilterDDLJobs(c *C) {
