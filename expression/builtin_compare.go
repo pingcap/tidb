@@ -1242,7 +1242,6 @@ func isTemporalColumn(expr Expression) bool {
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 // 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 // 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
-// If the value of the lazy constant have been changed, we should uncache the current statement.
 func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (_ *Constant, isExceptional bool) {
 	if con.GetType().EvalType() == types.ETInt {
 		return con, false
@@ -1256,8 +1255,6 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 	dt, err = dt.ConvertTo(sc, targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
-			// If we use the new constant, we should uncache the plan.
-			unCacheAndSimplify4MutableConstant(ctx, con)
 			return &Constant{
 				Value:        dt,
 				RetType:      targetFieldType,
@@ -1267,8 +1264,6 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 		}
 		return con, false
 	}
-	// If we use the new constant, we should uncache the plan.
-	unCacheAndSimplify4MutableConstant(ctx, con)
 	return &Constant{
 		Value:        dt,
 		RetType:      targetFieldType,
@@ -1284,8 +1279,14 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 // 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 // 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
-// If the value of the lazy constant have been changed, we should uncache the current statement.
 func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
+	if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
+		if con.GetType().EvalType() == types.ETString {
+			unCacheAndSimplify4MutableConstant(ctx, con)
+		} else {
+			return con, false
+		}
+	}
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
 		return con, false
@@ -1293,16 +1294,12 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	sc := ctx.GetSessionVars().StmtCtx
 
 	if targetFieldType.Tp == mysql.TypeBit {
-		// TODO: The type change for the bit type may cause the plan can not be
-		// cached when the plan cache enable. We should optimize it in the later.
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
 	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
-			// If we use the new constant, we should uncache the plan.
-			unCacheAndSimplify4MutableConstant(ctx, con)
 			return &Constant{
 				Value:        intDatum,
 				RetType:      &targetFieldType,
@@ -1317,8 +1314,6 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		return con, false
 	}
 	if c == 0 {
-		// If we use the new constant, we should uncache the plan.
-		unCacheAndSimplify4MutableConstant(ctx, con)
 		return &Constant{
 			Value:        intDatum,
 			RetType:      &targetFieldType,
@@ -1447,11 +1442,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			arg1.Value.SetInt64(adjusted)
 			finalArg1 = arg1
 		}
-	}
-	if MaybeOverOptimized4PlanCache(ctx, []Expression{finalArg0, finalArg1}) {
-		// Shouldn't do more optimization because of the parameter may be changed
-		// and the optimization may not work for other parameters.
-		return []Expression{finalArg0, finalArg1}
 	}
 
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
