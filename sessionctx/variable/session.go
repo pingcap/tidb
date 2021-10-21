@@ -1367,7 +1367,7 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 	return
 }
 
-// GetParseParams gets the parse parameters from session variables.
+// GetParseParams gets the parse parameters from session variables, for now, only charset and collation are retrieved.
 func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	chs, coll := s.GetCharsetInfo()
 	return []parser.ParseParam{
