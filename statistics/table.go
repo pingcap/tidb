@@ -868,6 +868,7 @@ func (coll *HistColl) GetAvgRowSize(ctx sessionctx.Context, cols []*expression.C
 	if sessionVars.EnableChunkRPC && !isForScan {
 		fixedLen = chunk.GetFixedLen
 	} else {
+		// refer to `(*Column).AvgColSize`
 		fixedLen = func(ft *types.FieldType) int {
 			switch ft.Tp {
 			case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
@@ -876,6 +877,9 @@ func (coll *HistColl) GetAvgRowSize(ctx sessionctx.Context, cols []*expression.C
 				if isEncodedKey {
 					return 8
 				}
+				// In `(*Column).AvgColSize`, we utilize `Column.TotColSize` for estimation when reaching here. When column stats are missing,
+				// considering the length of those types would not be very long, we just use pseudoColSize here.
+				return pseudoColSize
 			}
 			return -1
 		}
@@ -1024,6 +1028,9 @@ func estimateTypeWidth(colType *types.FieldType, getFixedLen func(*types.FieldTy
 	return 32
 }
 
+// EstimateTypeWidthForChunk estimates the average width of values of the type in chunk format.
+// This is used by the planner, which doesn't require absolutely correct results;
+// it's OK (and expected) to guess if we don't know for sure.
 func EstimateTypeWidthForChunk(colType *types.FieldType) int {
 	return estimateTypeWidth(colType, chunk.GetFixedLen)
 }

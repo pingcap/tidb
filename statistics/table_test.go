@@ -15,6 +15,7 @@
 package statistics
 
 import (
+	"github.com/pingcap/tidb/session"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/mysql"
@@ -41,4 +42,11 @@ func TestEstimateTypeWidth(t *testing.T) {
 
 	colType = &types.FieldType{Tp: mysql.TypeString}
 	require.Equal(t, 32, EstimateTypeWidthForChunk(colType)) // value after guessing
+}
+
+func TestGetAvgRowSizeWithoutColStats(t *testing.T) {
+	t.Parallel()
+
+	session.CreateSession4Test(nil)
+
 }
