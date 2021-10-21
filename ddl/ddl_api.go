@@ -2421,7 +2421,11 @@ func SetStatsOption(statsOptions *model.StatsOptions, statsOptionType ast.StatsO
 	case ast.StatsOptionTopN:
 		statsOptions.TopN = uintVal
 	case ast.StatsOptionSampleRate:
-		statsOptions.SampleRate, _ = strconv.ParseFloat(stringVal, 64)
+		floatRate, err := strconv.ParseFloat(stringVal, 64)
+		if err != nil {
+			return err
+		}
+		statsOptions.SampleRate = floatRate
 	case ast.StatsOptionColsChoice:
 		statsOptions.ColumnChoice = model.ColumnChoice(uintVal)
 	// TODO
@@ -6391,7 +6395,7 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 }
 
 var (
-	ErrInvalidStatsOptionsFormat = errors.New("stats options should be in format 'key=value'")
+	ErrInvalidStatsOptionsFormat = errors.New("Stats options should be in format 'key=value'")
 )
 
 func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, spec *ast.StatsOptionsSpec) error {

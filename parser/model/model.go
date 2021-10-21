@@ -342,7 +342,7 @@ type TableInfo struct {
 	PlacementPolicyRef  *PolicyRefInfo     `json:"policy_ref_info"`
 	DirectPlacementOpts *PlacementSettings `json:"placement_settings"`
 
-	// statistics options used when do analyze/auto-analyze for each table
+	// StatsOptions is used when do analyze/auto-analyze for each table
 	StatsOptions *StatsOptions `json:"stats_options"`
 }
 
