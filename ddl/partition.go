@@ -153,10 +153,20 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			return ver, errors.Trace(err)
 		}
 
-		bundles, err := newBundlesFromPartitionDefs(t, job, addingDefinitions)
+		bundles := make([]*placement.Bundle, 0)
+
+		// bundle for table should be recomputed because it includes some default configs for partitions
+		tblBundle, err := newBundleFromTblInfo(t, job, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		bundles = append(bundles, tblBundle)
+
+		partitionBundles, err := newBundlesFromPartitionDefs(t, job, addingDefinitions)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		bundles = append(bundles, partitionBundles...)
 
 		if err = infosync.PutRuleBundles(context.TODO(), bundles); err != nil {
 			job.State = model.JobStateCancelled
