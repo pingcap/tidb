@@ -97,7 +97,7 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 }
 
 // CreateTable executes a CREATE TABLE SQL.
-func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
+func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, hasDDLExecuted bool) error {
 	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
 	if err != nil {
 		log.Error("create table failed",
@@ -153,36 +153,37 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
 			}
 		}
 		restoreMetaSQL = fmt.Sprintf(setValFormat, table.Info.AutoIncID)
-		err = db.se.Execute(ctx, restoreMetaSQL)
 	case utils.NeedAutoID(table.Info):
 		restoreMetaSQL = fmt.Sprintf(
 			"alter table %s.%s auto_increment = %d;",
 			utils.EncloseName(table.DB.Name.O),
 			utils.EncloseName(table.Info.Name.O),
 			table.Info.AutoIncID)
+	}
+	if hasDDLExecuted {
 		err = db.se.Execute(ctx, restoreMetaSQL)
-	}
-	if err != nil {
-		log.Error("restore meta sql failed",
-			zap.String("query", restoreMetaSQL),
-			zap.Stringer("db", table.DB.Name),
-			zap.Stringer("table", table.Info.Name),
-			zap.Error(err))
-		return errors.Trace(err)
-	}
-	if table.Info.PKIsHandle && table.Info.ContainsAutoRandomBits() {
-		alterAutoRandIDSQL := fmt.Sprintf(
-			"alter table %s.%s auto_random_base = %d",
-			utils.EncloseName(table.DB.Name.O),
-			utils.EncloseName(table.Info.Name.O),
-			table.Info.AutoRandID)
-		err = db.se.Execute(ctx, alterAutoRandIDSQL)
 		if err != nil {
-			log.Error("restore auto random id failed",
-				zap.String("query", alterAutoRandIDSQL),
+			log.Error("restore meta sql failed",
+				zap.String("query", restoreMetaSQL),
 				zap.Stringer("db", table.DB.Name),
 				zap.Stringer("table", table.Info.Name),
 				zap.Error(err))
+			return errors.Trace(err)
+		}
+		if table.Info.PKIsHandle && table.Info.ContainsAutoRandomBits() {
+			alterAutoRandIDSQL := fmt.Sprintf(
+				"alter table %s.%s auto_random_base = %d",
+				utils.EncloseName(table.DB.Name.O),
+				utils.EncloseName(table.Info.Name.O),
+				table.Info.AutoRandID)
+			err = db.se.Execute(ctx, alterAutoRandIDSQL)
+			if err != nil {
+				log.Error("restore auto random id failed",
+					zap.String("query", alterAutoRandIDSQL),
+					zap.Stringer("db", table.DB.Name),
+					zap.Stringer("table", table.Info.Name),
+					zap.Error(err))
+			}
 		}
 	}
 	return errors.Trace(err)

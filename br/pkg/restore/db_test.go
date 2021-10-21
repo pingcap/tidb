@@ -97,7 +97,7 @@ func (s *testRestoreSchemaSuite) TestRestoreAutoIncID(c *C) {
 	table.DB.Collate = "utf8mb4_bin"
 	err = db.CreateDatabase(context.Background(), table.DB)
 	c.Assert(err, IsNil, Commentf("Error create empty charset db: %s %s", err, s.mock.DSN))
-	err = db.CreateTable(context.Background(), &table)
+	err = db.CreateTable(context.Background(), &table, false)
 	c.Assert(err, IsNil, Commentf("Error create table: %s %s", err, s.mock.DSN))
 	tk.MustExec("use test")
 	// Check if AutoIncID is altered successfully

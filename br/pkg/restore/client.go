@@ -405,7 +405,7 @@ func (rc *Client) createTable(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
-		err := db.CreateTable(ctx, table)
+		err := db.CreateTable(ctx, table, rc.HasDDLJobs())
 		if err != nil {
 			return CreatedTable{}, errors.Trace(err)
 		}
@@ -1055,6 +1055,18 @@ func (rc *Client) EnableSkipCreateSQL() {
 // IsSkipCreateSQL returns whether we need skip create schema and tables in restore.
 func (rc *Client) IsSkipCreateSQL() bool {
 	return rc.noSchema
+}
+
+// HasDDLJobs returns whether we are doing an incremental restore and need to do DDL jobs.
+// if we execute some DDLs before create table.
+// we may get two situation that need to rebase auto increment/random id.
+// 1. truncate table: truncate will generate new id cache.
+// 2. create table/create and rename table: the first create table will lock down the id cache.
+// because we cannot create onExistReplace table.
+// so the final create DDL with the correct auto increment/random id won't be executed.
+// TODO: This check can be more precisely. but for now is enough. since incremental restore is not GA.
+func (rc *Client) HasDDLJobs() bool {
+	return len(rc.ddlJobs) != 0
 }
 
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
