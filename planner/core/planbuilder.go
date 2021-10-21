@@ -1784,6 +1784,48 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 	return ids, names, nil
 }
 
+// getAnalyzeColumnsInfo returns the columns whose stats need to be collected.
+// 1. For `ANALYZE TABLE t PREDICATE COLUMNS`, it returns union of the predicate columns and the index columns. TODO
+// 2. For `ANALYZE TABLE t COLUMNS c1, c2, ..., cn`, it returns union of the specified columns(c1, c2, ..., cn) and the index columns.
+// 3. Otherwise it returns all the columns.
+func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tblInfo *model.TableInfo) []*model.ColumnInfo {
+	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
+	if as.HistogramOperation == ast.HistogramOperationNop && len(as.ColumnNames) > 0 {
+		for _, colName := range as.ColumnNames {
+			colInfo := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
+			if colInfo != nil {
+				columnIDs[colInfo.ID] = struct{}{}
+			} else {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("There is no column %s in table %s", colName.Name.O, tblInfo.Name.O))
+			}
+		}
+		if len(columnIDs) == 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("There is no valid column so all the columns would be analyzed"))
+		}
+	}
+	if len(columnIDs) == 0 {
+		return tblInfo.Columns
+	}
+	// add indexed columns
+	for _, idx := range tblInfo.Indices {
+		for _, idxCol := range idx.Columns {
+			colInfo := tblInfo.Columns[idxCol.Offset]
+			columnIDs[colInfo.ID] = struct{}{}
+		}
+	}
+	if tblInfo.PKIsHandle {
+		pkCol := tblInfo.GetPkColInfo()
+		columnIDs[pkCol.ID] = struct{}{}
+	}
+	columnsInfo := make([]*model.ColumnInfo, 0, len(columnIDs))
+	for _, col := range tblInfo.Columns {
+		if _, ok := columnIDs[col.ID]; ok {
+			columnsInfo = append(columnsInfo, col)
+		}
+	}
+	return columnsInfo
+}
+
 func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	as *ast.AnalyzeTableStmt,
 	taskSlice []AnalyzeColumnsTask,
@@ -1814,9 +1856,10 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			Incremental:   false,
 			StatsVersion:  version,
 		}
+		colsInfo := b.getAnalyzeColumnsInfo(as, tbl.TableInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo),
-			ColsInfo:    tbl.TableInfo.Columns,
+			ColsInfo:    colsInfo,
 			AnalyzeInfo: info,
 			TblInfo:     tbl.TableInfo,
 			Indexes:     idxInfos,
@@ -1861,6 +1904,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if version == statistics.Version2 {
 			p.ColTasks = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version)
 			continue
+		}
+		// TODO: support analyze specified columns for version 1
+		if as.HistogramOperation == ast.HistogramOperationNop && len(as.ColumnNames) > 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Only the analyze version 2 supports analyzing specified columns"))
 		}
 		for _, idx := range idxInfo {
 			// For prefix common handle. We don't use analyze mixed to handle it with columns. Because the full value
