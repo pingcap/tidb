@@ -15,34 +15,75 @@
 package statistics
 
 import (
+	"flag"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
+var testDataMap = make(testdata.BookKeeper, 1)
+
 func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+
+	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
+
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	testbridge.WorkaroundGoCheckFlags()
-	goleak.VerifyTestMain(m, opts...)
+
+	callback := func(i int) int {
+		testDataMap.GenerateOutputIfNeeded()
+		return i
+	}
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
+func GetIntegrationSuiteData() testdata.TestData {
+	return testDataMap["integration_suite"]
+}
+
+// TestStatistics batches tests sharing a test suite to reduce the setups
+// overheads.
 func TestStatistics(t *testing.T) {
-	s := createTestStatisticsSuite(t)
-	t.Run("TestSketch", SubTestSketch(s))
-	t.Run("TestSketchProtoConversion", SubTestSketchProtoConversion(s))
-	t.Run("TestFMSketchCoding", SubTestFMSketchCoding(s))
+	s := createTestStatisticsSamples(t)
+
+	// fmsketch_test.go
+	t.Run("SubTestSketch", SubTestSketch(s))
+	t.Run("SubTestSketchProtoConversion", SubTestSketchProtoConversion(s))
+	t.Run("SubTestFMSketchCoding", SubTestFMSketchCoding(s))
+
+	// statistics_test.go
+	t.Run("SubTestColumnRange", SubTestColumnRange(s))
+	t.Run("SubTestIntColumnRanges", SubTestIntColumnRanges(s))
+	t.Run("SubTestIndexRanges", SubTestIndexRanges(s))
+
+	// statistics_serial_test.go
+	t.Run("SubTestBuild", SubTestBuild(s))
+	t.Run("SubTestHistogramProtoConversion", SubTestHistogramProtoConversion(s))
+
 }
 
-func createTestStatisticsSuite(t *testing.T) *testStatisticsSuite {
-	s := new(testStatisticsSuite)
+func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
+	s := new(testStatisticsSamples)
 
 	s.count = 100000
 	samples := make([]*SampleItem, 10000)
