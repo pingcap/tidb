@@ -9141,3 +9141,16 @@ func (s *testSuite) TestGetResultRowsCount(c *C) {
 		c.Assert(ca.row, Equals, cnt, Commentf("sql: %v", ca.sql))
 	}
 }
+
+func (s *testSuiteP1) TestIssue28935(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_vectorized_expression=true")
+	tk.MustQuery(`select trim(leading from " a "), trim(both from " a "), trim(trailing from " a ")`).Check(testkit.Rows("a  a  a"))
+	tk.MustQuery(`select trim(leading null from " a "), trim(both null from " a "), trim(trailing null from " a ")`).Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustQuery(`select trim(null from " a ")`).Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("set @@tidb_enable_vectorized_expression=false")
+	tk.MustQuery(`select trim(leading from " a "), trim(both from " a "), trim(trailing from " a ")`).Check(testkit.Rows("a  a  a"))
+	tk.MustQuery(`select trim(leading null from " a "), trim(both null from " a "), trim(trailing null from " a ")`).Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustQuery(`select trim(null from " a ")`).Check(testkit.Rows("<nil>"))
+}
