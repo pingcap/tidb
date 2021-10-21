@@ -1573,3 +1573,18 @@ func TestIssue19410(t *testing.T) {
 	tk.MustQuery("select /*+ INL_HASH_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
 	tk.MustQuery("select /*+ INL_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
 }
+
+func TestAnalyzeNextRawErrorNoLeak(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int, c varchar(32))")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/distsql/mockNextRawError", `return(true)`))
+	err := tk.ExecToErr("analyze table t1")
+	require.EqualError(t, err, "mockNextRawError")
+}
