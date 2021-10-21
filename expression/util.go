@@ -910,7 +910,8 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // `$a==$b`, but it will cause wrong results when `$a!=$b`.
 // So we need to do the check here. The check includes the following aspects:
 // 1. Whether the plan cache switch is enable.
-// 2. Whether the expressions contain a lazy constant.
+// 2. Whether the statement can be cached.
+// 3. Whether the expressions contain a lazy constant.
 // TODO: Do more careful check here.
 func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
@@ -925,8 +926,9 @@ func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bo
 	return containMutableConst(ctx, exprs)
 }
 
-// unCacheAndSimplify4MutableConstant used to set the `MaybeOverOptimized4PlanCache` variable.
-// And it will remove the `DeferredExpr` and `ParamMarker` in the Constant expr.
+// unCacheAndSimplify4MutableConstant used to set the `MaybeOverOptimized4PlanCache` variable
+// for the current statement uncached. And it will remove the `DeferredExpr` and `ParamMarker`
+// in the `Constant` expr. It will be called when the value of the lazy constant have been changed.
 func unCacheAndSimplify4MutableConstant(ctx sessionctx.Context, con *Constant) {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
 		ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
@@ -952,7 +954,7 @@ func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 	return false
 }
 
-// removeMutableConst used to remove the ParamMarker and DeferredExpr in the Constant expr.
+// removeMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
 func removeMutableConst(ctx sessionctx.Context, exprs []Expression) {
 	for _, expr := range exprs {
 		switch v := expr.(type) {

@@ -288,7 +288,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	explainResult := testkit.Rows(
 		"TableReader_7 10.00 root  data:Selection_6",
-		" └─Selection_6 10.00 cop[tikv]  eq(test.t.a, 1)",
+		"└─Selection_6 10.00 cop[tikv]  eq(test.t.a, 1)",
 		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	)
 
@@ -302,6 +302,9 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 		PS: []*util.ProcessInfo{tk1.Se.ShowProcess()},
 	})
 	tk2.MustQuery(explainQuery).Check(explainResult)
+	tk1.MustExec(executeQuery)
+	// The plan can not be cached because the string type parameter will be convert to int type for calculation.
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	// multiple test, '1000' is both effective and efficient.
 	repeats := 1000

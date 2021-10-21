@@ -634,6 +634,7 @@ func (s *testSerialSuite) TestIssue28087And28162(c *C) {
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows("\x01"))
 	tk.MustExec(`set @a=0x00, @b=0x00, @c=0x01`)
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows("\x00", "\x01"))
+	// TypeBit will convert to long long type, this can not be cached. We should optimize it in the later.
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
 	// issue 28162

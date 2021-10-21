@@ -1242,6 +1242,7 @@ func isTemporalColumn(expr Expression) bool {
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 // 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 // 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
+// If the value of the lazy constant have been changed, we should uncache the current statement.
 func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.FieldType, con *Constant) (_ *Constant, isExceptional bool) {
 	if con.GetType().EvalType() == types.ETInt {
 		return con, false
@@ -1283,6 +1284,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 // ExceptionalVal : It is used to get more information to check whether 'int column [cmp] const' is true/false
 // 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 // 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
+// If the value of the lazy constant have been changed, we should uncache the current statement.
 func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
@@ -1291,6 +1293,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	sc := ctx.GetSessionVars().StmtCtx
 
 	if targetFieldType.Tp == mysql.TypeBit {
+		// TODO: The type change for the bit may cause the plan can not be cahced. We should optimize it in the later.
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
@@ -1475,7 +1478,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, args []Expression) []Expression {
 	// Only handle int cases, cause MySQL declares that `UNSIGNED` is deprecated for FLOAT, DOUBLE and DECIMAL types,
 	// and support for it would be removed in a future version.
-	if args[0].GetType().EvalType() != types.ETInt || args[1].GetType().EvalType() != types.ETInt || MaybeOverOptimized4PlanCache(ctx, args) {
+	if args[0].GetType().EvalType() != types.ETInt || args[1].GetType().EvalType() != types.ETInt {
 		return args
 	}
 	colArgs := make([]*Column, 2)
