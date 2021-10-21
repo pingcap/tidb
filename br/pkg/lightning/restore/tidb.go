@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
@@ -79,7 +80,7 @@ func isUnknownSystemVariableErr(err error) bool {
 	if !ok {
 		return strings.Contains(err.Error(), "Unknown system variable")
 	}
-	return code == mysql.ErrUnknownSystemVariable
+	return code == errno.ErrUnknownSystemVariable
 }
 
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {

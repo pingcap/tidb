@@ -23,6 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -849,10 +850,10 @@ func (s *testSuite4) TestInsertSetWithDefault(c *C) {
 	tk.MustExec("insert into t2 set a=default(a), b=default, c=default;")
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("10 -10 -10"))
 	tk.MustExec("delete from t2;")
-	tk.MustGetErrCode("insert into t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 set b=default(a);", errno.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 set a=default(b), b=default(b);", errno.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(c);", errno.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(a);", errno.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 }
 
@@ -884,10 +885,10 @@ func (s *testSuite4) TestInsertOnDupUpdateDefault(c *C) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("4 -4 -4"))
 	tk.MustExec("insert into t2 values (10,default,default) on duplicate key update b=default, a=20, c=default;")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("4 -4 -4", "10 -10 -10"))
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update b=default(a);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update b=default(a);", errno.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(b), b=default(b);", errno.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(c);", errno.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(a);", errno.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 
 	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
@@ -1075,10 +1076,10 @@ func (s *testSuite4) TestReplace(c *C) {
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 1 -1 -1", "2 1 -1 -1"))
 	tk.MustExec("replace t2 set pk=3, a=default(a), b=default, c=default;")
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 1 -1 -1", "2 1 -1 -1", "3 1 -1 -1"))
-	tk.MustGetErrCode("replace t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("replace t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("replace t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("replace t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("replace t2 set b=default(a);", errno.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("replace t2 set a=default(b), b=default(b);", errno.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("replace t2 set a=default(a), c=default(c);", errno.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("replace t2 set a=default(a), c=default(a);", errno.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 }
 
@@ -1555,7 +1556,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	_, err = tk.Exec("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
 	c.Assert(err, IsNil)
 
-	tk.MustGetErrCode("update (select * from t) t set c1 = 1111111", mysql.ErrNonUpdatableTable)
+	tk.MustGetErrCode("update (select * from t) t set c1 = 1111111", errno.ErrNonUpdatableTable)
 
 	// test update ignore for bad null error
 	tk.MustExec("drop table if exists t;")
@@ -1605,7 +1606,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
-	tk.MustGetErrCode("update seq set minvalue=1", mysql.ErrBadField)
+	tk.MustGetErrCode("update seq set minvalue=1", errno.ErrBadField)
 	tk.MustExec("drop sequence seq")
 
 	tk.MustExec("drop table if exists t1, t2")
@@ -1641,10 +1642,10 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "40 -40 -40"))
 	tk.MustExec("update t2 set a=default(a), b=default, c=default;")
 	tk.MustQuery("select * from t2;").Check(testkit.Rows("1 -1 -1", "1 -1 -1"))
-	tk.MustGetErrCode("update t2 set b=default(a);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("update t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("update t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
-	tk.MustGetErrCode("update t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("update t2 set b=default(a);", errno.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("update t2 set a=default(b), b=default(b);", errno.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("update t2 set a=default(a), c=default(c);", errno.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("update t2 set a=default(a), c=default(a);", errno.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 }
 

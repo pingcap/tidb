@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
-	parser_mysql "github.com/pingcap/tidb/parser/mysql"
+	pmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -175,7 +175,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeStateBetweenInteger(c *C
 			} else if len(tbl.(*tables.TableCommon).Columns) != 3 {
 				// changingCols has been added into meta.
 				checkErr = errors.New("len(cols) is not right")
-			} else if getModifyColumn(c, internalTK.Se.(sessionctx.Context), "test", "t", "c2", true).Flag&parser_mysql.PreventNullInsertFlag == uint(0) {
+			} else if getModifyColumn(c, internalTK.Se.(sessionctx.Context), "test", "t", "c2", true).Flag&pmysql.PreventNullInsertFlag == uint(0) {
 				checkErr = errors.New("old col's flag is not right")
 			} else if getModifyColumn(c, internalTK.Se.(sessionctx.Context), "test", "t", "_Col$_c2_0", true) == nil {
 				checkErr = errors.New("changingCol is nil")
@@ -195,9 +195,9 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeStateBetweenInteger(c *C
 	c.Assert(len(tbl.Cols()), Equals, 2)
 	col := getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2", false)
 	c.Assert(col, NotNil)
-	c.Assert(parser_mysql.HasNotNullFlag(col.Flag), Equals, true)
-	c.Assert(col.Flag&parser_mysql.NoDefaultValueFlag, Not(Equals), uint(0))
-	c.Assert(col.Tp, Equals, parser_mysql.TypeTiny)
+	c.Assert(pmysql.HasNotNullFlag(col.Flag), Equals, true)
+	c.Assert(col.Flag&pmysql.NoDefaultValueFlag, Not(Equals), uint(0))
+	c.Assert(col.Tp, Equals, pmysql.TypeTiny)
 	c.Assert(col.ChangeStateInfo, IsNil)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
@@ -272,7 +272,7 @@ func assertRollBackedColUnchanged(c *C, tk *testkit.TestKit) {
 	col := getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2", false)
 	c.Assert(col, NotNil)
 	c.Assert(col.Flag, Equals, uint(0))
-	c.Assert(col.Tp, Equals, parser_mysql.TypeLonglong)
+	c.Assert(col.Tp, Equals, pmysql.TypeLonglong)
 	c.Assert(col.ChangeStateInfo, IsNil)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
@@ -307,37 +307,37 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	tk.MustExec("alter table t modify a varchar(10)")
 	modifiedColumn := getModifyColumn(c, tk.Se, "test", "t", "a", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeVarchar)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeVarchar)
 	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
 
 	tk.MustExec("alter table t modify b char(10)")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "b", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeString)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeString)
 	tk.MustQuery("select b from t").Check(testkit.Rows("11"))
 
 	tk.MustExec("alter table t modify c binary(10)")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "c", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeString)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeString)
 	tk.MustQuery("select c from t").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00"))
 
 	tk.MustExec("alter table t modify d varbinary(10)")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "d", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeVarchar)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeVarchar)
 	tk.MustQuery("select d from t").Check(testkit.Rows("1111"))
 
 	tk.MustExec("alter table t modify e blob(10)")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "e", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTinyBlob)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeTinyBlob)
 	tk.MustQuery("select e from t").Check(testkit.Rows("11111"))
 
 	tk.MustExec("alter table t modify f text(10)")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "f", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTinyBlob)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeTinyBlob)
 	tk.MustQuery("select f from t").Check(testkit.Rows("111111"))
 
 	// integer to decimal
@@ -345,7 +345,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	tk.MustExec("alter table t modify a decimal(2,1)")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "a", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeNewDecimal)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeNewDecimal)
 	tk.MustQuery("select a from t").Check(testkit.Rows("1.0"))
 
 	// integer to year
@@ -353,21 +353,21 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	tk.MustExec("alter table t modify b year")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "b", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeYear)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeYear)
 	tk.MustQuery("select b from t").Check(testkit.Rows("2011"))
 
 	// integer to time
 	tk.MustExec("alter table t modify c time")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "c", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDuration) // mysql.TypeTime has rename to TypeDuration.
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeDuration) // mysql.TypeTime has rename to TypeDuration.
 	tk.MustQuery("select c from t").Check(testkit.Rows("00:01:11"))
 
 	// integer to date (mysql will throw `Incorrect date value: '1111' for column 'd' at row 1` error)
 	tk.MustExec("alter table t modify d date")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "d", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDate)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeDate)
 	tk.MustQuery("select d from t").Check(testkit.Rows("2000-11-11")) // the given number will be left-forward used.
 
 	// integer to timestamp (according to what timezone you have set)
@@ -375,14 +375,14 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	tk.MustExec("set @@session.time_zone=UTC")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "e", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTimestamp)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeTimestamp)
 	tk.MustQuery("select e from t").Check(testkit.Rows("2001-11-11 00:00:00")) // the given number will be left-forward used.
 
 	// integer to datetime
 	tk.MustExec("alter table t modify f datetime")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "f", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDatetime)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeDatetime)
 	tk.MustQuery("select f from t").Check(testkit.Rows("2011-11-11 00:00:00")) // the given number will be left-forward used.
 
 	// integer to floating-point values
@@ -390,20 +390,20 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	tk.MustExec("alter table t modify a float")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "a", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeFloat)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeFloat)
 	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
 
 	tk.MustExec("alter table t modify b double")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "b", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDouble)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeDouble)
 	tk.MustQuery("select b from t").Check(testkit.Rows("11"))
 
 	// integer to bit
 	tk.MustExec("alter table t modify c bit(10)")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "c", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeBit)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeBit)
 	// 111 will be stored ad 0x00,0110,1111 = 0x6F, which will be shown as ASCII('o')=111 as well.
 	tk.MustQuery("select c from t").Check(testkit.Rows("\x00o"))
 
@@ -411,7 +411,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	tk.MustExec("alter table t modify d json")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "d", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeJSON)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeJSON)
 	tk.MustQuery("select d from t").Check(testkit.Rows("1111"))
 
 	// integer to enum
@@ -420,14 +420,14 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	tk.MustExec("alter table t modify a enum(\"a\", \"b\")")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "a", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeEnum)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeEnum)
 	tk.MustQuery("select a from t").Check(testkit.Rows("a"))
 
 	// TiDB take integer as the set element offset to cast.
 	tk.MustExec("alter table t modify b set(\"a\", \"b\")")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "b", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeSet)
+	c.Assert(modifiedColumn.Tp, Equals, pmysql.TypeSet)
 	tk.MustQuery("select b from t").Check(testkit.Rows("a"))
 
 	// TiDB can't take integer as the enum element string to cast, while the MySQL can.
@@ -1825,13 +1825,13 @@ func (s *testColumnTypeChangeSuite) TestChangingAttributeOfColumnWithFK(c *C) {
 	// For column with FK, alter action can be performed for changing null/not null, default value, comment and so on, but column type.
 	tk.MustExec("alter table orders modify user_id int null;")
 	tbl := testGetTableByName(c, tk.Se, "test", "orders")
-	c.Assert(parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag), Equals, false)
+	c.Assert(pmysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag), Equals, false)
 
 	prepare()
 	tk.MustExec("alter table orders change user_id user_id2 int null")
 	tbl = testGetTableByName(c, tk.Se, "test", "orders")
 	c.Assert(tbl.Meta().Columns[1].Name.L, Equals, "user_id2")
-	c.Assert(parser_mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag), Equals, false)
+	c.Assert(pmysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag), Equals, false)
 
 	prepare()
 	tk.MustExec("alter table orders modify user_id int default -1 comment \"haha\"")

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
@@ -261,7 +262,7 @@ func (s *tidbSuite) TestInitSchemaErrorLost(c *C) {
 	s.mockDB.
 		ExpectExec("CREATE TABLE IF NOT EXISTS.*").
 		WillReturnError(&mysql.MySQLError{
-			Number:  tmysql.ErrTooBigFieldlength,
+			Number:  errno.ErrTooBigFieldlength,
 			Message: "Column length too big",
 		})
 
@@ -284,7 +285,7 @@ func (s *tidbSuite) TestInitSchemaUnsupportedSchemaError(c *C) {
 	s.mockDB.
 		ExpectExec("CREATE TABLE IF NOT EXISTS `db`.`t1`.*").
 		WillReturnError(&mysql.MySQLError{
-			Number:  tmysql.ErrTooBigFieldlength,
+			Number:  errno.ErrTooBigFieldlength,
 			Message: "Column length too big",
 		})
 	s.mockDB.

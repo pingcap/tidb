@@ -18,11 +18,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/format"
 )
 
 func newInvalidModeErr(s string) error {
-	return NewErr(ErrWrongValueForVar, "sql_mode", s)
+	return errno.NewErr(errno.ErrWrongValueForVar, "sql_mode", s)
 }
 
 // Version information.

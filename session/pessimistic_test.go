@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -218,7 +218,7 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	}
 	e, ok := errors.Cause(err).(*terror.Error)
 	c.Assert(ok, IsTrue)
-	c.Assert(int(e.Code()), Equals, mysql.ErrLockDeadlock)
+	c.Assert(int(e.Code()), Equals, errno.ErrLockDeadlock)
 
 	_, digest := parser.NormalizeDigest("update deadlock set v = v + 1 where k = 1")
 

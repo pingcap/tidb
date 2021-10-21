@@ -45,6 +45,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -121,7 +122,7 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
 	defer trace.StartRegion(ctx, "HandleStmtExecute").End()
 	if len(data) < 9 {
-		return mysql.ErrMalformPacket
+		return errno.ErrMalformPacket
 	}
 	pos := 0
 	stmtID := binary.LittleEndian.Uint32(data[0:4])
@@ -136,7 +137,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
-		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return errno.NewErr(errno.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_execute")
 	}
 
@@ -156,7 +157,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	case 1:
 		useCursor = true
 	default:
-		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag %d", nil, flag)
+		return errno.NewErrf(errno.ErrUnknown, "unsupported flag %d", nil, flag)
 	}
 
 	// skip iteration-count, always 1
@@ -172,7 +173,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	if numParams > 0 {
 		nullBitmapLen := (numParams + 7) >> 3
 		if len(data) < (pos + nullBitmapLen + 1) {
-			return mysql.ErrMalformPacket
+			return errno.ErrMalformPacket
 		}
 		nullBitmaps = data[pos : pos+nullBitmapLen]
 		pos += nullBitmapLen
@@ -181,7 +182,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		if data[pos] == 1 {
 			pos++
 			if len(data) < (pos + (numParams << 1)) {
-				return mysql.ErrMalformPacket
+				return errno.ErrMalformPacket
 			}
 
 			paramTypes = data[pos : pos+(numParams<<1)]
@@ -270,7 +271,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
-		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return errors.Annotate(errno.NewErr(errno.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch"), cc.preparedStmt2String(stmtID))
 	}
 	if variable.TopSQLEnabled() {
@@ -286,7 +287,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	cc.ctx.SetProcessInfo(sql, time.Now(), mysql.ComStmtExecute, 0)
 	rs := stmt.GetResultSet()
 	if rs == nil {
-		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return errors.Annotate(errno.NewErr(errno.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
@@ -299,7 +300,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 
 func parseStmtFetchCmd(data []byte) (uint32, uint32, error) {
 	if len(data) != 8 {
-		return 0, 0, mysql.ErrMalformPacket
+		return 0, 0, errno.ErrMalformPacket
 	}
 	// Please refer to https://dev.mysql.com/doc/internals/en/com-stmt-fetch.html
 	stmtID := binary.LittleEndian.Uint32(data[0:4])
@@ -340,7 +341,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 		}
 
 		if (i<<1)+1 >= len(paramTypes) {
-			return mysql.ErrMalformPacket
+			return errno.ErrMalformPacket
 		}
 
 		tp := paramTypes[i<<1]
@@ -355,7 +356,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 
 		case mysql.TypeTiny:
 			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
+				err = errno.ErrMalformPacket
 				return
 			}
 
@@ -370,7 +371,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 
 		case mysql.TypeShort, mysql.TypeYear:
 			if len(paramValues) < (pos + 2) {
-				err = mysql.ErrMalformPacket
+				err = errno.ErrMalformPacket
 				return
 			}
 			valU16 := binary.LittleEndian.Uint16(paramValues[pos : pos+2])
@@ -384,7 +385,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 
 		case mysql.TypeInt24, mysql.TypeLong:
 			if len(paramValues) < (pos + 4) {
-				err = mysql.ErrMalformPacket
+				err = errno.ErrMalformPacket
 				return
 			}
 			valU32 := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
@@ -398,7 +399,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 
 		case mysql.TypeLonglong:
 			if len(paramValues) < (pos + 8) {
-				err = mysql.ErrMalformPacket
+				err = errno.ErrMalformPacket
 				return
 			}
 			valU64 := binary.LittleEndian.Uint64(paramValues[pos : pos+8])
@@ -412,7 +413,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 
 		case mysql.TypeFloat:
 			if len(paramValues) < (pos + 4) {
-				err = mysql.ErrMalformPacket
+				err = errno.ErrMalformPacket
 				return
 			}
 
@@ -422,7 +423,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 
 		case mysql.TypeDouble:
 			if len(paramValues) < (pos + 8) {
-				err = mysql.ErrMalformPacket
+				err = errno.ErrMalformPacket
 				return
 			}
 
@@ -432,7 +433,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 
 		case mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeDatetime:
 			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
+				err = errno.ErrMalformPacket
 				return
 			}
 			// See https://dev.mysql.com/doc/internals/en/binary-protocol-value.html
@@ -449,7 +450,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			case 11:
 				pos, tmp = parseBinaryTimestamp(pos, paramValues)
 			default:
-				err = mysql.ErrMalformPacket
+				err = errno.ErrMalformPacket
 				return
 			}
 			args[i] = types.NewDatum(tmp) // FIXME: After check works!!!!!!
@@ -457,7 +458,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 
 		case mysql.TypeDuration:
 			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
+				err = errno.ErrMalformPacket
 				return
 			}
 			// See https://dev.mysql.com/doc/internals/en/binary-protocol-value.html
@@ -470,7 +471,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			case 8:
 				isNegative := paramValues[pos]
 				if isNegative > 1 {
-					err = mysql.ErrMalformPacket
+					err = errno.ErrMalformPacket
 					return
 				}
 				pos++
@@ -478,20 +479,20 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			case 12:
 				isNegative := paramValues[pos]
 				if isNegative > 1 {
-					err = mysql.ErrMalformPacket
+					err = errno.ErrMalformPacket
 					return
 				}
 				pos++
 				pos, tmp = parseBinaryDurationWithMS(pos, paramValues, isNegative)
 			default:
-				err = mysql.ErrMalformPacket
+				err = errno.ErrMalformPacket
 				return
 			}
 			args[i] = types.NewDatum(tmp)
 			continue
 		case mysql.TypeNewDecimal:
 			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
+				err = errno.ErrMalformPacket
 				return
 			}
 
@@ -514,7 +515,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			continue
 		case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
+				err = errno.ErrMalformPacket
 				return
 			}
 			v, isNull, n, err = parseLengthEncodedBytes(paramValues[pos:])
@@ -532,7 +533,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 		case mysql.TypeUnspecified, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
 			mysql.TypeEnum, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeBit:
 			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
+				err = errno.ErrMalformPacket
 				return
 			}
 
@@ -624,14 +625,14 @@ func (cc *clientConn) handleStmtClose(data []byte) (err error) {
 
 func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 	if len(data) < 6 {
-		return mysql.ErrMalformPacket
+		return errno.ErrMalformPacket
 	}
 
 	stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
 
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt == nil {
-		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return errno.NewErr(errno.ErrUnknownStmtHandler,
 			strconv.Itoa(stmtID), "stmt_send_longdata")
 	}
 
@@ -641,13 +642,13 @@ func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 
 func (cc *clientConn) handleStmtReset(ctx context.Context, data []byte) (err error) {
 	if len(data) < 4 {
-		return mysql.ErrMalformPacket
+		return errno.ErrMalformPacket
 	}
 
 	stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt == nil {
-		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return errno.NewErr(errno.ErrUnknownStmtHandler,
 			strconv.Itoa(stmtID), "stmt_reset")
 	}
 	stmt.Reset()
@@ -658,7 +659,7 @@ func (cc *clientConn) handleStmtReset(ctx context.Context, data []byte) (err err
 // handleSetOption refer to https://dev.mysql.com/doc/internals/en/com-set-option.html
 func (cc *clientConn) handleSetOption(ctx context.Context, data []byte) (err error) {
 	if len(data) < 2 {
-		return mysql.ErrMalformPacket
+		return errno.ErrMalformPacket
 	}
 
 	switch binary.LittleEndian.Uint16(data[:2]) {
@@ -669,7 +670,7 @@ func (cc *clientConn) handleSetOption(ctx context.Context, data []byte) (err err
 		cc.capability &^= mysql.ClientMultiStatements
 		cc.ctx.SetClientCapability(cc.capability)
 	default:
-		return mysql.ErrMalformPacket
+		return errno.ErrMalformPacket
 	}
 	if err = cc.writeEOF(0); err != nil {
 		return err

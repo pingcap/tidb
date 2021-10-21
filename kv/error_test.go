@@ -17,7 +17,7 @@ package kv
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/stretchr/testify/assert"
 )
@@ -39,7 +39,7 @@ func TestError(t *testing.T) {
 
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		assert.NotEqual(t, mysql.ErrUnknown, code)
+		assert.NotEqual(t, errno.ErrUnknown, code)
 		assert.Equal(t, uint16(err.Code()), code)
 	}
 }

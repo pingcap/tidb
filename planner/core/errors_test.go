@@ -16,7 +16,7 @@ package core
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/terror"
 )
 
@@ -86,6 +86,6 @@ func (s testErrorSuite) TestError(c *C) {
 	}
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
+		c.Assert(code != errno.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }

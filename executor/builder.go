@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -3032,7 +3033,7 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 	}
 	if lookUpContent[0].keyColIDs == nil {
 		return nil, false, nil,
-			dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("cannot get column IDs when dynamic pruning")
+			dbterror.ClassOptimizer.NewStd(errno.ErrInternal).GenWithStack("cannot get column IDs when dynamic pruning")
 	}
 	keyColOffsets := make([]int, len(lookUpContent[0].keyColIDs))
 	for i, colID := range lookUpContent[0].keyColIDs {
@@ -3045,7 +3046,7 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 		}
 		if offset == -1 {
 			return nil, false, nil,
-				dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("invalid column offset when dynamic pruning")
+				dbterror.ClassOptimizer.NewStd(errno.ErrInternal).GenWithStack("invalid column offset when dynamic pruning")
 		}
 		keyColOffsets[i] = offset
 	}

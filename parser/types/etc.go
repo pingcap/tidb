@@ -20,6 +20,7 @@ package types
 import (
 	"strings"
 
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 )
@@ -105,4 +106,4 @@ const (
 )
 
 // ErrInvalidDefault is returned when meet a invalid default value.
-var ErrInvalidDefault = terror.ClassTypes.NewStd(mysql.ErrInvalidDefault)
+var ErrInvalidDefault = terror.ClassTypes.NewStd(errno.ErrInvalidDefault)

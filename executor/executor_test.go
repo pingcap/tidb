@@ -1426,12 +1426,12 @@ func (s *testSuiteP2) TestUnion(c *C) {
 	err := tk.ExecToErr("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
 	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrWrongUsage))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.ErrWrongUsage))
 
 	err = tk.ExecToErr("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrWrongUsage))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.ErrWrongUsage))
 
 	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongUsage), IsTrue, Commentf("err %v", err))
@@ -1826,23 +1826,23 @@ func (s *testSuiteP1) TestJSON(c *C) {
 	_, err = tk.Exec(`create table test_bad_json(a json default '{}')`)
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrBlobCantHaveDefault))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a blob default 'hello')`)
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrBlobCantHaveDefault))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a text default 'world')`)
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrBlobCantHaveDefault))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.ErrBlobCantHaveDefault))
 
 	// check json fields cannot be used as key.
 	_, err = tk.Exec(`create table test_bad_json(id int, a json, key (a))`)
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrJSONUsedAsKey))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.ErrJSONUsedAsKey))
 
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
@@ -1917,18 +1917,18 @@ func (s *testSuiteP1) TestGeneratedColumnWrite(c *C) {
 		err  int
 	}{
 		// Can't modify generated column by values.
-		{`insert into test_gc_write (a, b, c) values (1, 1, 1)`, mysql.ErrBadGeneratedColumn},
-		{`insert into test_gc_write values (1, 1, 1)`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write (a, b, c) values (1, 1, 1)`, errno.ErrBadGeneratedColumn},
+		{`insert into test_gc_write values (1, 1, 1)`, errno.ErrBadGeneratedColumn},
 		// Can't modify generated column by select clause.
-		{`insert into test_gc_write select 1, 1, 1`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write select 1, 1, 1`, errno.ErrBadGeneratedColumn},
 		// Can't modify generated column by on duplicate clause.
-		{`insert into test_gc_write (a, b) values (1, 1) on duplicate key update c = 1`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write (a, b) values (1, 1) on duplicate key update c = 1`, errno.ErrBadGeneratedColumn},
 		// Can't modify generated column by set.
-		{`insert into test_gc_write set a = 1, b = 1, c = 1`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write set a = 1, b = 1, c = 1`, errno.ErrBadGeneratedColumn},
 		// Can't modify generated column by update clause.
-		{`update test_gc_write set c = 1`, mysql.ErrBadGeneratedColumn},
+		{`update test_gc_write set c = 1`, errno.ErrBadGeneratedColumn},
 		// Can't modify generated column by multi-table update clause.
-		{`update test_gc_write, test_gc_write_1 set test_gc_write.c = 1`, mysql.ErrBadGeneratedColumn},
+		{`update test_gc_write, test_gc_write_1 set test_gc_write.c = 1`, errno.ErrBadGeneratedColumn},
 
 		// Can insert without generated columns.
 		{`insert into test_gc_write (a, b) values (1, 1)`, 0},
@@ -1939,10 +1939,10 @@ func (s *testSuiteP1) TestGeneratedColumnWrite(c *C) {
 		{`update test_gc_write t1, test_gc_write_1 t2 set t1.b = 3, t2.b = 4`, 0},
 
 		// But now we can't do this, just as same with MySQL 5.7:
-		{`insert into test_gc_write values (1, 1)`, mysql.ErrWrongValueCountOnRow},
-		{`insert into test_gc_write select 1, 1`, mysql.ErrWrongValueCountOnRow},
-		{`insert into test_gc_write (c) select a, b from test_gc_write`, mysql.ErrWrongValueCountOnRow},
-		{`insert into test_gc_write (b, c) select a, b from test_gc_write`, mysql.ErrBadGeneratedColumn},
+		{`insert into test_gc_write values (1, 1)`, errno.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write select 1, 1`, errno.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write (c) select a, b from test_gc_write`, errno.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write (b, c) select a, b from test_gc_write`, errno.ErrBadGeneratedColumn},
 	}
 	for _, tt := range tests {
 		_, err := tk.Exec(tt.stmt)
@@ -2112,8 +2112,8 @@ func (s *testSuiteP1) TestGeneratedColumnRead(c *C) {
 		err  int
 	}{
 		// Can't insert these records, because generated columns are not null.
-		{`insert into test_gc_read_1(a, b) values (1, null)`, mysql.ErrBadNull},
-		{`insert into test_gc_read_2(a, b) values (1, null)`, mysql.ErrBadNull},
+		{`insert into test_gc_read_1(a, b) values (1, null)`, errno.ErrBadNull},
+		{`insert into test_gc_read_2(a, b) values (1, null)`, errno.ErrBadNull},
 	}
 	for _, tt := range tests {
 		_, err := tk.Exec(tt.stmt)
@@ -3828,7 +3828,7 @@ func (s *testSuite) TestContainDotColumn(c *C) {
 	tk.MustExec("drop table if exists t3")
 	_, err := tk.Exec("create table t3(s.a char);")
 	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrWrongTableName))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.ErrWrongTableName))
 }
 
 func (s *testSuite) TestCheckIndex(c *C) {
@@ -4611,24 +4611,24 @@ func (s *testSuite3) TestSubqueryTableAlias(c *C) {
 	tk.MustExec(`drop table if exists t`)
 
 	tk.MustExec("set sql_mode = ''")
-	tk.MustGetErrCode("select a, b from (select 1 a) ``, (select 2 b) ``;", mysql.ErrDerivedMustHaveAlias)
-	tk.MustGetErrCode("select a, b from (select 1 a) `x`, (select 2 b) `x`;", mysql.ErrNonuniqTable)
-	tk.MustGetErrCode("select a, b from (select 1 a), (select 2 b);", mysql.ErrDerivedMustHaveAlias)
+	tk.MustGetErrCode("select a, b from (select 1 a) ``, (select 2 b) ``;", errno.ErrDerivedMustHaveAlias)
+	tk.MustGetErrCode("select a, b from (select 1 a) `x`, (select 2 b) `x`;", errno.ErrNonuniqTable)
+	tk.MustGetErrCode("select a, b from (select 1 a), (select 2 b);", errno.ErrDerivedMustHaveAlias)
 	// ambiguous column name
-	tk.MustGetErrCode("select a from (select 1 a) ``, (select 2 a) ``;", mysql.ErrDerivedMustHaveAlias)
-	tk.MustGetErrCode("select a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonuniqTable)
-	tk.MustGetErrCode("select x.a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonuniqTable)
-	tk.MustGetErrCode("select a from (select 1 a), (select 2 a);", mysql.ErrDerivedMustHaveAlias)
+	tk.MustGetErrCode("select a from (select 1 a) ``, (select 2 a) ``;", errno.ErrDerivedMustHaveAlias)
+	tk.MustGetErrCode("select a from (select 1 a) `x`, (select 2 a) `x`;", errno.ErrNonuniqTable)
+	tk.MustGetErrCode("select x.a from (select 1 a) `x`, (select 2 a) `x`;", errno.ErrNonuniqTable)
+	tk.MustGetErrCode("select a from (select 1 a), (select 2 a);", errno.ErrDerivedMustHaveAlias)
 
 	tk.MustExec("set sql_mode = 'oracle';")
 	tk.MustQuery("select a, b from (select 1 a) ``, (select 2 b) ``;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select a, b from (select 1 a) `x`, (select 2 b) `x`;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select a, b from (select 1 a), (select 2 b);").Check(testkit.Rows("1 2"))
 	// ambiguous column name
-	tk.MustGetErrCode("select a from (select 1 a) ``, (select 2 a) ``;", mysql.ErrNonUniq)
-	tk.MustGetErrCode("select a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonUniq)
-	tk.MustGetErrCode("select x.a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonUniq)
-	tk.MustGetErrCode("select a from (select 1 a), (select 2 a);", mysql.ErrNonUniq)
+	tk.MustGetErrCode("select a from (select 1 a) ``, (select 2 a) ``;", errno.ErrNonUniq)
+	tk.MustGetErrCode("select a from (select 1 a) `x`, (select 2 a) `x`;", errno.ErrNonUniq)
+	tk.MustGetErrCode("select x.a from (select 1 a) `x`, (select 2 a) `x`;", errno.ErrNonUniq)
+	tk.MustGetErrCode("select a from (select 1 a), (select 2 a);", errno.ErrNonUniq)
 }
 
 func (s *testSerialSuite) TestTSOFail(c *C) {
@@ -5055,7 +5055,7 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	_, err := tk.Exec(`split table t index idx1 by ("abcd");`)
 	c.Assert(err, NotNil)
 	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.WarnDataTruncated))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.WarnDataTruncated))
 
 	// Test for split index region.
 	// Check min value is more than max value.
@@ -5749,11 +5749,11 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
 	tk.MustQuery("select collation(concat('啊', convert('啊' using gbk) collate gbk_bin));").Check(testkit.Rows("gbk_bin"))
 	tk.MustQuery("select collation(concat(_latin1 'a', convert('啊' using gbk) collate gbk_bin));").Check(testkit.Rows("gbk_bin"))
 
-	tk.MustGetErrCode("select collation(concat(latin_char, gbk_char)) from t;", mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode("select collation(concat(convert('€' using latin1), convert('啊' using gbk) collate gbk_bin));", mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode("select collation(concat(utf8mb4_char, gbk_char collate gbk_bin)) from t;", mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode("select collation(concat('ㅂ', convert('啊' using gbk) collate gbk_bin));", mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode("select collation(concat(ascii_char collate ascii_bin, gbk_char)) from t;", mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select collation(concat(latin_char, gbk_char)) from t;", errno.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select collation(concat(convert('€' using latin1), convert('啊' using gbk) collate gbk_bin));", errno.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select collation(concat(utf8mb4_char, gbk_char collate gbk_bin)) from t;", errno.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select collation(concat('ㅂ', convert('啊' using gbk) collate gbk_bin));", errno.ErrCantAggregate2collations)
+	tk.MustGetErrCode("select collation(concat(ascii_char collate ascii_bin, gbk_char)) from t;", errno.ErrCantAggregate2collations)
 }
 
 func (s *testSerialSuite2) TestIssue23567(c *C) {
@@ -6605,7 +6605,7 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 
 func (s *testSuiteP1) TestPrepareLoadData(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustGetErrCode(`prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";`, mysql.ErrUnsupportedPs)
+	tk.MustGetErrCode(`prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";`, errno.ErrUnsupportedPs)
 }
 
 func (s *testClusterTableSuite) TestSlowQuery(c *C) {
@@ -7067,7 +7067,7 @@ func (s *testSuite1) TestDIVZeroInPartitionExpr(c *C) {
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert into t1 values (NULL), (0), (1)")
 	tk.MustExec("set @@sql_mode='STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO'")
-	tk.MustGetErrCode("insert into t1 values (NULL), (0), (1)", mysql.ErrDivisionByZero)
+	tk.MustGetErrCode("insert into t1 values (NULL), (0), (1)", errno.ErrDivisionByZero)
 }
 
 func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {

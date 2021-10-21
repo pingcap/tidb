@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -151,8 +151,8 @@ func (s *testIntegrationSuite) TestBitColErrorMessage(c *C) {
 	tk.MustExec("drop table bit_col_t")
 	tk.MustExec("create table bit_col_t (a bit(1))")
 	tk.MustExec("drop table bit_col_t")
-	tk.MustGetErrCode("create table bit_col_t (a bit(0))", mysql.ErrInvalidFieldSize)
-	tk.MustGetErrCode("create table bit_col_t (a bit(65))", mysql.ErrTooBigDisplaywidth)
+	tk.MustGetErrCode("create table bit_col_t (a bit(0))", errno.ErrInvalidFieldSize)
+	tk.MustGetErrCode("create table bit_col_t (a bit(65))", errno.ErrTooBigDisplaywidth)
 }
 
 func (s *testIntegrationSuite) TestPushLimitDownIndexLookUpReader(c *C) {
@@ -227,7 +227,7 @@ func (s *testIntegrationSuite) TestIssue24571(c *C) {
 	tk.MustExec(`create view v as select 1 as b;`)
 	tk.MustExec(`create table t (a int);`)
 	tk.MustExec(`update v, t set a=2;`)
-	tk.MustGetErrCode(`update v, t set b=2;`, mysql.ErrNonUpdatableTable)
+	tk.MustGetErrCode(`update v, t set b=2;`, errno.ErrNonUpdatableTable)
 	tk.MustExec("create database db1")
 	tk.MustExec("use db1")
 	tk.MustExec("update test.t, (select 1 as a) as t set test.t.a=1;")
@@ -3471,12 +3471,12 @@ func (s *testIntegrationSerialSuite) TestDeleteStmt(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("delete t from t;")
 	tk.MustExec("delete t from test.t as t;")
-	tk.MustGetErrCode("delete test.t from test.t as t;", mysql.ErrUnknownTable)
+	tk.MustGetErrCode("delete test.t from test.t as t;", errno.ErrUnknownTable)
 	tk.MustExec("delete test.t from t;")
 	tk.MustExec("create database db1")
 	tk.MustExec("use db1")
 	tk.MustExec("create table t(a int)")
-	tk.MustGetErrCode("delete test.t from t;", mysql.ErrUnknownTable)
+	tk.MustGetErrCode("delete test.t from t;", errno.ErrUnknownTable)
 }
 
 func (s *testIntegrationSuite) TestIndexMergeConstantTrue(c *C) {
@@ -4105,11 +4105,11 @@ func (s *testIntegrationSerialSuite) TestIssue25300(c *C) {
 	tk.MustExec(`create table t (a char(65) collate utf8_unicode_ci, b text collate utf8_general_ci not null);`)
 	tk.MustExec(`insert into t values ('a', 'A');`)
 	tk.MustExec(`insert into t values ('b', 'B');`)
-	tk.MustGetErrCode(`(select a from t) union ( select b from t);`, mysql.ErrCantAggregateNcollations)
-	tk.MustGetErrCode(`(select 'a' collate utf8mb4_unicode_ci) union (select 'b' collate utf8mb4_general_ci);`, mysql.ErrCantAggregateNcollations)
-	tk.MustGetErrCode(`(select a from t) union ( select b from t) union all select 'a';`, mysql.ErrCantAggregateNcollations)
-	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a';`, mysql.ErrCantAggregateNcollations)
-	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a' except select 'd';`, mysql.ErrCantAggregateNcollations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t);`, errno.ErrCantAggregateNcollations)
+	tk.MustGetErrCode(`(select 'a' collate utf8mb4_unicode_ci) union (select 'b' collate utf8mb4_general_ci);`, errno.ErrCantAggregateNcollations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union all select 'a';`, errno.ErrCantAggregateNcollations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a';`, errno.ErrCantAggregateNcollations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a' except select 'd';`, errno.ErrCantAggregateNcollations)
 }
 
 func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {

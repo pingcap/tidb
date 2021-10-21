@@ -19,8 +19,9 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/mysql"
+	pmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -180,7 +181,7 @@ func CollationID2Name(id int32) string {
 		// 	"Unable to get collation name from ID, use default collation instead.",
 		// 	zap.Int32("ID", id),
 		// 	zap.Stack("stack"))
-		return mysql.DefaultCollationName
+		return pmysql.DefaultCollationName
 	}
 	return collation.Name
 }
@@ -191,7 +192,7 @@ func CollationName2ID(name string) int {
 	if coll, err := charset.GetCollationByName(name); err == nil {
 		return coll.ID
 	}
-	return mysql.DefaultCollationID
+	return pmysql.DefaultCollationID
 }
 
 // SubstituteMissingCollationToDefault will switch to the default collation if

@@ -139,7 +139,7 @@ func (s *testIntegrationSuite7) TestPrimaryKey(c *C) {
 	tk.MustExec("create table t (a int, b varchar(10), primary key(a) clustered);")
 	tk.MustGetErrCode("alter table t drop primary key;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t add primary key(a) clustered;", errno.ErrUnsupportedDDLOperation)
-	tk.MustGetErrCode("alter table t add primary key(a) nonclustered;", mysql.ErrMultiplePriKey)
+	tk.MustGetErrCode("alter table t add primary key(a) nonclustered;", errno.ErrMultiplePriKey)
 	tk.MustGetErrCode("alter table t add primary key(a);", errno.ErrMultiplePriKey) // implicit nonclustered
 	tk.MustGetErrCode("alter table t add primary key(b) clustered;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t add primary key(b) nonclustered;", errno.ErrMultiplePriKey)
@@ -506,23 +506,23 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	// for failure table cases
 	tk.MustExec("use ctwl_db")
 	failSQL := "create table t1 like test_not_exist.t"
-	tk.MustGetErrCode(failSQL, mysql.ErrNoSuchTable)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = "create table t1 like test.t_not_exist"
-	tk.MustGetErrCode(failSQL, mysql.ErrNoSuchTable)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = "create table t1 (like test_not_exist.t)"
-	tk.MustGetErrCode(failSQL, mysql.ErrNoSuchTable)
+	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = "create table test_not_exis.t1 like ctwl_db.t"
-	tk.MustGetErrCode(failSQL, mysql.ErrBadDB)
+	tk.MustGetErrCode(failSQL, errno.ErrBadDB)
 	failSQL = "create table t1 like ctwl_db.t"
-	tk.MustGetErrCode(failSQL, mysql.ErrTableExists)
+	tk.MustGetErrCode(failSQL, errno.ErrTableExists)
 
 	// test failure for wrong object cases
 	tk.MustExec("drop view if exists v")
 	tk.MustExec("create view v as select 1 from dual")
-	tk.MustGetErrCode("create table viewTable like v", mysql.ErrWrongObject)
+	tk.MustGetErrCode("create table viewTable like v", errno.ErrWrongObject)
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq")
-	tk.MustGetErrCode("create table sequenceTable like seq", mysql.ErrWrongObject)
+	tk.MustGetErrCode("create table sequenceTable like seq", errno.ErrWrongObject)
 
 	tk.MustExec("drop database ctwl_db")
 	tk.MustExec("drop database ctwl_db1")
@@ -1101,7 +1101,7 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Second)
 	defer func() { ddl.SetWaitTimeWhenErrorOccurred(originalWT) }()
 	startTime := time.Now()
-	tk.MustGetErrCode("alter table t_cjtt add column b int", mysql.ErrNoSuchTable)
+	tk.MustGetErrCode("alter table t_cjtt add column b int", errno.ErrNoSuchTable)
 	sub := time.Since(startTime)
 	c.Assert(sub, Less, ddl.GetWaitTimeWhenErrorOccurred())
 }

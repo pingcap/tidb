@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -372,7 +373,7 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 func noSuchTable(err error) bool {
 	e1 := errors.Cause(err)
 	if e2, ok := e1.(*terror.Error); ok {
-		if terror.ErrCode(e2.Code()) == terror.ErrCode(mysql.ErrNoSuchTable) {
+		if terror.ErrCode(e2.Code()) == terror.ErrCode(errno.ErrNoSuchTable) {
 			return true
 		}
 	}

@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -88,7 +89,7 @@ func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs Re
 // AppendParam implements PreparedStatement AppendParam method.
 func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	if paramID >= len(ts.boundParams) {
-		return mysql.NewErr(mysql.ErrWrongArguments, "stmt_send_longdata")
+		return errno.NewErr(errno.ErrWrongArguments, "stmt_send_longdata")
 	}
 	// If len(data) is 0, append an empty byte slice to the end to distinguish no data and no parameter.
 	if len(data) == 0 {

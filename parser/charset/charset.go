@@ -18,7 +18,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/mysql"
+	mysql "github.com/pingcap/tidb/errno"
+	pmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 )
 
@@ -128,7 +129,7 @@ func GetDefaultCollation(charset string) (string, error) {
 
 // GetDefaultCharsetAndCollate returns the default charset and collation.
 func GetDefaultCharsetAndCollate() (string, string) {
-	return mysql.DefaultCharset, mysql.DefaultCollationName
+	return pmysql.DefaultCharset, pmysql.DefaultCollationName
 }
 
 // GetCharsetInfo returns charset and collation for cs as name.
@@ -142,8 +143,8 @@ func GetCharsetInfo(cs string) (*Charset, error) {
 
 // GetCharsetInfoByID returns charset and collation for id as cs_number.
 func GetCharsetInfoByID(coID int) (string, string, error) {
-	if coID == mysql.DefaultCollationID {
-		return mysql.DefaultCharset, mysql.DefaultCollationName, nil
+	if coID == pmysql.DefaultCollationID {
+		return pmysql.DefaultCharset, pmysql.DefaultCollationName, nil
 	}
 	if collation, ok := collationsIDMap[coID]; ok {
 		return collation.CharsetName, collation.Name, nil
