@@ -79,10 +79,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 	}
 	if directPlacementOpts != nil {
 		// check the direct placement option compatibility.
-		if err := checkPolicyValidation(ctx, directPlacementOpts); err != nil {
-			if err == placement.ErrSkipInvalidPlacementOptions {
-				return nil
-			}
+		if err := checkPolicyValidation(directPlacementOpts); err != nil {
 			return errors.Trace(err)
 		}
 		dbInfo.DirectPlacementOpts = directPlacementOpts
@@ -200,10 +197,7 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 
 	if directPlacementOpts != nil {
 		// check the direct placement option compatibility.
-		if err := checkPolicyValidation(ctx, directPlacementOpts); err != nil {
-			if err == placement.ErrSkipInvalidPlacementOptions {
-				return nil
-			}
+		if err := checkPolicyValidation(directPlacementOpts); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1718,18 +1712,23 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 			}
 		}
 	}
-		// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
+	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
 	if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
 		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
 	}
 	if tbInfo.DirectPlacementOpts != nil {
 		// check the direct placement option compatibility.
-		if err := checkPolicyValidation(ctx, tbInfo.DirectPlacementOpts); err != nil {
-			if err == placement.ErrSkipInvalidPlacementOptions {
-				return nil
-			}
+		if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
 			return errors.Trace(err)
 		}
+	}
+	if tbInfo.PlacementPolicyRef != nil {
+		// placement policy reference will override the direct placement options.
+		policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(tbInfo.PlacementPolicyRef.Name)
+		if !ok {
+			return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+		}
+		tbInfo.PlacementPolicyRef.ID = policy.ID
 	}
 
 	if tbInfo.Partition != nil {
@@ -6452,10 +6451,7 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 	}
 	if placementSettings != nil {
 		// check the direct placement option compatibility.
-		if err := checkPolicyValidation(ctx, placementSettings); err != nil {
-			if err == placement.ErrSkipInvalidPlacementOptions {
-				return nil
-			}
+		if err := checkPolicyValidation(placementSettings); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -6515,11 +6511,8 @@ func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlac
 		return errors.Trace(err)
 	}
 
-	err = checkPolicyValidation(ctx, policyInfo.PlacementSettings)
+	err = checkPolicyValidation(policyInfo.PlacementSettings)
 	if err != nil {
-		if err == placement.ErrSkipInvalidPlacementOptions {
-			return nil
-		}
 		return err
 	}
 
@@ -6566,27 +6559,22 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 
 func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) (err error) {
 	policyName := stmt.PolicyName
-
-	newPolicyInfo, err := buildPolicyInfo(policyName, stmt.PlacementOptions)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = checkPolicyValidation(ctx, newPolicyInfo.PlacementSettings)
-	if err != nil {
-		if err == placement.ErrSkipInvalidPlacementOptions {
-			return nil
-		}
-		return err
-	}
-
-	// Check policy existence.
 	is := d.GetInfoSchemaWithInterceptor(ctx)
+	// Check policy existence.
 	policy, ok := is.PolicyByName(policyName)
 	if !ok {
 		return infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(policyName)
 	}
 
+	newPolicyInfo, err := buildPolicyInfo(policy.Name, stmt.PlacementOptions)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
+	err = checkPolicyValidation(newPolicyInfo.PlacementSettings)
+	if err != nil {
+		return err
+	}
 
 	job := &model.Job{
 		SchemaID:   policy.ID,
