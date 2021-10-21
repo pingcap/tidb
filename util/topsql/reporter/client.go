@@ -133,7 +133,7 @@ func (r *GRPCReportClient) Close() {
 	}
 	err := r.conn.Close()
 	if err != nil {
-		logutil.BgLogger().Warn("[top-sql] grpc clients close connection failed", zap.Error(err))
+		logutil.BgLogger().Warn("[top-sql] grpc client close connection failed", zap.Error(err))
 	}
 	r.conn = nil
 }
