@@ -31,7 +31,7 @@ start_services() {
     for cluster in tidb dumpling; do
         openssl genrsa -out "$DUMPLING_TEST_DIR/$cluster.key" 2048
         openssl req -new -batch -sha256 -subj "/CN=127.0.0.1/OU=$cluster" -key "$DUMPLING_TEST_DIR/$cluster.key" -out "$DUMPLING_TEST_DIR/$cluster.csr"
-        openssl x509 -req -sha256 -days 1 -extensions EXT -extfile tests/tls/ipsan.cnf -in "$DUMPLING_TEST_DIR/$cluster.csr" -CA "$DUMPLING_TEST_DIR/ca.pem" -CAkey "$DUMPLING_TEST_DIR/ca.key" -CAcreateserial -out "$DUMPLING_TEST_DIR/$cluster.pem" 2> /dev/null
+        openssl x509 -req -sha256 -days 1 -extensions EXT -extfile dumpling/tests/tls/ipsan.cnf -in "$DUMPLING_TEST_DIR/$cluster.csr" -CA "$DUMPLING_TEST_DIR/ca.pem" -CAkey "$DUMPLING_TEST_DIR/ca.key" -CAcreateserial -out "$DUMPLING_TEST_DIR/$cluster.pem" 2> /dev/null
     done
 
     cat > "$DUMPLING_TEST_DIR/tidb.toml" <<EOF
