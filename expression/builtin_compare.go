@@ -1293,7 +1293,8 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 	sc := ctx.GetSessionVars().StmtCtx
 
 	if targetFieldType.Tp == mysql.TypeBit {
-		// TODO: The type change for the bit may cause the plan can not be cahced. We should optimize it in the later.
+		// TODO: The type change for the bit type may cause the plan can not be
+		// cached when the plan cache enable. We should optimize it in the later.
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
