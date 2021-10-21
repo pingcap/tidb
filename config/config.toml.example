@@ -132,6 +132,10 @@ deprecate-integer-display-length = false
 # See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
 enable-enum-length-limit = true
 
+[top-sql]
+
+receiver-address = "127.0.0.1:10092"
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
