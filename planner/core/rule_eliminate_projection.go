@@ -16,9 +16,9 @@ package core
 
 import (
 	"context"
-
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
@@ -178,11 +178,13 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	if isProj {
 		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
 			for i := range proj.Exprs {
-				if canEliminate {
-					proj.Exprs[i] = expression.FoldConstant(ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema()))
-				} else {
-					proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
+				proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
+				foldedExpr := expression.FoldConstant(proj.Exprs[i])
+				// the folded expr should have the same null flag with the original expr, so forcing it here.
+				if proj.Exprs[i].GetType().Flag & mysql.NotNullFlag != foldedExpr.GetType().Flag & mysql.NotNullFlag {
+					foldedExpr.GetType().Flag = (foldedExpr.GetType().Flag & ^mysql.NotNullFlag) | (proj.Exprs[i].GetType().Flag & mysql.NotNullFlag)
 				}
+				proj.Exprs[i] = foldedExpr
 			}
 			p.Children()[0] = child.Children()[0]
 		}
