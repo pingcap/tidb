@@ -1367,6 +1367,15 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 	return
 }
 
+// GetParseParams gets the parse parameters from session variables, for now, only charset and collation are retrieved.
+func (s *SessionVars) GetParseParams() []parser.ParseParam {
+	chs, coll := s.GetCharsetInfo()
+	return []parser.ParseParam{
+		parser.CharsetConnection(chs),
+		parser.CollationConnection(coll),
+	}
+}
+
 // SetUserVar set the value and collation for user defined variable.
 func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
 	if len(collation) > 0 {
