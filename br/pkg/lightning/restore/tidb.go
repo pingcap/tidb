@@ -83,7 +83,6 @@ func isUnknownSystemVariableErr(err error) bool {
 }
 
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
-
 	param := common.MySQLConnectParam{
 		Host:             dsn.Host,
 		Port:             dsn.Port,
