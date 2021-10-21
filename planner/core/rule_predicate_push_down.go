@@ -5,7 +5,8 @@
 // You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
-// // Unless required by applicable law or agreed to in writing, software
+//
+// Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
@@ -16,10 +17,10 @@ package core
 import (
 	"context"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -537,7 +538,7 @@ func Conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 		return nil
 	}
 	sc := p.SCtx().GetSessionVars().StmtCtx
-	if expression.ContainMutableConst(p.SCtx(), []expression.Expression{con}) {
+	if expression.MaybeOverOptimized4PlanCache(p.SCtx(), []expression.Expression{con}) {
 		return nil
 	}
 	if isTrue, err := con.Value.ToBool(sc); (err == nil && isTrue == 0) || con.Value.IsNull() {
@@ -557,7 +558,7 @@ func DeleteTrueExprs(p LogicalPlan, conds []expression.Expression) []expression.
 			newConds = append(newConds, cond)
 			continue
 		}
-		if expression.ContainMutableConst(p.SCtx(), []expression.Expression{con}) {
+		if expression.MaybeOverOptimized4PlanCache(p.SCtx(), []expression.Expression{con}) {
 			newConds = append(newConds, cond)
 			continue
 		}

@@ -29,7 +29,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -138,6 +138,7 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	TopSQL              TopSQL      `toml:"top-sql" json:"top-sql"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
@@ -428,6 +429,7 @@ type Performance struct {
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
 	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease   string  `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                  int     `toml:"gogc" json:"gogc"`
 	EnforceMPP            bool    `toml:"enforce-mpp" json:"enforce-mpp"`
 }
@@ -537,6 +539,12 @@ type StmtSummary struct {
 	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
+// TopSQL is the config for TopSQL.
+type TopSQL struct {
+	// The TopSQL's data receiver address.
+	ReceiverAddress string `toml:"receiver-address" json:"receiver-address"`
+}
+
 // IsolationRead is the config for isolation read.
 type IsolationRead struct {
 	// Engines filters tidb-server access paths by engine type.
@@ -557,6 +565,7 @@ var defaultConf = Config{
 	Host:                         DefHost,
 	AdvertiseAddress:             "",
 	Port:                         DefPort,
+	Socket:                       "/tmp/tidb.sock",
 	Cors:                         "",
 	Store:                        "unistore",
 	Path:                         "/tmp/tidb",
@@ -634,6 +643,7 @@ var defaultConf = Config{
 		IndexUsageSyncLease: "0s",
 		GOGC:                100,
 		EnforceMPP:          false,
+		PlanReplayerGCLease: "10m",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

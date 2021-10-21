@@ -32,6 +32,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -40,11 +43,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore"
+	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
@@ -61,6 +67,7 @@ type Lightning struct {
 	server     http.Server
 	serverAddr net.Addr
 	serverLock sync.Mutex
+	status     restore.LightningStatus
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -271,7 +278,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	// initiation of default glue should be after RegisterMySQL, which is ready to be called after taskCfg.Adjust
 	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
 	if g == nil {
-		db, err := restore.DBFromConfig(taskCfg.TiDB)
+		db, err := restore.DBFromConfig(ctx, taskCfg.TiDB)
 		if err != nil {
 			return err
 		}
@@ -310,7 +317,8 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	web.BroadcastInitProgress(dbMetas)
 
 	var procedure *restore.Controller
-	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, s, g)
+
+	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, &l.status, s, g)
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
@@ -331,6 +339,13 @@ func (l *Lightning) Stop() {
 		log.L().Warn("failed to shutdown HTTP server", log.ShortError(err))
 	}
 	l.shutdown()
+}
+
+// Status return the sum size of file which has been imported to TiKV and the total size of source file.
+func (l *Lightning) Status() (finished int64, total int64) {
+	finished = l.status.FinishedFileSize.Load()
+	total = l.status.TotalFileSize.Load()
+	return
 }
 
 func writeJSONError(w http.ResponseWriter, code int, prefix string, err error) {
@@ -702,4 +717,109 @@ func checkSchemaConflict(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) e
 		}
 	}
 	return nil
+}
+func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
+	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cpdb.Close()
+
+	// try to remove the metadata first.
+	taskCp, err := cpdb.TaskCheckpoint(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// a empty id means this task is not inited, we needn't further check metas.
+	if taskCp != nil && taskCp.TaskID != 0 {
+		// try to clean up table metas if exists
+		if err = CleanupMetas(ctx, cfg, tableName); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return errors.Trace(cpdb.RemoveCheckpoint(ctx, tableName))
+}
+
+func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) error {
+	if tableName == "all" {
+		tableName = ""
+	}
+	// try to clean up table metas if exists
+	db, err := restore.DBFromConfig(ctx, cfg.TiDB)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tableMetaExist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, restore.TableMetaTableName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tableMetaExist {
+		metaTableName := common.UniqueTable(cfg.App.MetaSchemaName, restore.TableMetaTableName)
+		if err = restore.RemoveTableMetaByTableName(ctx, db, metaTableName, tableName); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	exist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, restore.TaskMetaTableName)
+	if err != nil || !exist {
+		return errors.Trace(err)
+	}
+	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, db, cfg.App.MetaSchemaName, tableMetaExist))
+}
+
+func UnsafeCloseEngine(ctx context.Context, importer backend.Backend, engine string) (*backend.ClosedEngine, error) {
+	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
+		tableName := engine[:index]
+		engineID, err := strconv.Atoi(engine[index+1:])
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ce, err := importer.UnsafeCloseEngine(ctx, nil, tableName, int32(engineID))
+		return ce, errors.Trace(err)
+	}
+
+	engineUUID, err := uuid.Parse(engine)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ce, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "<tidb-lightning-ctl>", engineUUID)
+	return ce, errors.Trace(err)
+}
+
+func CleanupEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {
+	importer, err := importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ce, err := UnsafeCloseEngine(ctx, importer, engine)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return errors.Trace(ce.Cleanup(ctx))
+}
+
+func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
+	var m import_sstpb.SwitchMode
+	switch mode {
+	case config.ImportMode:
+		m = import_sstpb.SwitchMode_Import
+	case config.NormalMode:
+		m = import_sstpb.SwitchMode_Normal
+	default:
+		return errors.Errorf("invalid mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
+	}
+
+	return tikv.ForAllStores(
+		ctx,
+		tls.WithHost(cfg.TiDB.PdAddr),
+		tikv.StoreStateDisconnected,
+		func(c context.Context, store *tikv.Store) error {
+			return tikv.SwitchMode(c, tls, store.Address, m)
+		},
+	)
 }

@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/docker/go-units"
@@ -36,11 +37,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/types"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
@@ -50,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
@@ -61,6 +58,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/table/tables"
 	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/tikv/pd/server/api"
 )
@@ -980,10 +983,11 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 			}
 		}
 	}()
-	exec := mock.NewMockSQLExecutor(controller)
-	g.EXPECT().GetSQLExecutor().Return(exec).AnyTimes()
-	exec.EXPECT().ObtainStringWithLog(gomock.Any(), "SELECT version()", gomock.Any(), gomock.Any()).
-		Return("5.7.25-TiDB-v5.0.1", nil).AnyTimes()
+	db, sqlMock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	g.EXPECT().GetDB().Return(db, nil).AnyTimes()
+	sqlMock.ExpectQuery("SELECT version\\(\\);").WillReturnRows(sqlmock.NewRows([]string{"version()"}).
+		AddRow("5.7.25-TiDB-v5.0.1"))
 
 	web.BroadcastInitProgress(rc.dbMetas)
 
@@ -1359,7 +1363,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 
 	ctx := context.Background()
 	cfg := config.NewConfig()
-	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
+	errorMgr := errormanager.New(nil, cfg)
+	rc := &Controller{pauser: DeliverPauser, cfg: cfg, errorMgr: errorMgr}
 
 	reader, err := store.Open(ctx, fileName)
 	c.Assert(err, IsNil)
@@ -1373,7 +1378,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup).NewEncoder(
+	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup, errorMgr).NewEncoder(
 		s.tr.encTable,
 		&kv.SessionOptions{
 			SQLMode:   s.cfg.TiDB.SQLMode,
@@ -1548,8 +1553,23 @@ func (s *restoreSchemaSuite) TearDownTest(c *C) {
 }
 
 func (s *restoreSchemaSuite) TestRestoreSchemaSuccessful(c *C) {
+	// before restore, if sysVars is initialized by other test, the time_zone should be default value
+	if len(s.rc.sysVars) > 0 {
+		tz, ok := s.rc.sysVars["time_zone"]
+		c.Assert(ok, IsTrue)
+		c.Assert(tz, Equals, "SYSTEM")
+	}
+
+	s.rc.cfg.TiDB.Vars = map[string]string{
+		"time_zone": "UTC",
+	}
 	err := s.rc.restoreSchema(s.ctx)
 	c.Assert(err, IsNil)
+
+	// test after restore schema, sysVars has been updated
+	tz, ok := s.rc.sysVars["time_zone"]
+	c.Assert(ok, IsTrue)
+	c.Assert(tz, Equals, "UTC")
 }
 
 func (s *restoreSchemaSuite) TestRestoreSchemaFailed(c *C) {
@@ -1713,7 +1733,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			sourceSize += size
 			return nil
 		})
-		err = rc.ClusterResource(ctx, sourceSize)
+		err = rc.clusterResource(ctx, sourceSize)
 		c.Assert(err, IsNil)
 
 		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCount)
@@ -1835,7 +1855,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
 		rc := &Controller{cfg: cfg, tls: tls, taskMgr: mockTaskMetaMgr{}, checkTemplate: template}
 
-		err := rc.CheckClusterRegion(context.Background())
+		err := rc.checkClusterRegion(context.Background())
 		c.Assert(err, IsNil)
 		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCnt)
 		c.Assert(template.Success(), Equals, ca.expectResult)
@@ -1887,7 +1907,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV(c *C) {
 		{
 			false,
 			"(.*)large csv: /testPath file exists(.*)",
-			false,
+			true,
 			1,
 			[]*mydump.MDDatabaseMeta{
 				{
@@ -1921,6 +1941,54 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV(c *C) {
 		c.Assert(template.Success(), Equals, ca.expectResult)
 		c.Assert(strings.ReplaceAll(template.Output(), "\n", ""), Matches, ca.expectMsg)
 	}
+}
+func (s *tableRestoreSuite) TestEstimate(c *C) {
+	ctx := context.Background()
+	controller := gomock.NewController(c)
+	defer controller.Finish()
+	mockBackend := mock.NewMockBackend(controller)
+	idAlloc := kv.NewPanickingAllocators(0)
+	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
+	c.Assert(err, IsNil)
+
+	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
+		SQLMode:        s.cfg.TiDB.SQLMode,
+		Timestamp:      0,
+		AutoRandomSeed: 0,
+	})).AnyTimes()
+	importer := backend.MakeBackend(mockBackend)
+	s.cfg.TikvImporter.Backend = config.BackendLocal
+
+	template := NewSimpleTemplate()
+	rc := &Controller{
+		cfg:           s.cfg,
+		checkTemplate: template,
+		store:         s.store,
+		backend:       importer,
+		dbMetas: []*mydump.MDDatabaseMeta{
+			{
+				Name:   "db1",
+				Tables: []*mydump.MDTableMeta{s.tableMeta},
+			},
+		},
+		dbInfos: map[string]*checkpoints.TidbDBInfo{
+			"db1": s.dbInfo,
+		},
+		ioWorkers: worker.NewPool(context.Background(), 1, "io"),
+	}
+	source, err := rc.estimateSourceData(ctx)
+	// Because this file is small than region split size so we does not sample it.
+	c.Assert(err, IsNil)
+	c.Assert(source, Equals, s.tableMeta.TotalSize)
+	s.tableMeta.TotalSize = int64(config.SplitRegionSize)
+	source, err = rc.estimateSourceData(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(source, Greater, s.tableMeta.TotalSize)
+	rc.cfg.TikvImporter.Backend = config.BackendTiDB
+	source, err = rc.estimateSourceData(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(source, Equals, s.tableMeta.TotalSize)
 }
 
 func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
@@ -2338,6 +2406,86 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 			c.Assert(msgs[0], Matches, ca.expectMsg)
 		}
 	}
+}
+
+func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid(c *C) {
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize:          config.ReadBlockSize,
+			DataCharacterSet:       "gb18030",
+			DataInvalidCharReplace: string(utf8.RuneError),
+			CSV: config.CSVConfig{
+				Separator:       "，",
+				Delimiter:       `"`,
+				Header:          true,
+				NotNull:         false,
+				Null:            `\N`,
+				BackslashEscape: true,
+				TrimLastSep:     false,
+			},
+			IgnoreColumns: nil,
+		},
+	}
+	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
+	c.Assert(err, IsNil)
+	mockStore, err := storage.NewLocalStorage(c.MkDir())
+	c.Assert(err, IsNil)
+	csvContent, err := charsetConvertor.Encode(string([]byte("\"colA\"，\"colB\"\n\"a\"，\"b\"")))
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	csvFile := "db1.gbk_table.csv"
+	err = mockStore.WriteFile(ctx, csvFile, []byte(csvContent))
+	c.Assert(err, IsNil)
+
+	rc := &Controller{
+		cfg:           cfg,
+		checkTemplate: NewSimpleTemplate(),
+		store:         mockStore,
+		dbInfos: map[string]*checkpoints.TidbDBInfo{
+			"db1": {
+				Name: "db1",
+				Tables: map[string]*checkpoints.TidbTableInfo{
+					"gbk_table": {
+						ID:   1,
+						DB:   "db1",
+						Name: "gbk_table",
+						Core: &model.TableInfo{
+							Columns: []*model.ColumnInfo{
+								{
+									Name: model.NewCIStr("colA"),
+									FieldType: types.FieldType{
+										Flag: 1,
+									},
+								},
+								{
+									Name: model.NewCIStr("colB"),
+									FieldType: types.FieldType{
+										Flag: 1,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		ioWorkers: worker.NewPool(ctx, 1, "io"),
+	}
+	msgs, err := rc.SchemaIsValid(ctx, &mydump.MDTableMeta{
+		DB:   "db1",
+		Name: "gbk_table",
+		DataFiles: []mydump.FileInfo{
+			{
+				FileMeta: mydump.SourceFileMeta{
+					FileSize: 1 * units.TiB,
+					Path:     csvFile,
+					Type:     mydump.SourceTypeCSV,
+				},
+			},
+		},
+	})
+	c.Assert(err, IsNil)
+	c.Assert(msgs, HasLen, 0)
 }
 
 type testChecksumMgr struct {

@@ -2,7 +2,7 @@
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain col1 copy of the License at
+// You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
@@ -19,10 +19,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -173,8 +173,8 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 			corColIDs:  []int64{},
 			idxColIDs:  []int64{3},
 			idxColLens: []int{types.UnspecifiedLength},
-			access:     "[]",
-			remained:   "[eq(Column#3, \x01)]",
+			access:     "[eq(Column#3, \x01)]",
+			remained:   "[]",
 		},
 	}
 	collate.SetNewCollationEnabledForTest(true)

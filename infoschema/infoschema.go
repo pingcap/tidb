@@ -19,10 +19,10 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 )
@@ -317,9 +317,8 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 	return
 }
 
-// SequenceByName implements the interface of SequenceSchema defined in util package.
-// It could be used in expression package without import cycle problem.
-func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.SequenceTable, error) {
+// GetSequenceByName gets the sequence by name.
+func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
 	tbl, err := is.TableByName(schema, sequence)
 	if err != nil {
 		return nil, err
@@ -354,6 +353,9 @@ func init() {
 		Tables:  infoSchemaTables,
 	}
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
+	util.GetSequenceByName = func(is interface{}, schema, sequence model.CIStr) (util.SequenceTable, error) {
+		return GetSequenceByName(is.(InfoSchema), schema, sequence)
+	}
 }
 
 // HasAutoIncrementColumn checks whether the table has auto_increment columns, if so, return true and the column name.
@@ -400,6 +402,18 @@ func (is *infoSchema) RuleBundles() []*placement.Bundle {
 		bundles = append(bundles, bundle)
 	}
 	return bundles
+}
+
+func (is *infoSchema) setPolicy(policy *model.PolicyInfo) {
+	is.policyMutex.Lock()
+	defer is.policyMutex.Unlock()
+	is.policyMap[policy.Name.L] = policy
+}
+
+func (is *infoSchema) deletePolicy(name string) {
+	is.policyMutex.Lock()
+	defer is.policyMutex.Unlock()
+	delete(is.policyMap, name)
 }
 
 func (is *infoSchema) SetBundle(bundle *placement.Bundle) {

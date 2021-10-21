@@ -696,6 +696,11 @@ error = '''
 Placement policy '%s' can't co-exist with direct placement options
 '''
 
+["ddl:8241"]
+error = '''
+Placement policy '%-.192s' is still in use
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -1488,7 +1493,7 @@ There is no such grant defined for user '%-.48s' on host '%-.255s'
 
 ["privilege:3530"]
 error = '''
-%s is is not granted to %s
+%s is not granted to %s
 '''
 
 ["schema:1007"]
@@ -1589,6 +1594,11 @@ Incorrect foreign key definition for '%-.192s': %s
 ["schema:1347"]
 error = '''
 '%-.192s.%-.192s' is not %s
+'''
+
+["schema:1382"]
+error = '''
+The '%-.64s' syntax is reserved for purposes internal to the MySQL server
 '''
 
 ["schema:1831"]
