@@ -1493,7 +1493,7 @@ There is no such grant defined for user '%-.48s' on host '%-.255s'
 
 ["privilege:3530"]
 error = '''
-%s is is not granted to %s
+%s is not granted to %s
 '''
 
 ["schema:1007"]
@@ -1594,6 +1594,11 @@ Incorrect foreign key definition for '%-.192s': %s
 ["schema:1347"]
 error = '''
 '%-.192s.%-.192s' is not %s
+'''
+
+["schema:1382"]
+error = '''
+The '%-.64s' syntax is reserved for purposes internal to the MySQL server
 '''
 
 ["schema:1831"]

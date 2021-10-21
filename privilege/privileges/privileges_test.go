@@ -26,11 +26,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -84,7 +84,6 @@ func TestCheckPointGetDBPrivilege(t *testing.T) {
 	rootSe := newSession(t, store, dbName)
 	mustExec(t, rootSe, `CREATE USER 'tester'@'localhost';`)
 	mustExec(t, rootSe, `GRANT SELECT,UPDATE ON test.* TO  'tester'@'localhost';`)
-	mustExec(t, rootSe, `flush privileges;`)
 	mustExec(t, rootSe, `create database test2`)
 	mustExec(t, rootSe, `create table test2.t(id int, v int, primary key(id))`)
 	mustExec(t, rootSe, `insert into test2.t(id, v) values(1, 1)`)
@@ -115,7 +114,6 @@ func TestIssue22946(t *testing.T) {
 	mustExec(t, rootSe, "grant all on db1.* to delTest@'localhost';")
 	mustExec(t, rootSe, "grant all on db2.* to delTest@'localhost';")
 	mustExec(t, rootSe, "grant select on test.* to delTest@'localhost';")
-	mustExec(t, rootSe, "flush privileges;")
 
 	se := newSession(t, store, dbName)
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "delTest", Hostname: "localhost"}, nil, nil))
@@ -199,6 +197,9 @@ func TestCheckPrivilegeWithRoles(t *testing.T) {
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_role", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `SET ROLE r_1, r_2;`)
 	mustExec(t, rootSe, `SET DEFAULT ROLE r_1 TO 'test_role'@'localhost';`)
+	// test bogus role for current user.
+	_, err := se.ExecuteInternal(context.Background(), `SET DEFAULT ROLE roledoesnotexist TO 'test_role'@'localhost';`)
+	require.True(t, terror.ErrorEqual(err, executor.ErrRoleNotGranted))
 
 	mustExec(t, rootSe, `GRANT SELECT ON test.* TO r_1;`)
 	pc := privilege.GetPrivilegeManager(se)
@@ -561,6 +562,106 @@ func TestSelectViewSecurity(t *testing.T) {
 	require.EqualError(t, err, core.ErrViewInvalid.GenWithStackByArgs("test", "selectviewsecurity").Error())
 }
 
+func TestShowViewPriv(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`DROP VIEW IF EXISTS test.v`)
+	tk.MustExec(`CREATE VIEW test.v AS SELECT 1`)
+	tk.MustExec("CREATE USER vnobody, vshowview, vselect, vshowandselect")
+	tk.MustExec("GRANT SHOW VIEW ON test.v TO vshowview")
+	tk.MustExec("GRANT SELECT ON test.v TO vselect")
+	tk.MustExec("GRANT SHOW VIEW, SELECT ON test.v TO vshowandselect")
+
+	tests := []struct {
+		userName     string
+		showViewErr  string
+		showTableErr string
+		explainErr   string
+		explainRes   string
+		descErr      string
+		descRes      string
+		tablesNum    string
+		columnsNum   string
+	}{
+		{"vnobody",
+			"[planner:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"[planner:1142]SHOW VIEW command denied to user 'vnobody'@'%' for table 'v'",
+			"[executor:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"",
+			"[executor:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"",
+			"0",
+			"0",
+		},
+		{"vshowview",
+			"[planner:1142]SELECT command denied to user 'vshowview'@'%' for table 'v'",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"1",
+			"0",
+		},
+		{"vselect",
+			"[planner:1142]SHOW VIEW command denied to user 'vselect'@'%' for table 'v'",
+			"[planner:1142]SHOW VIEW command denied to user 'vselect'@'%' for table 'v'",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"1",
+			"1",
+		},
+		{"vshowandselect",
+			"",
+			"",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"1",
+			"1",
+		},
+	}
+
+	for _, test := range tests {
+		tk.Session().Auth(&auth.UserIdentity{Username: test.userName, Hostname: "localhost"}, nil, nil)
+		err := tk.ExecToErr("SHOW CREATE VIEW test.v")
+		if test.showViewErr != "" {
+			require.EqualError(t, err, test.showViewErr, test)
+		} else {
+			require.NoError(t, err, test)
+		}
+		err = tk.ExecToErr("SHOW CREATE TABLE test.v")
+		if test.showTableErr != "" {
+			require.EqualError(t, err, test.showTableErr, test)
+		} else {
+			require.NoError(t, err, test)
+		}
+		if test.explainErr != "" {
+			err = tk.QueryToErr("explain test.v")
+			require.EqualError(t, err, test.explainErr, test)
+		} else {
+			// TODO: expecting empty set but got one row for vshowview.
+			// tk.MustQuery("explain test.v").Check(testkit.Rows(test.explainRes))
+		}
+		if test.descErr != "" {
+			err = tk.QueryToErr("explain test.v")
+			require.EqualError(t, err, test.descErr, test)
+		} else {
+			// TODO: expecting empty set but got one row for vshowview.
+			// tk.MustQuery("desc test.v").Check(testkit.Rows(test.descRes))
+		}
+		tk.MustQuery("select count(*) from information_schema.tables where table_schema='test' and table_name='v'").Check(testkit.Rows(test.tablesNum))
+		// TODO: expecting 0 but got 1 for vshowview.
+		// tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows(test.columnsNum))
+	}
+}
+
 func TestRoleAdminSecurity(t *testing.T) {
 	t.Parallel()
 	store, clean := newStore(t)
@@ -610,7 +711,6 @@ func TestCheckCertBasedAuth(t *testing.T) {
 	mustExec(t, se, "UPDATE mysql.global_priv set priv = 'abc' where `user` = 'r13_broken_user' and `host` = 'localhost'")
 	mustExec(t, se, `CREATE USER 'r14_san_only_pass'@'localhost' require san 'URI:spiffe://mesh.pingcap.com/ns/timesh/sa/me1'`)
 	mustExec(t, se, `CREATE USER 'r15_san_only_fail'@'localhost' require san 'URI:spiffe://mesh.pingcap.com/ns/timesh/sa/me2'`)
-	mustExec(t, se, "flush privileges")
 
 	defer func() {
 		require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
@@ -1471,12 +1571,10 @@ func TestDefaultRoles(t *testing.T) {
 	require.Len(t, ret, 0)
 
 	mustExec(t, rootSe, `SET DEFAULT ROLE ALL TO 'testdefault'@'localhost';`)
-	mustExec(t, rootSe, `flush privileges;`)
 	ret = pc.GetDefaultRoles("testdefault", "localhost")
 	require.Len(t, ret, 2)
 
 	mustExec(t, rootSe, `SET DEFAULT ROLE NONE TO 'testdefault'@'localhost';`)
-	mustExec(t, rootSe, `flush privileges;`)
 	ret = pc.GetDefaultRoles("testdefault", "localhost")
 	require.Len(t, ret, 0)
 }
@@ -2493,6 +2591,59 @@ func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
 	mustExec(t, se, "grant select on metrics_schema.up to test_user;")
 }
 
+func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	defer func() {
+		require.True(t, tk.Session().Auth(&auth.UserIdentity{
+			Username: "root",
+			Hostname: "localhost",
+		}, nil, nil))
+		tk.MustExec(`DROP SCHEMA IF EXISTS placment_rule_db`)
+		tk.MustExec(`DROP USER IF EXISTS placement_rule_user_scheam`)
+		tk.MustExec(`DROP USER IF EXISTS placement_rule_user_table`)
+	}()
+	tk.MustExec("CREATE DATABASE placement_rule_db")
+	tk.MustExec("USE placement_rule_db")
+	tk.MustExec(`CREATE TABLE placement_rule_table_se (a int) PRIMARY_REGION="se" REGIONS="se,nl"`)
+	tk.MustExec(`CREATE TABLE placement_rule_table_nl (a int) PRIMARY_REGION="nl" REGIONS="se,nl"`)
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
+		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl se,nl      0 0",
+		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
+	tk.MustExec("CREATE USER placement_rule_user_schema")
+	tk.MustExec("CREATE USER placement_rule_user_table")
+	tk.MustExec("GRANT SELECT ON placement_rule_db.placement_rule_table_se TO placement_rule_user_table")
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "placement_rule_user_schema",
+		Hostname: "somehost",
+	}, nil, nil))
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows())
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "placement_rule_user_table",
+		Hostname: "somehost",
+	}, nil, nil))
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows("<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil))
+	tk.MustExec("GRANT SELECT ON placement_rule_db.* TO placement_rule_user_schema")
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "placement_rule_user_schema",
+		Hostname: "somehost",
+	}, nil, nil))
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
+		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl se,nl      0 0",
+		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
+}
+
 func TestGrantCreateTmpTables(t *testing.T) {
 	t.Parallel()
 	store, clean := newStore(t)
@@ -2515,4 +2666,71 @@ func TestGrantCreateTmpTables(t *testing.T) {
 		`GRANT CREATE TEMPORARY TABLES ON create_tmp_table_db.* TO 'u1'@'%'`))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE create_tmp_table_db")
+}
+
+func TestRevokeSecondSyntax(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	tk.MustExec(`drop user if exists ss1;`)
+	tk.MustExec(`create user ss1;`)
+	tk.MustExec(`revoke all privileges, grant option from ss1;`)
+	tk.MustQuery("show grants for ss1").Check(testkit.Rows("GRANT USAGE ON *.* TO 'ss1'@'%'"))
+}
+
+func TestGrantEvent(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE event_db")
+	tk.MustExec("USE event_db")
+	tk.MustExec("CREATE USER u1")
+	tk.MustExec("CREATE TABLE event_table (a int)")
+	tk.MustExec("GRANT EVENT on event_db.* to u1")
+	tk.MustExec("GRANT EVENT on *.* to u1")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
+		`GRANT EVENT ON *.* TO 'u1'@'%'`,
+		`GRANT EVENT ON event_db.* TO 'u1'@'%'`))
+	tk.MustExec("DROP USER u1")
+	tk.MustExec("DROP DATABASE event_db")
+}
+
+func TestGrantRoutine(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE routine_db")
+	tk.MustExec("USE routine_db")
+	tk.MustExec("CREATE USER u1")
+	tk.MustExec("CREATE TABLE routine_table (a int)")
+	tk.MustExec("GRANT CREATE ROUTINE on routine_db.* to u1")
+	tk.MustExec("GRANT CREATE ROUTINE on *.* to u1")
+	tk.MustExec("GRANT ALTER ROUTINE on routine_db.* to u1")
+	tk.MustExec("GRANT ALTER ROUTINE on *.* to u1")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
+		`GRANT CREATE ROUTINE,ALTER ROUTINE ON *.* TO 'u1'@'%'`,
+		`GRANT CREATE ROUTINE,ALTER ROUTINE ON routine_db.* TO 'u1'@'%'`))
+	tk.MustExec("DROP USER u1")
+	tk.MustExec("DROP DATABASE routine_db")
 }

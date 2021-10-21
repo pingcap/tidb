@@ -16,7 +16,7 @@ package resourcegrouptag
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

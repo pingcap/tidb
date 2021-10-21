@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -971,7 +971,7 @@ func (b *builtinNextValSig) evalInt(row chunk.Row) (int64, bool, error) {
 		db = b.ctx.GetSessionVars().CurrentDB
 	}
 	// Check the tableName valid.
-	sequence, err := b.ctx.GetInfoSchema().(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := util.GetSequenceByName(b.ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
 	if err != nil {
 		return 0, false, err
 	}
@@ -1027,7 +1027,7 @@ func (b *builtinLastValSig) evalInt(row chunk.Row) (int64, bool, error) {
 		db = b.ctx.GetSessionVars().CurrentDB
 	}
 	// Check the tableName valid.
-	sequence, err := b.ctx.GetInfoSchema().(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := util.GetSequenceByName(b.ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
 	if err != nil {
 		return 0, false, err
 	}
@@ -1077,7 +1077,7 @@ func (b *builtinSetValSig) evalInt(row chunk.Row) (int64, bool, error) {
 		db = b.ctx.GetSessionVars().CurrentDB
 	}
 	// Check the tableName valid.
-	sequence, err := b.ctx.GetInfoSchema().(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := util.GetSequenceByName(b.ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
 	if err != nil {
 		return 0, false, err
 	}
