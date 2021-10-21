@@ -337,10 +337,30 @@ type TableInfo struct {
 	// It's true when the engine of the table is TiFlash only.
 	IsColumnar bool `json:"is_columnar"`
 
-	TempTableType `json:"temp_table_type"`
+	TempTableType        `json:"temp_table_type"`
+	TableCacheStatusType `json:"cache_table_status"`
+	PlacementPolicyRef   *PolicyRefInfo     `json:"policy_ref_info"`
+	DirectPlacementOpts  *PlacementSettings `json:"placement_settings"`
+}
+type TableCacheStatusType int
 
-	PlacementPolicyRef  *PolicyRefInfo     `json:"policy_ref_info"`
-	DirectPlacementOpts *PlacementSettings `json:"placement_settings"`
+const (
+	TableCacheStatusDISABLE TableCacheStatusType = iota
+	TableCacheStatusTableENABLE
+	TableCacheStatusTableSWITCHING
+)
+
+func (t TableCacheStatusType) String() string {
+	switch t {
+	case TableCacheStatusDISABLE:
+		return "DISABLE"
+	case TableCacheStatusTableENABLE:
+		return "ENABLE"
+	case TableCacheStatusTableSWITCHING:
+		return "SWITCHING"
+	default:
+		return ""
+	}
 }
 
 type TempTableType byte
