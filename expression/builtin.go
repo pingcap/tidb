@@ -130,6 +130,33 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		return
 	}
 
+	for i := range args {
+		switch argTps[i] {
+		case types.ETInt:
+			args[i] = WrapWithCastAsInt(ctx, args[i])
+		case types.ETReal:
+			args[i] = WrapWithCastAsReal(ctx, args[i])
+		case types.ETDecimal:
+			args[i] = WrapWithCastAsDecimal(ctx, args[i])
+		case types.ETString:
+			args[i] = WrapWithCastAsStringWithTp(ctx, args[i], &types.FieldType{
+				Tp:      mysql.TypeVarString,
+				Decimal: types.UnspecifiedLength,
+				Charset: ec.Charset,
+				Collate: ec.Collation,
+				Flen:    types.UnspecifiedLength,
+			})
+		case types.ETDatetime:
+			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
+		case types.ETTimestamp:
+			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeTimestamp))
+		case types.ETDuration:
+			args[i] = WrapWithCastAsDuration(ctx, args[i])
+		case types.ETJson:
+			args[i] = WrapWithCastAsJSON(ctx, args[i])
+		}
+	}
+
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:
@@ -190,27 +217,6 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 			Charset: mysql.DefaultCharset,
 			Collate: mysql.DefaultCollationName,
 			Flag:    mysql.BinaryFlag,
-		}
-	}
-
-	for i := range args {
-		switch argTps[i] {
-		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i])
-		case types.ETReal:
-			args[i] = WrapWithCastAsReal(ctx, args[i])
-		case types.ETDecimal:
-			args[i] = WrapWithCastAsDecimal(ctx, args[i])
-		case types.ETString:
-			args[i] = WrapWithCastAsStringWithTp(ctx, args[i], fieldType)
-		case types.ETDatetime:
-			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
-		case types.ETTimestamp:
-			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeTimestamp))
-		case types.ETDuration:
-			args[i] = WrapWithCastAsDuration(ctx, args[i])
-		case types.ETJson:
-			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		}
 	}
 
