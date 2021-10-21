@@ -926,17 +926,6 @@ func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bo
 	return containMutableConst(ctx, exprs)
 }
 
-// unCacheAndSimplify4MutableConstant used to set the `MaybeOverOptimized4PlanCache` variable
-// for the current statement uncached. And it will remove the `DeferredExpr` and `ParamMarker`
-// in the `Constant` expr. It will be called when the value of the lazy constant have been changed.
-func unCacheAndSimplify4MutableConstant(ctx sessionctx.Context, con *Constant) {
-	if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
-		ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
-		con.DeferredExpr = nil
-		con.ParamMarker = nil
-	}
-}
-
 // containMutableConst checks if the expressions contain a lazy constant.
 func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 	for _, expr := range exprs {

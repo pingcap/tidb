@@ -1282,7 +1282,11 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
 		if con.GetType().EvalType() == types.ETString {
-			unCacheAndSimplify4MutableConstant(ctx, con)
+			// If the constant type is string, we should uncache the plan.
+			// And change the laze constant to normal constant.
+			ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+			con.DeferredExpr = nil
+			con.ParamMarker = nil
 		} else {
 			return con, false
 		}
@@ -1375,6 +1379,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
 // `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`. It also handles comparing year type
 // with int constant if the int constant falls into a sensible year representation.
+// When plan cache enable, we can only use refineArgs for `int column <cmp> string constant`.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0IsInt := arg0Type.EvalType() == types.ETInt
@@ -1443,7 +1448,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			finalArg1 = arg1
 		}
 	}
-
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
 		// This will always be false.
 		return []Expression{NewZero(), NewOne()}
