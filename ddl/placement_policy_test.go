@@ -200,11 +200,9 @@ func (s *testDBSuite6) TestSkipPlacementValidation(c *C) {
 	tk.MustExec("drop placement policy if exists x")
 	tk.MustExec("drop table if exists t")
 	tk.MustQuery(`select @@PLACEMENT_CHECKS;`).Check(testkit.Rows("1"))
-	tk.MustGetErrCode("alter placement policy x followers=4", mysql.ErrPlacementPolicyNotExists)
 	tk.MustGetErrCode("create table t(a int) PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
 	tk.MustExec("SET PLACEMENT_CHECKS = 0;")
 	tk.MustQuery(`select @@PLACEMENT_CHECKS;`).Check(testkit.Rows("0"))
-	tk.MustExec("alter placement policy x followers=4")
 	tk.MustExec("create table t(a int) PLACEMENT POLICY=\"x\"")
 }
 
