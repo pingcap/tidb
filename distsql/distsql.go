@@ -195,9 +195,9 @@ func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
 	if canUseChunkRPC(ctx) {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 		setChunkMemoryLayout(dagReq)
-		return
+	} else {
+		dagReq.EncodeType = tipb.EncodeType_TypeDefault
 	}
-	dagReq.EncodeType = tipb.EncodeType_TypeDefault
 }
 
 func canUseChunkRPC(ctx sessionctx.Context) bool {
@@ -239,7 +239,7 @@ func init() {
 	ptr := unsafe.Pointer(&i)
 	if 0x01 == *(*byte)(ptr) {
 		systemEndian = tipb.Endian_BigEndian
-		return
+	} else {
+		systemEndian = tipb.Endian_LittleEndian
 	}
-	systemEndian = tipb.Endian_LittleEndian
 }
