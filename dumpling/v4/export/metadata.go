@@ -10,10 +10,9 @@ import (
 	"strings"
 	"time"
 
-	tcontext "github.com/pingcap/dumpling/v4/context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
 	"go.uber.org/zap"
 )
 

@@ -12,13 +12,12 @@ import (
 	"sync"
 	"time"
 
-	tcontext "github.com/pingcap/dumpling/v4/context"
-	"github.com/pingcap/dumpling/v4/log"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
+	"github.com/pingcap/tidb/dumpling/v4/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )

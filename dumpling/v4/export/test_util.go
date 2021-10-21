@@ -8,9 +8,8 @@ import (
 	"database/sql/driver"
 	"fmt"
 
-	tcontext "github.com/pingcap/dumpling/v4/context"
-
 	"github.com/DATA-DOG/go-sqlmock"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
 )
 
 type mockPoisonWriter struct {

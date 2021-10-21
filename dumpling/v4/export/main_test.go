@@ -19,7 +19,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/pingcap/dumpling/v4/log"
+	"github.com/pingcap/tidb/dumpling/v4/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"

@@ -12,14 +12,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/dumpling/v4/log"
-
 	"github.com/go-sql-driver/mysql"
-
-	tcontext "github.com/pingcap/dumpling/v4/context"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
+	"github.com/pingcap/tidb/dumpling/v4/log"
 	"github.com/pingcap/tidb/store/helper"
 	"go.uber.org/zap"
 )

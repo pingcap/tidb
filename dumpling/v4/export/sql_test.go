@@ -16,12 +16,12 @@ import (
 	"strings"
 	"testing"
 
-	tcontext "github.com/pingcap/dumpling/v4/context"
 	"github.com/stretchr/testify/require"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
 )
 
 var showIndexHeaders = []string{

@@ -9,11 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/dumpling/v4/log"
-
-	tcontext "github.com/pingcap/dumpling/v4/context"
-
 	"github.com/pingcap/errors"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
+	"github.com/pingcap/tidb/dumpling/v4/log"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
 )

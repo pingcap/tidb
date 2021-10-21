@@ -15,8 +15,6 @@ import (
 	"text/template"
 	"time"
 
-	tcontext "github.com/pingcap/dumpling/v4/context"
-
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
@@ -24,6 +22,7 @@ import (
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tcontext "github.com/pingcap/tidb/dumpling/v4/context"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
