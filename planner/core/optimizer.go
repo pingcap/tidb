@@ -176,6 +176,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 		traceRecords := vars.StmtCtx.CETraceRecords
 		select {
 		case traceHandle.RecordCh <- traceRecords:
+			vars.StmtCtx.CETraceRecords = nil
 		default:
 			logutil.BgLogger().Warn("[CE Trace] dropped records for one optimization")
 		}

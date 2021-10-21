@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"math"
+	"regexp"
 	"sort"
 	"unicode/utf8"
 
@@ -645,7 +646,11 @@ func RangesToString(sc *stmtctx.StatementContext, rans []*Range, colNames []stri
 			buffer.WriteString(" or ")
 		}
 	}
-	return buffer.String()
+	result := buffer.String()
+	if matched, err := regexp.MatchString(`^\(*true\)*$`, result); matched || (err != nil) {
+		return ""
+	}
+	return result
 }
 
 func RangeSingleColToString(sc *stmtctx.StatementContext, lowVal, highVal types.Datum, lowExclude, highExclude bool, colName string) string {

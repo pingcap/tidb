@@ -402,10 +402,14 @@ func CETrace(sc *stmtctx.StatementContext, tableID int64, colNames []string, ran
 	} else {
 		tp = tp + "-Range"
 	}
+	expr := ranger.RangesToString(sc, ranges, colNames)
+	if expr == "" {
+		return
+	}
 	CERecord := trace.CETraceRecord{
 		TableID:  tableID,
 		Type:     tp,
-		Expr:     ranger.RangesToString(sc, ranges, colNames),
+		Expr:     expr,
 		RowCount: rowCount,
 	}
 	sc.CETraceRecords = append(sc.CETraceRecords, &CERecord)
