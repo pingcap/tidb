@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"go.uber.org/zap"
 )
