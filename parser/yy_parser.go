@@ -135,6 +135,7 @@ func (parser *Parser) SetParserConfig(config ParserConfig) {
 	parser.lexer.skipPositionRecording = config.SkipPositionRecording
 }
 
+// ParseSQL parses a query string to raw ast.StmtNode.
 func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.StmtNode, warns []error, err error) {
 	resetParams(parser)
 	for _, p := range params {
@@ -179,7 +180,7 @@ func (parser *Parser) lastErrorAsWarn() {
 // ParseOneStmt parses a query and returns an ast.StmtNode.
 // The query must have one statement, otherwise ErrSyntax is returned.
 func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode, error) {
-	stmts, _, err := parser.Parse(sql, charset, collation)
+	stmts, _, err := parser.ParseSQL(sql, CharsetConnection(charset), CollationConnection(collation))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

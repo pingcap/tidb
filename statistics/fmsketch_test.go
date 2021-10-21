@@ -33,7 +33,7 @@ func extractSampleItemsDatums(items []*SampleItem) []types.Datum {
 	return datums
 }
 
-func SubTestSketch(s *testStatisticsSuite) func(*testing.T) {
+func SubTestSketch(s *testStatisticsSamples) func(*testing.T) {
 	return func(t *testing.T) {
 		t.Parallel()
 		sc := &stmtctx.StatementContext{TimeZone: time.Local}
@@ -64,7 +64,7 @@ func SubTestSketch(s *testStatisticsSuite) func(*testing.T) {
 	}
 }
 
-func SubTestSketchProtoConversion(s *testStatisticsSuite) func(*testing.T) {
+func SubTestSketchProtoConversion(s *testStatisticsSamples) func(*testing.T) {
 	return func(t *testing.T) {
 		t.Parallel()
 		sc := &stmtctx.StatementContext{TimeZone: time.Local}
@@ -82,7 +82,7 @@ func SubTestSketchProtoConversion(s *testStatisticsSuite) func(*testing.T) {
 	}
 }
 
-func SubTestFMSketchCoding(s *testStatisticsSuite) func(*testing.T) {
+func SubTestFMSketchCoding(s *testStatisticsSamples) func(*testing.T) {
 	return func(t *testing.T) {
 		t.Parallel()
 		sc := &stmtctx.StatementContext{TimeZone: time.Local}

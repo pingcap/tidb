@@ -209,7 +209,7 @@ func createDatabaseIfNotExistStmt(dbName string) string {
 }
 
 func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
-	stmts, _, err := p.Parse(createTable, "", "")
+	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {
 		return []string{}, err
 	}

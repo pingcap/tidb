@@ -955,6 +955,11 @@ type SessionVars struct {
 		curr int8
 		data [2]stmtctx.StatementContext
 	}
+
+	// EnableMPPBalanceWithContinuousRegion indicates whether MPP balance logic will take account of region's continuity in TiFlash.
+	EnableMPPBalanceWithContinuousRegion bool
+	// EnableMPPBalanceWithContinuousRegionCount indicates the continuous region count that balance logic assigns to a TiFlash instance each time.
+	EnableMPPBalanceWithContinuousRegionCount int64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1372,7 +1377,8 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	return []parser.ParseParam{
 		parser.CharsetConnection(chs),
 		parser.CollationConnection(coll),
-		parser.CharsetClient(cli)}
+		parser.CharsetClient(cli),
+	}
 }
 
 // SetUserVar set the value and collation for user defined variable.
