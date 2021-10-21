@@ -16,7 +16,6 @@ package main
 import (
 	"context"
 	"fmt"
-	_ "net/http/pprof"
 	"os"
 
 	"github.com/prometheus/client_golang/prometheus"
