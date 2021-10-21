@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	osuser "os/user"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -1688,15 +1689,16 @@ func doDDLWorks(s Session) {
 // TODO: sanitize.
 func doDMLWorks(s Session) {
 	mustExecute(s, "BEGIN")
-
 	if config.GetGlobalConfig().Security.SecureBootstrap {
-		// TODO:
-		// change "mysql_native_password" to "auth_socket"
-		// When these PRs are merged:
-		// https://github.com/pingcap/tidb/pull/27561
-		// https://github.com/pingcap/tidb/pull/28486
+		// If secure bootstrap is enabled, we create a root@localhost account which can login with auth_socket.
+		// i.e. mysql -S /tmp/tidb.sock -uroot
+		// The auth_socket plugin will validate that the user matches $USER.
+		u, err := osuser.Current()
+		if err != nil {
+			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
+		}
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("localhost", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`, u.Username)
 	} else {
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
 		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)

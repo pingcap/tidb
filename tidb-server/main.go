@@ -513,8 +513,7 @@ func overrideConfig(cfg *config.Config) {
 		cfg.ProxyProtocol.HeaderTimeout = *proxyProtocolHeaderTimeout
 	}
 
-	// Security
-	// Sanity check:
+	// Sanity check: can't specify both options
 	if actualFlags[nmInitializeSecure] && actualFlags[nmInitializeInsecure] {
 		err = fmt.Errorf("the options --initialize-insecure and --initialize-secure are mutually exclusive")
 		terror.MustNil(err)
