@@ -2103,7 +2103,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 			}
 			limit := math.Float64frombits(analyzeOptionLimit[opt.Type])
 			if fVal <= 0 || fVal > limit {
-				return nil, errors.Errorf("Value of analyze option %s should not larger than %f, and should be greater than 0", analyzeOptionLimit[opt.Type], limit)
+				return nil, errors.Errorf("Value of analyze option %s should not larger than %f, and should be greater than 0", ast.AnalyzeOptionString[opt.Type], limit)
 			}
 			sampleRate = fVal
 			optMap[opt.Type] = math.Float64bits(fVal)
