@@ -359,11 +359,11 @@ func (s *testShowStatsSuite) TestShowColumnStatsUsage(c *C) {
 	result := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Sort()
 	rows := result.Rows()
 	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0], DeepEquals, []string{"test", "t1", "", t1.Meta().Columns[0].Name.O, "NULL", "2021-10-20 08:00:00"})
+	c.Assert(rows[0], DeepEquals, []interface{}{"test", "t1", "", t1.Meta().Columns[0].Name.O, "<nil>", "2021-10-20 08:00:00"})
 
 	result = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Sort()
 	rows = result.Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[0], DeepEquals, []string{"test", "t2", "global", t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "NULL"})
-	c.Assert(rows[1], DeepEquals, []string{"test", "t2", p0.Name.O, t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "NULL"})
+	c.Assert(rows[0], DeepEquals, []interface{}{"test", "t2", "global", t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
+	c.Assert(rows[1], DeepEquals, []interface{}{"test", "t2", p0.Name.O, t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
 }

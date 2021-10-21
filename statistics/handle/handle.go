@@ -1780,6 +1780,7 @@ type colStatsUsage struct {
 	LastAnalyzedAt *types.Time
 }
 
+// LoadColumnStatsUsage loads column stats usage information from disk.
 func (h *Handle) LoadColumnStatsUsage() (map[model.TableColumnID]colStatsUsage, error) {
 	rows, _, err := h.execRestrictedSQL(context.Background(), "SELECT table_id, column_id, last_used_at, last_analyzed_at FROM mysql.column_stats_usage")
 	if err != nil {

@@ -480,12 +480,12 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 			}
 			row := []interface{}{dbName, tbl.Name.O, partitionName, col.Name.O}
 			if colStatsUsage.LastUsedAt != nil {
-				row = append(row, colStatsUsage.LastUsedAt)
+				row = append(row, *colStatsUsage.LastUsedAt)
 			} else {
 				row = append(row, nil)
 			}
 			if colStatsUsage.LastAnalyzedAt != nil {
-				row = append(row, colStatsUsage.LastAnalyzedAt)
+				row = append(row, *colStatsUsage.LastAnalyzedAt)
 			} else {
 				row = append(row, nil)
 			}
