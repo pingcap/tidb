@@ -288,11 +288,7 @@ func StartCPUProfile(w io.Writer) error {
 	if GlobalSQLCPUProfiler.IsEnabled() {
 		return GlobalSQLCPUProfiler.startExportCPUProfile(w)
 	}
-	err := pprof.StartCPUProfile(w)
-	if err != nil {
-		return err
-	}
-	return nil
+	return pprof.StartCPUProfile(w)
 }
 
 // StopCPUProfile same like pprof.StopCPUProfile.
