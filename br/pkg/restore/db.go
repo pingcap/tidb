@@ -107,7 +107,11 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
 		return errors.Trace(err)
 	}
 
-	if table.Info.IsSequence() {
+	var restoreMetaSQL string
+	switch {
+	case table.Info.IsView():
+		return nil
+	case table.Info.IsSequence():
 		setValFormat := fmt.Sprintf("do setval(%s.%s, %%d);",
 			utils.EncloseName(table.DB.Name.O),
 			utils.EncloseName(table.Info.Name.O))
@@ -148,14 +152,37 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
 				return errors.Trace(err)
 			}
 		}
-		restoreMetaSQL := fmt.Sprintf(setValFormat, table.Info.AutoIncID)
-		if err = db.se.Execute(ctx, restoreMetaSQL); err != nil {
-			log.Error("restore meta sql failed",
-				zap.String("query", restoreMetaSQL),
+		restoreMetaSQL = fmt.Sprintf(setValFormat, table.Info.AutoIncID)
+		err = db.se.Execute(ctx, restoreMetaSQL)
+	case utils.NeedAutoID(table.Info):
+		restoreMetaSQL = fmt.Sprintf(
+			"alter table %s.%s auto_increment = %d;",
+			utils.EncloseName(table.DB.Name.O),
+			utils.EncloseName(table.Info.Name.O),
+			table.Info.AutoIncID)
+		err = db.se.Execute(ctx, restoreMetaSQL)
+	}
+	if err != nil {
+		log.Error("restore meta sql failed",
+			zap.String("query", restoreMetaSQL),
+			zap.Stringer("db", table.DB.Name),
+			zap.Stringer("table", table.Info.Name),
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+	if table.Info.PKIsHandle && table.Info.ContainsAutoRandomBits() {
+		alterAutoRandIDSQL := fmt.Sprintf(
+			"alter table %s.%s auto_random_base = %d",
+			utils.EncloseName(table.DB.Name.O),
+			utils.EncloseName(table.Info.Name.O),
+			table.Info.AutoRandID)
+		err = db.se.Execute(ctx, alterAutoRandIDSQL)
+		if err != nil {
+			log.Error("restore auto random id failed",
+				zap.String("query", alterAutoRandIDSQL),
 				zap.Stringer("db", table.DB.Name),
 				zap.Stringer("table", table.Info.Name),
 				zap.Error(err))
-			return errors.Trace(err)
 		}
 	}
 	return errors.Trace(err)
