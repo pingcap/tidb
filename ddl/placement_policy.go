@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -38,11 +39,7 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	err = checkPolicyValidation(policyInfo.PlacementSettings)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
+
 	switch policyInfo.State {
 	case model.StateNone:
 		// none -> public
@@ -66,7 +63,10 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 	}
 }
 
-func checkPolicyValidation(info *model.PlacementSettings) error {
+func checkPolicyValidation(sctx sessionctx.Context, info *model.PlacementSettings) error {
+	if !sctx.GetSessionVars().EnablePlacementChecks {
+		return placement.ErrSkipInvalidPlacementOptions
+	}
 	_, err := placement.NewBundleFromOptions(info)
 	return err
 }
@@ -196,12 +196,6 @@ func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 
 	newPolicyInfo := *oldPolicy
 	newPolicyInfo.PlacementSettings = alterPolicy.PlacementSettings
-
-	err = checkPolicyValidation(newPolicyInfo.PlacementSettings)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
 
 	err = t.UpdatePolicy(&newPolicyInfo)
 	if err != nil {

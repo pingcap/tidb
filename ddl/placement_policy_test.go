@@ -194,6 +194,20 @@ func (s *testDBSuite6) TestPlacementValidation(c *C) {
 	tk.MustExec("drop placement policy x")
 }
 
+func (s *testDBSuite6) TestSkipPlacementValidation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("drop table if exists t")
+	tk.MustQuery(`select @@PLACEMENT_CHECKS;`).Check(testkit.Rows("1"))
+	tk.MustGetErrCode("alter placement policy x followers=4", mysql.ErrPlacementPolicyNotExists)
+	tk.MustGetErrCode("create table t(a int) PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
+	tk.MustExec("SET PLACEMENT_CHECKS = 0;")
+	tk.MustQuery(`select @@PLACEMENT_CHECKS;`).Check(testkit.Rows("0"))
+	tk.MustExec("alter placement policy x followers=4")
+	tk.MustExec("create table t(a int) PLACEMENT POLICY=\"x\"")
+}
+
 func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists TestResetPlacementDB;")

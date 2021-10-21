@@ -43,4 +43,6 @@ var (
 	ErrNoRulesToDrop = errors.New("no rule of such role to drop")
 	// ErrInvalidPlacementOptions is from bundle.go.
 	ErrInvalidPlacementOptions = errors.New("invalid placement option")
+	// ErrSkipInvalidPlacementOptions is for skipping Policy Validation when PLACEMENT_CHECKS is off.
+	ErrSkipInvalidPlacementOptions = errors.New("skip the invalid placement option")
 )
