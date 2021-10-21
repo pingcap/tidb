@@ -55,3 +55,4 @@ a	hex(a)
 涓?枃	E6B6933FE69E83
 中文	E4B8ADE69687
 涓?枃	E6B6933FE69E83
+set @@character_set_client = 'utf8mb4';
