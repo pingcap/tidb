@@ -7,12 +7,18 @@ E4B880E4BA8CE4B889	D2BBB6FEC8FD	E4B880E4BA8CE4B8890000000000000000000000
 select length(a), length(b), length(c) from t;
 length(a)	length(b)	length(c)
 9	6	20
+select octet_length(a), octet_length(b), octet_length(c) from t;
+octet_length(a)	octet_length(b)	octet_length(c)
+9	6	20
 set @@tidb_enable_vectorized_expression = true;
 select hex(a), hex(b), hex(c) from t;
 hex(a)	hex(b)	hex(c)
 E4B880E4BA8CE4B889	D2BBB6FEC8FD	E4B880E4BA8CE4B8890000000000000000000000
 select length(a), length(b), length(c) from t;
 length(a)	length(b)	length(c)
+9	6	20
+select octet_length(a), octet_length(b), octet_length(c) from t;
+octet_length(a)	octet_length(b)	octet_length(c)
 9	6	20
 set @@tidb_enable_vectorized_expression = false;
 drop table if exists t;

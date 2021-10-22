@@ -91,14 +91,16 @@ func (s *testEvaluatorSuite) TestLengthAndOctetLength(c *C) {
 		{"一二三!", "gbk", 7},
 		{"一二三!", "", 10},
 	}
-	for _, t := range tbl {
-		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, t.chs)
-		c.Assert(err, IsNil)
-		f, err := newFunctionForTest(s.ctx, ast.Length, s.primitiveValsToConstants([]interface{}{t.input})...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(d.GetInt64(), Equals, t.result)
+	for _, lengthMethod := range lengthMethods {
+		for _, t := range tbl {
+			err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, t.chs)
+			c.Assert(err, IsNil)
+			f, err := newFunctionForTest(s.ctx, lengthMethod, s.primitiveValsToConstants([]interface{}{t.input})...)
+			c.Assert(err, IsNil)
+			d, err := f.Eval(chunk.Row{})
+			c.Assert(err, IsNil)
+			c.Assert(d.GetInt64(), Equals, t.result)
+		}
 	}
 }
 
