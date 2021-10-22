@@ -2494,6 +2494,8 @@ const (
 	AlterTableAddStatistics
 	AlterTableDropStatistics
 	AlterTableAttributes
+	AlterTableCache
+	AlterTableNoCache
 	AlterTableStatsOptions
 )
 
@@ -3127,6 +3129,10 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		if err := spec.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.AttributesSpec")
 		}
+	case AlterTableCache:
+		ctx.WriteKeyWord("CACHE")
+	case AlterTableNoCache:
+		ctx.WriteKeyWord("NOCACHE")
 	case AlterTableStatsOptions:
 		spec := n.StatsOptionsSpec
 		if err := spec.Restore(ctx); err != nil {

@@ -1729,7 +1729,7 @@ func findColumnByName(colName string, tblInfo *model.TableInfo) *model.ColumnInf
 
 func extractPartitionColumns(partExpr string, tblInfo *model.TableInfo) ([]*model.ColumnInfo, error) {
 	partExpr = "select " + partExpr
-	stmts, _, err := parser.New().Parse(partExpr, "", "")
+	stmts, _, err := parser.New().ParseSQL(partExpr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
