@@ -954,6 +954,21 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `idx_v` (`v`) COMMENT 'foo''bar'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Test show table with stats options
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int) STATS_BUCKETS=1,STATS_TOPN=1")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin STATS_BUCKETS=1,STATS_TOPN=1 "))
+	tk.MustExec("alter table t STATS_OPTIONS=\"BUCKETS=2,TOPN=2\"")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin STATS_BUCKETS=2,STATS_TOPN=2 "))
+	tk.MustExec("drop table t")
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
