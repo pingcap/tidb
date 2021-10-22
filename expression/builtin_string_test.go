@@ -136,6 +136,29 @@ func (s *testEvaluatorSuite) TestASCII(c *C) {
 	}
 	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result int64
+	}{
+		{"abc", "gbk", 97},
+		{"你好", "gbk", 196},
+		{"你好", "", 228},
+		{"世界", "gbk", 202},
+		{"世界", "", 228},
+	}
+
+	for _, t := range tbl {
+		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, t.chs)
+		c.Assert(err, IsNil)
+		f, err := newFunctionForTest(s.ctx, ast.ASCII, s.primitiveValsToConstants([]interface{}{t.input})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.GetInt64(), Equals, t.result)
+	}
 }
 
 func (s *testEvaluatorSuite) TestConcat(c *C) {

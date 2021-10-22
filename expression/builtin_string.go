@@ -272,6 +272,13 @@ func (b *builtinASCIISig) evalInt(row chunk.Row) (int64, bool, error) {
 	if len(val) == 0 {
 		return 0, false, nil
 	}
+	argTp := b.args[0].GetType()
+	if !types.IsBinaryStr(argTp) {
+		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
+		if err == nil {
+			return int64(dBytes[0]), false, nil
+		}
+	}
 	return int64(val[0]), false, nil
 }
 
