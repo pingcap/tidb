@@ -5725,36 +5725,33 @@ func (b *builtinConvertTzSig) convertTz(dt types.Time, fromTzStr, toTzStr string
 	fromTzMatched := b.timezoneRegex.MatchString(fromTzStr)
 	toTzMatched := b.timezoneRegex.MatchString(toTzStr)
 
-	var t time.Time
+	var fromTz, toTz *time.Location
 	var err error
 
 	if fromTzMatched {
-		t, err = dt.GoTime(time.UTC)
-		if err != nil {
-			return types.ZeroTime, true, nil
-		}
-		t = t.Add(-timeZone2Duration(fromTzStr))
+		fromTz = time.FixedZone(fromTzStr, timeZone2int(fromTzStr))
 	} else {
-		fromTz, err := time.LoadLocation(fromTzStr)
+		fromTz, err = time.LoadLocation(fromTzStr)
 		if err != nil {
 			return types.ZeroTime, true, nil
 		}
-		t, err = dt.GoTime(fromTz)
-		if err != nil {
-			return types.ZeroTime, true, nil
-		}
-		t = t.In(time.UTC)
 	}
 
-	if toTzMatched {
-		return types.NewTime(types.FromGoTime(t.Add(timeZone2Duration(toTzStr))),
-			mysql.TypeDatetime, int8(b.tp.Decimal)), false, nil
-	}
-
-	toTz, err := time.LoadLocation(toTzStr)
+	t, err := dt.GoTime(fromTz)
 	if err != nil {
 		return types.ZeroTime, true, nil
 	}
+	t = t.In(time.UTC)
+
+	if toTzMatched {
+		toTz = time.FixedZone(toTzStr, timeZone2int(toTzStr))
+	} else {
+		toTz, err = time.LoadLocation(toTzStr)
+		if err != nil {
+			return types.ZeroTime, true, nil
+		}
+	}
+
 	return types.NewTime(types.FromGoTime(t.In(toTz)), mysql.TypeDatetime, int8(b.tp.Decimal)), false, nil
 }
 
