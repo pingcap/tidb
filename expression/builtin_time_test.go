@@ -2634,6 +2634,10 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestConvertTz(c *C) {
+	loc1, _ := time.LoadLocation("Europe/Tallinn")
+	loc2, _ := time.LoadLocation("Local")
+	t1, _ := time.ParseInLocation("2006-01-02 15:04:00", "2021-10-22 10:00:00", loc1)
+	t2, _ := time.ParseInLocation("2006-01-02 15:04:00", "2021-10-22 10:00:00", loc2)
 	tests := []struct {
 		t       interface{}
 		fromTz  interface{}
@@ -2680,6 +2684,8 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 		{"2021-10-31 02:00:00", "Europe/Amsterdam", "+01:00", true, "2021-10-31 02:00:00"},
 		{"2021-10-31 03:00:00", "Europe/Amsterdam", "+01:00", true, "2021-10-31 03:00:00"},
 		{"2021-03-28 02:30:00", "Europe/Amsterdam", "UTC", true, ""},
+		{"2021-10-22 10:00:00", "Europe/Tallinn", "SYSTEM", true, t1.In(loc2).Format("2006-01-02 15:04:00")},
+		{"2021-10-22 10:00:00", "SYSTEM", "Europe/Tallinn", true, t2.In(loc1).Format("2006-01-02 15:04:00")},
 	}
 	fc := funcs[ast.ConvertTz]
 	for _, test := range tests {
