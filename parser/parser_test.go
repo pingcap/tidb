@@ -1133,6 +1133,9 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// for show stats_topn.
 		{"show stats_topn", true, "SHOW STATS_TOPN"},
 		{"show stats_topn where table_name = 't'", true, "SHOW STATS_TOPN WHERE `table_name`=_UTF8MB4't'"},
+		// for show column_stats_usage.
+		{"show column_stats_usage", true, "SHOW COLUMN_STATS_USAGE"},
+		{"show column_stats_usage where table_name = 't'", true, "SHOW COLUMN_STATS_USAGE WHERE `table_name`=_UTF8MB4't'"},
 		// for show pump/drainer status.
 		{"show pump status", true, "SHOW PUMP STATUS"},
 		{"show drainer status", true, "SHOW DRAINER STATUS"},
@@ -2224,6 +2227,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (a.b, b);", false, ""},
 		{"CREATE TABLE foo (a, b.c);", false, ""},
 		{"CREATE TABLE (name CHAR(50) BINARY)", false, ""},
+		// test enable or disable cached table
+		{"ALTER TABLE tmp CACHE", true, "ALTER TABLE `tmp` CACHE"},
+		{"ALTER TABLE tmp NOCACHE", true, "ALTER TABLE `tmp` NOCACHE"},
 		// for create temporary table
 		{"CREATE TEMPORARY TABLE t (a varchar(50), b int);", true, "CREATE TEMPORARY TABLE `t` (`a` VARCHAR(50),`b` INT)"},
 		{"CREATE TEMPORARY TABLE t LIKE t1", true, "CREATE TEMPORARY TABLE `t` LIKE `t1`"},
@@ -2395,6 +2401,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{`alter database t placement policy="ww";`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `ww`"},
 		{`alter database t default placement policy="ww";`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `ww`"},
 		{`alter database t /*T![placement] primary_region="us" */;`, true, "ALTER DATABASE `t` PRIMARY_REGION = 'us'"},
+		{`alter database t PLACEMENT POLICY='DEFAULT';`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
+		{`alter database t PLACEMENT POLICY=DEFAULT;`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
+		{`alter database t PLACEMENT POLICY = DEFAULT;`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
+		{`alter database t PLACEMENT POLICY SET DEFAULT`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
+		{"alter database t PLACEMENT POLICY=`DEFAULT`;", true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
 		// 5. create partition
 		{`create table m (c int) partition by range (c) (partition p1 values less than (200) primary_region="us");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) PRIMARY_REGION = 'us')"},
 		{`create table m (c int) partition by range (c) (partition p1 values less than (200) regions="us,3");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) REGIONS = 'us,3')"},
@@ -4187,6 +4198,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"GRANT PROXY ON 'localuser'@'localhost' TO 'externaluser'@'somehost'", true, "GRANT PROXY ON `localuser`@`localhost` TO `externaluser`@`somehost`"},
 		{"GRANT PROXY ON ''@'' TO 'root'@'localhost' WITH GRANT OPTION", true, "GRANT PROXY ON ``@`` TO `root`@`localhost` WITH GRANT OPTION"},
 		{"GRANT PROXY ON 'proxied_user' TO 'proxy_user1', 'proxy_user2'", true, "GRANT PROXY ON `proxied_user`@`%` TO `proxy_user1`@`%`, `proxy_user2`@`%`"},
+		{"grant grant option on *.* to u1", true, "GRANT GRANT OPTION ON *.* TO `u1`@`%`"}, // not typical syntax, but supported
 
 		// for revoke statement
 		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'localhost';", true, "REVOKE ALL ON `db1`.* FROM `jeffrey`@`localhost`"},
@@ -4205,6 +4217,8 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"REVOKE EXECUTE ON FUNCTION db.func FROM 'user'@'localhost'", true, "REVOKE EXECUTE ON FUNCTION `db`.`func` FROM `user`@`localhost`"},
 		{"REVOKE EXECUTE ON PROCEDURE db.func FROM 'user'@'localhost'", true, "REVOKE EXECUTE ON PROCEDURE `db`.`func` FROM `user`@`localhost`"},
 		{"REVOKE APPLICATION_PASSWORD_ADMIN,AUDIT_ADMIN ON *.* FROM 'root'@'localhost'", true, "REVOKE APPLICATION_PASSWORD_ADMIN, AUDIT_ADMIN ON *.* FROM `root`@`localhost`"},
+		{"revoke all privileges, grant option from u1", true, "REVOKE ALL, GRANT OPTION ON *.* FROM `u1`@`%`"},                             // special case syntax
+		{"revoke all privileges, grant option from u1, u2, u3", true, "REVOKE ALL, GRANT OPTION ON *.* FROM `u1`@`%`, `u2`@`%`, `u3`@`%`"}, // special case syntax
 	}
 	s.RunTest(c, table)
 }
@@ -5089,6 +5103,16 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t drop histogram on b", true, "ANALYZE TABLE `t` DROP HISTOGRAM ON `b`"},
 		{"analyze table t update histogram on c1, c2;", true, "ANALYZE TABLE `t` UPDATE HISTOGRAM ON `c1`,`c2`"},
 		{"analyze table t drop histogram on c1, c2;", true, "ANALYZE TABLE `t` DROP HISTOGRAM ON `c1`,`c2`"},
+		{"analyze table t1,t2 predicate columns", true, "ANALYZE TABLE `t1`,`t2` PREDICATE COLUMNS"},
+		{"analyze table t partition a predicate columns", true, "ANALYZE TABLE `t` PARTITION `a` PREDICATE COLUMNS"},
+		{"analyze table t1,t2 predicate columns with 4 topn", true, "ANALYZE TABLE `t1`,`t2` PREDICATE COLUMNS WITH 4 TOPN"},
+		{"analyze table t partition a predicate columns with 1024 buckets", true, "ANALYZE TABLE `t` PARTITION `a` PREDICATE COLUMNS WITH 1024 BUCKETS"},
+		{"analyze table t columns c1,c2", true, "ANALYZE TABLE `t` COLUMNS `c1`,`c2`"},
+		{"analyze table t partition a columns c1,c2", true, "ANALYZE TABLE `t` PARTITION `a` COLUMNS `c1`,`c2`"},
+		{"analyze table t columns c1,c2 with 4 topn", true, "ANALYZE TABLE `t` COLUMNS `c1`,`c2` WITH 4 TOPN"},
+		{"analyze table t partition a columns c1,c2 with 1024 buckets", true, "ANALYZE TABLE `t` PARTITION `a` COLUMNS `c1`,`c2` WITH 1024 BUCKETS"},
+		{"analyze table t index a columns c", false, ""},
+		{"analyze table t index a predicate columns", false, ""},
 	}
 	s.RunTest(c, table)
 }
@@ -6322,34 +6346,34 @@ func (s *testParserSuite) TestCTEBindings(c *C) {
 	}
 }
 
-func (s *testParserSuite) TestPlanRecreator(c *C) {
+func (s *testParserSuite) TestPlanReplayer(c *C) {
 	table := []testCase{
-		{"PLAN RECREATOR DUMP EXPLAIN SELECT a FROM t", true, "PLAN RECREATOR DUMP EXPLAIN SELECT `a` FROM `t`"},
-		{"PLAN RECREATOR DUMP EXPLAIN SELECT * FROM t WHERE a > 10", true, "PLAN RECREATOR DUMP EXPLAIN SELECT * FROM `t` WHERE `a`>10"},
-		{"PLAN RECREATOR DUMP EXPLAIN ANALYZE SELECT * FROM t WHERE a > 10", true, "PLAN RECREATOR DUMP EXPLAIN ANALYZE SELECT * FROM `t` WHERE `a`>10"},
-		{"PLAN RECREATOR DUMP EXPLAIN SLOW QUERY WHERE a > 10 and t < 1 ORDER BY t LIMIT 10", true, "PLAN RECREATOR DUMP EXPLAIN SLOW QUERY WHERE `a`>10 AND `t`<1 ORDER BY `t` LIMIT 10"},
-		{"PLAN RECREATOR DUMP EXPLAIN ANALYZE SLOW QUERY WHERE a > 10 and t < 1 ORDER BY t LIMIT 10", true, "PLAN RECREATOR DUMP EXPLAIN ANALYZE SLOW QUERY WHERE `a`>10 AND `t`<1 ORDER BY `t` LIMIT 10"},
-		{"PLAN RECREATOR DUMP EXPLAIN SLOW QUERY WHERE a > 10 and t < 1 LIMIT 10", true, "PLAN RECREATOR DUMP EXPLAIN SLOW QUERY WHERE `a`>10 AND `t`<1 LIMIT 10"},
-		{"PLAN RECREATOR DUMP EXPLAIN ANALYZE SLOW QUERY WHERE a > 10 and t < 1 LIMIT 10", true, "PLAN RECREATOR DUMP EXPLAIN ANALYZE SLOW QUERY WHERE `a`>10 AND `t`<1 LIMIT 10"},
-		{"PLAN RECREATOR DUMP EXPLAIN SLOW QUERY LIMIT 10", true, "PLAN RECREATOR DUMP EXPLAIN SLOW QUERY LIMIT 10"},
-		{"PLAN RECREATOR DUMP EXPLAIN ANALYZE SLOW QUERY LIMIT 10", true, "PLAN RECREATOR DUMP EXPLAIN ANALYZE SLOW QUERY LIMIT 10"},
-		{"PLAN RECREATOR DUMP EXPLAIN SLOW QUERY", true, "PLAN RECREATOR DUMP EXPLAIN SLOW QUERY"},
-		{"PLAN RECREATOR DUMP EXPLAIN ANALYZE SLOW QUERY", true, "PLAN RECREATOR DUMP EXPLAIN ANALYZE SLOW QUERY"},
-		{"PLAN RECREATOR LOAD '/tmp/sdfaalskdjf.zip'", true, "PLAN RECREATOR LOAD '/tmp/sdfaalskdjf.zip'"},
+		{"PLAN REPLAYER DUMP EXPLAIN SELECT a FROM t", true, "PLAN REPLAYER DUMP EXPLAIN SELECT `a` FROM `t`"},
+		{"PLAN REPLAYER DUMP EXPLAIN SELECT * FROM t WHERE a > 10", true, "PLAN REPLAYER DUMP EXPLAIN SELECT * FROM `t` WHERE `a`>10"},
+		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE SELECT * FROM t WHERE a > 10", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE SELECT * FROM `t` WHERE `a`>10"},
+		{"PLAN REPLAYER DUMP EXPLAIN SLOW QUERY WHERE a > 10 and t < 1 ORDER BY t LIMIT 10", true, "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY WHERE `a`>10 AND `t`<1 ORDER BY `t` LIMIT 10"},
+		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY WHERE a > 10 and t < 1 ORDER BY t LIMIT 10", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY WHERE `a`>10 AND `t`<1 ORDER BY `t` LIMIT 10"},
+		{"PLAN REPLAYER DUMP EXPLAIN SLOW QUERY WHERE a > 10 and t < 1 LIMIT 10", true, "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY WHERE `a`>10 AND `t`<1 LIMIT 10"},
+		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY WHERE a > 10 and t < 1 LIMIT 10", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY WHERE `a`>10 AND `t`<1 LIMIT 10"},
+		{"PLAN REPLAYER DUMP EXPLAIN SLOW QUERY LIMIT 10", true, "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY LIMIT 10"},
+		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY LIMIT 10", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY LIMIT 10"},
+		{"PLAN REPLAYER DUMP EXPLAIN SLOW QUERY", true, "PLAN REPLAYER DUMP EXPLAIN SLOW QUERY"},
+		{"PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY", true, "PLAN REPLAYER DUMP EXPLAIN ANALYZE SLOW QUERY"},
+		{"PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'", true, "PLAN REPLAYER LOAD '/tmp/sdfaalskdjf.zip'"},
 	}
 	s.RunTest(c, table)
 
 	p := parser.New()
-	sms, _, err := p.Parse("PLAN RECREATOR DUMP EXPLAIN SELECT a FROM t", "", "")
+	sms, _, err := p.Parse("PLAN REPLAYER DUMP EXPLAIN SELECT a FROM t", "", "")
 	c.Assert(err, IsNil)
-	v, ok := sms[0].(*ast.PlanRecreatorStmt)
+	v, ok := sms[0].(*ast.PlanReplayerStmt)
 	c.Assert(ok, IsTrue)
 	c.Assert(v.Stmt.Text(), Equals, "SELECT a FROM t")
 	c.Assert(v.Analyze, IsFalse)
 
-	sms, _, err = p.Parse("PLAN RECREATOR DUMP EXPLAIN ANALYZE SELECT a FROM t", "", "")
+	sms, _, err = p.Parse("PLAN REPLAYER DUMP EXPLAIN ANALYZE SELECT a FROM t", "", "")
 	c.Assert(err, IsNil)
-	v, ok = sms[0].(*ast.PlanRecreatorStmt)
+	v, ok = sms[0].(*ast.PlanReplayerStmt)
 	c.Assert(ok, IsTrue)
 	c.Assert(v.Stmt.Text(), Equals, "SELECT a FROM t")
 	c.Assert(v.Analyze, IsTrue)
@@ -6388,17 +6412,17 @@ func (s *testParserSuite) TestGBKEncoding(c *C) {
 	sql, err := encoder.String("create table 测试表 (测试列 varchar(255) default 'GBK测试用例');")
 	c.Assert(err, IsNil)
 
-	stmt, err := p.ParseOneStmt(sql, "", "")
+	stmt, _, err := p.ParseSQL(sql)
 	c.Assert(err, IsNil)
 	checker := &gbkEncodingChecker{}
-	_, _ = stmt.Accept(checker)
+	_, _ = stmt[0].Accept(checker)
 	c.Assert(checker.tblName, Not(Equals), "测试表")
 	c.Assert(checker.colName, Not(Equals), "测试列")
 
-	p.SetParserConfig(parser.ParserConfig{CharsetClient: "gbk"})
-	stmt, err = p.ParseOneStmt(sql, "", "")
+	gbkOpt := parser.CharsetClient("gbk")
+	stmt, _, err = p.ParseSQL(sql, gbkOpt)
 	c.Assert(err, IsNil)
-	_, _ = stmt.Accept(checker)
+	_, _ = stmt[0].Accept(checker)
 	c.Assert(checker.tblName, Equals, "测试表")
 	c.Assert(checker.colName, Equals, "测试列")
 	c.Assert(checker.expr, Equals, "GBK测试用例")
@@ -6406,13 +6430,14 @@ func (s *testParserSuite) TestGBKEncoding(c *C) {
 	utf8SQL := "select '芢' from `玚`;"
 	sql, err = encoder.String(utf8SQL)
 	c.Assert(err, IsNil)
-	stmt, err = p.ParseOneStmt(sql, "", "")
+	stmt, _, err = p.ParseSQL(sql, gbkOpt)
 	c.Assert(err, IsNil)
-	stmt, err = p.ParseOneStmt("select '\xc6\x5c' from `\xab\x60`;", "", "")
+	stmt, _, err = p.ParseSQL("select '\xc6\x5c' from `\xab\x60`;", gbkOpt)
+	c.Assert(err, IsNil)
+	stmt, _, err = p.ParseSQL(`prepare p1 from "insert into t values ('中文');";`, gbkOpt)
 	c.Assert(err, IsNil)
 
-	p.SetParserConfig(parser.ParserConfig{CharsetClient: ""})
-	stmt, err = p.ParseOneStmt("select _gbk '\xc6\x5c' from dual;", "", "")
+	stmt, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
 	c.Assert(err, NotNil)
 }
 

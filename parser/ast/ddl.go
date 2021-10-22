@@ -2464,6 +2464,8 @@ const (
 	AlterTableAddStatistics
 	AlterTableDropStatistics
 	AlterTableAttributes
+	AlterTableCache
+	AlterTableNoCache
 )
 
 // LockType is the type for AlterTableSpec.
@@ -3095,7 +3097,10 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		if err := spec.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.AttributesSpec")
 		}
-
+	case AlterTableCache:
+		ctx.WriteKeyWord("CACHE")
+	case AlterTableNoCache:
+		ctx.WriteKeyWord("NOCACHE")
 	default:
 		// TODO: not support
 		ctx.WritePlainf(" /* AlterTableType(%d) is not supported */ ", n.Tp)

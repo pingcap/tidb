@@ -129,6 +129,7 @@ func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = ts.port
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -274,6 +275,7 @@ func (ts *tidbTestSuite) TestStatusPort(c *C) {
 	defer dom.Close()
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -300,6 +302,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = "/tmp/ca-cert-2.pem"
@@ -320,7 +323,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 
 	// but plain http connection should fail.
 	cli.statusScheme = "http"
-	_, err = cli.fetchStatus("/status")
+	_, err = cli.fetchStatus("/status") // nolint: bodyclose
 	c.Assert(err, NotNil)
 
 	server.Close()
@@ -351,6 +354,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = caPath
@@ -372,15 +376,16 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 		client1CertPath,
 		client1KeyPath,
 	)
-	_, err = hc.Get(cli.statusURL("/status"))
+	_, err = hc.Get(cli.statusURL("/status")) // nolint: bodyclose
 	c.Assert(err, NotNil)
 
 	hc = newTLSHttpClient(c, caPath,
 		client2CertPath,
 		client2KeyPath,
 	)
-	_, err = hc.Get(cli.statusURL("/status"))
+	resp, err := hc.Get(cli.statusURL("/status"))
 	c.Assert(err, IsNil)
+	c.Assert(resp.Body.Close(), IsNil)
 }
 
 func newTLSHttpClient(c *C, caFile, certFile, keyFile string) *http.Client {
@@ -865,6 +870,7 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, ts.store)
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -882,6 +888,7 @@ func (ts *tidbTestSerialSuite) TestTLSAuto(c *C) {
 	}
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
@@ -934,6 +941,7 @@ func (ts *tidbTestSerialSuite) TestTLSBasic(c *C) {
 	}
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -1000,6 +1008,7 @@ func (ts *tidbTestSerialSuite) TestTLSVerify(c *C) {
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -1065,6 +1074,7 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 	// try old cert used in startup configuration.
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -1165,6 +1175,7 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
@@ -1499,6 +1510,7 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.GracefulWaitBeforeShutdown = 2 // wait before shutdown
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
@@ -1515,17 +1527,20 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	}()
 	time.Sleep(time.Millisecond * 100)
 
-	_, err = cli.fetchStatus("/status") // server is up
+	resp, err := cli.fetchStatus("/status") // server is up
 	c.Assert(err, IsNil)
+	c.Assert(resp.Body.Close(), IsNil)
 
 	go server.Close()
 	time.Sleep(time.Millisecond * 500)
 
-	resp, _ := cli.fetchStatus("/status") // should return 5xx code
+	resp, _ = cli.fetchStatus("/status") // should return 5xx code
 	c.Assert(resp.StatusCode, Equals, 500)
+	c.Assert(resp.Body.Close(), IsNil)
 
 	time.Sleep(time.Second * 2)
 
+	// nolint: bodyclose
 	_, err = cli.fetchStatus("/status") // status is gone
 	c.Assert(err, ErrorMatches, ".*connect: connection refused")
 }

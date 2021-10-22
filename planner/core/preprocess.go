@@ -739,8 +739,23 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 	if stmt.TemporaryKeyword != ast.TemporaryNone {
 		for _, opt := range stmt.Options {
-			if opt.Tp == ast.TableOptionShardRowID {
+			switch opt.Tp {
+			case ast.TableOptionShardRowID:
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+				return
+			case ast.TableOptionPlacementPrimaryRegion,
+				ast.TableOptionPlacementRegions,
+				ast.TableOptionPlacementFollowerCount,
+				ast.TableOptionPlacementVoterCount,
+				ast.TableOptionPlacementLearnerCount,
+				ast.TableOptionPlacementSchedule,
+				ast.TableOptionPlacementConstraints,
+				ast.TableOptionPlacementLeaderConstraints,
+				ast.TableOptionPlacementLearnerConstraints,
+				ast.TableOptionPlacementFollowerConstraints,
+				ast.TableOptionPlacementVoterConstraints,
+				ast.TableOptionPlacementPolicy:
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("PLACEMENT")
 				return
 			}
 		}
@@ -1158,6 +1173,9 @@ func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 	}
 	if tableMetaInfo.ShardRowIDBits != 0 {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+	}
+	if tableMetaInfo.DirectPlacementOpts != nil || tableMetaInfo.PlacementPolicyRef != nil {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("placement")
 	}
 
 	return nil
