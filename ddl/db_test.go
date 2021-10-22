@@ -6447,7 +6447,7 @@ func checkTableCache(c *C, se session.Session, dbName, tableName string) {
 	dom := domain.GetDomain(se)
 	err := dom.Reload()
 	c.Assert(err, IsNil)
-	c.Assert(tb.Meta().TableCacheStatusType, Equals, model.TableCacheStatusTableENABLE)
+	c.Assert(tb.Meta().TableCacheStatusType, Equals, model.TableCacheStatusENABLE)
 }
 func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

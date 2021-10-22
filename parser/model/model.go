@@ -346,17 +346,17 @@ type TableCacheStatusType int
 
 const (
 	TableCacheStatusDISABLE TableCacheStatusType = iota
-	TableCacheStatusTableENABLE
-	TableCacheStatusTableSWITCHING
+	TableCacheStatusENABLE
+	TableCacheStatusSWITCHING
 )
 
 func (t TableCacheStatusType) String() string {
 	switch t {
 	case TableCacheStatusDISABLE:
 		return "DISABLE"
-	case TableCacheStatusTableENABLE:
+	case TableCacheStatusENABLE:
 		return "ENABLE"
-	case TableCacheStatusTableSWITCHING:
+	case TableCacheStatusSWITCHING:
 		return "SWITCHING"
 	default:
 		return ""

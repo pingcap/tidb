@@ -1427,7 +1427,7 @@ func onAlterCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		return 0, errors.Trace(err)
 	}
 	// If the table is already in the cache state
-	if tbInfo.TableCacheStatusType == model.TableCacheStatusTableENABLE {
+	if tbInfo.TableCacheStatusType == model.TableCacheStatusENABLE {
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		return ver, nil
 	}
@@ -1435,14 +1435,14 @@ func onAlterCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch tbInfo.TableCacheStatusType {
 	case model.TableCacheStatusDISABLE:
 		// disable -> switching
-		tbInfo.TableCacheStatusType = model.TableCacheStatusTableSWITCHING
+		tbInfo.TableCacheStatusType = model.TableCacheStatusSWITCHING
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tbInfo, true)
 		if err != nil {
 			return ver, err
 		}
-	case model.TableCacheStatusTableSWITCHING:
+	case model.TableCacheStatusSWITCHING:
 		// switching -> enable
-		tbInfo.TableCacheStatusType = model.TableCacheStatusTableENABLE
+		tbInfo.TableCacheStatusType = model.TableCacheStatusENABLE
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tbInfo, true)
 		if err != nil {
 			return ver, err
