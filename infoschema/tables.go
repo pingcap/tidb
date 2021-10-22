@@ -163,8 +163,6 @@ const (
 	TableTiFlashTables = "TIFLASH_TABLES"
 	// TableTiFlashSegments is the string constant of tiflash segments table.
 	TableTiFlashSegments = "TIFLASH_SEGMENTS"
-	// TablePlacementPolicy is the string constant of placement policy table.
-	TablePlacementPolicy = "PLACEMENT_POLICY"
 	// TableClientErrorsSummaryGlobal is the string constant of client errors table.
 	TableClientErrorsSummaryGlobal = "CLIENT_ERRORS_SUMMARY_GLOBAL"
 	// TableClientErrorsSummaryByUser is the string constant of client errors table.
@@ -264,20 +262,21 @@ var tableIDMap = map[string]int64{
 	TableStorageStats:                       autoid.InformationSchemaDBID + 63,
 	TableTiFlashTables:                      autoid.InformationSchemaDBID + 64,
 	TableTiFlashSegments:                    autoid.InformationSchemaDBID + 65,
-	TablePlacementPolicy:                    autoid.InformationSchemaDBID + 66,
-	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
-	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
-	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
-	TableTiDBTrx:                            autoid.InformationSchemaDBID + 70,
-	ClusterTableTiDBTrx:                     autoid.InformationSchemaDBID + 71,
-	TableDeadlocks:                          autoid.InformationSchemaDBID + 72,
-	ClusterTableDeadlocks:                   autoid.InformationSchemaDBID + 73,
-	TableDataLockWaits:                      autoid.InformationSchemaDBID + 74,
-	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 75,
-	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
-	TableRegionLabel:                        autoid.InformationSchemaDBID + 77,
-	TableTiDBHotRegionsHistory:              autoid.InformationSchemaDBID + 78,
-	TablePlacementRules:                     autoid.InformationSchemaDBID + 79,
+	// Removed, see https://github.com/pingcap/tidb/issues/28890
+	//TablePlacementPolicy:                    autoid.InformationSchemaDBID + 66,
+	TableClientErrorsSummaryGlobal:       autoid.InformationSchemaDBID + 67,
+	TableClientErrorsSummaryByUser:       autoid.InformationSchemaDBID + 68,
+	TableClientErrorsSummaryByHost:       autoid.InformationSchemaDBID + 69,
+	TableTiDBTrx:                         autoid.InformationSchemaDBID + 70,
+	ClusterTableTiDBTrx:                  autoid.InformationSchemaDBID + 71,
+	TableDeadlocks:                       autoid.InformationSchemaDBID + 72,
+	ClusterTableDeadlocks:                autoid.InformationSchemaDBID + 73,
+	TableDataLockWaits:                   autoid.InformationSchemaDBID + 74,
+	TableStatementsSummaryEvicted:        autoid.InformationSchemaDBID + 75,
+	ClusterTableStatementsSummaryEvicted: autoid.InformationSchemaDBID + 76,
+	TableRegionLabel:                     autoid.InformationSchemaDBID + 77,
+	TableTiDBHotRegionsHistory:           autoid.InformationSchemaDBID + 78,
+	TablePlacementRules:                  autoid.InformationSchemaDBID + 79,
 }
 
 type columnInfo struct {
@@ -381,13 +380,15 @@ var tablesCols = []columnInfo{
 	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "UPDATE_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "CHECK_TIME", tp: mysql.TypeDatetime, size: 19},
-	{name: "TABLE_COLLATION", tp: mysql.TypeVarchar, size: 32, deflt: "utf8_bin"},
+	{name: "TABLE_COLLATION", tp: mysql.TypeVarchar, size: 32, deflt: mysql.DefaultCollationName},
 	{name: "CHECKSUM", tp: mysql.TypeLonglong, size: 21},
 	{name: "CREATE_OPTIONS", tp: mysql.TypeVarchar, size: 255},
 	{name: "TABLE_COMMENT", tp: mysql.TypeVarchar, size: 2048},
 	{name: "TIDB_TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_ROW_ID_SHARDING_INFO", tp: mysql.TypeVarchar, size: 255},
 	{name: "TIDB_PK_TYPE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
@@ -559,6 +560,8 @@ var partitionsCols = []columnInfo{
 	{name: "NODEGROUP", tp: mysql.TypeVarchar, size: 12},
 	{name: "TABLESPACE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -1367,19 +1370,6 @@ var tableTableTiFlashSegmentsCols = []columnInfo{
 	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
 }
 
-var tablePlacementPolicyCols = []columnInfo{
-	{name: "GROUP_ID", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "GROUP_INDEX", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag | mysql.UnsignedFlag},
-	{name: "RULE_ID", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "SCHEMA_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "INDEX_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "ROLE", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag},
-	{name: "REPLICAS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
-	{name: "CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024},
-}
-
 var tableClientErrorsSummaryGlobalCols = []columnInfo{
 	{name: "ERROR_NUMBER", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 	{name: "ERROR_MESSAGE", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
@@ -1852,7 +1842,6 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableStorageStats:                       tableStorageStatsCols,
 	TableTiFlashTables:                      tableTableTiFlashTablesCols,
 	TableTiFlashSegments:                    tableTableTiFlashSegmentsCols,
-	TablePlacementPolicy:                    tablePlacementPolicyCols,
 	TableClientErrorsSummaryGlobal:          tableClientErrorsSummaryGlobalCols,
 	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,

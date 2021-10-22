@@ -701,8 +701,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildLoadStats(x), nil
 	case *ast.IndexAdviseStmt:
 		return b.buildIndexAdvise(x), nil
-	case *ast.PlanRecreatorStmt:
-		return b.buildPlanRecreator(x), nil
+	case *ast.PlanReplayerStmt:
+		return b.buildPlanReplayer(x), nil
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x), nil
 	case *ast.SelectStmt:
@@ -1381,16 +1381,6 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	// Admin command can only be executed by administrator.
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return ret, nil
-}
-
-// FindColumnInfoByID finds ColumnInfo in cols by ID.
-func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInfo {
-	for _, info := range colInfos {
-		if info.ID == id {
-			return info
-		}
-	}
-	return nil
 }
 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
@@ -2338,6 +2328,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			Tp:          show.Tp,
 			DBName:      show.DBName,
 			Table:       show.Table,
+			Partition:   show.Partition,
 			Column:      show.Column,
 			IndexName:   show.IndexName,
 			Flag:        show.Flag,
@@ -2356,7 +2347,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if p.DBName == "" {
 			return nil, ErrNoDB
 		}
-	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable:
+	case ast.ShowCreateTable, ast.ShowCreateSequence, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
 		var err error
 		if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
 			isView = table.Meta().IsView()
@@ -2399,7 +2390,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		p.setSchemaAndNames(buildShowNextRowID())
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", ErrPrivilegeCheckFail)
 		return p, nil
-	case ast.ShowStatsBuckets, ast.ShowStatsHistograms, ast.ShowStatsMeta, ast.ShowStatsExtended, ast.ShowStatsHealthy, ast.ShowStatsTopN:
+	case ast.ShowStatsBuckets, ast.ShowStatsHistograms, ast.ShowStatsMeta, ast.ShowStatsExtended, ast.ShowStatsHealthy, ast.ShowStatsTopN, ast.ShowColumnStatsUsage:
 		user := b.ctx.GetSessionVars().User
 		var err error
 		if user != nil {
@@ -4123,6 +4114,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowStatsHealthy:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Healthy"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
+	case ast.ShowColumnStatsUsage:
+		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Last_used_at", "Last_analyzed_at"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime}
 	case ast.ShowProfiles: // ShowProfiles is deprecated.
 		names = []string{"Query_ID", "Duration", "Query"}
 		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}
@@ -4171,8 +4165,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	return
 }
 
-func (b *PlanBuilder) buildPlanRecreator(pc *ast.PlanRecreatorStmt) Plan {
-	p := &PlanRecreatorSingle{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
+func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
+	p := &PlanReplayerSingle{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
 	return p
 }
 

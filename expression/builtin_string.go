@@ -222,6 +222,15 @@ func (b *builtinLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+
+	argTp := b.args[0].GetType()
+	if !types.IsBinaryStr(argTp) {
+		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
+		if err == nil {
+			return int64(len(dBytes)), false, nil
+		}
+	}
+
 	return int64(len([]byte(val))), false, nil
 }
 
@@ -706,7 +715,7 @@ func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLowerSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Lower)
 	} else {
-		sig = &builtinLowerUTF8Sig{bf}
+		sig = &builtinLowerUTF8Sig{bf, charset.NewEncoding(argTp.Charset)}
 		sig.setPbCode(tipb.ScalarFuncSig_LowerUTF8)
 	}
 	return sig, nil
@@ -714,11 +723,15 @@ func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinLowerUTF8Sig struct {
 	baseBuiltinFunc
+	encoding *charset.Encoding
 }
 
 func (b *builtinLowerUTF8Sig) Clone() builtinFunc {
 	newSig := &builtinLowerUTF8Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	if b.encoding != nil {
+		newSig.encoding = charset.NewEncoding(b.encoding.Name())
+	}
 	return newSig
 }
 
@@ -730,7 +743,7 @@ func (b *builtinLowerUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, 
 		return d, isNull, err
 	}
 
-	return strings.ToLower(d), false, nil
+	return b.encoding.ToLower(d), false, nil
 }
 
 type builtinLowerSig struct {
@@ -901,7 +914,7 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinUpperSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Upper)
 	} else {
-		sig = &builtinUpperUTF8Sig{bf}
+		sig = &builtinUpperUTF8Sig{bf, charset.NewEncoding(argTp.Charset)}
 		sig.setPbCode(tipb.ScalarFuncSig_UpperUTF8)
 	}
 	return sig, nil
@@ -909,11 +922,15 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinUpperUTF8Sig struct {
 	baseBuiltinFunc
+	encoding *charset.Encoding
 }
 
 func (b *builtinUpperUTF8Sig) Clone() builtinFunc {
 	newSig := &builtinUpperUTF8Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	if b.encoding != nil {
+		newSig.encoding = charset.NewEncoding(b.encoding.Name())
+	}
 	return newSig
 }
 
@@ -925,7 +942,7 @@ func (b *builtinUpperUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, 
 		return d, isNull, err
 	}
 
-	return strings.ToUpper(d), false, nil
+	return b.encoding.ToUpper(d), false, nil
 }
 
 type builtinUpperSig struct {
@@ -1658,11 +1675,9 @@ func (b *builtinHexStrArgSig) evalString(row chunk.Row) (string, bool, error) {
 		return d, isNull, err
 	}
 	dBytes := hack.Slice(d)
-	if b.encoding.Enabled() {
-		dBytes, err = b.encoding.Encode(nil, dBytes)
-		if err != nil {
-			return d, false, err
-		}
+	dBytes, err = b.encoding.Encode(nil, dBytes)
+	if err != nil {
+		return d, false, err
 	}
 	return strings.ToUpper(hex.EncodeToString(dBytes)), false, nil
 }
@@ -1881,33 +1896,23 @@ func (b *builtinTrim3ArgsSig) evalString(row chunk.Row) (d string, isNull bool, 
 		return d, isNull, err
 	}
 	remstr, isRemStrNull, err = b.args[1].EvalString(b.ctx, row)
-	if err != nil {
-		return d, isNull, err
+	if err != nil || isRemStrNull {
+		return d, isRemStrNull, err
 	}
 	x, isNull, err = b.args[2].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return d, isNull, err
 	}
 	direction = ast.TrimDirectionType(x)
-	if direction == ast.TrimLeading {
-		if isRemStrNull {
-			d = strings.TrimLeft(str, spaceChars)
-		} else {
-			d = trimLeft(str, remstr)
-		}
-	} else if direction == ast.TrimTrailing {
-		if isRemStrNull {
-			d = strings.TrimRight(str, spaceChars)
-		} else {
-			d = trimRight(str, remstr)
-		}
-	} else {
-		if isRemStrNull {
-			d = strings.Trim(str, spaceChars)
-		} else {
-			d = trimLeft(str, remstr)
-			d = trimRight(d, remstr)
-		}
+	switch direction {
+	case ast.TrimLeading:
+		d = trimLeft(str, remstr)
+	case ast.TrimTrailing:
+		d = trimRight(str, remstr)
+	default:
+		d = trimLeft(str, remstr)
+		d = trimRight(d, remstr)
+
 	}
 	return d, false, nil
 }

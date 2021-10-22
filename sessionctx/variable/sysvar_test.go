@@ -17,6 +17,7 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -51,6 +52,12 @@ func TestSysVar(t *testing.T) {
 
 	f = GetSysVar("tidb_enable_table_partition")
 	require.Equal(t, "ON", f.Value)
+
+	f = GetSysVar("version_compile_os")
+	require.Equal(t, runtime.GOOS, f.Value)
+
+	f = GetSysVar("version_compile_machine")
+	require.Equal(t, runtime.GOARCH, f.Value)
 }
 
 func TestTxnMode(t *testing.T) {
