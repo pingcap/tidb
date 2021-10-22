@@ -1620,15 +1620,7 @@ var defaultSysVars = []*SysVar{
 		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSlowLogMasking, Value: BoolToOnOff(DefTiDBRedactLog), Aliases: []string{TiDBRedactLog}, skipInit: true, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, TiDBSlowLogMasking, TiDBRedactLog)
-		return normalizedValue, nil
-	}, GetSession: func(s *SessionVars) (string, error) {
-		return s.systems[TiDBRedactLog], nil
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return s.GlobalVarsAccessor.GetGlobalSysVar(TiDBRedactLog)
-	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: BoolToOnOff(DefTiDBRedactLog), Aliases: []string{TiDBSlowLogMasking}, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: BoolToOnOff(DefTiDBRedactLog), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableRedactLog = TiDBOptOn(val)
 		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 		return nil
@@ -1787,11 +1779,6 @@ var defaultSysVars = []*SysVar{
 			return err
 		}
 		TopSQLVariable.ReportIntervalSeconds.Store(val)
-		return nil
-	}},
-
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableGlobalTemporaryTable, Value: BoolToOnOff(DefTiDBEnableGlobalTemporaryTable), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableGlobalTemporaryTable = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: SkipNameResolve, Value: Off, Type: TypeBool},
