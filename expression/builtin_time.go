@@ -5731,6 +5731,9 @@ func (b *builtinConvertTzSig) convertTz(dt types.Time, fromTzStr, toTzStr string
 	if fromTzMatched {
 		fromTz = time.FixedZone(fromTzStr, timeZone2int(fromTzStr))
 	} else {
+		if strings.EqualFold(fromTzStr, "SYSTEM") {
+			fromTzStr = "Local"
+		}
 		fromTz, err = time.LoadLocation(fromTzStr)
 		if err != nil {
 			return types.ZeroTime, true, nil
@@ -5746,6 +5749,9 @@ func (b *builtinConvertTzSig) convertTz(dt types.Time, fromTzStr, toTzStr string
 	if toTzMatched {
 		toTz = time.FixedZone(toTzStr, timeZone2int(toTzStr))
 	} else {
+		if strings.EqualFold(toTzStr, "SYSTEM") {
+			toTzStr = "Local"
+		}
 		toTz, err = time.LoadLocation(toTzStr)
 		if err != nil {
 			return types.ZeroTime, true, nil
