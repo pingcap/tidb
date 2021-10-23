@@ -68,6 +68,16 @@ type Column struct {
 	elemBuf    []byte
 }
 
+type ColumnAllocator interface {
+	NewColumn(ft *types.FieldType, cap int) *Column
+}
+
+type DefaultColumnAllocator struct{}
+
+func (_ DefaultColumnAllocator) NewColumn(ft *types.FieldType, cap int) *Column {
+	return newColumn(getFixedLen(ft), cap)
+}
+
 // NewColumn creates a new column with the specific type and capacity.
 func NewColumn(ft *types.FieldType, cap int) *Column {
 	return newColumn(getFixedLen(ft), cap)

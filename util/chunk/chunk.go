@@ -78,7 +78,6 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	for _, f := range fields {
 		chk.columns = append(chk.columns, NewColumn(f, chk.capacity))
 	}
-
 	return chk
 }
 
