@@ -20,7 +20,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -386,8 +385,8 @@ func locateStringWithCollation(str, substr, coll string) int64 {
 }
 
 // timeZone2Duration converts timezone whose format should satisfy the regular condition
-// `(^(+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^+13:00$)` to time.Duration.
-func timeZone2Duration(tz string) time.Duration {
+// `(^(+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^+13:00$)` to int for use by time.FixedZone().
+func timeZone2int(tz string) int {
 	sign := 1
 	if strings.HasPrefix(tz, "-") {
 		sign = -1
@@ -398,7 +397,7 @@ func timeZone2Duration(tz string) time.Duration {
 	terror.Log(err)
 	m, err := strconv.Atoi(tz[i+1:])
 	terror.Log(err)
-	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
+	return sign * ((h * 3600) + (m * 60))
 }
 
 var logicalOps = map[string]struct{}{
