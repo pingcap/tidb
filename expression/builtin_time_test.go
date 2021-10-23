@@ -2714,9 +2714,13 @@ func TestSecToTime(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 func TestConvertTz(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
+=======
+func (s *testEvaluatorSuite) TestConvertTz(c *C) {
+>>>>>>> 465d2e745... expression: handle mixed offsets and names zones in CONVERT_TZ (#28528)
 	loc1, _ := time.LoadLocation("Europe/Tallinn")
 	loc2, _ := time.LoadLocation("Local")
 	t1, _ := time.ParseInLocation("2006-01-02 15:04:00", "2021-10-22 10:00:00", loc1)
