@@ -988,7 +988,7 @@ func GetFormatBytes(bytes float64) string {
 	if divisor == 1 {
 		return strconv.FormatFloat(bytes, 'f', 0, 64) + " " + unit
 	}
-	value := float64(bytes) / divisor
+	value := bytes / divisor
 	if math.Abs(value) >= 100000.0 {
 		return strconv.FormatFloat(value, 'e', 2, 64) + " " + unit
 	}
@@ -1027,7 +1027,7 @@ func GetFormatNanoTime(time float64) string {
 	if divisor == 1 {
 		return strconv.FormatFloat(time, 'f', 0, 64) + " " + unit
 	}
-	value := float64(time) / divisor
+	value := time / divisor
 	if math.Abs(value) >= 100000.0 {
 		return strconv.FormatFloat(value, 'e', 2, 64) + " " + unit
 	}
