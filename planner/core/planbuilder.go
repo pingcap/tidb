@@ -1788,7 +1788,8 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 // 1. For `ANALYZE TABLE t PREDICATE COLUMNS`, it returns union of the predicate columns and the index columns. TODO
 // 2. For `ANALYZE TABLE t COLUMNS c1, c2, ..., cn`, it returns union of the specified columns(c1, c2, ..., cn) and the index columns.
 // 3. Otherwise it returns all the columns.
-func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tblInfo *model.TableInfo) []*model.ColumnInfo {
+func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
+	tblInfo := tbl.TableInfo
 	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
 	if as.HistogramOperation == ast.HistogramOperationNop && len(as.ColumnNames) > 0 {
 		for _, colName := range as.ColumnNames {
@@ -1804,18 +1805,54 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tblInfo *m
 		}
 	}
 	if len(columnIDs) == 0 {
-		return tblInfo.Columns
+		return tblInfo.Columns, nil
 	}
-	// add indexed columns
-	for _, idx := range tblInfo.Indices {
-		for _, idxCol := range idx.Columns {
-			colInfo := tblInfo.Columns[idxCol.Offset]
-			columnIDs[colInfo.ID] = struct{}{}
+	if len(tblInfo.Indices) > 0 {
+		// add indexed columns
+		// Some indexed columns are generated columns so we also need to add the columns that make up those generated columns.
+		columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx, tbl.Schema, tbl.Name, tblInfo.Columns, tblInfo)
+		if err != nil {
+			return nil, err
+		}
+		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
+		for _, idx := range tblInfo.Indices {
+			for _, idxCol := range idx.Columns {
+				colInfo := tblInfo.Columns[idxCol.Offset]
+				columnIDs[colInfo.ID] = struct{}{}
+				if expr := columns[idxCol.Offset].VirtualExpr; expr != nil {
+					virtualExprs = append(virtualExprs, expr)
+				}
+			}
+		}
+		relatedCols := make([]*expression.Column, 0, len(tblInfo.Columns))
+		for len(virtualExprs) > 0 {
+			relatedCols = expression.ExtractColumnsFromExpressions(relatedCols, virtualExprs, nil)
+			virtualExprs = virtualExprs[:0]
+			for _, col := range relatedCols {
+				columnIDs[col.ID] = struct{}{}
+				if col.VirtualExpr != nil {
+					virtualExprs = append(virtualExprs, col.VirtualExpr)
+				}
+			}
+			relatedCols = relatedCols[:0]
 		}
 	}
 	if tblInfo.PKIsHandle {
 		pkCol := tblInfo.GetPkColInfo()
 		columnIDs[pkCol.ID] = struct{}{}
+	}
+	if b.ctx.GetSessionVars().EnableExtendedStats {
+		// add the columns related to extended stats
+		// TODO: column_ids read from mysql.stats_extended in optimization phase may be different from that in execution phase((*Handle).BuildExtendedStats)
+		// if someone inserts data into mysql.stats_extended between the two time points, which may cause that some extended stats fail to be computed.
+		statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+		extendedStatsColIDs, err := statsHandle.CollectColumnsInExtendedStats(tblInfo.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, colID := range extendedStatsColIDs {
+			columnIDs[colID] = struct{}{}
+		}
 	}
 	columnsInfo := make([]*model.ColumnInfo, 0, len(columnIDs))
 	for _, col := range tblInfo.Columns {
@@ -1823,7 +1860,7 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tblInfo *m
 			columnsInfo = append(columnsInfo, col)
 		}
 	}
-	return columnsInfo
+	return columnsInfo, nil
 }
 
 func (b *PlanBuilder) buildAnalyzeFullSamplingTask(

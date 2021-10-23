@@ -1784,3 +1784,28 @@ func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int
 	}
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
+
+// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
+func (h *Handle) CollectColumnsInExtendedStats(tableID int64) ([]int64, error) {
+	ctx := context.Background()
+	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
+	rows, _, err := h.execRestrictedSQL(ctx, sql, tableID, StatsStatusAnalyzed, StatsStatusInited)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	columnIDs := make([]int64, 0, len(rows)*2)
+	for _, row := range rows {
+		twoIDs := make([]int64, 0, 2)
+		data := row.GetString(2)
+		err := json.Unmarshal([]byte(data), &twoIDs)
+		if err != nil {
+			logutil.BgLogger().Error("invalid column_ids in mysql.stats_extended, skip collecting extended stats for this row", zap.String("column_ids", data), zap.Error(err))
+			continue
+		}
+		columnIDs = append(columnIDs, twoIDs...)
+	}
+	return columnIDs, nil
+}

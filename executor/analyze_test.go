@@ -1132,27 +1132,3 @@ func (s *testSuite10) TestSnapshotAnalyze(c *C) {
 	c.Assert(s3Str, Equals, s2Str)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"), IsNil)
 }
-
-func (s *testSerialSuite2) TestAnalyzePredicateColumns(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("set @@tidb_analyze_version = 2")
-	tk.MustExec("create table t1 (a int, b int, c int, d int, index idx_a_b(a, b))")
-	tk.MustExec("insert into t1 values (1,2,3,4), (5,6,7,8), (9,10,11,12)")
-
-	do := s.dom
-	is := do.InfoSchema()
-	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-
-
-	tk.MustExec("analyze table t1 columns c")
-	res := tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't1'").Sort()
-	rows := res.Rows()
-	c.Assert(len(rows), Equals, 1)
-	// modify count should be set to 0
-	c.Assert(rows[0][4], Equals, "0")
-	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, stats_ver from mysql.stats_histograms where table_id = %d and stats_ver > 0 order by is_index, hist_id", t1.Meta().ID)).Check(
-		testkit.Rows("0 1 2", "0 2 2", "0 3 2", "1 1 2"))
-}

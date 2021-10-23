@@ -3073,3 +3073,44 @@ func (s *testStatsSuite) TestIncrementalModifyCountUpdate(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseCount"), IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseModifyCount"), IsNil)
 }
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithVer2(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t1 (a int primary key, b int, c int)")
+	tk.MustExec("insert into t1 values (1,1,1), (2,1,1), (3,2,2), (4,2,2), (5,3,3), (6,4,3), (7,5,4), (8,6,4), (9,null,null)")
+
+	do := s.do
+	is := do.InfoSchema()
+	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+
+
+	tk.MustExec("analyze table t1 columns d with 2 topn, 2 buckets")
+	res := tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't1'").Sort()
+	rows := res.Rows()
+	c.Assert(len(rows), Equals, 1)
+	// modify count should be set to 0
+	c.Assert(rows[0][4], Equals, "0")
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, stats_ver from mysql.stats_histograms where table_id = %d and stats_ver > 0 order by is_index, hist_id", t1.Meta().ID)).Check(
+		testkit.Rows("0 1 2", "0 2 2", "0 3 2", "1 1 2"))
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithVer1(c *C) {
+
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithPartitionTable(c *C) {
+
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithClusteredIndex(c *C) {
+
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithExtendedStats(c *C) {
+
+}
