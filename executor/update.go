@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -274,7 +275,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		if variable.TopSQLEnabled() {
 			txn, err := e.ctx.Txn(true)
 			if err == nil {
-				txn.SetOption(kv.ResourceGroupTag, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTag())
+				txn.SetOption(kv.ResourceGroupTag, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTag(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown))
 			}
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {

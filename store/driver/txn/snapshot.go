@@ -117,8 +117,6 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetReadReplicaScope(val.(string))
 	case kv.SnapInterceptor:
 		s.interceptor = val.(kv.SnapshotInterceptor)
-	case kv.KeyLabel:
-		s.KVSnapshot.SetKeyLabel(val.(int32))
 	}
 }
 

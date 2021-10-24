@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tipb/go-tipb"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvutil "github.com/tikv/client-go/v2/util"
@@ -979,7 +980,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
 	lockCtx.LockKeysCount = &seVars.StmtCtx.LockKeysCount
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
-	lockCtx.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest)
+	lockCtx.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
 	lockCtx.OnDeadlock = func(deadlock *tikverr.ErrDeadlock) {
 		cfg := config.GetGlobalConfig()
 		if deadlock.IsRetryable && !cfg.PessimisticTxn.DeadlockHistoryCollectRetryable {
@@ -1880,12 +1881,12 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 
 func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 	if snapshot != nil && variable.TopSQLEnabled() {
-		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag())
+		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown))
 	}
 }
 
-func setKeyLabelForSnapshot(snapshot kv.Snapshot, keyLabel int32) {
+func setResourceGroupTagForSnapshot(sc *stmtctx.StatementContext, snapshot kv.Snapshot, label tipb.ResourceGroupTagLabel) {
 	if snapshot != nil && variable.TopSQLEnabled() {
-		snapshot.SetOption(kv.KeyLabel, keyLabel)
+		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag(label))
 	}
 }

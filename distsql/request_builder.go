@@ -154,11 +154,11 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 	if variable.TopSQLEnabled() && len(dag.Executors) > 0 {
 		switch dag.Executors[0].Tp {
 		case tipb.ExecType_TypeIndexScan:
-			builder.SetKeyLabel(int32(tipb.ResourceGroupKeyLabel_IsIndex))
+			builder.SetResourceGroupTagLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex)
 		case tipb.ExecType_TypeTableScan:
-			builder.SetKeyLabel(int32(tipb.ResourceGroupKeyLabel_IsRow))
+			builder.SetResourceGroupTagLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow)
 		default:
-			builder.SetKeyLabel(int32(tipb.ResourceGroupKeyLabel_IsOthers))
+			builder.SetResourceGroupTagLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
 		}
 	}
 	return builder
@@ -224,9 +224,9 @@ func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 	return builder
 }
 
-// SetKeyLabel sets `KeyLabel` property.
-func (builder *RequestBuilder) SetKeyLabel(keyLabel int32) *RequestBuilder {
-	builder.Request.KeyLabel = keyLabel
+// SetResourceGroupTagLabel sets `ResourceGroupTagLabel` property.
+func (builder *RequestBuilder) SetResourceGroupTagLabel(label tipb.ResourceGroupTagLabel) *RequestBuilder {
+	builder.Request.ResourceGroupTagLabel = label
 	return builder
 }
 
@@ -301,7 +301,7 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 // SetResourceGroupTag sets the request resource group tag.
 func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext) *RequestBuilder {
 	if variable.TopSQLEnabled() {
-		builder.Request.ResourceGroupTag = sc.GetResourceGroupTag()
+		builder.Request.ResourceGroupTag = sc.GetResourceGroupTag(builder.Request.ResourceGroupTagLabel)
 	}
 	return builder
 }

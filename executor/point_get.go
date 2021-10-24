@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+
 	"github.com/pingcap/tipb/go-tipb"
 
 	"github.com/pingcap/errors"
@@ -240,7 +241,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 
-			setKeyLabelForSnapshot(e.snapshot, int32(tipb.ResourceGroupKeyLabel_IsIndex))
+			setResourceGroupTagForSnapshot(e.ctx.GetSessionVars().StmtCtx, e.snapshot, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex)
 			e.handleVal, err = e.get(ctx, e.idxKey)
 			if err != nil {
 				if !kv.ErrNotExist.Equal(err) {
@@ -294,7 +295,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	setKeyLabelForSnapshot(e.snapshot, int32(tipb.ResourceGroupKeyLabel_IsRow))
+	setResourceGroupTagForSnapshot(e.ctx.GetSessionVars().StmtCtx, e.snapshot, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow)
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
 	val, err := e.getAndLock(ctx, key)
 	if err != nil {

@@ -97,9 +97,7 @@ require (
 // we need keep the replacement until go.etcd.io supports the higher version of grpc.
 replace google.golang.org/grpc => google.golang.org/grpc v1.29.1
 
-
-replace github.com/pingcap/tipb => github.com/crazycs520/tipb v0.0.0-20210806124853-308070a785ed
-
-replace github.com/pingcap/kvproto => github.com/crazycs520/kvproto v0.0.0-20210811090023-8bfd9794848e
-
 replace github.com/pingcap/tidb/parser => ./parser
+
+// TODO(mornyx): remove
+replace github.com/pingcap/tipb => github.com/mornyx/tipb v0.0.0-20211024034411-742b5bcb8eb2

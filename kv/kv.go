@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/trxevents"
+	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -337,8 +338,8 @@ type Request struct {
 	MatchStoreLabels []*metapb.StoreLabel
 	// ResourceGroupTag indicates the kv request task group.
 	ResourceGroupTag []byte
-	// KeyLabel indicates the key label of the kv request.
-	KeyLabel int32
+	// ResourceGroupTagLabel indicates the key label of the kv request.
+	ResourceGroupTagLabel tipb.ResourceGroupTagLabel
 }
 
 const (

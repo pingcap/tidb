@@ -69,9 +69,6 @@ const (
 
 	// SnapInterceptor is used for setting the interceptor for snapshot
 	SnapInterceptor
-
-	// KeyLabel indicates the key label of the kv request.
-	KeyLabel
 )
 
 // ReplicaReadType is the type of replica to read data from

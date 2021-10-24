@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -167,8 +168,8 @@ type StatementContext struct {
 
 	// stmtCache is used to store some statement-related values.
 	stmtCache map[StmtCacheKey]interface{}
-	// resourceGroupTag cache for the current statement resource group tag.
-	resourceGroupTag atomic.Value
+	// resourceGroupTags cache for the current statement resource group tags.
+	resourceGroupTags sync.Map
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
@@ -269,18 +270,18 @@ func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *pars
 }
 
 // GetResourceGroupTag gets the resource group of the statement.
-func (sc *StatementContext) GetResourceGroupTag() []byte {
-	tag, _ := sc.resourceGroupTag.Load().([]byte)
-	if len(tag) > 0 {
-		return tag
+func (sc *StatementContext) GetResourceGroupTag(label tipb.ResourceGroupTagLabel) []byte {
+	tag, ok := sc.resourceGroupTags.Load(label)
+	if ok {
+		return tag.([]byte)
 	}
 	normalized, sqlDigest := sc.SQLDigest()
 	if len(normalized) == 0 {
 		return nil
 	}
-	tag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest)
-	sc.resourceGroupTag.Store(tag)
-	return tag
+	newTag := resourcegrouptag.EncodeResourceGroupTag(sqlDigest, sc.planDigest, label)
+	sc.resourceGroupTags.Store(label, newTag)
+	return newTag
 }
 
 // SetPlanDigest sets the normalized plan and plan digest.

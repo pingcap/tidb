@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/bindinfo"
@@ -546,7 +547,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
-	s.txn.SetOption(kv.ResourceGroupTag, sessVars.StmtCtx.GetResourceGroupTag())
+	s.txn.SetOption(kv.ResourceGroupTag, sessVars.StmtCtx.GetResourceGroupTag(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown))
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
 	if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
 		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
