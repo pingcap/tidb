@@ -890,6 +890,8 @@ func (b *builtinASCIISig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		return err
 	}
 
+	argTp := b.args[0].GetType()
+	enc := charset.NewEncoding(argTp.Charset)
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
@@ -902,7 +904,11 @@ func (b *builtinASCIISig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 			i64s[i] = 0
 			continue
 		}
-		i64s[i] = int64(str[0])
+		newStr, err := enc.EncodeString(str)
+		if err != nil {
+			return err
+		}
+		i64s[i] = int64(newStr[0])
 	}
 	return nil
 }

@@ -272,7 +272,14 @@ func (b *builtinASCIISig) evalInt(row chunk.Row) (int64, bool, error) {
 	if len(val) == 0 {
 		return 0, false, nil
 	}
-	return int64(val[0]), false, nil
+
+	argTp := b.args[0].GetType()
+	newStr, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
+	if err != nil {
+		return 0, isNull, err
+	}
+
+	return int64(newStr[0]), false, nil
 }
 
 type concatFunctionClass struct {
