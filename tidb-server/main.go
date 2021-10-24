@@ -527,6 +527,13 @@ func overrideConfig(cfg *config.Config) {
 	if actualFlags[nmInitializeInsecure] {
 		cfg.Security.SecureBootstrap = !*initializeInsecure
 	}
+	// Secure bootstrap initializes with Socket authentication
+	// which is not supported on windows. Only the insecure bootstrap
+	// method is supported.
+	if runtime.GOOS == "windows" && cfg.Security.SecureBootstrap {
+		err = fmt.Errorf("the option --initialize-secure is not supported on Windows")
+		terror.MustNil(err)
+	}
 }
 
 func setGlobalVars() {
