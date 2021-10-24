@@ -23,11 +23,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -76,6 +78,28 @@ func (s *testEvaluatorSuite) TestLengthAndOctetLength(c *C) {
 
 	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result int64
+	}{
+		{"abc", "gbk", 3},
+		{"一二三", "gbk", 6},
+		{"一二三", "", 9},
+		{"一二三!", "gbk", 7},
+		{"一二三!", "", 10},
+	}
+	for _, t := range tbl {
+		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, t.chs)
+		c.Assert(err, IsNil)
+		f, err := newFunctionForTest(s.ctx, ast.Length, s.primitiveValsToConstants([]interface{}{t.input})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.GetInt64(), Equals, t.result)
+	}
 }
 
 func (s *testEvaluatorSuite) TestASCII(c *C) {
@@ -560,6 +584,27 @@ func (s *testEvaluatorSuite) TestLower(c *C) {
 
 	_, err := funcs[ast.Lower].getFunction(s.ctx, []Expression{varcharCon})
 	c.Assert(err, IsNil)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result string
+	}{
+		{"ABC", "gbk", "abc"},
+		{"一二三", "gbk", "一二三"},
+		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "gbk", "àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ"},
+		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "", "àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅺⅻ"},
+	}
+	for _, t := range tbl {
+		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, t.chs)
+		c.Assert(err, IsNil)
+		f, err := newFunctionForTest(s.ctx, ast.Lower, s.primitiveValsToConstants([]interface{}{t.input})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.GetString(), Equals, t.result)
+	}
 }
 
 func (s *testEvaluatorSuite) TestUpper(c *C) {
@@ -596,6 +641,28 @@ func (s *testEvaluatorSuite) TestUpper(c *C) {
 
 	_, err := funcs[ast.Upper].getFunction(s.ctx, []Expression{varcharCon})
 	c.Assert(err, IsNil)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result string
+	}{
+		{"abc", "gbk", "ABC"},
+		{"一二三", "gbk", "一二三"},
+		{"àbc", "gbk", "àBC"},
+		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "gbk", "àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ"},
+		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "", "ÀÁÈÉÊÌÍÒÓÙÚÜĀĒĚĪŃŇŌŪǍǏǑǓǕǗǙǛⅪⅫ"},
+	}
+	for _, t := range tbl {
+		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, t.chs)
+		c.Assert(err, IsNil)
+		f, err := newFunctionForTest(s.ctx, ast.Upper, s.primitiveValsToConstants([]interface{}{t.input})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.GetString(), Equals, t.result)
+	}
 }
 
 func (s *testEvaluatorSuite) TestReverse(c *C) {
@@ -1025,8 +1092,7 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		{[]interface{}{"xxxbarxxx", "x", int(ast.TrimLeading)}, false, false, "barxxx"},
 		{[]interface{}{"barxxyz", "xyz", int(ast.TrimTrailing)}, false, false, "barx"},
 		{[]interface{}{"xxxbarxxx", "x", int(ast.TrimBoth)}, false, false, "bar"},
-		// FIXME: the result for this test shuold be nil, current is "bar"
-		{[]interface{}{"bar", nil, int(ast.TrimLeading)}, false, false, "bar"},
+		{[]interface{}{"bar", nil, int(ast.TrimLeading)}, true, false, ""},
 		{[]interface{}{errors.New("must error")}, false, true, ""},
 	}
 	for _, t := range cases {
@@ -1168,6 +1234,32 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 			} else {
 				c.Assert(d.GetString(), Equals, t.res)
 			}
+		}
+	}
+
+	strCases := []struct {
+		arg     string
+		chs     string
+		res     string
+		errCode int
+	}{
+		{"你好", "", "E4BDA0E5A5BD", 0},
+		{"你好", "gbk", "C4E3BAC3", 0},
+		{"一忒(๑•ㅂ•)و✧", "", "E4B880E5BF9228E0B991E280A2E38582E280A229D988E29CA7", 0},
+		{"一忒(๑•ㅂ•)و✧", "gbk", "", errno.ErrInvalidCharacterString},
+	}
+	for _, t := range strCases {
+		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, t.chs)
+		c.Assert(err, IsNil)
+		f, err := newFunctionForTest(s.ctx, ast.Hex, s.primitiveValsToConstants([]interface{}{t.arg})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		if t.errCode != 0 {
+			c.Assert(err, NotNil)
+			c.Assert(strings.Contains(err.Error(), strconv.Itoa(t.errCode)), IsTrue)
+		} else {
+			c.Assert(err, IsNil)
+			c.Assert(d.GetString(), Equals, t.res)
 		}
 	}
 

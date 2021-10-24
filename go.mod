@@ -22,6 +22,7 @@ require (
 	github.com/dgraph-io/ristretto v0.0.1
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
 	github.com/docker/go-units v0.4.0
+	github.com/form3tech-oss/jwt-go v3.2.5+incompatible // indirect
 	github.com/fsouza/fake-gcs-server v1.19.0
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/gogo/protobuf v1.3.2
@@ -52,7 +53,7 @@ require (
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20210802080519-94b831c6db55
+	github.com/pingcap/tipb v0.0.0-20211008080435-3fd327dfce0e
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
@@ -98,6 +99,9 @@ require (
 replace google.golang.org/grpc => google.golang.org/grpc v1.29.1
 
 replace github.com/pingcap/tidb/parser => ./parser
+
+// fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
+replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
 // TODO(mornyx): remove
 replace github.com/pingcap/tipb => github.com/mornyx/tipb v0.0.0-20211024034411-742b5bcb8eb2

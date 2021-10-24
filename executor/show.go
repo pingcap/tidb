@@ -78,6 +78,7 @@ type ShowExec struct {
 	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName    model.CIStr
 	Table     *ast.TableName       // Used for showing columns.
+	Partition model.CIStr          // Used for showing partition
 	Column    *ast.ColumnName      // Used for `desc table column`.
 	IndexName model.CIStr          // Used for show table regions.
 	Flag      int                  // Some flag parsed from sql, such as FULL.
@@ -146,6 +147,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreateView()
 	case ast.ShowCreateDatabase:
 		return e.fetchShowCreateDatabase()
+	case ast.ShowCreatePlacementPolicy:
+		return e.fetchShowCreatePlacementPolicy()
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowDrainerStatus:
@@ -193,6 +196,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowStatsHealthy:
 		e.fetchShowStatsHealthy()
 		return nil
+	case ast.ShowColumnStatsUsage:
+		return e.fetchShowColumnStatsUsage()
 	case ast.ShowPlugins:
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
@@ -222,6 +227,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlacementForDB(ctx)
 	case ast.ShowPlacementForTable:
 		return e.fetchShowPlacementForTable(ctx)
+	case ast.ShowPlacementForPartition:
+		return e.fetchShowPlacementForPartition(ctx)
 	}
 	return nil
 }
@@ -1001,14 +1008,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	buf.WriteString("\n")
 
-	switch tableInfo.TempTableType {
-	case model.TempTableNone:
-		buf.WriteString(") ENGINE=InnoDB")
-	default:
-		// For now the only supported engine for temporary table is memory.
-		buf.WriteString(") ENGINE=memory")
-	}
-
+	buf.WriteString(") ENGINE=InnoDB")
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
@@ -1380,6 +1380,17 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 	return nil
 }
 
+// fetchShowCreatePlacementPolicy composes show create policy result.
+func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
+	policy, found := e.is.PolicyByName(e.DBName)
+	if !found {
+		return infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+	showCreate := fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", e.DBName.O, policy.PlacementSettings.String())
+	e.appendRow([]interface{}{e.DBName.O, showCreate})
+	return nil
+}
+
 func (e *ShowExec) fetchShowCollation() error {
 	collations := collate.GetSupportedCollations()
 	for _, v := range collations {
@@ -1461,9 +1472,16 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		}
 		require = privValue.RequireStr()
 	}
+
+	authData := checker.GetEncodedPassword(e.User.Username, e.User.Hostname)
+	authStr := ""
+	if !(authplugin == mysql.AuthSocket && authData == "") {
+		authStr = fmt.Sprintf(" AS '%s'", authData)
+	}
+
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s' AS '%s' REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
-		e.User.Username, e.User.Hostname, authplugin, checker.GetEncodedPassword(e.User.Username, e.User.Hostname), require)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
