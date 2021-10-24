@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"runtime"
 	"strconv"
+	"testing"
 	"time"
 	"unsafe"
 
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = SerialSuites(&testExecSuite{})
@@ -105,7 +107,20 @@ func (msm *mockSessionManager) SetServerID(serverID uint64) {
 	msm.serverID = serverID
 }
 
-func (s *testExecSuite) TestShowProcessList(c *C) {
+func TestExecutorPkg(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ShowProcessList", SubTestShowProcessList)
+	t.Run("BuildKvRangesForIndexJoinWithoutCwc", SubTestBuildKvRangesForIndexJoinWithoutCwc)
+	t.Run("GetFieldsFromLine", SubTestGetFieldsFromLine)
+	t.Run("LoadDataWithDifferentEscapeChar", SubTestLoadDataWithDifferentEscapeChar)
+	t.Run("SortSpillDisk", SubTestSortSpillDisk)
+	t.Run("SlowQueryRuntimeStats", SubTestSlowQueryRuntimeStats)
+	t.Run("AggPartialResultMapperB", SubTestAggPartialResultMapperB)
+	t.Run("FilterTemporaryTableKeys", SubTestFilterTemporaryTableKeys)
+}
+
+func SubTestShowProcessList(t *testing.T) {
 	// Compose schema.
 	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 	ftypes := []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
@@ -139,23 +154,23 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 
 	ctx := context.Background()
 	err := e.Open(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	chk := newFirstChunk(e)
 	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {
 		err = e.Next(context.Background(), chk)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			c.Assert(row.GetUint64(0), Equals, p.ID)
+			require.Equal(t, row.GetUint64(0), p.ID)
 		}
 	}
 	err = e.Next(context.Background(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 0)
+	require.NoError(t, err)
+	require.Equal(t, chk.NumRows(), 0)
 	err = e.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
 func buildSchema(names []string, ftypes []byte) *expression.Schema {
@@ -178,7 +193,7 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 	return schema
 }
 
-func (s *testExecSuite) TestBuildKvRangesForIndexJoinWithoutCwc(c *C) {
+func SubTestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 	indexRanges := make([]*ranger.Range, 0, 6)
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
@@ -197,12 +212,12 @@ func (s *testExecSuite) TestBuildKvRangesForIndexJoinWithoutCwc(c *C) {
 	keyOff2IdxOff := []int{1, 3}
 	ctx := mock.NewContext()
 	kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// Check the kvRanges is in order.
 	for i, kvRange := range kvRanges {
-		c.Assert(kvRange.StartKey.Cmp(kvRange.EndKey) < 0, IsTrue)
+		require.True(t, kvRange.StartKey.Cmp(kvRange.EndKey) < 0)
 		if i > 0 {
-			c.Assert(kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0, IsTrue)
+			require.True(t, kvRange.StartKey.Cmp(kvRanges[i-1].EndKey) >= 0)
 		}
 	}
 }
@@ -222,7 +237,7 @@ func generateDatumSlice(vals ...int64) []types.Datum {
 	return datums
 }
 
-func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
+func SubTestGetFieldsFromLine(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected []string
@@ -265,15 +280,15 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 
 	for _, test := range tests {
 		got, err := ldInfo.getFieldsFromLine([]byte(test.input))
-		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
-		assertEqualStrings(c, got, test.expected)
+		require.NoErrorf(t, err, "failed: %s", test.input)
+		assertEqualStrings(t, got, test.expected)
 	}
 
 	_, err := ldInfo.getFieldsFromLine([]byte(`1,a string,100.20`))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testExecSerialSuite) TestLoadDataWithDifferentEscapeChar(c *C) {
+func SubTestLoadDataWithDifferentEscapeChar(t *testing.T) {
 	tests := []struct {
 		input      string
 		escapeChar byte
@@ -295,27 +310,27 @@ func (s *testExecSerialSuite) TestLoadDataWithDifferentEscapeChar(c *C) {
 			},
 		}
 		got, err := ldInfo.getFieldsFromLine([]byte(test.input))
-		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
-		assertEqualStrings(c, got, test.expected)
+		require.NoErrorf(t, err, "failed: %s", test.input)
+		assertEqualStrings(t, got, test.expected)
 	}
 }
 
-func assertEqualStrings(c *C, got []field, expect []string) {
-	c.Assert(len(got), Equals, len(expect))
+func assertEqualStrings(t *testing.T, got []field, expect []string) {
+	require.Equal(t, len(got), len(expect))
 	for i := 0; i < len(got); i++ {
-		c.Assert(string(got[i].str), Equals, expect[i])
+		require.Equal(t, string(got[i].str), expect[i])
 	}
 }
 
-func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
+func SubTestSortSpillDisk(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
 		conf.MemQuotaQuery = 1
 	})
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"))
 	}()
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
@@ -341,28 +356,28 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	chk := newFirstChunk(exec)
 	dataSource.prepareChunks()
 	err := exec.Open(tmpCtx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for {
 		err = exec.Next(tmpCtx, chk)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if chk.NumRows() == 0 {
 			break
 		}
 	}
 	// Test only 1 partition and all data in memory.
-	c.Assert(len(exec.partitionList), Equals, 1)
-	c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, false)
-	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	require.Len(t, exec.partitionList, 1)
+	require.Equal(t, exec.partitionList[0].AlreadySpilledSafeForTest(), false)
+	require.Equal(t, exec.partitionList[0].NumRow(), 2048)
 	err = exec.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 1)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for {
 		err = exec.Next(tmpCtx, chk)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if chk.NumRows() == 0 {
 			break
 		}
@@ -372,37 +387,37 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	// Maybe the second add() will called before spilling, depends on
 	// Golang goroutine scheduling. So the result has two possibilities.
 	if len(exec.partitionList) == 2 {
-		c.Assert(len(exec.partitionList), Equals, 2)
-		c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
-		c.Assert(exec.partitionList[1].AlreadySpilledSafeForTest(), Equals, true)
-		c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
-		c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
+		require.Len(t, exec.partitionList, 2)
+		require.Equal(t, exec.partitionList[0].AlreadySpilledSafeForTest(), true)
+		require.Equal(t, exec.partitionList[1].AlreadySpilledSafeForTest(), true)
+		require.Equal(t, exec.partitionList[0].NumRow(), 1024)
+		require.Equal(t, exec.partitionList[1].NumRow(), 1024)
 	} else {
-		c.Assert(len(exec.partitionList), Equals, 1)
-		c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
-		c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+		require.Len(t, exec.partitionList, 1)
+		require.Equal(t, exec.partitionList[0].AlreadySpilledSafeForTest(), true)
+		require.Equal(t, exec.partitionList[0].NumRow(), 2048)
 	}
 
 	err = exec.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 24000)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for {
 		err = exec.Next(tmpCtx, chk)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if chk.NumRows() == 0 {
 			break
 		}
 	}
 	// Test only 1 partition but spill disk.
-	c.Assert(len(exec.partitionList), Equals, 1)
-	c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
-	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	require.Len(t, exec.partitionList, 1)
+	require.Equal(t, exec.partitionList[0].AlreadySpilledSafeForTest(), true)
+	require.Equal(t, exec.partitionList[0].NumRow(), 2048)
 	err = exec.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// Test partition nums.
 	ctx = mock.NewContext()
@@ -430,21 +445,21 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	chk = newFirstChunk(exec)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for {
 		err = exec.Next(tmpCtx, chk)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if chk.NumRows() == 0 {
 			break
 		}
 	}
 	// Don't spill too many partitions.
-	c.Assert(len(exec.partitionList) <= 4, IsTrue)
+	require.True(t, len(exec.partitionList) <= 4)
 	err = exec.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *pkgTestSuite) TestSlowQueryRuntimeStats(c *C) {
+func SubTestSlowQueryRuntimeStats(t *testing.T) {
 	stats := &slowQueryRuntimeStats{
 		totalFileNum: 2,
 		readFileNum:  2,
@@ -454,17 +469,17 @@ func (s *pkgTestSuite) TestSlowQueryRuntimeStats(c *C) {
 		parseLog:     int64(time.Millisecond * 100),
 		concurrent:   15,
 	}
-	c.Assert(stats.String(), Equals, "initialize: 1ms, read_file: 1s, parse_log: {time:100ms, concurrency:15}, total_file: 2, read_file: 2, read_size: 1024 MB")
-	c.Assert(stats.String(), Equals, stats.Clone().String())
+	require.Equal(t, stats.String(), "initialize: 1ms, read_file: 1s, parse_log: {time:100ms, concurrency:15}, total_file: 2, read_file: 2, read_size: 1024 MB")
+	require.Equal(t, stats.String(), stats.Clone().String())
 	stats.Merge(stats.Clone())
-	c.Assert(stats.String(), Equals, "initialize: 2ms, read_file: 2s, parse_log: {time:200ms, concurrency:15}, total_file: 4, read_file: 4, read_size: 2 GB")
+	require.Equal(t, stats.String(), "initialize: 2ms, read_file: 2s, parse_log: {time:200ms, concurrency:15}, total_file: 4, read_file: 4, read_size: 2 GB")
 }
 
 // Test whether the actual buckets in Golang Map is same with the estimated number.
 // The test relies the implement of Golang Map. ref https://github.com/golang/go/blob/go1.13/src/runtime/map.go#L114
-func (s *pkgTestSuite) TestAggPartialResultMapperB(c *C) {
+func SubTestAggPartialResultMapperB(t *testing.T) {
 	if runtime.Version() < `go1.13` {
-		c.Skip("Unsupported version")
+		t.Skip("Unsupported version")
 	}
 	type testCase struct {
 		rowNum          int
@@ -521,8 +536,8 @@ func (s *pkgTestSuite) TestAggPartialResultMapperB(c *C) {
 			aggMap[strconv.Itoa(num)] = tempSlice
 		}
 
-		c.Assert(getB(aggMap), Equals, tc.expectedB)
-		c.Assert(getGrowing(aggMap), Equals, tc.expectedGrowing)
+		require.Equal(t, getB(aggMap), tc.expectedB)
+		require.Equal(t, getGrowing(aggMap), tc.expectedGrowing)
 	}
 }
 
@@ -554,7 +569,7 @@ func getGrowing(m aggPartialResultMapper) bool {
 	return value.oldbuckets != nil
 }
 
-func (s *pkgTestSuite) TestFilterTemporaryTableKeys(c *C) {
+func SubTestFilterTemporaryTableKeys(t *testing.T) {
 	vars := variable.NewSessionVars()
 	const tableID int64 = 3
 	vars.TxnCtx = &variable.TransactionContext{
@@ -562,5 +577,5 @@ func (s *pkgTestSuite) TestFilterTemporaryTableKeys(c *C) {
 	}
 
 	res := filterTemporaryTableKeys(vars, []kv.Key{tablecodec.EncodeTablePrefix(tableID), tablecodec.EncodeTablePrefix(42)})
-	c.Assert(res, HasLen, 1)
+	require.Len(t, res, 1)
 }
