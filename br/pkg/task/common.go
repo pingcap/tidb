@@ -114,10 +114,9 @@ func (tls *TLSConfig) ToTLSConfig() (*tls.Config, error) {
 }
 
 // ParseFromFlags parses the TLS config from the flag set.
-func (tls *TLSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
-	var err error
+func (tls *TLSConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 	tls.CA, tls.Cert, tls.Key, err = ParseTLSTripleFromFlags(flags)
-	return err
+	return
 }
 
 // Config is the common configuration for all BRIE tasks.
@@ -168,7 +167,7 @@ type Config struct {
 	// GrpcKeepaliveTimeout is the max time a grpc conn can keep idel before killed.
 	GRPCKeepaliveTimeout time.Duration `json:"grpc-keepalive-timeout" toml:"grpc-keepalive-timeout"`
 
-	CipherInfo backuppb.CipherInfo
+	CipherInfo backuppb.CipherInfo `json:"-" toml:"-"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
