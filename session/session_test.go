@@ -183,7 +183,7 @@ func clearETCD(ebd kv.EtcdBackend) error {
 	return nil
 }
 
-func (s *testSessionSuiteBase) setup(assert func(error)) {
+func createTestSuite(assert func(error), s *testSessionSuiteBase) {
 	if *withTiKV {
 		initPdAddrs()
 		s.pdAddr = <-pdAddrChan
@@ -230,10 +230,10 @@ func initPdAddrs() {
 }
 
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
-	s.setup(func(err error) { c.Assert(err, IsNil) })
+	createTestSuite(func(err error) { c.Assert(err, IsNil) }, s)
 }
 
-func (s *testSessionSuiteBase) teardown(assert func(error)) {
+func (s *testSessionSuiteBase) cleanSuite(assert func(error)) {
 	s.dom.Close()
 	assert(s.store.Close())
 	if *withTiKV {
@@ -242,7 +242,7 @@ func (s *testSessionSuiteBase) teardown(assert func(error)) {
 }
 
 func (s *testSessionSuiteBase) TearDownSuite(c *C) {
-	s.teardown(func(err error) { c.Assert(err, IsNil) })
+	s.cleanSuite(func(err error) { c.Assert(err, IsNil) })
 }
 
 func (s *testSessionSuiteBase) TearDownTest(c *C) {
