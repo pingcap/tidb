@@ -25,9 +25,11 @@ echo "load data..."
 run_sql "CREATE DATABASE IF NOT EXISTS $DB;"
 # create table
 run_sql "CREATE TABLE IF NOT EXISTS ${DB}.${TABLE} (c1 INT);"
+run_sql "CREATE TABLE IF NOT EXISTS ${DB}.${TABLE}_rename (c CHAR(255);"
 # insert records
 for i in $(seq $ROW_COUNT); do
     run_sql "INSERT INTO ${DB}.${TABLE}(c1) VALUES ($i);"
+    run_sql "INSERT INTO ${DB}.${TABLE}_rename(c) VALUES ('$i');"
 done
 
 # full backup
@@ -42,6 +44,8 @@ run_sql "CREATE DATABASE ${DB};"
 run_sql "CREATE TABLE ${DB}.${TABLE}1 (c2 CHAR(255));"
 run_sql "RENAME TABLE ${DB}.${TABLE}1 to ${DB}.${TABLE};"
 run_sql "TRUNCATE TABLE ${DB}.${TABLE};"
+
+run_sql "RENAME TABLE ${DB}.${TABLE}_rename to ${DB}.${TABLE}_rename2;"
 # insert records
 for i in $(seq $ROW_COUNT); do
     run_sql "INSERT INTO ${DB}.${TABLE}(c2) VALUES ('$i');"
@@ -71,5 +75,6 @@ if [ "${row_count_inc}" != "${ROW_COUNT}" ];then
     exit 1
 fi
 run_sql "INSERT INTO ${DB}.${TABLE}(c2) VALUES ('1');"
+run_sql "INSERT INTO ${DB}.${TABLE}_rename2(c) VALUES ('1');"
 
 run_sql "DROP DATABASE $DB;"
