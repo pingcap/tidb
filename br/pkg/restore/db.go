@@ -22,7 +22,7 @@ type DB struct {
 	se glue.Session
 }
 
-type UniqueName struct {
+type UniqueTableName struct {
 	DB    string
 	Table string
 }
@@ -102,7 +102,7 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 }
 
 // CreateTable executes a CREATE TABLE SQL.
-func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, uniqueMap map[UniqueName]bool) error {
+func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
 	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
 	if err != nil {
 		log.Error("create table failed",
@@ -165,7 +165,7 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, uniqueMap 
 			utils.EncloseName(table.Info.Name.O),
 			table.Info.AutoIncID)
 	}
-	if uniqueMap[UniqueName{table.DB.Name.String(), table.Info.Name.String()}] {
+	if ddlTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}] {
 		err = db.se.Execute(ctx, restoreMetaSQL)
 		if err != nil {
 			log.Error("restore meta sql failed",
@@ -232,12 +232,12 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 	for _, table := range tables {
 		tableIDs := make(map[int64]bool)
 		tableIDs[table.Info.ID] = true
-		tableNames := make(map[UniqueName]bool)
-		name := UniqueName{table.DB.Name.String(), table.Info.Name.String()}
+		tableNames := make(map[UniqueTableName]bool)
+		name := UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}
 		tableNames[name] = true
 		for _, job := range allDDLJobs {
 			if job.BinlogInfo.TableInfo != nil {
-				name = UniqueName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}
+				name = UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}
 				if tableIDs[job.TableID] || tableNames[name] {
 					ddlJobs = append(ddlJobs, job)
 					tableIDs[job.TableID] = true

@@ -97,7 +97,7 @@ func (s *testRestoreSchemaSuite) TestRestoreAutoIncID(c *C) {
 	table.DB.Collate = "utf8mb4_bin"
 	err = db.CreateDatabase(context.Background(), table.DB)
 	c.Assert(err, IsNil, Commentf("Error create empty charset db: %s %s", err, s.mock.DSN))
-	uniqueMap := make(map[restore.UniqueName]bool)
+	uniqueMap := make(map[restore.UniqueTableName]bool)
 	err = db.CreateTable(context.Background(), &table, uniqueMap)
 	c.Assert(err, IsNil, Commentf("Error create table: %s %s", err, s.mock.DSN))
 
@@ -117,7 +117,7 @@ func (s *testRestoreSchemaSuite) TestRestoreAutoIncID(c *C) {
 
 	// try again, success because we use alter sql in unique map.
 	table.Info.AutoIncID = globalAutoID + 300
-	uniqueMap[restore.UniqueName{"test", "\"t\""}] = true
+	uniqueMap[restore.UniqueTableName{"test", "\"t\""}] = true
 	err = db.CreateTable(context.Background(), &table, uniqueMap)
 	// Check if AutoIncID is altered to globalAutoID + 300.
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
