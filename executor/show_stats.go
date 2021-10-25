@@ -451,3 +451,64 @@ func (e *ShowExec) fetchShowAnalyzeStatus() {
 		}
 	}
 }
+
+func (e *ShowExec) fetchShowColumnStatsUsage() error {
+	do := domain.GetDomain(e.ctx)
+	h := do.StatsHandle()
+	colStatsMap, err := h.LoadColumnStatsUsage()
+	if err != nil {
+		return err
+	}
+	dbs := do.InfoSchema().AllSchemas()
+
+	appendTableForColumnStatsUsage := func(dbName string, tbl *model.TableInfo, global bool, def *model.PartitionDefinition) {
+		tblID := tbl.ID
+		if def != nil {
+			tblID = def.ID
+		}
+		partitionName := ""
+		if def != nil {
+			partitionName = def.Name.O
+		} else if global {
+			partitionName = "global"
+		}
+		for _, col := range tbl.Columns {
+			tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
+			colStatsUsage, ok := colStatsMap[tblColID]
+			if !ok {
+				continue
+			}
+			row := []interface{}{dbName, tbl.Name.O, partitionName, col.Name.O}
+			if colStatsUsage.LastUsedAt != nil {
+				row = append(row, *colStatsUsage.LastUsedAt)
+			} else {
+				row = append(row, nil)
+			}
+			if colStatsUsage.LastAnalyzedAt != nil {
+				row = append(row, *colStatsUsage.LastAnalyzedAt)
+			} else {
+				row = append(row, nil)
+			}
+			e.appendRow(row)
+		}
+	}
+
+	for _, db := range dbs {
+		for _, tbl := range db.Tables {
+			pi := tbl.GetPartitionInfo()
+			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+				appendTableForColumnStatsUsage(db.Name.O, tbl, pi != nil, nil)
+				if pi != nil {
+					for _, def := range pi.Definitions {
+						appendTableForColumnStatsUsage(db.Name.O, tbl, false, &def)
+					}
+				}
+			} else {
+				for _, def := range pi.Definitions {
+					appendTableForColumnStatsUsage(db.Name.O, tbl, false, &def)
+				}
+			}
+		}
+	}
+	return nil
+}
