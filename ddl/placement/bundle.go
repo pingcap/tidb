@@ -85,9 +85,7 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 			return nil, fmt.Errorf("%w: LeaderConstraints conflicts with Constraints", err)
 		}
 	}
-	if len(LeaderConstraints) > 0 {
-		Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
-	}
+	Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
 
 	if followerCount > 0 {
 		FollowerRules, err := NewRules(Follower, followerCount, followerConstraints)
@@ -133,9 +131,6 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 	}
 
 	primaryRegion := strings.TrimSpace(options.PrimaryRegion)
-	if len(primaryRegion) == 0 {
-		return nil, fmt.Errorf("%w: empty primary region", ErrInvalidPlacementOptions)
-	}
 
 	var regions []string
 	if k := strings.TrimSpace(options.Regions); len(k) > 0 {
@@ -151,11 +146,15 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 	}
 	schedule := options.Schedule
 
+	primaryIndex := 0
 	// regions must include the primary
-	sort.Strings(regions)
-	primaryIndex := sort.SearchStrings(regions, primaryRegion)
-	if primaryIndex >= len(regions) || regions[primaryIndex] != primaryRegion {
-		return nil, fmt.Errorf("%w: primary region must be included in regions", ErrInvalidPlacementOptions)
+	// but we don't see empty primaryRegion and regions as an error
+	if primaryRegion != "" || len(regions) > 0 {
+		sort.Strings(regions)
+		primaryIndex = sort.SearchStrings(regions, primaryRegion)
+		if primaryIndex >= len(regions) || regions[primaryIndex] != primaryRegion {
+			return nil, fmt.Errorf("%w: primary region must be included in regions", ErrInvalidPlacementOptions)
+		}
 	}
 
 	var Rules []*Rule
@@ -190,14 +189,14 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 // Non-Exported functionality function, do not use it directly but NewBundleFromOptions
 // here is for only directly used in the test.
 func newBundleFromOptions(options *model.PlacementSettings) (bundle *Bundle, err error) {
-	var isSyntaxSugar bool
-
 	if options == nil {
 		return nil, fmt.Errorf("%w: options can not be nil", ErrInvalidPlacementOptions)
 	}
 
-	if len(options.PrimaryRegion) > 0 || len(options.Regions) > 0 || len(options.Schedule) > 0 {
-		isSyntaxSugar = true
+	// always prefer the sugar syntax, which gives better schedule results most of the time
+	isSyntaxSugar := true
+	if len(options.LeaderConstraints) > 0 || len(options.LearnerConstraints) > 0 || len(options.FollowerConstraints) > 0 || len(options.Constraints) > 0 || options.Learners > 0 {
+		isSyntaxSugar = false
 	}
 
 	if isSyntaxSugar {
