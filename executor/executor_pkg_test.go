@@ -23,7 +23,6 @@ import (
 	"time"
 	"unsafe"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -46,20 +45,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testExecSuite{})
-var _ = SerialSuites(&testExecSerialSuite{})
-
 // Note: it's a tricky way to export the `inspectionSummaryRules` and `inspectionRules` for unit test but invisible for normal code
 var (
 	InspectionSummaryRules = inspectionSummaryRules
 	InspectionRules        = inspectionRules
 )
-
-type testExecSuite struct {
-}
-
-type testExecSerialSuite struct {
-}
 
 // mockSessionManager is a mocked session manager which is used for test.
 type mockSessionManager struct {
