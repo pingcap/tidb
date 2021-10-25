@@ -61,10 +61,10 @@ func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 	checkFunc := func(policyInfo *model.PolicyInfo) {
 		c.Assert(policyInfo.ID != 0, Equals, true)
 		c.Assert(policyInfo.Name.L, Equals, "x")
-		c.Assert(policyInfo.Followers, Equals, uint64(0))
-		c.Assert(policyInfo.FollowerConstraints, Equals, "")
-		c.Assert(policyInfo.Voters, Equals, uint64(3))
-		c.Assert(policyInfo.VoterConstraints, Equals, "[+disk=ssd]")
+		c.Assert(policyInfo.Followers, Equals, uint64(3))
+		c.Assert(policyInfo.FollowerConstraints, Equals, "[+disk=ssd]")
+		c.Assert(policyInfo.Voters, Equals, uint64(0))
+		c.Assert(policyInfo.VoterConstraints, Equals, "")
 		c.Assert(policyInfo.Learners, Equals, uint64(1))
 		c.Assert(policyInfo.LearnerConstraints, Equals, "[+region=cn-west-1]")
 		c.Assert(policyInfo.State, Equals, model.StatePublic)
@@ -152,7 +152,7 @@ func (s *testDBSuite6) TestPlacementValidation(c *C) {
 		},
 		{
 			name: "constraints may be incompatible with itself",
-			settings: "FOLLOWERS=3 LEARNERS=1" +
+			settings: "FOLLOWERS=3 LEARNERS=1 " +
 				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-2]\"",
 			errmsg: "invalid label constraints format: should be [constraint1, ...] (error conflicting label constraints: '+zone=cn-west-2' and '+zone=cn-west-1'), {constraint1: cnt1, ...} (error yaml: unmarshal errors:\n" +
 				"  line 1: cannot unmarshal !!seq into map[string]int), or any yaml compatible representation: invalid LearnerConstraints",

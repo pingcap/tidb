@@ -617,6 +617,28 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	})
 
 	tests = append(tests, TestCase{
+		name: "sugar syntax: omit regions 1",
+		input: &model.PlacementSettings{
+			Followers: 2,
+			Schedule:  "even",
+		},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect()),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: omit regions 2",
+		input: &model.PlacementSettings{
+			Followers: 2,
+			Schedule:  "majority_in_primary",
+		},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect()),
+		},
+	})
+
+	tests = append(tests, TestCase{
 		name: "sugar syntax: wrong schedule prop",
 		input: &model.PlacementSettings{
 			PrimaryRegion: "us",
@@ -737,7 +759,7 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	})
 
 	tests = append(tests, TestCase{
-		name: "direct syntax: lack count 1",
+		name: "direct syntax: lack count 2",
 		input: &model.PlacementSettings{
 			LeaderConstraints:  "[+region=as]",
 			LearnerConstraints: "[-region=us]",

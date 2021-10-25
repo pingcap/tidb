@@ -169,33 +169,31 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 
 	switch strings.ToLower(schedule) {
 	case "", "even":
-		primaryCount := uint64(0)
 		if len(regions) == 0 {
-			primaryCount = followers + 1
-			Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect()))
+			Rules = append(Rules, NewRule(Voter, followers+1, NewConstraintsDirect()))
 		} else {
-			primaryCount = uint64(math.Ceil(float64(followers+1) / float64(len(regions))))
+			primaryCount := uint64(math.Ceil(float64(followers+1) / float64(len(regions))))
 			Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
-		}
 
-		if len(regions) > 1 && followers+1 > primaryCount {
-			// delete primary from regions
-			regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
-			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
+			if followers+1 > primaryCount {
+				// delete primary from regions
+				regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
+				Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
+			}
 		}
 	case "majority_in_primary":
-		// calculate how many replicas need to be in the primary region for quorum
-		primaryCount := uint64(math.Ceil(float64(followers+1)/2 + 1))
 		if len(regions) == 0 {
-			Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect()))
+			Rules = append(Rules, NewRule(Voter, followers+1, NewConstraintsDirect()))
 		} else {
+			// calculate how many replicas need to be in the primary region for quorum
+			primaryCount := uint64(math.Ceil(float64(followers+1)/2 + 1))
 			Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
-		}
 
-		if len(regions) > 1 && followers+1 > primaryCount {
-			// delete primary from regions
-			regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
-			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
+			if followers+1 > primaryCount {
+				// delete primary from regions
+				regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
+				Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
+			}
 		}
 	default:
 		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacementOptions, schedule)
