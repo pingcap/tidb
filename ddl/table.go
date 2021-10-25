@@ -78,17 +78,23 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	// build table & partition bundles if any.
+	var bundles []*placement.Bundle
 	tableBundle, err := newBundleFromTblInfo(t, job, tbInfo)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	partitionBundles, err := newBundleFromPartition(t, job, tbInfo.Partition)
-	if err != nil {
-		return ver, errors.Trace(err)
+
+	if tableBundle != nil {
+		bundles = append(bundles, tableBundle)
 	}
-	bundles := make([]*placement.Bundle, 0, 1+len(partitionBundles))
-	bundles = append(bundles, tableBundle)
-	bundles = append(bundles, partitionBundles...)
+
+	if tbInfo.Partition != nil {
+		partitionBundles, err := newBundlesFromPartitionDefs(t, job, tbInfo.Partition.Definitions)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		bundles = append(bundles, partitionBundles...)
+	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
@@ -163,23 +169,31 @@ func newBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo)
 	return bundle, nil
 }
 
-func newBundleFromPartition(t *meta.Meta, job *model.Job, partition *model.PartitionInfo) ([]*placement.Bundle, error) {
-	if partition == nil {
-		return nil, nil
+func newBundleFromPartitionDef(t *meta.Meta, job *model.Job, def model.PartitionDefinition) (*placement.Bundle, error) {
+	bundle, err := newBundleFromPolicyOrDirectOptions(t, job, def.PlacementPolicyRef, def.DirectPlacementOpts)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	bundles := make([]*placement.Bundle, 0, len(partition.Definitions))
+
+	if bundle != nil {
+		bundle.Reset(placement.RuleIndexPartition, []int64{def.ID})
+	}
+
+	return bundle, nil
+}
+
+func newBundlesFromPartitionDefs(t *meta.Meta, job *model.Job, defs []model.PartitionDefinition) ([]*placement.Bundle, error) {
+	bundles := make([]*placement.Bundle, 0, len(defs))
 	// If the partition has the placement rules on their own, build the partition-level bundles additionally.
-	for _, def := range partition.Definitions {
-		bundle, err := newBundleFromPolicyOrDirectOptions(t, job, def.PlacementPolicyRef, def.DirectPlacementOpts)
+	for _, def := range defs {
+		bundle, err := newBundleFromPartitionDef(t, job, def)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if bundle == nil {
-			continue
+
+		if bundle != nil {
+			bundles = append(bundles, bundle)
 		}
-		bundle.Reset(placement.RuleIndexPartition, []int64{def.ID})
-		bundles = append(bundles, bundle)
-		continue
 	}
 	return bundles, nil
 }
@@ -1342,11 +1356,11 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 	return ver, nil
 }
 
-func onAlterTablePartitionOptions(t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onAlterTablePartitionOptions(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var partitionID int64
 	policyRefInfo := &model.PolicyRefInfo{}
 	placementSettings := &model.PlacementSettings{}
-	err = job.DecodeArgs(&partitionID, policyRefInfo, placementSettings)
+	err = job.DecodeArgs(&partitionID, &policyRefInfo, &placementSettings)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1357,17 +1371,18 @@ func onAlterTablePartitionOptions(t *meta.Meta, job *model.Job) (ver int64, err 
 	}
 
 	ptInfo := tblInfo.GetPartitionInfo()
-	isFound := false
+	var partitionDef *model.PartitionDefinition
 	definitions := ptInfo.Definitions
 	for i := range definitions {
 		if partitionID == definitions[i].ID {
 			definitions[i].DirectPlacementOpts = placementSettings
 			definitions[i].PlacementPolicyRef = policyRefInfo
-			isFound = true
+			partitionDef = &definitions[i]
 			break
 		}
 	}
-	if !isFound {
+
+	if partitionDef == nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
@@ -1376,6 +1391,62 @@ func onAlterTablePartitionOptions(t *meta.Meta, job *model.Job) (ver int64, err 
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+
+	bundle, err := newBundleFromPartitionDef(t, job, *partitionDef)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Send the placement bundle to PD.
+	if bundle != nil {
+		err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
+	} else {
+		err = dropRuleBundles(d, []int64{partitionDef.ID})
+	}
+
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onAlterTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	policyRefInfo := &model.PolicyRefInfo{}
+	placementSettings := &model.PlacementSettings{}
+	err = job.DecodeArgs(&policyRefInfo, &placementSettings)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return 0, err
+	}
+
+	tblInfo.PlacementPolicyRef = policyRefInfo
+	tblInfo.DirectPlacementOpts = placementSettings
+
+	bundle, err := newBundleFromTblInfo(t, job, tblInfo)
+	if err != nil {
+		return 0, err
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Send the placement bundle to PD.
+	if bundle != nil {
+		err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
+	} else {
+		err = dropRuleBundles(d, []int64{tblInfo.ID})
+	}
+
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 
 	return ver, nil
