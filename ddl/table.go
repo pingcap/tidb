@@ -1492,3 +1492,37 @@ func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[str
 	patch := label.NewRulePatch(newRules, oldRuleIDs)
 	return infosync.UpdateLabelRules(context.TODO(), patch)
 }
+func onAlterCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	// If the table is already in the cache state
+	if tbInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+		return ver, nil
+	}
+
+	switch tbInfo.TableCacheStatusType {
+	case model.TableCacheStatusDisable:
+		// disable -> switching
+		tbInfo.TableCacheStatusType = model.TableCacheStatusSwitching
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tbInfo, true)
+		if err != nil {
+			return ver, err
+		}
+	case model.TableCacheStatusSwitching:
+		// switching -> enable
+		tbInfo.TableCacheStatusType = model.TableCacheStatusEnable
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tbInfo, true)
+		if err != nil {
+			return ver, err
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+	default:
+		job.State = model.JobStateCancelled
+		err = ErrInvalidDDLState.GenWithStackByArgs("alter table cache", tbInfo.TableCacheStatusType.String())
+	}
+	return ver, err
+}
