@@ -3091,6 +3091,11 @@ func (s *testStatsSuite) TestAnalyzeColumnsWithPrimaryKey(c *C) {
 	tblID := tbl.Meta().ID
 
 	tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][3], Equals, "a")
+	c.Assert(rows[1][3], Equals, "b")
+
 	// Since column histograms are loaded lazily, `show stats_*` may not show the records of column stats. Hence we use `select * from mysql.stats_*` to check ANALYZE results.
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
 		testkit.Rows("0 9"))
@@ -3127,6 +3132,12 @@ func (s *testStatsSuite) TestAnalyzeColumnsWithIndex(c *C) {
 	tblID := tbl.Meta().ID
 
 	tk.MustExec("analyze table t columns c with 2 topn, 2 buckets")
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
+	c.Assert(len(rows), Equals, 3)
+	c.Assert(rows[0][3], Equals, "a")
+	c.Assert(rows[1][3], Equals, "b")
+	c.Assert(rows[2][3], Equals, "c")
+
 	// Since column histograms are loaded lazily, `show stats_*` may not show the records of column stats. Hence we use `select * from mysql.stats_*` to check ANALYZE results.
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
 		testkit.Rows("0 9"))
@@ -3171,6 +3182,12 @@ func (s *testStatsSuite) TestAnalyzeColumnsWithClusteredIndex(c *C) {
 	tblID := tbl.Meta().ID
 
 	tk.MustExec("analyze table t columns c with 2 topn, 2 buckets")
+	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
+	c.Assert(len(rows), Equals, 3)
+	c.Assert(rows[0][3], Equals, "a")
+	c.Assert(rows[1][3], Equals, "b")
+	c.Assert(rows[2][3], Equals, "c")
+
 	// Since column histograms are loaded lazily, `show stats_*` may not show the records of column stats. Hence we use `select * from mysql.stats_*` to check ANALYZE results.
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
 		testkit.Rows("0 9"))
@@ -3199,18 +3216,43 @@ func (s *testStatsSuite) TestAnalyzeColumnsWithClusteredIndex(c *C) {
 			"1 1 1 3 1 \x03\x80\x00\x00\x00\x00\x00\x00\x09\x03\x80\x00\x00\x00\x00\x00\x00\x09 \x03\x80\x00\x00\x00\x00\x00\x00\x07\x03\x80\x00\x00\x00\x00\x00\x00\x07 0"))
 }
 
-func (s *testStatsSuite) TestAnalyzeColumnsWithExpressionIndex(c *C) {
+func (s *testStatsSuite) TestAnalyzeColumnsError(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
 
-}
+	// analyze version 1 doesn't support `ANALYZE COLUMNS c1, ..., cn` currently
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	err := tk.ExecToErr("analyze table t columns a")
+	c.Assert(err.Error(), Equals, "Only the analyze version 2 supports analyzing the specified columns")
+	tk.MustExec("set @@tidb_analyze_version = 2")
 
-func (s *testStatsSuite) TestAnalyzeColumnsWithVer1(c *C) {
-
+	// invalid column
+	err = tk.ExecToErr("analyze table t columns c")
+	c.Assert(err.Error(), Equals, "There is no column c in table t")
 }
 
 func (s *testStatsSuite) TestAnalyzeColumnsWithPartitionTable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+	tk.MustExec("insert into t values (1,2), (2,4), (3,6), (4,8), (4,8), (5,10), (5,10), (5,10), (null,null), (11,22), (12,24), (13,26), (14,28), (15,30), (16,32), (16,32), (16,32), (16,32), (17,34), (17,34)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
 
 }
 
 func (s *testStatsSuite) TestAnalyzeColumnsWithExtendedStats(c *C) {
+
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithExpressionIndex(c *C) {
 
 }

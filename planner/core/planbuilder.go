@@ -1794,17 +1794,12 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 	if as.HistogramOperation == ast.HistogramOperationNop && len(as.ColumnNames) > 0 {
 		for _, colName := range as.ColumnNames {
 			colInfo := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
-			if colInfo != nil {
-				columnIDs[colInfo.ID] = struct{}{}
-			} else {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("There is no column %s in table %s", colName.Name.O, tblInfo.Name.O))
+			if colInfo == nil {
+				return nil, errors.Errorf("There is no column %s in table %s", colName.Name.O, tblInfo.Name.O)
 			}
+			columnIDs[colInfo.ID] = struct{}{}
 		}
-		if len(columnIDs) == 0 {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("There is no valid column so all the columns would be analyzed"))
-		}
-	}
-	if len(columnIDs) == 0 {
+	} else {
 		return tblInfo.Columns, nil
 	}
 	if len(tblInfo.Indices) > 0 {
@@ -1844,7 +1839,7 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 	if b.ctx.GetSessionVars().EnableExtendedStats {
 		// add the columns related to extended stats
 		// TODO: column_ids read from mysql.stats_extended in optimization phase may be different from that in execution phase((*Handle).BuildExtendedStats)
-		// if someone inserts data into mysql.stats_extended between the two time points, which may cause that some extended stats fail to be computed.
+		// if someone inserts data into mysql.stats_extended between the two time points, the new added extended stats may not be computed.
 		statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 		extendedStatsColIDs, err := statsHandle.CollectColumnsInExtendedStats(tblInfo.ID)
 		if err != nil {
@@ -1950,7 +1945,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 		}
 		// TODO: support analyze specified columns for version 1
 		if as.HistogramOperation == ast.HistogramOperationNop && len(as.ColumnNames) > 0 {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Only the analyze version 2 supports analyzing specified columns"))
+			return nil, errors.Errorf("Only the analyze version 2 supports analyzing the specified columns")
 		}
 		for _, idx := range idxInfo {
 			// For prefix common handle. We don't use analyze mixed to handle it with columns. Because the full value
