@@ -12,6 +12,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -124,7 +125,11 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobs(c *C) {
 	ts, err := s.mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil, Commentf("Error get ts: %s", err))
 
-	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false)
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
+
+	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
@@ -150,7 +155,7 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobs(c *C) {
 	c.Assert(err, IsNil)
 	// check the schema version
 	c.Assert(mockMeta.Version, Equals, int32(metautil.MetaV1))
-	metaReader := metautil.NewMetaReader(mockMeta, s.storage)
+	metaReader := metautil.NewMetaReader(mockMeta, s.storage, &cipher)
 	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 	c.Assert(err, IsNil)
 	var allDDLJobs []*model.Job
@@ -182,7 +187,11 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobsV2(c *C) {
 	ts, err := s.mock.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil, Commentf("Error get ts: %s", err))
 
-	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, true)
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
+
+	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, true, &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
@@ -209,7 +218,7 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobsV2(c *C) {
 	c.Assert(err, IsNil)
 	// check the schema version
 	c.Assert(mockMeta.Version, Equals, int32(metautil.MetaV2))
-	metaReader := metautil.NewMetaReader(mockMeta, s.storage)
+	metaReader := metautil.NewMetaReader(mockMeta, s.storage, &cipher)
 	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 	c.Assert(err, IsNil)
 	var allDDLJobs []*model.Job
