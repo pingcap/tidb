@@ -245,6 +245,7 @@ func (tsr *RemoteTopSQLReporter) Close() {
 	for i := range tsr.clients {
 		tsr.clients[i].Close()
 	}
+	tsr.clients = nil
 }
 
 func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, totalCPUTimeMs uint32) {

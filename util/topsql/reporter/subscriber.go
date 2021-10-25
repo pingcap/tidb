@@ -24,6 +24,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// TopSQLPublisher implements TopSQLPublisher.
+//
+// If a client subscribes to TopSQL records, the TopSQLPublisher is responsible for registering them to the reporter.
+// Then the reporter sends data to the client periodically.
 type TopSQLPublisher struct {
 	decodePlan     planBinaryDecodeFunc
 	clientRegistry *ReportClientRegistry
@@ -41,6 +45,8 @@ func NewTopSQLPublisher(
 
 var _ tipb.TopSQLPubSubServer = &TopSQLPublisher{}
 
+// Subscribe registers clients to the reporter and redirects data received from reporter
+// to subscribers associated with those clients.
 func (t *TopSQLPublisher) Subscribe(
 	_ *tipb.TopSQLSubRequest,
 	stream tipb.TopSQLPubSub_SubscribeServer,
@@ -146,6 +152,10 @@ func (s *subClient) run(wg *sync.WaitGroup) {
 var _ ReportClient = &subClient{}
 
 func (s *subClient) Send(_ context.Context, data reportData) error {
+	if s.IsDown() {
+		return nil
+	}
+
 	select {
 	case s.dataCh <- data:
 		// sent successfully

@@ -84,7 +84,7 @@ func initializeCache(maxStatementsNum, interval int, addr string) *RemoteTopSQLR
 }
 
 func TestCollectAndSendBatch(t *testing.T) {
-	agentServer, err := mock.StartMockAgentServer()
+	agentServer, err := mock.StartMockReceiverServer()
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
@@ -123,7 +123,7 @@ func TestCollectAndSendBatch(t *testing.T) {
 }
 
 func TestCollectAndEvicted(t *testing.T) {
-	agentServer, err := mock.StartMockAgentServer()
+	agentServer, err := mock.StartMockReceiverServer()
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
@@ -188,7 +188,7 @@ func collectAndWait(tsr *RemoteTopSQLReporter, timestamp uint64, records []trace
 }
 
 func TestCollectAndTopN(t *testing.T) {
-	agentServer, err := mock.StartMockAgentServer()
+	agentServer, err := mock.StartMockReceiverServer()
 	require.NoError(t, err)
 	defer agentServer.Stop()
 
@@ -390,7 +390,7 @@ func TestDataPoints(t *testing.T) {
 }
 
 func TestCollectInternal(t *testing.T) {
-	agentServer, err := mock.StartMockAgentServer()
+	agentServer, err := mock.StartMockReceiverServer()
 	require.NoError(t, err)
 	defer agentServer.Stop()
 

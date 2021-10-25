@@ -1630,7 +1630,6 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	dbt.mustExec("create table t (a int auto_increment, b int, unique index idx(a));")
 	dbt.mustExec("create table t1 (a int auto_increment, b int, unique index idx(a));")
 	dbt.mustExec("create table t2 (a int auto_increment, b int, unique index idx(a));")
-	dbt.mustExec("set @@global.tidb_enable_top_sql='On';")
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "127.0.0.1:4001"
 	})
@@ -1826,7 +1825,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	checkFn("commit", "")
 }
 
-func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
+func (ts *tidbTestTopSQLSuite) TestTopSQLReceiver(c *C) {
 	c.Skip("unstable, skip it and fix it before 20210702")
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
@@ -1834,10 +1833,10 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()
-	agentServer, err := mockTopSQLReporter.StartMockAgentServer()
+	receiverServer, err := mockTopSQLReporter.StartMockReceiverServer()
 	c.Assert(err, IsNil)
 	defer func() {
-		agentServer.Stop()
+		receiverServer.Stop()
 	}()
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/topsql/reporter/resetTimeoutForTest", `return(true)`), IsNil)
@@ -1867,7 +1866,6 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 			conf.TopSQL.ReceiverAddress = addr
 		})
 	}
-	dbt.mustExec("set @@global.tidb_enable_top_sql='On';")
 	setTopSQLReceiverAddress("")
 	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
 	dbt.mustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
@@ -1878,16 +1876,16 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 
 	// TODO: change to ensure that the right sql statements are reported, not just counts
 	checkFn := func(n int) {
-		records := agentServer.GetLatestRecords()
+		records := receiverServer.GetLatestRecords()
 		c.Assert(len(records), Equals, n)
 		for _, r := range records {
-			sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(r.SqlDigest, time.Second)
+			sqlMeta, exist := receiverServer.GetSQLMetaByDigestBlocking(r.SqlDigest, time.Second)
 			c.Assert(exist, IsTrue)
 			c.Check(sqlMeta.NormalizedSql, Matches, "select.*from.*join.*")
 			if len(r.PlanDigest) == 0 {
 				continue
 			}
-			plan, exist := agentServer.GetPlanMetaByDigestBlocking(r.PlanDigest, time.Second)
+			plan, exist := receiverServer.GetPlanMetaByDigestBlocking(r.PlanDigest, time.Second)
 			c.Assert(exist, IsTrue)
 			plan = strings.Replace(plan, "\n", " ", -1)
 			plan = strings.Replace(plan, "\t", " ", -1)
@@ -1912,22 +1910,22 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	cancel := runWorkload(0, 10)
 	// Test with null agent address, the agent server can't receive any record.
 	setTopSQLReceiverAddress("")
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	receiverServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
-	setTopSQLReceiverAddress(agentServer.Address())
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	setTopSQLReceiverAddress(receiverServer.Address())
+	receiverServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(5)
 	// Test with wrong agent address, the agent server can't receive any record.
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=8;")
 	setTopSQLReceiverAddress("127.0.0.1:65530")
 
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	receiverServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
-	setTopSQLReceiverAddress(agentServer.Address())
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	setTopSQLReceiverAddress(receiverServer.Address())
+	receiverServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(8)
 	cancel() // cancel case 1
 
@@ -1936,19 +1934,19 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// empty agent address, should not collect records
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 	setTopSQLReceiverAddress("")
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	receiverServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// set correct address, should collect records
-	setTopSQLReceiverAddress(agentServer.Address())
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	setTopSQLReceiverAddress(receiverServer.Address())
+	receiverServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(5)
 	// agent server hangs for a while
-	agentServer.HangFromNow(time.Second * 6)
+	receiverServer.HangFromNow(time.Second * 6)
 	// run another set of SQL queries
 	cancel2()
 
 	cancel3 := runWorkload(11, 20)
-	agentServer.WaitCollectCnt(1, time.Second*8)
+	receiverServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
 	cancel3()
 
@@ -1956,24 +1954,24 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	cancel4 := runWorkload(0, 10)
 	// empty agent address, should not collect records
 	setTopSQLReceiverAddress("")
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	receiverServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// set correct address, should collect records
-	setTopSQLReceiverAddress(agentServer.Address())
-	agentServer.WaitCollectCnt(1, time.Second*8)
+	setTopSQLReceiverAddress(receiverServer.Address())
+	receiverServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
 	// run another set of SQL queries
 	cancel4()
 
 	cancel5 := runWorkload(11, 20)
 	// agent server shutdown
-	agentServer.Stop()
+	receiverServer.Stop()
 	// agent server restart
-	agentServer, err = mockTopSQLReporter.StartMockAgentServer()
+	receiverServer, err = mockTopSQLReporter.StartMockReceiverServer()
 	c.Assert(err, IsNil)
-	setTopSQLReceiverAddress(agentServer.Address())
+	setTopSQLReceiverAddress(receiverServer.Address())
 	// check result
-	agentServer.WaitCollectCnt(2, time.Second*8)
+	receiverServer.WaitCollectCnt(2, time.Second*8)
 	checkFn(5)
 	cancel5()
 }

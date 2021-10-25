@@ -28,7 +28,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-type mockAgentServer struct {
+type mockReceiverServer struct {
 	sync.Mutex
 	addr       string
 	grpcServer *grpc.Server
@@ -41,42 +41,42 @@ type mockAgentServer struct {
 	}
 }
 
-// StartMockAgentServer starts the mock agent server.
-func StartMockAgentServer() (*mockAgentServer, error) {
+// StartMockReceiverServer starts the mock receiver server.
+func StartMockReceiverServer() (*mockReceiverServer, error) {
 	addr := "127.0.0.1:0"
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
 	server := grpc.NewServer()
-	agentServer := &mockAgentServer{
+	receiverServer := &mockReceiverServer{
 		addr:       fmt.Sprintf("127.0.0.1:%d", lis.Addr().(*net.TCPAddr).Port),
 		grpcServer: server,
 		sqlMetas:   make(map[string]tipb.SQLMeta, 5000),
 		planMetas:  make(map[string]string, 5000),
 	}
-	agentServer.hang.beginTime.Store(time.Now())
-	agentServer.hang.endTime.Store(time.Now())
-	tipb.RegisterTopSQLAgentServer(server, agentServer)
+	receiverServer.hang.beginTime.Store(time.Now())
+	receiverServer.hang.endTime.Store(time.Now())
+	tipb.RegisterTopSQLAgentServer(server, receiverServer)
 
 	go func() {
 		err := server.Serve(lis)
 		if err != nil {
-			logutil.BgLogger().Warn("[top-sql] mock agent server serve failed", zap.Error(err))
+			logutil.BgLogger().Warn("[top-sql] mock receiver server serve failed", zap.Error(err))
 		}
 	}()
 
-	return agentServer, nil
+	return receiverServer, nil
 }
 
-func (svr *mockAgentServer) HangFromNow(duration time.Duration) {
+func (svr *mockReceiverServer) HangFromNow(duration time.Duration) {
 	now := time.Now()
 	svr.hang.beginTime.Store(now)
 	svr.hang.endTime.Store(now.Add(duration))
 }
 
 // mayHang will check the hanging period, and ensure to sleep through it
-func (svr *mockAgentServer) mayHang() {
+func (svr *mockReceiverServer) mayHang() {
 	now := time.Now()
 	beginTime := svr.hang.beginTime.Load().(time.Time)
 	endTime := svr.hang.endTime.Load().(time.Time)
@@ -85,7 +85,7 @@ func (svr *mockAgentServer) mayHang() {
 	}
 }
 
-func (svr *mockAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
+func (svr *mockReceiverServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
 	records := make([]*tipb.CPUTimeRecord, 0, 10)
 	for {
 		svr.mayHang()
@@ -103,7 +103,7 @@ func (svr *mockAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportC
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 
-func (svr *mockAgentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaServer) error {
+func (svr *mockReceiverServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaServer) error {
 	for {
 		svr.mayHang()
 		req, err := stream.Recv()
@@ -119,7 +119,7 @@ func (svr *mockAgentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaS
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 
-func (svr *mockAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMetaServer) error {
+func (svr *mockReceiverServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMetaServer) error {
 	for {
 		svr.mayHang()
 		req, err := stream.Recv()
@@ -135,7 +135,7 @@ func (svr *mockAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMet
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 
-func (svr *mockAgentServer) WaitCollectCnt(cnt int, timeout time.Duration) {
+func (svr *mockReceiverServer) WaitCollectCnt(cnt int, timeout time.Duration) {
 	start := time.Now()
 	svr.Lock()
 	old := len(svr.records)
@@ -154,7 +154,7 @@ func (svr *mockAgentServer) WaitCollectCnt(cnt int, timeout time.Duration) {
 	}
 }
 
-func (svr *mockAgentServer) GetSQLMetaByDigestBlocking(digest []byte, timeout time.Duration) (meta tipb.SQLMeta, exist bool) {
+func (svr *mockReceiverServer) GetSQLMetaByDigestBlocking(digest []byte, timeout time.Duration) (meta tipb.SQLMeta, exist bool) {
 	start := time.Now()
 	for {
 		svr.Lock()
@@ -167,7 +167,7 @@ func (svr *mockAgentServer) GetSQLMetaByDigestBlocking(digest []byte, timeout ti
 	}
 }
 
-func (svr *mockAgentServer) GetPlanMetaByDigestBlocking(digest []byte, timeout time.Duration) (normalizedPlan string, exist bool) {
+func (svr *mockReceiverServer) GetPlanMetaByDigestBlocking(digest []byte, timeout time.Duration) (normalizedPlan string, exist bool) {
 	start := time.Now()
 	for {
 		svr.Lock()
@@ -180,7 +180,7 @@ func (svr *mockAgentServer) GetPlanMetaByDigestBlocking(digest []byte, timeout t
 	}
 }
 
-func (svr *mockAgentServer) GetLatestRecords() []*tipb.CPUTimeRecord {
+func (svr *mockReceiverServer) GetLatestRecords() []*tipb.CPUTimeRecord {
 	svr.Lock()
 	records := svr.records
 	svr.records = [][]*tipb.CPUTimeRecord{}
@@ -192,11 +192,11 @@ func (svr *mockAgentServer) GetLatestRecords() []*tipb.CPUTimeRecord {
 	return records[len(records)-1]
 }
 
-func (svr *mockAgentServer) Address() string {
+func (svr *mockReceiverServer) Address() string {
 	return svr.addr
 }
 
-func (svr *mockAgentServer) Stop() {
+func (svr *mockReceiverServer) Stop() {
 	if svr.grpcServer != nil {
 		svr.grpcServer.Stop()
 	}

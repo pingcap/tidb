@@ -31,8 +31,14 @@ import (
 // ReportClient send data to the target server.
 type ReportClient interface {
 	Send(ctx context.Context, data reportData) error
+
+	// IsPending indicates that ReportClient is not expecting to receive records for now and may resume in the future.
 	IsPending() bool
+
+	// IsDown indicates that the client has been closed and can be cleared.
+	// Note that: once a ReportClient is closed, it cannot go back to be non-closed.
 	IsDown() bool
+
 	Close()
 }
 

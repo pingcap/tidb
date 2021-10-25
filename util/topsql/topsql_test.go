@@ -17,6 +17,8 @@ package topsql_test
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tipb/go-tipb"
+	"google.golang.org/grpc"
 	"testing"
 	"time"
 
@@ -107,7 +109,7 @@ func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 }
 
 func TestTopSQLReporter(t *testing.T) {
-	server, err := mockServer.StartMockAgentServer()
+	server, err := mockServer.StartMockReceiverServer()
 	require.NoError(t, err)
 	variable.TopSQLVariable.MaxStatementCount.Store(200)
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
@@ -175,6 +177,119 @@ func TestTopSQLReporter(t *testing.T) {
 		checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
 	}
 	require.Equal(t, 2, len(checkSQLPlanMap))
+}
+
+func TestTopSQLPubSub(t *testing.T) {
+	variable.TopSQLVariable.MaxStatementCount.Store(200)
+	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
+
+	cr := reporter.NewReportClientRegistry()
+	report := reporter.NewRemoteTopSQLReporter(cr)
+	defer report.Close()
+
+	server, err := mockServer.StartMockPublisherServer(mockPlanBinaryDecoderFunc, cr)
+	require.NoError(t, err)
+	defer server.Stop()
+
+	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{report})
+	conn, err := grpc.Dial(server.Address(), grpc.WithBlock(), grpc.WithInsecure())
+	require.NoError(t, err)
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := tipb.NewTopSQLPubSubClient(conn)
+	stream, err := client.Subscribe(ctx, &tipb.TopSQLSubRequest{})
+	require.NoError(t, err)
+
+	reqs := []struct {
+		sql  string
+		plan string
+	}{
+		{"select * from t where a=?", "point-get"},
+		{"select * from t where a>?", "table-scan"},
+		{"insert into t values (?)", ""},
+	}
+
+	closeCh := make(chan struct{})
+	defer close(closeCh)
+
+	digest2sql := make(map[string]string)
+	sql2plan := make(map[string]string)
+	for _, req := range reqs {
+		sql2plan[req.sql] = req.plan
+		sqlDigest := mock.GenSQLDigest(req.sql)
+		digest2sql[string(sqlDigest.Bytes())] = req.sql
+
+		go func(sql, plan string) {
+			for {
+				select {
+				case <-closeCh:
+					return
+				default:
+					mockExecuteSQL(sql, plan)
+				}
+			}
+		}(req.sql, req.plan)
+	}
+
+	sqlMetas := make(map[string]*tipb.SQLMeta)
+	planMetas := make(map[string]string)
+	records := make(map[string]*tipb.CPUTimeRecord)
+
+	for {
+		r, err := stream.Recv()
+		if err != nil {
+			break
+		}
+
+		if r.GetRecord() != nil {
+			rec := r.GetRecord()
+			if _, ok := records[string(rec.SqlDigest)]; !ok {
+				records[string(rec.SqlDigest)] = rec
+			} else {
+				cpu := records[string(rec.SqlDigest)]
+				if rec.PlanDigest != nil {
+					cpu.PlanDigest = rec.PlanDigest
+				}
+				cpu.RecordListTimestampSec = append(cpu.RecordListTimestampSec, rec.RecordListTimestampSec...)
+				cpu.RecordListCpuTimeMs = append(cpu.RecordListCpuTimeMs, rec.RecordListCpuTimeMs...)
+			}
+		} else if r.GetSqlMeta() != nil {
+			sql := r.GetSqlMeta()
+			if _, ok := sqlMetas[string(sql.SqlDigest)]; !ok {
+				sqlMetas[string(sql.SqlDigest)] = sql
+			}
+		} else if r.GetPlanMeta() != nil {
+			plan := r.GetPlanMeta()
+			if _, ok := planMetas[string(plan.PlanDigest)]; !ok {
+				planMetas[string(plan.PlanDigest)] = plan.NormalizedPlan
+			}
+		}
+	}
+
+	checkSQLPlanMap := map[string]struct{}{}
+	for i := range records {
+		record := records[i]
+		require.Greater(t, len(record.RecordListCpuTimeMs), 0)
+		require.Greater(t, record.RecordListCpuTimeMs[0], uint32(0))
+		sqlMeta, exist := sqlMetas[string(record.SqlDigest)]
+		require.True(t, exist)
+		expectedNormalizedSQL, exist := digest2sql[string(record.SqlDigest)]
+		require.True(t, exist)
+		require.Equal(t, expectedNormalizedSQL, sqlMeta.NormalizedSql)
+
+		expectedNormalizedPlan := sql2plan[expectedNormalizedSQL]
+		if expectedNormalizedPlan == "" || len(record.PlanDigest) == 0 {
+			require.Equal(t, len(record.PlanDigest), 0)
+			continue
+		}
+		normalizedPlan, exist := planMetas[string(record.PlanDigest)]
+		require.True(t, exist)
+		require.Equal(t, expectedNormalizedPlan, normalizedPlan)
+		checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
+	}
+	require.Equal(t, len(checkSQLPlanMap), 2)
 }
 
 func TestMaxSQLAndPlanTest(t *testing.T) {
