@@ -1620,6 +1620,8 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
+	variable.TopSQLVariable.InstanceEnable.Store(true)
+	defer variable.TopSQLVariable.InstanceEnable.Store(false)
 	collector := mockTopSQLTraceCPU.NewTopSQLCollector()
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
 

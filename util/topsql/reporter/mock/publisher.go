@@ -26,7 +26,7 @@ import (
 )
 
 type mockPublisherServer struct {
-	addr string
+	addr       string
 	grpcServer *grpc.Server
 }
 
