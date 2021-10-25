@@ -2088,21 +2088,20 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int, statsOptions *mod
 			if statsVer == statistics.Version2 {
 				valToSet = analyzeOptionDefaultV2[key]
 			}
-			if statsOptions == nil {
-				continue
-			}
-			switch key {
-			case ast.AnalyzeOptNumBuckets:
-				if statsOptions.Buckets > 0 {
-					valToSet = statsOptions.Buckets
-				}
-			case ast.AnalyzeOptNumTopN:
-				if statsOptions.TopN > 0 {
-					valToSet = statsOptions.TopN
-				}
-			case ast.AnalyzeOptNumSamples:
-				if statsOptions.SampleNum > 0 {
-					valToSet = statsOptions.SampleNum
+			if statsOptions != nil {
+				switch key {
+				case ast.AnalyzeOptNumBuckets:
+					if statsOptions.Buckets > 0 {
+						valToSet = statsOptions.Buckets
+					}
+				case ast.AnalyzeOptNumTopN:
+					if statsOptions.TopN > 0 {
+						valToSet = statsOptions.TopN
+					}
+				case ast.AnalyzeOptNumSamples:
+					if statsOptions.SampleNum > 0 {
+						valToSet = statsOptions.SampleNum
+					}
 				}
 			}
 			// analyzeOptionLimit could change, we can only check at planning instead of create/alter table
