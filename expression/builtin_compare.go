@@ -1390,7 +1390,6 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 			arg0.DeferredExpr = nil
 			arg0.ParamMarker = nil
-
 		} else {
 			return args
 		}
