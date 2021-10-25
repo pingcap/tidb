@@ -1835,9 +1835,6 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, tableOpts map[int64]map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{TableOpts: tableOpts}
 	for _, tbl := range as.TableNames {
-		if tbl.TableInfo.IsView() {
-			return nil, errors.Errorf("analyze view %s is not supported now.", tbl.Name.O)
-		}
 		if tbl.TableInfo.IsSequence() {
 			return nil, errors.Errorf("analyze sequence %s is not supported now.", tbl.Name.O)
 		}
@@ -2126,6 +2123,9 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	}
 	tableOpts := map[int64]map[ast.AnalyzeOptionType]uint64{}
 	for _, tbl := range as.TableNames {
+		if tbl.TableInfo.IsView() {
+			return nil, errors.Errorf("analyze view %s is not supported now.", tbl.Name.O)
+		}
 		user := b.ctx.GetSessionVars().User
 		var insertErr, selectErr error
 		if user != nil {
