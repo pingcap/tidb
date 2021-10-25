@@ -39,6 +39,9 @@ type collectorWrapper struct {
 }
 
 func TestTopSQLCPUProfile(t *testing.T) {
+	variable.TopSQLVariable.InstanceEnable.Store(true)
+	defer variable.TopSQLVariable.InstanceEnable.Store(false)
+
 	collector := mock.NewTopSQLCollector()
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
 	reqs := []struct {

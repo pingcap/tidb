@@ -285,7 +285,7 @@ func (sp *sqlCPUProfiler) IsEnabled() bool {
 // Because the GlobalSQLCPUProfiler keep calling pprof.StartCPUProfile to fetch SQL cpu stats, other place (such pprof profile HTTP API handler) call pprof.StartCPUProfile will be failed,
 // other place should call tracecpu.StartCPUProfile instead of pprof.StartCPUProfile.
 func StartCPUProfile(w io.Writer) error {
-	if variable.TopSQLInstanceEnabled() {
+	if GlobalSQLCPUProfiler.IsEnabled() {
 		return GlobalSQLCPUProfiler.startExportCPUProfile(w)
 	}
 	return pprof.StartCPUProfile(w)
