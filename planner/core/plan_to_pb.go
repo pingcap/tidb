@@ -261,12 +261,12 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 		return nil, errors.Trace(err)
 	}
 	ecExec := &tipb.ExchangeSender{
-		Tp:              e.ExchangeType,
-		EncodedTaskMeta: encodedTask,
-		PartitionKeys:   hashColPb,
-		Child:           child,
-		PartitionKeyTypes:           hashColTypes,
-		AllFieldTypes: 	 allFieldTypes,
+		Tp:                e.ExchangeType,
+		EncodedTaskMeta:   encodedTask,
+		PartitionKeys:     hashColPb,
+		Child:             child,
+		PartitionKeyTypes: hashColTypes,
+		AllFieldTypes:     allFieldTypes,
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
