@@ -200,7 +200,7 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 	return errors.Trace(err)
 }
 
-func (d *ddl) ModifyTablePlacement(ctx sessionctx.Context, ident ast.Ident, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (err error) {
+func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (err error) {
 	is := d.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -221,7 +221,7 @@ func (d *ddl) ModifyTablePlacement(ctx sessionctx.Context, ident ast.Ident, plac
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
 		SchemaName: schema.Name.L,
-		Type:       model.ActionModifyTablePlacement,
+		Type:       model.ActionAlterTablePlacement,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{placementPolicyRef, directPlacementOpts},
 	}
@@ -2817,7 +2817,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			}
 
 			if placementPolicyRef != nil || placementSettings != nil {
-				err = d.ModifyTablePlacement(sctx, ident, placementPolicyRef, placementSettings)
+				err = d.AlterTablePlacement(sctx, ident, placementPolicyRef, placementSettings)
 			}
 		case ast.AlterTableSetTiFlashReplica:
 			err = d.AlterTableSetTiFlashReplica(sctx, ident, spec.TiFlashReplica)

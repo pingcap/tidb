@@ -1413,7 +1413,7 @@ func onAlterTablePartitionOptions(d *ddlCtx, t *meta.Meta, job *model.Job) (ver 
 	return ver, nil
 }
 
-func onModifyTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onAlterTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	policyRefInfo := &model.PolicyRefInfo{}
 	placementSettings := &model.PlacementSettings{}
 	err = job.DecodeArgs(&policyRefInfo, &placementSettings)
