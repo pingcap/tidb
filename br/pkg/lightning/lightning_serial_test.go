@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInitEnv( t *testing.T) {
+func TestInitEnv(t *testing.T) {
 	cfg := &config.GlobalConfig{
 		App: config.GlobalLightning{StatusAddr: ":45678"},
 	}
@@ -42,7 +42,7 @@ func TestInitEnv( t *testing.T) {
 	require.EqualError(t, err, "can't use directory as log file name")
 }
 
-func TestRun( t *testing.T) {
+func TestRun(t *testing.T) {
 	globalConfig := config.NewGlobalConfig()
 	globalConfig.TiDB.Host = "test.invalid"
 	globalConfig.TiDB.Port = 4000
