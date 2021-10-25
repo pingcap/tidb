@@ -2105,7 +2105,6 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int, statsOptions *mod
 			}
 			optMap[opt.Type] = v
 		}
-		optMap[opt.Type] = opt.Value
 	}
 	if sampleNum > 0 && sampleRate > 0 {
 		return nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them.")
