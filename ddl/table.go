@@ -292,12 +292,6 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	var physicalTableIDs = []int64{tblInfo.ID}
-	if tblInfo.Partition != nil {
-		for _, p := range tblInfo.Partition.Definitions {
-			physicalTableIDs = append(physicalTableIDs, p.ID)
-		}
-	}
 
 	originalState := job.SchemaState
 	switch tblInfo.State {
@@ -339,12 +333,8 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 				break
 			}
 		}
-		// Clean the placement bundle to PD.
-		err = dropRuleBundles(d, physicalTableIDs)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
+		// Placement rules cannot be removed immediately after drop table / truncate table, because the
+		// tables can be flashed back or recovered, therefore it moved to doGCPlacementRules in gc_worker.go.
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
