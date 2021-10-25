@@ -163,16 +163,20 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		if primaryIndex >= len(regions) || regions[primaryIndex] != primaryRegion {
 			return nil, fmt.Errorf("%w: primary region must be included in regions", ErrInvalidPlacementOptions)
 		}
-	} else if followers == 0 {
-		return nil, fmt.Errorf("%w: empty options", ErrInvalidPlacementOptions)
 	}
 
 	var Rules []*Rule
 
 	switch strings.ToLower(schedule) {
 	case "", "even":
-		primaryCount := uint64(math.Ceil(float64(followers+1) / float64(len(regions))))
-		Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+		primaryCount := uint64(0)
+		if len(regions) == 0 {
+			primaryCount = followers + 1
+			Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect()))
+		} else {
+			primaryCount = uint64(math.Ceil(float64(followers+1) / float64(len(regions))))
+			Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+		}
 
 		if len(regions) > 1 && followers+1 > primaryCount {
 			// delete primary from regions
@@ -182,7 +186,11 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 	case "majority_in_primary":
 		// calculate how many replicas need to be in the primary region for quorum
 		primaryCount := uint64(math.Ceil(float64(followers+1)/2 + 1))
-		Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+		if len(regions) == 0 {
+			Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect()))
+		} else {
+			Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+		}
 
 		if len(regions) > 1 && followers+1 > primaryCount {
 			// delete primary from regions

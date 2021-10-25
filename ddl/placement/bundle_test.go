@@ -567,7 +567,9 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	tests = append(tests, TestCase{
 		name:  "empty 1",
 		input: &model.PlacementSettings{},
-		err:   ErrInvalidPlacementOptions,
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect()),
+		},
 	})
 
 	tests = append(tests, TestCase{
@@ -579,7 +581,7 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	tests = append(tests, TestCase{
 		name: "empty 3",
 		input: &model.PlacementSettings{
-			LearnerConstraints: "",
+			LearnerConstraints: "[+region=us]",
 		},
 		err: ErrInvalidPlacementOptions,
 	})

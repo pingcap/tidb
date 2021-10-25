@@ -55,8 +55,8 @@ func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 	tk.MustExec("create placement policy x " +
 		"LEARNERS=1 " +
 		"LEARNER_CONSTRAINTS=\"[+region=cn-west-1]\" " +
-		"VOTERS=3 " +
-		"VOTER_CONSTRAINTS=\"[+disk=ssd]\"")
+		"FOLLOWERS=3 " +
+		"FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\"")
 
 	checkFunc := func(policyInfo *model.PolicyInfo) {
 		c.Assert(policyInfo.ID != 0, Equals, true)
@@ -152,7 +152,7 @@ func (s *testDBSuite6) TestPlacementValidation(c *C) {
 		},
 		{
 			name: "constraints may be incompatible with itself",
-			settings: "LEARNERS=1 " +
+			settings: "FOLLOWERS=3 LEARNERS=1" +
 				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-2]\"",
 			errmsg: "invalid label constraints format: should be [constraint1, ...] (error conflicting label constraints: '+zone=cn-west-2' and '+zone=cn-west-1'), {constraint1: cnt1, ...} (error yaml: unmarshal errors:\n" +
 				"  line 1: cannot unmarshal !!seq into map[string]int), or any yaml compatible representation: invalid LearnerConstraints",

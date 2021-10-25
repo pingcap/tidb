@@ -75,7 +75,7 @@ func (s *testSuite5) TestShowPlacement(c *C) {
 
 	tk.MustExec("CREATE TABLE t4 (id INT) placement policy pa1 PARTITION BY RANGE (id) (" +
 		"PARTITION p0 VALUES LESS THAN (100) placement policy pa2," +
-		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"," +
+		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\" FOLLOWERS=4," +
 		"PARTITION p2 VALUES LESS THAN (10000)" +
 		")")
 	defer tk.MustExec("drop table if exists t4")
@@ -147,7 +147,7 @@ func (s *testSuite5) TestShowPlacementPrivilege(c *C) {
 	tk.MustExec("create table t2 (id int) LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2")
 	defer tk.MustExec("drop table if exists t2")
 	tk.MustExec("CREATE TABLE t3 (id INT) PARTITION BY RANGE (id) (" +
-		"PARTITION p1 VALUES LESS THAN (100) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"" +
+		"PARTITION p1 VALUES LESS THAN (100) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\" FOLLOWERS=4" +
 		")")
 	defer tk.MustExec("drop table if exists t3")
 	tk.MustExec("create table db2.t1 (id int) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2")
@@ -246,7 +246,7 @@ func (s *testSuite5) TestShowPlacementForTableAndPartition(c *C) {
 	// table do not display partition placement
 	tk.MustExec("create table t4 (id int) LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 PARTITION BY RANGE (id) (" +
 		"PARTITION p0 VALUES LESS THAN (100), " +
-		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"," +
+		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\", FOLLOWERS=4" +
 		"PARTITION p2 VALUES LESS THAN (10000) PLACEMENT POLICY p1" +
 		")")
 	defer tk.MustExec("drop table if exists t4")
@@ -386,7 +386,7 @@ func (s *testSuite5) TestShowPlacementForTableAndPartitionPrivilege(c *C) {
 
 	// prepare tables
 	tk.MustExec("create table t1 (id int) placement policy p1 PARTITION BY RANGE (id) (" +
-		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"" +
+		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\" FOLLOWERS=4" +
 		")")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t2 (id int) LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2")
