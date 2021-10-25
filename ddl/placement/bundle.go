@@ -85,10 +85,14 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 			return nil, fmt.Errorf("%w: LeaderConstraints conflicts with Constraints", err)
 		}
 	}
-	Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
+	if len(LeaderConstraints) > 0 {
+		Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
+	} else if followerCount == 0 {
+		return nil, fmt.Errorf("%w: you must at least provide common/leader constraints, or set some followers", ErrInvalidPlacementOptions)
+	}
 
 	if followerCount > 0 {
-		FollowerRules, err := NewRules(Follower, followerCount, followerConstraints)
+		FollowerRules, err := NewRules(Voter, followerCount, followerConstraints)
 		if err != nil {
 			return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
 		}
