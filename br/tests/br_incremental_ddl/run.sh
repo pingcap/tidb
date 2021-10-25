@@ -25,7 +25,7 @@ echo "load data..."
 run_sql "CREATE DATABASE IF NOT EXISTS $DB;"
 # create table
 run_sql "CREATE TABLE IF NOT EXISTS ${DB}.${TABLE} (c1 INT);"
-run_sql "CREATE TABLE IF NOT EXISTS ${DB}.${TABLE}_rename (c CHAR(255);"
+run_sql "CREATE TABLE IF NOT EXISTS ${DB}.${TABLE}_rename (c CHAR(255));"
 # insert records
 for i in $(seq $ROW_COUNT); do
     run_sql "INSERT INTO ${DB}.${TABLE}(c1) VALUES ($i);"
