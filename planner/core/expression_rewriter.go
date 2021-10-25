@@ -1452,8 +1452,9 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 				var isExceptional bool
 				if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{c}) {
 					if c.GetType().EvalType() == types.ETString {
-						// If the constant type is string, we should uncache the plan.
-						// And change the laze constant to normal constant.
+						// To keep the result be compatible with MySQL, refine
+						// `int non-constant <cmp> str constant` here and skip
+						// this refine operation in all other cases for safety.
 						er.sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 						c.DeferredExpr = nil
 						c.ParamMarker = nil

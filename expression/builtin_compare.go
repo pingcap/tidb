@@ -1368,7 +1368,8 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
 // `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`. It also handles comparing year type
 // with int constant if the int constant falls into a sensible year representation.
-// When plan cache enable, we can only use refineArgs for `int column <cmp> string constant`.
+// This refine operation depends on the values of these args, but these values can change when using plan-cache.
+// So we have to skip this operation or mark the plan as over-optimized when using plan-cache.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0IsInt := arg0Type.EvalType() == types.ETInt
@@ -1380,8 +1381,9 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
 	if MaybeOverOptimized4PlanCache(ctx, args) {
-		// If the constant type is string, we should uncache the plan.
-		// And change the laze constant to normal constant.
+		// To keep the result be compatible with MySQL, refine
+		// `int non-constant <cmp> str constant` here and skip this refine operation
+		// in all other cases for safety.
 		if arg0IsInt && !arg0IsCon && arg1IsString && arg1IsCon {
 			ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 			arg1.DeferredExpr = nil
