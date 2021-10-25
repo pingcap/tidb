@@ -2439,6 +2439,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+	se.GetSessionVars().InRestrictedSQL = true
 
 	// get system tz from mysql.tidb
 	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
@@ -2551,11 +2552,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	se8, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	dom.PlanReplayerLoop(se8)
+	dom.PlanReplayerLoop()
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
