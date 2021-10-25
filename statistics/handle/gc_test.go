@@ -54,7 +54,6 @@ func createTestKitAndDom(t *testing.T) (*testkit.TestKit, *domain.Domain, func()
 }
 
 func TestGCStats(t *testing.T) {
-	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -87,7 +86,6 @@ func TestGCStats(t *testing.T) {
 }
 
 func TestGCPartition(t *testing.T) {
-	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testkit.WithPruneMode(testKit, variable.Static, func() {
@@ -125,7 +123,6 @@ func TestGCPartition(t *testing.T) {
 }
 
 func TestGCExtendedStats(t *testing.T) {
-	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("set session tidb_enable_extended_stats = on")
