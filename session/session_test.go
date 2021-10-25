@@ -26,6 +26,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/docker/go-units"
@@ -60,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	tk2 "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -182,11 +184,7 @@ func clearETCD(ebd kv.EtcdBackend) error {
 	return nil
 }
 
-func createTestSuite(assert func(error), s *testSessionSuiteBase) *testSessionSuiteBase {
-	if s == nil {
-		s = new(testSessionSuiteBase)
-	}
-
+func createTestSuite(assert func(error), s *testSessionSuiteBase) {
 	if *withTiKV {
 		initPdAddrs()
 		s.pdAddr = <-pdAddrChan
@@ -217,8 +215,6 @@ func createTestSuite(assert func(error), s *testSessionSuiteBase) *testSessionSu
 	var err error
 	s.dom, err = session.BootstrapSession(s.store)
 	assert(err)
-
-	return s
 }
 
 func initPdAddrs() {
@@ -250,6 +246,24 @@ func (s *testSessionSuiteBase) cleanSuite(assert func(error)) {
 func (s *testSessionSuiteBase) TearDownSuite(c *C) {
 	defer testleak.AfterTest(c)()
 	s.cleanSuite(func(err error) { c.Assert(err, IsNil) })
+}
+
+func cleanupStore(t *testing.T, store kv.Storage) {
+	tk := tk2.NewTestKit(t, store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show full tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tableType := tb[1]
+		switch tableType {
+		case "VIEW":
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		case "BASE TABLE":
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		default:
+			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
+		}
+	}
 }
 
 func (s *testSessionSuiteBase) TearDownTest(c *C) {

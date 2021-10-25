@@ -23,19 +23,31 @@ import (
 )
 
 func TestIsolation(t *testing.T) {
-	s := createTestSuite(func(err error) { require.NoError(t, err) }, nil)
+	tests := []struct {
+		name string
+		f    func(*testSessionSuiteBase) func(*testing.T)
+	}{
+		{"P0DirtyWrite", SubTestP0DirtyWrite},
+		{"P1DirtyRead", SubTestP1DirtyRead},
+		{"P2NonRepeatableRead", SubTestP2NonRepeatableRead},
+		{"P3Phantom", SubTestP3Phantom},
+		{"P4LostUpdate", SubTestP4LostUpdate},
+		{"A3Phantom", SubTestA3Phantom},
+		{"A5AReadSkew", SubTestA5AReadSkew},
+		{"A5BWriteSkew", SubTestA5BWriteSkew},
+		{"ReadAfterWrite", SubTestReadAfterWrite},
+		{"PhantomReadInInnodb", SubTestPhantomReadInInnodb},
+	}
+
+	s := new(testSessionSuiteBase)
+	createTestSuite(func(err error) { require.NoError(t, err) }, s)
 	defer s.cleanSuite(func(err error) { require.NoError(t, err) })
 
-	t.Run("P0DirtyWrite", SubTestP0DirtyWrite(s))
-	t.Run("P1DirtyRead", SubTestP1DirtyRead(s))
-	t.Run("P2NonRepeatableRead", SubTestP2NonRepeatableRead(s))
-	t.Run("P3Phantom", SubTestP3Phantom(s))
-	t.Run("P4LostUpdate", SubTestP4LostUpdate(s))
-	t.Run("A3Phantom", SubTestA3Phantom(s))
-	t.Run("A5AReadSkew", SubTestA5AReadSkew(s))
-	t.Run("A5BWriteSkew", SubTestA5BWriteSkew(s))
-	t.Run("ReadAfterWrite", SubTestReadAfterWrite(s))
-	t.Run("PhantomReadInInnodb", SubTestPhantomReadInInnodb(s))
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, test.f(s))
+		cleanupStore(t, s.store)
+	}
 }
 
 /*
