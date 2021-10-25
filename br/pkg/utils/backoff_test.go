@@ -113,3 +113,32 @@ func (s *testBackofferSuite) TestBackoffWithRetryableError(c *C) {
 		berrors.ErrKVEpochNotMatch,
 	})
 }
+
+func (s *testBackofferSuite) TestPdBackoffWithRetryableError(c *C) {
+	var counter int
+	backoffer := utils.NewPDReqBackoffer()
+	gRPCError := status.Error(codes.Unavailable, "transport is closing")
+	err := utils.WithRetry(context.Background(), func() error {
+		defer func() { counter++ }()
+		return gRPCError
+	}, backoffer)
+	c.Assert(counter, Equals, 16)
+	c.Assert(multierr.Errors(err), DeepEquals, []error{
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+		gRPCError,
+	})
+}
