@@ -726,6 +726,24 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	})
 
 	tests = append(tests, TestCase{
+		name: "direct syntax: lack count 1",
+		input: &model.PlacementSettings{
+			LeaderConstraints:   "[+region=as]",
+			FollowerConstraints: "[-region=us]",
+		},
+		err: ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: lack count 1",
+		input: &model.PlacementSettings{
+			LeaderConstraints:  "[+region=as]",
+			LearnerConstraints: "[-region=us]",
+		},
+		err: ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
 		name: "direct syntax: conflicts 1",
 		input: &model.PlacementSettings{
 			Constraints:       "[+region=us]",

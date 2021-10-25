@@ -104,6 +104,8 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 			}
 		}
 		Rules = append(Rules, FollowerRules...)
+	} else if followerConstraints != "" {
+		return nil, fmt.Errorf("%w: specify follower constraints without specify how many followers to be placed", ErrInvalidPlacementOptions)
 	}
 
 	if learnerCount > 0 {
@@ -119,6 +121,8 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 			}
 		}
 		Rules = append(Rules, LearnerRules...)
+	} else if learnerConstraints != "" {
+		return nil, fmt.Errorf("%w: specify learner constraints without specify how many followers to be placed", ErrInvalidPlacementOptions)
 	}
 
 	return &Bundle{Rules: Rules}, nil
