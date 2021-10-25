@@ -6427,20 +6427,6 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 }
 
 func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	meta := tb.Meta()
-	if meta.Partition == nil {
-		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
-	}
-
-	partitionID, err := tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	var policyRefInfo *model.PolicyRefInfo
 	var placementSettings *model.PlacementSettings
 	if spec.Options != nil {
@@ -6469,6 +6455,31 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 		}
 	}
 
+	if policyRefInfo != nil || placementSettings != nil {
+		err = d.AlterTablePartitionPlacement(ctx, ident, spec, policyRefInfo, placementSettings)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
+func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent ast.Ident, spec *ast.AlterTableSpec, policyRefInfo *model.PolicyRefInfo, placementSettings *model.PlacementSettings) (err error) {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, tableIdent)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tblInfo := tb.Meta()
+	if tblInfo.Partition == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	partitionID, err := tables.FindPartitionByName(tblInfo, spec.PartitionNames[0].L)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	policyRefInfo, placementSettings, err = checkAndNormalizePlacement(ctx, policyRefInfo, placementSettings)
 	if err != nil {
 		return errors.Trace(err)
@@ -6476,7 +6487,7 @@ func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
-		TableID:    meta.ID,
+		TableID:    tblInfo.ID,
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAlterTablePartitionPolicy,
 		BinlogInfo: &model.HistoryInfo{},
