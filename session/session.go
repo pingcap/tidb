@@ -2089,7 +2089,9 @@ func (s *session) NewTxn(ctx context.Context) error {
 		IsStaleness: false,
 		TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
 	}
-	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
+	if s.sessionVars.TemporaryTableData != nil {
+		s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
+	}
 	return nil
 }
 
