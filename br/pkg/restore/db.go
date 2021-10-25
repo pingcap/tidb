@@ -158,14 +158,6 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables 
 			}
 		}
 		restoreMetaSQL = fmt.Sprintf(setValFormat, table.Info.AutoIncID)
-	case utils.NeedAutoID(table.Info):
-		restoreMetaSQL = fmt.Sprintf(
-			"alter table %s.%s auto_increment = %d;",
-			utils.EncloseName(table.DB.Name.O),
-			utils.EncloseName(table.Info.Name.O),
-			table.Info.AutoIncID)
-	}
-	if ddlTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}] {
 		err = db.se.Execute(ctx, restoreMetaSQL)
 		if err != nil {
 			log.Error("restore meta sql failed",
@@ -175,20 +167,34 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables 
 				zap.Error(err))
 			return errors.Trace(err)
 		}
-		if table.Info.PKIsHandle && table.Info.ContainsAutoRandomBits() {
-			alterAutoRandIDSQL := fmt.Sprintf(
+	// only table exists in incremental restore should do alter after creation.
+	case ddlTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
+		if utils.NeedAutoID(table.Info) {
+			restoreMetaSQL = fmt.Sprintf(
+				"alter table %s.%s auto_increment = %d;",
+				utils.EncloseName(table.DB.Name.O),
+				utils.EncloseName(table.Info.Name.O),
+				table.Info.AutoIncID)
+		} else if table.Info.PKIsHandle && table.Info.ContainsAutoRandomBits() {
+			restoreMetaSQL = fmt.Sprintf(
 				"alter table %s.%s auto_random_base = %d",
 				utils.EncloseName(table.DB.Name.O),
 				utils.EncloseName(table.Info.Name.O),
 				table.Info.AutoRandID)
-			err = db.se.Execute(ctx, alterAutoRandIDSQL)
-			if err != nil {
-				log.Error("restore auto random id failed",
-					zap.String("query", alterAutoRandIDSQL),
-					zap.Stringer("db", table.DB.Name),
-					zap.Stringer("table", table.Info.Name),
-					zap.Error(err))
-			}
+		} else {
+			log.Info("table exists in incremental ddl jobs, but don't need to be altered",
+				zap.Stringer("db", table.DB.Name),
+				zap.Stringer("table", table.Info.Name))
+			return nil
+		}
+		err = db.se.Execute(ctx, restoreMetaSQL)
+		if err != nil {
+			log.Error("restore meta sql failed",
+				zap.String("query", restoreMetaSQL),
+				zap.Stringer("db", table.DB.Name),
+				zap.Stringer("table", table.Info.Name),
+				zap.Error(err))
+			return errors.Trace(err)
 		}
 	}
 	return errors.Trace(err)
