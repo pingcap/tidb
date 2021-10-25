@@ -206,11 +206,6 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	tidbCfg := config.GetGlobalConfig()
-	if tidbCfg.Store != "tikv" {
-		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
-		return nil
-	}
-
 	cfg := task.Config{
 		TLS: task.TLSConfig{
 			CA:   tidbCfg.Security.ClusterSSLCA,
@@ -243,6 +238,11 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		}
 	default:
 		break
+	}
+
+	if tidbCfg.Store != "tikv" {
+		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
+		return nil
 	}
 
 	cfg.Storage = storageURL.String()
