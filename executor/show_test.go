@@ -962,12 +962,12 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin STATS_BUCKETS=1,STATS_TOPN=1 "))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! STATS_BUCKETS=1,STATS_TOPN=1 */"))
 	tk.MustExec("alter table t STATS_OPTIONS=\"BUCKETS=2,TOPN=2\"")
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin STATS_BUCKETS=2,STATS_TOPN=2 "))
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! STATS_BUCKETS=2,STATS_TOPN=2 */"))
 	tk.MustExec("drop table t")
 }
 

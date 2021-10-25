@@ -1063,7 +1063,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.StatsOptions != nil {
-		fmt.Fprintf(buf, " STATS_BUCKETS=%d,STATS_TOPN=%d ", tableInfo.StatsOptions.Buckets, tableInfo.StatsOptions.TopN)
+		fmt.Fprintf(buf, " /*T! STATS_BUCKETS=%d,STATS_TOPN=%d */", tableInfo.StatsOptions.Buckets, tableInfo.StatsOptions.TopN)
 	}
 
 	if len(tableInfo.Comment) > 0 {
