@@ -1410,7 +1410,6 @@ func onAlterTablePartitionOptions(d *ddlCtx, t *meta.Meta, job *model.Job) (ver 
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-
 	return ver, nil
 }
 
