@@ -90,6 +90,10 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 
 	dbInfo.PlacementPolicyRef, dbInfo.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts)
 	if err != nil {
+		if !ctx.GetSessionVars().EnablePlacementChecks && errors.ErrorEqual(err, infoschema.ErrPlacementPolicyNotExists) {
+			dbInfo.PlacementPolicyRef = nil
+			dbInfo.DirectPlacementOpts = nil
+		}
 		return errors.Trace(err)
 	}
 
@@ -1999,7 +2003,12 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
-		return err
+		if !ctx.GetSessionVars().EnablePlacementChecks && errors.ErrorEqual(err, infoschema.ErrPlacementPolicyNotExists) {
+			tbInfo.DirectPlacementOpts =  schema.DirectPlacementOpts
+			tbInfo.PlacementPolicyRef = schema.PlacementPolicyRef
+		} else {
+			return err
+		}
 	}
 
 	onExist := OnExistError
