@@ -6594,8 +6594,12 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	if err != nil {
 		return err
 	}
+	if t.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+		return nil
+	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
+		SchemaName: schema.Name.L,
 		TableID:    t.Meta().ID,
 		Type:       model.ActionAlterCacheTable,
 		BinlogInfo: &model.HistoryInfo{},
