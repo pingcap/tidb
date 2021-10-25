@@ -122,7 +122,7 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 		}
 		Rules = append(Rules, LearnerRules...)
 	} else if learnerConstraints != "" {
-		return nil, fmt.Errorf("%w: specify learner constraints without specify how many followers to be placed", ErrInvalidPlacementOptions)
+		return nil, fmt.Errorf("%w: specify learner constraints without specify how many learners to be placed", ErrInvalidPlacementOptions)
 	}
 
 	return &Bundle{Rules: Rules}, nil
@@ -149,6 +149,9 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 	}
 
 	followers := options.Followers
+	if followers == 0 {
+		followers = 2
+	}
 	schedule := options.Schedule
 
 	primaryIndex := 0

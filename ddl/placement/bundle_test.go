@@ -591,7 +591,7 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			Regions:       "us",
 		},
 		output: []*Rule{
-			NewRule(Voter, 1, NewConstraintsDirect(
+			NewRule(Voter, 3, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
 		},
