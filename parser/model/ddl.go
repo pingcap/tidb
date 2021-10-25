@@ -86,6 +86,7 @@ const (
 	ActionDropPlacementPolicy           ActionType = 53
 	ActionAlterTablePartitionPolicy     ActionType = 54
 	ActionModifySchemaDefaultPlacement  ActionType = 55
+	ActionAlterTableStatsOptions        ActionType = 56
 )
 
 var actionMap = map[ActionType]string{
@@ -142,6 +143,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterPlacementPolicy:          "alter placement policy",
 	ActionDropPlacementPolicy:           "drop placement policy",
 	ActionModifySchemaDefaultPlacement:  "modify schema default placement",
+	ActionAlterTableStatsOptions:        "alter table statistics options",
 }
 
 // String return current ddl action in string
