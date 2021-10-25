@@ -231,3 +231,11 @@ func RedactAny(fieldKey string, key interface{}) zap.Field {
 	}
 	return zap.Any(fieldKey, key)
 }
+
+// Redact replaces the zap field by a '?' if redaction is turned on.
+func Redact(field zap.Field) zap.Field {
+	if redact.NeedRedact() {
+		return zap.String(field.Key, "?")
+	}
+	return field
+}
