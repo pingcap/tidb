@@ -131,6 +131,15 @@ func renewEmpty(chk *Chunk) *Chunk {
 	return newChk
 }
 
+func (c *Chunk) resetForReuse() {
+	for i := 0; i < len(c.columns); i++ {
+		c.columns[i] = nil
+	}
+	columns := c.columns[:0]
+	// Keep only the empty columns array space, reset other fields.
+	*c = Chunk{columns: columns}
+}
+
 // MemoryUsage returns the total memory usage of a Chunk in bytes.
 // We ignore the size of Column.length and Column.nullCount
 // since they have little effect of the total memory usage.

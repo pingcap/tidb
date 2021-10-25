@@ -28,70 +28,91 @@ type Allocator interface {
 }
 
 // NewAllocator creates an Allocator.
-func NewAllocator() Allocator {
+func NewAllocator() *allocator {
 	ret := &allocator{}
 	ret.columnAlloc.init()
 	return ret
 }
 
-// allocator try to reuse objects at the chunk column level.
+var _ Allocator = &allocator{}
+
+// allocator try to reuse objects.
 // It uses `poolColumnAllocator` to alloc chunk column objects.
 // The allocated chunks are recorded in the `allocated` array.
 // After Reset(), those chunks are decoupled into chunk column objects and get
 // into `poolColumnAllocator` again for reuse.
 type allocator struct {
-	allocated   []Chunk
+	allocated   []*Chunk
+	free        []*Chunk
 	columnAlloc poolColumnAllocator
 }
 
 // Alloc implements the Allocator interface.
 func (a *allocator) Alloc(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
-	a.allocated = append(a.allocated, Chunk{
-		columns:      make([]*Column, 0, len(fields)),
-		capacity:     mathutil.Min(cap, maxChunkSize),
-		requiredRows: maxChunkSize,
-	})
-	chk := &a.allocated[len(a.allocated)-1]
+	var chk *Chunk
+	// Try to alloc from the free list.
+	if len(a.free) > 0 {
+		chk = a.free[len(a.free)-1]
+		a.free = a.free[:len(a.free)-1]
+	} else {
+		chk = &Chunk{columns: make([]*Column, 0, len(fields))}
+	}
 
+	// Init the chunk fields.
+	chk.capacity = mathutil.Min(cap, maxChunkSize)
+	chk.requiredRows = maxChunkSize
+	// Allocate the chunk columns from the pool column allocator.
 	for _, f := range fields {
 		chk.columns = append(chk.columns, a.columnAlloc.NewColumn(f, chk.capacity))
 	}
 
+	a.allocated = append(a.allocated, chk)
 	return chk
 }
 
+const (
+	maxFreeChunks         = 64
+	maxFreeColumnsPerType = 256
+)
+
 // Reset implements the Allocator interface.
 func (a *allocator) Reset() {
-	for i := 0; i < len(a.allocated); i++ {
-		chk := &a.allocated[i]
-		// Decouple Chunk into Chunk Column objects for reuse.
+	a.free = a.free[:0]
+	for i, chk := range a.allocated {
+		a.allocated[i] = nil
+		// Decouple chunk into chunk column objects and put them back to the column allocator for reuse.
 		for _, col := range chk.columns {
 			a.columnAlloc.put(col)
 		}
-		// Reset all the fields
-		*chk = Chunk{}
+		// Reset the chunk and put it to the free list for reuse.
+		chk.resetForReuse()
+
+		if len(a.free) < maxFreeChunks { // Don't cache too much data.
+			a.free = append(a.free, chk)
+		}
 	}
 	a.allocated = a.allocated[:0]
 }
 
+var _ ColumnAllocator = &poolColumnAllocator{}
+
 type poolColumnAllocator struct {
-	pool map[int]freeList
+	pool map[int]*freeList
 }
 
 // poolColumnAllocator implements the ColumnAllocator interface.
-func (alloc *poolColumnAllocator) NewColumn(ft *types.FieldType, cap int) *Column {
+func (alloc *poolColumnAllocator) NewColumn(ft *types.FieldType, count int) *Column {
 	typeSize := getFixedLen(ft)
-	if l, ok := alloc.pool[typeSize]; ok {
-		if !l.empty() {
-			col := l.pop()
-			return col
-		}
+	l := alloc.pool[typeSize]
+	if l != nil && !l.empty() {
+		col := l.pop()
+		return col
 	}
-	return newColumn(typeSize, cap)
+	return newColumn(typeSize, count)
 }
 
 func (alloc *poolColumnAllocator) init() {
-	alloc.pool = make(map[int]freeList)
+	alloc.pool = make(map[int]*freeList)
 	return
 }
 
@@ -101,14 +122,12 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 		return
 	}
 
-	l, ok := alloc.pool[typeSize]
-	if !ok {
-		l = freeList{
+	l := alloc.pool[typeSize]
+	if l == nil {
+		l = &freeList{
 			data: make([]*Column, 0, 8),
 		}
-		l.push(col)
 		alloc.pool[typeSize] = l
-		return
 	}
 	l.push(col)
 	return
@@ -129,5 +148,9 @@ func (l *freeList) pop() *Column {
 }
 
 func (l *freeList) push(c *Column) {
+	if len(l.data) >= maxFreeColumnsPerType {
+		// Don't cache too much to save memory.
+		return
+	}
 	l.data = append(l.data, c)
 }

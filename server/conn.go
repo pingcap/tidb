@@ -999,7 +999,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
-		cc.chunkAlloc.Reset()
 		cc.alloc.Reset()
 		// close connection when idle time is more than wait_timeout
 		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
@@ -1032,7 +1031,9 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 
 		startTime := time.Now()
-		if err = cc.dispatch(ctx, data); err != nil {
+		err = cc.dispatch(ctx, data)
+		cc.chunkAlloc.Reset()
+		if err != nil {
 			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
