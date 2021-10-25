@@ -167,7 +167,7 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables 
 				zap.Error(err))
 			return errors.Trace(err)
 		}
-	// only table exists in incremental restore should do alter after creation.
+	// only table exists in ddlJobs during incremental restoration should do alter after creation.
 	case ddlTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
 		if utils.NeedAutoID(table.Info) {
 			restoreMetaSQL = fmt.Sprintf(

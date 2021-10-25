@@ -1074,9 +1074,8 @@ func (rc *Client) IsSkipCreateSQL() bool {
 func (rc *Client) DDLJobsMap() map[UniqueTableName]bool {
 	m := make(map[UniqueTableName]bool)
 	for _, job := range rc.ddlJobs {
-		if job.Type == model.ActionTruncateTable ||
-			job.Type == model.ActionCreateTable ||
-			job.Type == model.ActionRenameTable {
+		switch job.Type {
+		case model.ActionTruncateTable, model.ActionCreateTable, model.ActionRenameTable:
 			m[UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}] = true
 		}
 	}
