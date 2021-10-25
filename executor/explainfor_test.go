@@ -822,7 +822,7 @@ func (s *testPrepareSerialSuite) TestIssue28696(c *C) {
 	c.Assert(res.Rows()[4][0], Matches, ".*TableRowIDScan.*")
 }
 
-func (s *testPrepareSerialSuite) TestIssue28710(c *C) {
+func (s *testPrepareSerialSuite) TestIndexMerge(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	orgEnable := core.PreparedPlanCacheEnabled()
@@ -890,4 +890,29 @@ func (s *testPrepareSerialSuite) TestIssue28710(c *C) {
 	c.Assert(res.Rows()[2][4], Equals, "range:(0,3), keep order:false, stats:pseudo")
 	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
 	c.Assert(res.Rows()[3][4], Equals, "range:(1,+inf], keep order:false, stats:pseudo")
+
+	// test for prefix index
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t1(a int primary key, b varchar(255), c int, index idx_c(c));")
+	tk.MustExec("create unique index b on t1(b(3));")
+	tk.MustExec("insert into t1 values(1,'abcdfsafd',1),(2,'addfdsafd',2),(3,'ddcdsaf',3),(4,'bbcsa',4);")
+	tk.MustExec("prepare stmt from 'select /*+ USE_INDEX_MERGE(t1, primary, idx_b, idx_c) */ * from t1 where b = ? or a > 10 or c > 10")
+	tk.MustExec("set @a='bbcsa', @b='ddcdsaf';")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("4 'bbcsa' 4"))
+
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
+
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 'ddcdsaf' 3"))
+	// TODO: should use plan cache here
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 'ddcdsaf' 3"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
 }
