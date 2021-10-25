@@ -901,6 +901,9 @@ func (h *Handle) getAutoAnalyzeParameters() map[string]string {
 }
 
 func (h *Handle) getAutoAnalyzeOptions(statsOptions *model.StatsOptions) string {
+	if statsOptions == nil {
+		return ""
+	}
 	var optBuilder strings.Builder
 	buckets := statsOptions.Buckets
 	if buckets > 0 {
