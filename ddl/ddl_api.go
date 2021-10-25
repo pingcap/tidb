@@ -2411,7 +2411,7 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 	return nil
 }
 
-func SetStatsOption(statsOptions *model.StatsOptions, statsOptionType ast.StatsOptionType, stringVal string, uintVal uint64) error {
+func setStatsOption(statsOptions *model.StatsOptions, statsOptionType ast.StatsOptionType, stringVal string, uintVal uint64) error {
 	switch statsOptionType {
 	case ast.StatsOptionBuckets:
 		statsOptions.Buckets = uintVal
@@ -2494,7 +2494,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if tbInfo.StatsOptions == nil {
 				tbInfo.StatsOptions = model.NewStatsOptions()
 			}
-			err := SetStatsOption(tbInfo.StatsOptions, ast.StatsOptionType(op.Tp), op.StrValue, op.UintValue)
+			err := setStatsOption(tbInfo.StatsOptions, ast.StatsOptionType(op.Tp), op.StrValue, op.UintValue)
 			if err != nil {
 				return err
 			}
@@ -6392,7 +6392,7 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 }
 
 var (
-	ErrInvalidStatsOptionsFormat = errors.New("Stats options should be in format 'key=value'")
+	errInvalidStatsOptionsFormat = errors.New("Stats options should be in format 'key=value'")
 )
 
 func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, spec *ast.StatsOptionsSpec) error {
@@ -6415,15 +6415,15 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 			for _, attr := range attrs {
 				kv := strings.Split(attr, "=")
 				if len(kv) != 2 {
-					return fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, kv)
+					return fmt.Errorf("%w: %s", errInvalidStatsOptionsFormat, kv)
 				}
 				key := strings.TrimSpace(kv[0])
 				if key == "" {
-					return fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, key)
+					return fmt.Errorf("%w: %s", errInvalidStatsOptionsFormat, key)
 				}
 				val := strings.TrimSpace(kv[1])
 				if val == "" {
-					return fmt.Errorf("%w: %s", ErrInvalidStatsOptionsFormat, val)
+					return fmt.Errorf("%w: %s", errInvalidStatsOptionsFormat, val)
 				}
 				switch strings.ToUpper(key) {
 				case "AUTO_RECALC":

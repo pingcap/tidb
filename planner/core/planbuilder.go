@@ -2088,6 +2088,9 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int, statsOptions *mod
 			if statsVer == statistics.Version2 {
 				valToSet = analyzeOptionDefaultV2[key]
 			}
+			if statsOptions == nil {
+				continue
+			}
 			switch key {
 			case ast.AnalyzeOptNumBuckets:
 				if statsOptions.Buckets > 0 {
