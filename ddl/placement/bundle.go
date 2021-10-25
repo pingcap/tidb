@@ -145,9 +145,6 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 	}
 
 	followers := options.Followers
-	if followers == 0 {
-		followers = 2
-	}
 	schedule := options.Schedule
 
 	primaryIndex := 0
@@ -159,6 +156,8 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		if primaryIndex >= len(regions) || regions[primaryIndex] != primaryRegion {
 			return nil, fmt.Errorf("%w: primary region must be included in regions", ErrInvalidPlacementOptions)
 		}
+	} else if followers == 0 {
+		return nil, fmt.Errorf("%w: empty options", ErrInvalidPlacementOptions)
 	}
 
 	var Rules []*Rule
@@ -168,7 +167,7 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		primaryCount := uint64(math.Ceil(float64(followers+1) / float64(len(regions))))
 		Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
 
-		if len(regions) > 1 {
+		if len(regions) > 1 && followers+1 > primaryCount {
 			// delete primary from regions
 			regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
 			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
@@ -178,7 +177,7 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		primaryCount := uint64(math.Ceil(float64(followers+1)/2 + 1))
 		Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
 
-		if len(regions) > 1 {
+		if len(regions) > 1 && followers+1 > primaryCount {
 			// delete primary from regions
 			regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
 			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))

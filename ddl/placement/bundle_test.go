@@ -565,9 +565,9 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	var tests []TestCase
 
 	tests = append(tests, TestCase{
-		name:   "empty 1",
-		input:  &model.PlacementSettings{},
-		output: []*Rule{},
+		name:  "empty 1",
+		input: &model.PlacementSettings{},
+		err:   ErrInvalidPlacementOptions,
 	})
 
 	tests = append(tests, TestCase{
@@ -577,13 +577,21 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	})
 
 	tests = append(tests, TestCase{
+		name: "empty 3",
+		input: &model.PlacementSettings{
+			LearnerConstraints: "",
+		},
+		err: ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
 		name: "sugar syntax: normal case 1",
 		input: &model.PlacementSettings{
 			PrimaryRegion: "us",
 			Regions:       "us",
 		},
 		output: []*Rule{
-			NewRule(Voter, 3, NewConstraintsDirect(
+			NewRule(Voter, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
 		},
@@ -594,12 +602,13 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 		input: &model.PlacementSettings{
 			PrimaryRegion: "us",
 			Regions:       "bj,sh,us",
+			Followers:     1,
 		},
 		output: []*Rule{
 			NewRule(Voter, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
-			NewRule(Follower, 2, NewConstraintsDirect(
+			NewRule(Follower, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "bj", "sh"),
 			)),
 		},
@@ -690,7 +699,7 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			NewRule(Leader, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
-			NewRule(Follower, 2, NewConstraintsDirect(
+			NewRule(Voter, 2, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
 		},
@@ -707,7 +716,7 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			NewRule(Leader, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
-			NewRule(Follower, 2, NewConstraintsDirect(
+			NewRule(Voter, 2, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
 			NewRule(Learner, 2, NewConstraintsDirect(
