@@ -2005,7 +2005,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		if !ctx.GetSessionVars().EnablePlacementChecks && errors.ErrorEqual(err, infoschema.ErrPlacementPolicyNotExists) {
-			tbInfo.DirectPlacementOpts =  schema.DirectPlacementOpts
+			tbInfo.DirectPlacementOpts = schema.DirectPlacementOpts
 			tbInfo.PlacementPolicyRef = schema.PlacementPolicyRef
 		} else {
 			return err
