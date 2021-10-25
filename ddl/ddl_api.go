@@ -6594,6 +6594,7 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	if err != nil {
 		return err
 	}
+	// if a table is already in cache state, return directly
 	if t.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
 		return nil
 	}
