@@ -361,8 +361,8 @@ data_parsers: tools/bin/vfsgendev br/pkg/lightning/mydump/parser_generated.go br
 	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOPATH)/src" br/pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
 	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/br/pkg/lightning/web".Res' && mv res_vfsdata.go br/pkg/lightning/web/
 
-build_dumpling: dumpling/cmd/dumpling/main.go $(wildcard **/*.go)
-	$(DUMPLING_GOBUILD) $(RACE_FLAG) -tags codes -o $(DUMPLING_BIN) $<
+build_dumpling:
+	$(DUMPLING_GOBUILD) $(RACE_FLAG) -tags codes -o $(DUMPLING_BIN) dumpling/cmd/dumpling/main.go
 
 dumpling_unit_test: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))
 dumpling_unit_test: failpoint-enable
