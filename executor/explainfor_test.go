@@ -891,3 +891,13 @@ func (s *testPrepareSerialSuite) TestIssue28710(c *C) {
 	c.Assert(res.Rows()[3][0], Matches, ".*IndexRangeScan.*")
 	c.Assert(res.Rows()[3][4], Equals, "range:(1,+inf], keep order:false, stats:pseudo")
 }
+
+func (s *testSuite) TestIssue28792(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t12(a INT, b INT)")
+	tk.MustExec("CREATE TABLE t97(a INT, b INT UNIQUE NOT NULL);")
+	r1 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 on t12.b = t97.b;").Rows()
+	r2 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b;").Rows()
+	c.Assert(r1, DeepEquals, r2)
+}

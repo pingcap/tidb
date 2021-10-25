@@ -274,6 +274,16 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
 	}
+	// If we only have tablePath as possibleAccessPaths, try to find uniqueKeys by table indices info
+	if len(ds.possibleAccessPaths) == 1 {
+		for _, index := range ds.table.Meta().Indices {
+			if uniqueKey, newKey := checkIndexCanBeKey(index, ds.Columns, selfSchema); newKey != nil {
+				selfSchema.Keys = append(selfSchema.Keys, newKey)
+			} else if uniqueKey != nil {
+				selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
+			}
+		}
+	}
 	if ds.tableInfo.PKIsHandle {
 		for i, col := range ds.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
