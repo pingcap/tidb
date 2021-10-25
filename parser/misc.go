@@ -602,6 +602,7 @@ var tokenMap = map[string]int{
 	"RUNNING":                  running,
 	"S3":                       s3,
 	"SAMPLES":                  samples,
+	"SAMPLERATE":               sampleRate,
 	"SAN":                      san,
 	"SCHEDULE":                 schedule,
 	"SCHEMA":                   database,
