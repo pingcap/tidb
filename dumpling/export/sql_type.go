@@ -20,7 +20,7 @@ var (
 // There are two kinds of scenes to use this dataType
 // The first is to be the receiver of table sample, which will use tidb's INFORMATION_SCHEMA.COLUMNS's DATA_TYPE column, which is from
 // https://github.com/pingcap/tidb/blob/619c4720059ea619081b01644ef3084b426d282f/executor/infoschema_reader.go#L654
-// https://github.com/pingcap/tidb/parser/blob/8e8ed7927bde11c4cf0967afc5e05ab5aeb14cc7/types/etc.go#L44-70
+// https://github.com/pingcap/parser/blob/8e8ed7927bde11c4cf0967afc5e05ab5aeb14cc7/types/etc.go#L44-70
 // The second is to be the receiver of select row type, which will use sql.DB's rows.DatabaseTypeName(), which is from
 // https://github.com/go-sql-driver/mysql/blob/v1.5.0/fields.go#L17-97
 func initColTypeRowReceiverMap() {

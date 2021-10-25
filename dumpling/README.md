@@ -1,10 +1,10 @@
 🥟 Dumpling
 ============
 
-[![Build Status](https://travis-ci.org/pingcap/tidb/dumpling.svg?branch=master)](https://travis-ci.org/pingcap/tidb/dumpling)
-[![codecov](https://codecov.io/gh/pingcap/tidb/dumpling/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/tidb/dumpling)
-[![API Docs](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white)](https://pkg.go.dev/github.com/pingcap/tidb/dumpling)
-[![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/tidb/dumpling)](https://goreportcard.com/report/github.com/pingcap/tidb/dumpling)
+[![Build Status](https://travis-ci.org/pingcap/dumpling.svg?branch=master)](https://travis-ci.org/pingcap/dumpling)
+[![codecov](https://codecov.io/gh/pingcap/dumpling/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/dumpling)
+[![API Docs](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white)](https://pkg.go.dev/github.com/pingcap/dumpling)
+[![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/dumpling)](https://goreportcard.com/report/github.com/pingcap/dumpling)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling?ref=badge_shield)
 [![Discuss in Slack](https://img.shields.io/badge/slack-sig--migrate-4A154B?logo=slack)](https://slack.tidb.io/invite?team=tidb-community&channel=sig-migrate&ref=github_sig)
 
