@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -502,6 +503,7 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		collation:  mysql.DefaultCollationID,
 		peerHost:   "localhost",
 		alloc:      arena.NewAllocator(512),
+		chunkAlloc: chunk.NewAllocator(),
 		ctx:        tc,
 		capability: capability,
 	}
@@ -579,8 +581,9 @@ func TestConnExecutionTimeout(t *testing.T) {
 		server: &Server{
 			capability: defaultCapability,
 		},
-		ctx:   tc,
-		alloc: arena.NewAllocator(32 * 1024),
+		ctx:        tc,
+		alloc:      arena.NewAllocator(32 * 1024),
+		chunkAlloc: chunk.NewAllocator(),
 	}
 	srv := &Server{
 		clients: map[uint64]*clientConn{
@@ -688,7 +691,8 @@ func TestPrefetchPointKeys(t *testing.T) {
 	defer clean()
 
 	cc := &clientConn{
-		alloc: arena.NewAllocator(1024),
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
@@ -760,7 +764,8 @@ func TestTiFlashFallback(t *testing.T) {
 	defer clean()
 
 	cc := &clientConn{
-		alloc: arena.NewAllocator(1024),
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
@@ -870,7 +875,8 @@ func TestShowErrors(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	cc := &clientConn{
-		alloc: arena.NewAllocator(1024),
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
@@ -907,6 +913,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc := &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
