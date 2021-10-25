@@ -950,7 +950,7 @@ func removeMutableConst(ctx sessionctx.Context, exprs []Expression) {
 			v.ParamMarker = nil
 			v.DeferredExpr = nil
 		case *ScalarFunction:
-			containMutableConst(ctx, v.GetArgs())
+			removeMutableConst(ctx, v.GetArgs())
 		}
 	}
 }
