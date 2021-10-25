@@ -689,7 +689,6 @@ func (s *testSerialSuite) TestPreparePlanCache4Function(c *C) {
 		plannercore.SetPreparedPlanCache(orgEnable)
 	}()
 	plannercore.SetPreparedPlanCache(true)
-
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 
