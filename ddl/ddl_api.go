@@ -1998,9 +1998,6 @@ func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.Cr
 	switch s.TemporaryKeyword {
 	case ast.TemporaryGlobal:
 		tbInfo.TempTableType = model.TempTableGlobal
-		if !ctx.GetSessionVars().EnableGlobalTemporaryTable {
-			return errors.New("SET tidb_enable_global_temporary_table=1 to enable temporary tables")
-		}
 		// "create global temporary table ... on commit preserve rows"
 		if !s.OnCommitDelete {
 			return errors.Trace(errUnsupportedOnCommitPreserve)
@@ -2447,12 +2444,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.PreSplitRegions = op.UintValue
 		case ast.TableOptionCharset, ast.TableOptionCollate:
 			// We don't handle charset and collate here since they're handled in `getCharsetAndCollateInTableOption`.
-		case ast.TableOptionEngine:
-			if tbInfo.TempTableType != model.TempTableNone {
-				if op.StrValue != "" && !strings.EqualFold(op.StrValue, "memory") {
-					return errors.Trace(errUnsupportedEngineTemporary)
-				}
-			}
 		case ast.TableOptionPlacementPolicy:
 			tbInfo.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: model.NewCIStr(op.StrValue),
@@ -6497,6 +6488,9 @@ func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*model.P
 
 func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {
 	policyName := stmt.PolicyName
+	if policyName.L == "default" {
+		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(policyName))
+	}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	// Check policy existence.
 	_, ok := is.PolicyByName(policyName)
