@@ -5918,7 +5918,6 @@ func (s *testDBSuite2) TestAlterTableCache(c *C) {
 	tk.MustExec("alter table t cache")
 	tk.MustExec("alter table t cache")
 
-
 }
 
 // test write local lock
