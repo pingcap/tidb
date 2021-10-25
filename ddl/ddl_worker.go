@@ -420,6 +420,10 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			// it may be too large that it can not be added to the history queue, too
 			// delete its arguments
 			job.Args = nil
+			// truncate its query in case, it is too long
+			if len(job.Query) > 1000 {
+				job.Query = job.Query[:1000]
+			}
 		}
 	}
 	if err != nil {
