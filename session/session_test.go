@@ -183,6 +183,39 @@ func clearETCD(ebd kv.EtcdBackend) error {
 	return nil
 }
 
+func createTestSuite(assert func(error), s *testSessionSuiteBase) {
+	if *withTiKV {
+		initPdAddrs()
+		s.pdAddr = <-pdAddrChan
+		var d driver.TiKVDriver
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TxnLocalLatches.Enabled = false
+		})
+		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", s.pdAddr))
+		assert(err)
+		err = clearStorage(store)
+		assert(err)
+		err = clearETCD(store.(kv.EtcdBackend))
+		assert(err)
+		session.ResetStoreForWithTiKVTest(store)
+		s.store = store
+	} else {
+		store, err := mockstore.NewMockStore(
+			mockstore.WithClusterInspector(func(c testutils.Cluster) {
+				mockstore.BootstrapWithSingleStore(c)
+				s.cluster = c
+			}),
+		)
+		assert(err)
+		s.store = store
+		session.DisableStats4Test()
+	}
+
+	var err error
+	s.dom, err = session.BootstrapSession(s.store)
+	assert(err)
+}
+
 func initPdAddrs() {
 	initPdAddrsOnce.Do(func() {
 		addrs := strings.Split(*pdAddrs, ",")
@@ -197,47 +230,19 @@ func initPdAddrs() {
 }
 
 func (s *testSessionSuiteBase) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-
-	if *withTiKV {
-		initPdAddrs()
-		s.pdAddr = <-pdAddrChan
-		var d driver.TiKVDriver
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.TxnLocalLatches.Enabled = false
-		})
-		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", s.pdAddr))
-		c.Assert(err, IsNil)
-		err = clearStorage(store)
-		c.Assert(err, IsNil)
-		err = clearETCD(store.(kv.EtcdBackend))
-		c.Assert(err, IsNil)
-		session.ResetStoreForWithTiKVTest(store)
-		s.store = store
-	} else {
-		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c testutils.Cluster) {
-				mockstore.BootstrapWithSingleStore(c)
-				s.cluster = c
-			}),
-		)
-		c.Assert(err, IsNil)
-		s.store = store
-		session.DisableStats4Test()
-	}
-
-	var err error
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
+	createTestSuite(func(err error) { c.Assert(err, IsNil) }, s)
 }
 
-func (s *testSessionSuiteBase) TearDownSuite(c *C) {
+func (s *testSessionSuiteBase) cleanSuite(assert func(error)) {
 	s.dom.Close()
-	s.store.Close()
-	testleak.AfterTest(c)()
+	assert(s.store.Close())
 	if *withTiKV {
 		pdAddrChan <- s.pdAddr
 	}
+}
+
+func (s *testSessionSuiteBase) TearDownSuite(c *C) {
+	s.cleanSuite(func(err error) { c.Assert(err, IsNil) })
 }
 
 func (s *testSessionSuiteBase) TearDownTest(c *C) {
