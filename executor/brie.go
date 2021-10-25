@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -207,11 +208,6 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	tidbCfg := config.GetGlobalConfig()
-	if tidbCfg.Store != "tikv" {
-		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
-		return nil
-	}
-
 	cfg := task.Config{
 		TLS: task.TLSConfig{
 			CA:   tidbCfg.Security.ClusterSSLCA,
@@ -239,8 +235,19 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		storage.ExtractQueryParameters(storageURL, &cfg.S3)
 	case "gs", "gcs":
 		storage.ExtractQueryParameters(storageURL, &cfg.GCS)
+	case "local", "file", "":
+		if sem.IsEnabled() {
+			// Storage is not permitted to be local when SEM is enabled.
+			b.err = ErrNotSupportedWithSem.GenWithStackByArgs("local storage")
+			return nil
+		}
 	default:
 		break
+	}
+
+	if tidbCfg.Store != "tikv" {
+		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
+		return nil
 	}
 
 	cfg.Storage = storageURL.String()
