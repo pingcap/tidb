@@ -113,7 +113,6 @@ func (alloc *poolColumnAllocator) NewColumn(ft *types.FieldType, count int) *Col
 
 func (alloc *poolColumnAllocator) init() {
 	alloc.pool = make(map[int]*freeList)
-	return
 }
 
 func (alloc *poolColumnAllocator) put(col *Column) {
@@ -130,7 +129,6 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 		alloc.pool[typeSize] = l
 	}
 	l.push(col)
-	return
 }
 
 type freeList struct {

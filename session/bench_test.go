@@ -1680,6 +1680,7 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+		alloc.Reset()
 	}
 	b.StopTimer()
 }
