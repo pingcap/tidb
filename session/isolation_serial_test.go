@@ -23,8 +23,6 @@ import (
 )
 
 func TestIsolation(t *testing.T) {
-	t.Parallel()
-
 	s := createTestSuite(func(err error) { require.NoError(t, err) }, nil)
 	defer s.cleanSuite(func(err error) { require.NoError(t, err) })
 
