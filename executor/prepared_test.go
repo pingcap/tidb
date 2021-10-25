@@ -596,7 +596,7 @@ func (s *testSerialSuite) TestIssue28828(c *C) {
 		");")
 	tk.MustExec("insert into t values(1,9941971237863475), (2,9941971237863476), (3, 0);")
 	tk.MustExec("prepare stmt from 'select * from t where audit_id=?';")
-	tk.MustExec("set @a='9941971237863475', @b=9941971237863475, @c='xayh7vrWVNqZtzlJmdJQUwAHnkI8Ec', @d='0.0', @e='0.1';")
+	tk.MustExec("set @a='9941971237863475', @b=9941971237863475, @c='xayh7vrWVNqZtzlJmdJQUwAHnkI8Ec', @d='0.0', @e='0.1', @f = '9941971237863476';")
 
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1 9941971237863475"))
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("1 9941971237863475"))
@@ -609,6 +609,13 @@ func (s *testSerialSuite) TestIssue28828(c *C) {
 	tk.MustQuery("execute stmt using @e;").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @d;").Check(testkit.Rows("3 0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @f;").Check(testkit.Rows("2 9941971237863476"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("prepare stmt from 'select count(*) from t where audit_id in (?, ?, ?, ?, ?)';")
+	tk.MustQuery("execute stmt using @a, @b, @c, @d, @e;").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @f, @b, @c, @d, @e;").Check(testkit.Rows("3"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 

@@ -1444,6 +1444,17 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
+				if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{c}) {
+					if c.GetType().EvalType() == types.ETString {
+						// If the constant type is string, we should uncache the plan.
+						// And change the laze constant to normal constant.
+						er.sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+						c.DeferredExpr = nil
+						c.ParamMarker = nil
+					} else {
+						continue
+					}
+				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
 				if isExceptional {
 					args[i] = c

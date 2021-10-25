@@ -1280,17 +1280,6 @@ func tryToConvertConstantInt(ctx sessionctx.Context, targetFieldType *types.Fiel
 // 					If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 // 					If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
 func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
-	if MaybeOverOptimized4PlanCache(ctx, []Expression{con}) {
-		if con.GetType().EvalType() == types.ETString {
-			// If the constant type is string, we should uncache the plan.
-			// And change the laze constant to normal constant.
-			ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
-			con.DeferredExpr = nil
-			con.ParamMarker = nil
-		} else {
-			return con, false
-		}
-	}
 	dt, err := con.Eval(chunk.Row{})
 	if err != nil {
 		return con, false
@@ -1384,10 +1373,28 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0IsInt := arg0Type.EvalType() == types.ETInt
 	arg1IsInt := arg1Type.EvalType() == types.ETInt
+	arg0IsString := arg0Type.EvalType() == types.ETString
+	arg1IsString := arg1Type.EvalType() == types.ETString
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
+	if MaybeOverOptimized4PlanCache(ctx, args) {
+		// If the constant type is string, we should uncache the plan.
+		// And change the laze constant to normal constant.
+		if arg0IsInt && !arg0IsCon && arg1IsString && arg1IsCon {
+			ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+			arg1.DeferredExpr = nil
+			arg1.ParamMarker = nil
+		} else if arg1IsInt && !arg1IsCon && arg0IsString && arg0IsCon {
+			ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+			arg0.DeferredExpr = nil
+			arg0.ParamMarker = nil
+
+		} else {
+			return args
+		}
+	}
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
