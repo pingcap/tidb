@@ -793,14 +793,53 @@ func (s *testSerialSuite) TestPreparePlanCache4Blacklist(c *C) {
 	c.Assert(res.Rows()[1][0], Matches, ".*TopN.*")
 
 	res = tk.MustQuery("explain format = 'brief' select min(a) from t")
-	c.Assert(len(res.Rows()), Equals, 4)
 	c.Assert(res.Rows()[0][0], Matches, ".*StreamAgg.*")
-	c.Assert(res.Rows()[1][0], Matches, ".*TableReader.*")
-	c.Assert(res.Rows()[2][0], Matches, ".*StreamAgg.*")
-	c.Assert(res.Rows()[3][0], Matches, ".*TableFullScan.*")
 
 	// test the blacklist of Expression Pushdown
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("prepare stmt from 'SELECT * FROM t WHERE a < 2 and a > 2;';")
+	tk.MustExec("execute stmt;")
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[0][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[0][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
 
+	res = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE a < 2 and a > 2;")
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
+
+	tk.MustExec("INSERT INTO mysql.expr_pushdown_blacklist VALUES('<','tikv','');")
+	tk.MustExec("ADMIN reload expr_pushdown_blacklist;")
+
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustExec("execute stmt;")
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	// The expressions can still be pushed down to tikv.
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[0][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[0][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
+
+	res = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE a < 2 and a > 2;")
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[0][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[0][4], Equals, "lt(test.t.a, 2)")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][4], Equals, "gt(test.t.a, 2)")
+
+	tk.MustExec("DELETE FROM mysql.expr_pushdown_blacklist;")
+	tk.MustExec("ADMIN reload expr_pushdown_blacklist;")
 }
 
 func (s *testSerialSuite) TestIssue28064(c *C) {
