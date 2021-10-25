@@ -458,13 +458,11 @@ func (b *builtinHexStrArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			continue
 		}
 		buf0Bytes := buf0.GetBytes(i)
-		if b.encoding.Enabled() {
-			encodedBuf, err = b.encoding.Encode(encodedBuf, buf0Bytes)
-			if err != nil {
-				return err
-			}
-			buf0Bytes = encodedBuf
+		encodedBuf, err = b.encoding.Encode(encodedBuf, buf0Bytes)
+		if err != nil {
+			return err
 		}
+		buf0Bytes = encodedBuf
 		result.AppendString(strings.ToUpper(hex.EncodeToString(buf0Bytes)))
 	}
 	return nil
@@ -2022,33 +2020,21 @@ func (b *builtinTrim3ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	}
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf2.IsNull(i) {
+		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		useDefaultRemStr := buf1.IsNull(i)
 		direction := ast.TrimDirectionType(buf2.GetInt64(i))
 		baseStr := buf0.GetString(i)
 		remStr := buf1.GetString(i)
-		if direction == ast.TrimLeading {
-			if useDefaultRemStr {
-				result.AppendString(strings.TrimLeft(baseStr, spaceChars))
-			} else {
-				result.AppendString(trimLeft(baseStr, remStr))
-			}
-		} else if direction == ast.TrimTrailing {
-			if useDefaultRemStr {
-				result.AppendString(strings.TrimRight(baseStr, spaceChars))
-			} else {
-				result.AppendString(trimRight(baseStr, remStr))
-			}
-		} else {
-			if useDefaultRemStr {
-				result.AppendString(strings.Trim(baseStr, spaceChars))
-			} else {
-				tmpStr := trimLeft(baseStr, remStr)
-				result.AppendString(trimRight(tmpStr, remStr))
-			}
+		switch direction {
+		case ast.TrimLeading:
+			result.AppendString(trimLeft(baseStr, remStr))
+		case ast.TrimTrailing:
+			result.AppendString(trimRight(baseStr, remStr))
+		default:
+			tmpStr := trimLeft(baseStr, remStr)
+			result.AppendString(trimRight(tmpStr, remStr))
 		}
 	}
 	return nil
@@ -2141,6 +2127,10 @@ func (b *builtinLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 		return err
 	}
 
+	argTp := b.args[0].GetType()
+	enc := charset.NewEncoding(argTp.Charset)
+	isBinaryStr := types.IsBinaryStr(argTp)
+
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
@@ -2149,6 +2139,13 @@ func (b *builtinLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		str := buf.GetBytes(i)
+		if !isBinaryStr {
+			dBytes, err := enc.Encode(nil, str)
+			if err == nil {
+				i64s[i] = int64(len(dBytes))
+				continue
+			}
+		}
 		i64s[i] = int64(len(str))
 	}
 	return nil
