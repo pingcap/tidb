@@ -1553,8 +1553,23 @@ func (s *restoreSchemaSuite) TearDownTest(c *C) {
 }
 
 func (s *restoreSchemaSuite) TestRestoreSchemaSuccessful(c *C) {
+	// before restore, if sysVars is initialized by other test, the time_zone should be default value
+	if len(s.rc.sysVars) > 0 {
+		tz, ok := s.rc.sysVars["time_zone"]
+		c.Assert(ok, IsTrue)
+		c.Assert(tz, Equals, "SYSTEM")
+	}
+
+	s.rc.cfg.TiDB.Vars = map[string]string{
+		"time_zone": "UTC",
+	}
 	err := s.rc.restoreSchema(s.ctx)
 	c.Assert(err, IsNil)
+
+	// test after restore schema, sysVars has been updated
+	tz, ok := s.rc.sysVars["time_zone"]
+	c.Assert(ok, IsTrue)
+	c.Assert(tz, Equals, "UTC")
 }
 
 func (s *restoreSchemaSuite) TestRestoreSchemaFailed(c *C) {
