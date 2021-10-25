@@ -201,7 +201,7 @@ func (s *testDBSuite6) TestSkipPlacementValidation(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
 	tk.MustExec("drop placement policy if exists y")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t, t_range_p")
 
 	tk.MustExec("create placement policy `y` followers=4;")
 	tk.MustExec("alter database test placement policy='y'")
@@ -212,14 +212,35 @@ func (s *testDBSuite6) TestSkipPlacementValidation(c *C) {
 	tk.MustExec("SET PLACEMENT_CHECKS = 0;")
 	tk.MustQuery(`select @@PLACEMENT_CHECKS;`).Check(testkit.Rows("0"))
 
-	// Skip the check, and inherit from the database placement policy
+	// Skip the check, and create database with default placement option.
+	tk.MustExec("create database db_skip_validation PLACEMENT POLICY=\"x\"")
+	tk.MustQuery(`show create database db_skip_validation`).Check(testutil.RowsWithSep("|",
+		"db_skip_validation CREATE DATABASE `db_skip_validation` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
+
+	// Skip the check, and inherit from the database placement policy when create table
 	tk.MustExec("create table t(a int) PLACEMENT POLICY=\"x\"")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */"))
 
-	tk.MustExec("drop table if exists t")
+	// Skip the check, and inherit from the table placement policy when create partition
+	tk.MustExec("create table t_range_p(id int) placement policy y partition by range(id) (" +
+		"PARTITION p0 VALUES LESS THAN (100)," +
+		"PARTITION p1 VALUES LESS THAN (1000) placement policy x)",
+	)
+	tk.MustQuery("show create table t_range_p").Check(testkit.Rows("t_range_p CREATE TABLE `t_range_p` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */\n" +
+		"PARTITION BY RANGE ( `id` ) (\n" +
+		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
+		"  PARTITION `p1` VALUES LESS THAN (1000)\n)",
+	))
+
+	tk.MustExec("SET PLACEMENT_CHECKS = 1;")
+	tk.MustExec("drop table if exists t, t_range_p")
 	tk.MustExec("alter database test placement policy='default'")
+	tk.MustExec("drop database db_skip_validation;")
 }
 
 func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {

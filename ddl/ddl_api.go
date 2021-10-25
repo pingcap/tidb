@@ -93,8 +93,9 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		if !ctx.GetSessionVars().EnablePlacementChecks && errors.ErrorEqual(err, infoschema.ErrPlacementPolicyNotExists) {
 			dbInfo.PlacementPolicyRef = nil
 			dbInfo.DirectPlacementOpts = nil
+		} else {
+			return errors.Trace(err)
 		}
-		return errors.Trace(err)
 	}
 
 	return d.CreateSchemaWithInfo(ctx, dbInfo, OnExistError, false /*tryRetainID*/)

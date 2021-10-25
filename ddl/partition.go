@@ -416,7 +416,12 @@ func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.Partition
 		def := &partitions[idx]
 		def.PlacementPolicyRef, def.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, def.PlacementPolicyRef, def.DirectPlacementOpts)
 		if err != nil {
-			return nil, err
+			if !ctx.GetSessionVars().EnablePlacementChecks && errors.ErrorEqual(err, infoschema.ErrPlacementPolicyNotExists) {
+				def.DirectPlacementOpts = nil
+				def.PlacementPolicyRef = nil
+			} else {
+				return nil, err
+			}
 		}
 	}
 
