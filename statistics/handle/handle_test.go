@@ -3074,29 +3074,132 @@ func (s *testStatsSuite) TestIncrementalModifyCountUpdate(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseModifyCount"), IsNil)
 }
 
-func (s *testStatsSuite) TestAnalyzeColumnsWithVer2(c *C) {
+func (s *testStatsSuite) TestAnalyzeColumnsWithPrimaryKey(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@tidb_analyze_version = 2")
-	tk.MustExec("create table t1 (a int primary key, b int, c int)")
-	tk.MustExec("insert into t1 values (1,1,1), (2,1,1), (3,2,2), (4,2,2), (5,3,3), (6,4,3), (7,5,4), (8,6,4), (9,null,null)")
+	tk.MustExec("create table t (a int primary key, b int, c int)")
+	tk.MustExec("insert into t values (1,1,1), (2,1,1), (3,2,2), (4,2,2), (5,3,3), (6,4,3), (7,5,4), (8,6,4), (9,null,null)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 
-	do := s.do
-	is := do.InfoSchema()
-	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
 
+	tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
+	// Since column histograms are loaded lazily, `show stats_*` may not show the records of column stats. Hence we use `select * from mysql.stats_*` to check ANALYZE results.
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 9"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, value, count from mysql.stats_top_n where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 \x03\x80\x00\x00\x00\x00\x00\x00\x01 1",
+			"0 1 \x03\x80\x00\x00\x00\x00\x00\x00\x02 1",
+			"0 2 \x03\x80\x00\x00\x00\x00\x00\x00\x01 2",
+			"0 2 \x03\x80\x00\x00\x00\x00\x00\x00\x02 2"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 9 0 9 2 1",
+			"0 2 6 1 8 2 1",
+			"0 3 0 0 8 0 0", // column c is not analyzed
+		))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, bucket_id, count, repeats, upper_bound, lower_bound, ndv from mysql.stats_buckets where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 0 4 1 6 3 0", // bucket.ndv is not maintained for column histograms
+			"0 1 1 3 1 9 7 0",
+			"0 2 0 3 1 5 3 0",
+			"0 2 1 1 1 6 6 0"))
+}
 
-	tk.MustExec("analyze table t1 columns d with 2 topn, 2 buckets")
-	res := tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't1'").Sort()
-	rows := res.Rows()
-	c.Assert(len(rows), Equals, 1)
-	// modify count should be set to 0
-	c.Assert(rows[0][4], Equals, "0")
-	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, stats_ver from mysql.stats_histograms where table_id = %d and stats_ver > 0 order by is_index, hist_id", t1.Meta().ID)).Check(
-		testkit.Rows("0 1 2", "0 2 2", "0 3 2", "1 1 2"))
+func (s *testStatsSuite) TestAnalyzeColumnsWithIndex(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t (a int, b int, c int, d int, index idx_a_b(a, b))")
+	tk.MustExec("insert into t values (1,1,null,1), (1,1,9,2), (1,1,8,1), (2,2,7,2), (3,3,7,1), (4,4,6,2), (4,5,6,1), (4,5,6,2), (5,5,6,1)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	tk.MustExec("analyze table t columns c with 2 topn, 2 buckets")
+	// Since column histograms are loaded lazily, `show stats_*` may not show the records of column stats. Hence we use `select * from mysql.stats_*` to check ANALYZE results.
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 9"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, value, count from mysql.stats_top_n where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 \x03\x80\x00\x00\x00\x00\x00\x00\x01 3",
+			"0 1 \x03\x80\x00\x00\x00\x00\x00\x00\x04 3",
+			"0 2 \x03\x80\x00\x00\x00\x00\x00\x00\x01 3",
+			"0 2 \x03\x80\x00\x00\x00\x00\x00\x00\x05 3",
+			"0 3 \x03\x80\x00\x00\x00\x00\x00\x00\x06 4",
+			"0 3 \x03\x80\x00\x00\x00\x00\x00\x00\x07 2",
+			"1 1 \x03\x80\x00\x00\x00\x00\x00\x00\x01\x03\x80\x00\x00\x00\x00\x00\x00\x01 3",
+			"1 1 \x03\x80\x00\x00\x00\x00\x00\x00\x04\x03\x80\x00\x00\x00\x00\x00\x00\x05 2"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 5 0 9 2 1",
+			"0 2 5 0 9 2 1",
+			"0 3 4 1 8 2 -0.07",
+			"0 4 0 0 9 0 0", // column d is not analyzed
+			"1 1 6 0 18 2 0"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, bucket_id, count, repeats, upper_bound, lower_bound, ndv from mysql.stats_buckets where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 0 2 1 3 2 0", // bucket.ndv is not maintained for column histograms
+			"0 1 1 1 1 5 5 0",
+			"0 2 0 2 1 3 2 0",
+			"0 2 1 1 1 4 4 0",
+			"0 3 0 2 1 9 8 0",
+			"1 1 0 3 1 \x03\x80\x00\x00\x00\x00\x00\x00\x04\x03\x80\x00\x00\x00\x00\x00\x00\x04 \x03\x80\x00\x00\x00\x00\x00\x00\x02\x03\x80\x00\x00\x00\x00\x00\x00\x02 0",
+			"1 1 1 1 1 \x03\x80\x00\x00\x00\x00\x00\x00\x05\x03\x80\x00\x00\x00\x00\x00\x00\x05 \x03\x80\x00\x00\x00\x00\x00\x00\x05\x03\x80\x00\x00\x00\x00\x00\x00\x05 0"))
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithClusteredIndex(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("create table t (a int, b int, c int, d int, primary key(a, b) clustered)")
+	tk.MustExec("insert into t values (1,1,null,1), (2,2,9,2), (3,3,8,1), (4,4,7,2), (5,5,7,1), (6,6,6,2), (7,7,6,1), (8,8,6,2), (9,9,6,1)")
+	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	tk.MustExec("analyze table t columns c with 2 topn, 2 buckets")
+	// Since column histograms are loaded lazily, `show stats_*` may not show the records of column stats. Hence we use `select * from mysql.stats_*` to check ANALYZE results.
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 9"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, value, count from mysql.stats_top_n where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 \x03\x80\x00\x00\x00\x00\x00\x00\x01 1",
+			"0 1 \x03\x80\x00\x00\x00\x00\x00\x00\x02 1",
+			"0 2 \x03\x80\x00\x00\x00\x00\x00\x00\x01 1",
+			"0 2 \x03\x80\x00\x00\x00\x00\x00\x00\x02 1",
+			"0 3 \x03\x80\x00\x00\x00\x00\x00\x00\x06 4",
+			"0 3 \x03\x80\x00\x00\x00\x00\x00\x00\x07 2",
+			"1 1 \x03\x80\x00\x00\x00\x00\x00\x00\x01\x03\x80\x00\x00\x00\x00\x00\x00\x01 1",
+			"1 1 \x03\x80\x00\x00\x00\x00\x00\x00\x02\x03\x80\x00\x00\x00\x00\x00\x00\x02 1"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 9 0 9 2 1",
+			"0 2 9 0 9 2 1",
+			"0 3 4 1 8 2 -0.07",
+			"0 4 0 0 9 0 0", // column d is not analyzed
+			"1 1 9 0 18 2 0"))
+	tk.MustQuery(fmt.Sprintf("select is_index, hist_id, bucket_id, count, repeats, upper_bound, lower_bound, ndv from mysql.stats_buckets where table_id = %d", tblID)).Sort().Check(
+		testkit.Rows("0 1 0 4 1 6 3 0", // bucket.ndv is not maintained for column histograms
+			"0 1 1 3 1 9 7 0",
+			"0 2 0 4 1 6 3 0",
+			"0 2 1 3 1 9 7 0",
+			"0 3 0 2 1 9 8 0",
+			"1 1 0 4 1 \x03\x80\x00\x00\x00\x00\x00\x00\x06\x03\x80\x00\x00\x00\x00\x00\x00\x06 \x03\x80\x00\x00\x00\x00\x00\x00\x03\x03\x80\x00\x00\x00\x00\x00\x00\x03 0",
+			"1 1 1 3 1 \x03\x80\x00\x00\x00\x00\x00\x00\x09\x03\x80\x00\x00\x00\x00\x00\x00\x09 \x03\x80\x00\x00\x00\x00\x00\x00\x07\x03\x80\x00\x00\x00\x00\x00\x00\x07 0"))
+}
+
+func (s *testStatsSuite) TestAnalyzeColumnsWithExpressionIndex(c *C) {
+
 }
 
 func (s *testStatsSuite) TestAnalyzeColumnsWithVer1(c *C) {
@@ -3104,10 +3207,6 @@ func (s *testStatsSuite) TestAnalyzeColumnsWithVer1(c *C) {
 }
 
 func (s *testStatsSuite) TestAnalyzeColumnsWithPartitionTable(c *C) {
-
-}
-
-func (s *testStatsSuite) TestAnalyzeColumnsWithClusteredIndex(c *C) {
 
 }
 

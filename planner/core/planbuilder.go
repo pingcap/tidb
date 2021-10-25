@@ -1870,7 +1870,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	names []string,
 	tbl *ast.TableName,
 	version int,
-) []AnalyzeColumnsTask {
+) ([]AnalyzeColumnsTask, error) {
 	idxInfos := make([]*model.IndexInfo, 0, len(tbl.TableInfo.Indices))
 	for _, idx := range tbl.TableInfo.Indices {
 		if idx.State != model.StatePublic {
@@ -1893,7 +1893,10 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			Incremental:   false,
 			StatsVersion:  version,
 		}
-		colsInfo := b.getAnalyzeColumnsInfo(as, tbl.TableInfo)
+		colsInfo, err := b.getAnalyzeColumnsInfo(as, tbl)
+		if err != nil {
+			return nil, err
+		}
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo),
 			ColsInfo:    colsInfo,
@@ -1909,7 +1912,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		taskSlice = append(taskSlice, newTask)
 	}
-	return taskSlice
+	return taskSlice, nil
 }
 
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
@@ -1939,7 +1942,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 		}
 		if version == statistics.Version2 {
-			p.ColTasks = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version)
+			p.ColTasks, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version)
+			if err != nil {
+				return nil, err
+			}
 			continue
 		}
 		// TODO: support analyze specified columns for version 1
