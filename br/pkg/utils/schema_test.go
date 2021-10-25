@@ -10,6 +10,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/parser/model"
@@ -94,7 +95,15 @@ func (r *testSchemaSuite) TestLoadBackupMeta(c *C) {
 	err = r.store.WriteFile(ctx, metautil.MetaFile, data)
 	c.Assert(err, IsNil)
 
-	dbs, err := LoadBackupTables(ctx, metautil.NewMetaReader(meta, r.store))
+	dbs, err := LoadBackupTables(
+		ctx,
+		metautil.NewMetaReader(
+			meta,
+			r.store,
+			&backuppb.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+			}),
+	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Files, HasLen, 1)
@@ -177,7 +186,16 @@ func (r *testSchemaSuite) TestLoadBackupMetaPartionTable(c *C) {
 	err = r.store.WriteFile(ctx, metautil.MetaFile, data)
 	c.Assert(err, IsNil)
 
-	dbs, err := LoadBackupTables(ctx, metautil.NewMetaReader(meta, r.store))
+	dbs, err := LoadBackupTables(
+		ctx,
+		metautil.NewMetaReader(
+			meta,
+			r.store,
+			&backuppb.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+			},
+		),
+	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Files, HasLen, 3)
@@ -251,7 +269,16 @@ func (r *testSchemaSuite) BenchmarkLoadBackupMeta64(c *C) {
 		err = r.store.WriteFile(ctx, metautil.MetaFile, data)
 		c.Assert(err, IsNil)
 
-		dbs, err := LoadBackupTables(ctx, metautil.NewMetaReader(meta, r.store))
+		dbs, err := LoadBackupTables(
+			ctx,
+			metautil.NewMetaReader(
+				meta,
+				r.store,
+				&backuppb.CipherInfo{
+					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+				},
+			),
+		)
 		c.Assert(err, IsNil)
 		c.Assert(dbs, HasLen, 1)
 		c.Assert(dbs, HasKey, "bench")
@@ -270,7 +297,16 @@ func (r *testSchemaSuite) BenchmarkLoadBackupMeta1024(c *C) {
 		err = r.store.WriteFile(ctx, metautil.MetaFile, data)
 		c.Assert(err, IsNil)
 
-		dbs, err := LoadBackupTables(ctx, metautil.NewMetaReader(meta, r.store))
+		dbs, err := LoadBackupTables(
+			ctx,
+			metautil.NewMetaReader(
+				meta,
+				r.store,
+				&backuppb.CipherInfo{
+					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+				},
+			),
+		)
 		c.Assert(err, IsNil)
 		c.Assert(dbs, HasLen, 1)
 		c.Assert(dbs, HasKey, "bench")
@@ -289,7 +325,16 @@ func (r *testSchemaSuite) BenchmarkLoadBackupMeta10240(c *C) {
 		err = r.store.WriteFile(ctx, metautil.MetaFile, data)
 		c.Assert(err, IsNil)
 
-		dbs, err := LoadBackupTables(ctx, metautil.NewMetaReader(meta, r.store))
+		dbs, err := LoadBackupTables(
+			ctx,
+			metautil.NewMetaReader(
+				meta,
+				r.store,
+				&backuppb.CipherInfo{
+					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+				},
+			),
+		)
 		c.Assert(err, IsNil)
 		c.Assert(dbs, HasLen, 1)
 		c.Assert(dbs, HasKey, "bench")

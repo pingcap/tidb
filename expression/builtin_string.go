@@ -222,6 +222,15 @@ func (b *builtinLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+
+	argTp := b.args[0].GetType()
+	if !types.IsBinaryStr(argTp) {
+		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
+		if err == nil {
+			return int64(len(dBytes)), false, nil
+		}
+	}
+
 	return int64(len([]byte(val))), false, nil
 }
 
@@ -1887,33 +1896,23 @@ func (b *builtinTrim3ArgsSig) evalString(row chunk.Row) (d string, isNull bool, 
 		return d, isNull, err
 	}
 	remstr, isRemStrNull, err = b.args[1].EvalString(b.ctx, row)
-	if err != nil {
-		return d, isNull, err
+	if err != nil || isRemStrNull {
+		return d, isRemStrNull, err
 	}
 	x, isNull, err = b.args[2].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return d, isNull, err
 	}
 	direction = ast.TrimDirectionType(x)
-	if direction == ast.TrimLeading {
-		if isRemStrNull {
-			d = strings.TrimLeft(str, spaceChars)
-		} else {
-			d = trimLeft(str, remstr)
-		}
-	} else if direction == ast.TrimTrailing {
-		if isRemStrNull {
-			d = strings.TrimRight(str, spaceChars)
-		} else {
-			d = trimRight(str, remstr)
-		}
-	} else {
-		if isRemStrNull {
-			d = strings.Trim(str, spaceChars)
-		} else {
-			d = trimLeft(str, remstr)
-			d = trimRight(d, remstr)
-		}
+	switch direction {
+	case ast.TrimLeading:
+		d = trimLeft(str, remstr)
+	case ast.TrimTrailing:
+		d = trimRight(str, remstr)
+	default:
+		d = trimLeft(str, remstr)
+		d = trimRight(d, remstr)
+
 	}
 	return d, false, nil
 }
