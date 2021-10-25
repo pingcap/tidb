@@ -3,7 +3,7 @@
 set -e
 TAG="nightly"
 pwd=$(pwd)
-mkdir bin/
+mkdir -p bin/
 
 # download lightning and sync_diff_inspector
 wget http://download.pingcap.org/tidb-toolkit-$TAG-linux-amd64.tar.gz -O tools.tar.gz
