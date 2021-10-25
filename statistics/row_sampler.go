@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// RowSampleCollector implements the needed interface for a row-based sample collector.
 type RowSampleCollector interface {
 	MergeCollector(collector RowSampleCollector)
 	FromProto(pbCollector *tipb.RowSampleCollector)
@@ -111,6 +112,7 @@ type RowSampleBuilder struct {
 	Rng             *rand.Rand
 }
 
+// NewRowSampleCollector creates a collector from the given inputs.
 func NewRowSampleCollector(maxSampleSize int, sampleRate float64, totalLen int) RowSampleCollector {
 	if maxSampleSize > 0 {
 		return NewReservoirRowSampleCollector(maxSampleSize, totalLen)
@@ -454,6 +456,7 @@ func (s *BernoulliRowSampleCollector) ToProto() *tipb.RowSampleCollector {
 	return collector
 }
 
+// Base implements the interface RowSampleCollector.
 func (s *BernoulliRowSampleCollector) Base() *baseCollector {
 	return s.baseCollector
 }
