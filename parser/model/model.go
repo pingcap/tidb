@@ -345,19 +345,19 @@ type TableInfo struct {
 type TableCacheStatusType int
 
 const (
-	TableCacheStatusDISABLE TableCacheStatusType = iota
-	TableCacheStatusENABLE
-	TableCacheStatusSWITCHING
+	TableCacheStatusDisable TableCacheStatusType = iota
+	TableCacheStatusEnable
+	TableCacheStatusSwitching
 )
 
 func (t TableCacheStatusType) String() string {
 	switch t {
-	case TableCacheStatusDISABLE:
-		return "DISABLE"
-	case TableCacheStatusENABLE:
-		return "ENABLE"
-	case TableCacheStatusSWITCHING:
-		return "SWITCHING"
+	case TableCacheStatusDisable:
+		return "disable"
+	case TableCacheStatusEnable:
+		return "enable"
+	case TableCacheStatusSwitching:
+		return "switching"
 	default:
 		return ""
 	}

@@ -426,7 +426,7 @@ func checkTableCacheTest(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.Tabl
 		c.Assert(err, IsNil)
 		c.Assert(info, NotNil)
 		c.Assert(info.TableCacheStatusType, NotNil)
-		c.Assert(info.TableCacheStatusType, Equals, model.TableCacheStatusENABLE)
+		c.Assert(info.TableCacheStatusType, Equals, model.TableCacheStatusEnable)
 		return nil
 	})
 	c.Assert(err, IsNil)
