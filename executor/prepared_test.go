@@ -704,8 +704,8 @@ func (s *testSerialSuite) TestPreparePlanCache4DifferentSystemVars(c *C) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
+	c.Assert(len(res.Rows()), Equals, 5)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexMerge.*")
 
 	tk.MustExec("set @@tidb_enable_index_merge = 0;")
 	tk.MustExec("execute stmt;")
@@ -713,8 +713,8 @@ func (s *testSerialSuite) TestPreparePlanCache4DifferentSystemVars(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
+	c.Assert(len(res.Rows()), Equals, 5)
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexMerge.*")
 	tk.MustExec("execute stmt;")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
