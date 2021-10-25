@@ -28,7 +28,7 @@ import (
 	"google.golang.org/grpc/backoff"
 )
 
-// ReportClient send data to the target server.
+// ReportClient sends data to the target server.
 type ReportClient interface {
 	Send(ctx context.Context, data reportData) error
 
@@ -42,11 +42,13 @@ type ReportClient interface {
 	Close()
 }
 
+// ReportClientRegistry is used to receive ReportClient registrations.
 type ReportClientRegistry struct {
 	sync.Mutex
 	newClients []ReportClient
 }
 
+// NewReportClientRegistry creates a new ReportClientRegistry.
 func NewReportClientRegistry() *ReportClientRegistry {
 	return &ReportClientRegistry{}
 }
@@ -124,10 +126,12 @@ func (r *GRPCReportClient) Send(ctx context.Context, data reportData) error {
 	return nil
 }
 
+// IsPending implements ReportClient interface.
 func (r *GRPCReportClient) IsPending() bool {
 	return len(config.GetGlobalConfig().TopSQL.ReceiverAddress) == 0
 }
 
+// IsDown implements ReportClient interface.
 func (r *GRPCReportClient) IsDown() bool {
 	return false
 }

@@ -56,11 +56,12 @@ func SetupTopSQL() {
 	publisher := reporter.NewTopSQLPublisher(plancodec.DecodeNormalizedPlan, cr)
 	globalTopSQLPubSubService = publisher
 
-	if config.GetGlobalConfig().TopSQL.ReceiverAddress != "" {
+	if len(config.GetGlobalConfig().TopSQL.ReceiverAddress) != 0 {
 		variable.TopSQLVariable.InstanceEnable.Store(true)
 	}
 }
 
+// RegisterPubSubServer registers TopSQLPubSubService to the given gRPC server.
 func RegisterPubSubServer(s *grpc.Server) {
 	if globalTopSQLPubSubService != nil {
 		tipb.RegisterTopSQLPubSubServer(s, globalTopSQLPubSubService)

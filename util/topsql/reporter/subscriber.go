@@ -33,6 +33,7 @@ type TopSQLPublisher struct {
 	clientRegistry *ReportClientRegistry
 }
 
+// NewTopSQLPublisher creates a new TopSQLPublisher.
 func NewTopSQLPublisher(
 	decodePlan planBinaryDecodeFunc,
 	clientRegistry *ReportClientRegistry,

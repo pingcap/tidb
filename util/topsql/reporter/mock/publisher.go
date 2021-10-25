@@ -19,7 +19,6 @@ import (
 	"net"
 
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -32,8 +31,7 @@ type mockPublisherServer struct {
 
 // StartMockPublisherServer starts the mock publisher server.
 func StartMockPublisherServer(
-	planBinaryDecodeFunc func(string) (string, error),
-	clientRegistry *reporter.ReportClientRegistry,
+	service tipb.TopSQLPubSubServer,
 ) (*mockPublisherServer, error) {
 	addr := "127.0.0.1:0"
 	lis, err := net.Listen("tcp", addr)
@@ -41,9 +39,7 @@ func StartMockPublisherServer(
 		return nil, err
 	}
 	server := grpc.NewServer()
-
-	publisherServer := reporter.NewTopSQLPublisher(planBinaryDecodeFunc, clientRegistry)
-	tipb.RegisterTopSQLPubSubServer(server, publisherServer)
+	tipb.RegisterTopSQLPubSubServer(server, service)
 
 	go func() {
 		err := server.Serve(lis)

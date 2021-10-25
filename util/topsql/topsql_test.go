@@ -17,8 +17,6 @@ package topsql_test
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tipb/go-tipb"
-	"google.golang.org/grpc"
 	"testing"
 	"time"
 
@@ -31,7 +29,9 @@ import (
 	mockServer "github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 type collectorWrapper struct {
@@ -190,7 +190,8 @@ func TestTopSQLPubSub(t *testing.T) {
 	report := reporter.NewRemoteTopSQLReporter(cr)
 	defer report.Close()
 
-	server, err := mockServer.StartMockPublisherServer(mockPlanBinaryDecoderFunc, cr)
+	publisherServer := reporter.NewTopSQLPublisher(mockPlanBinaryDecoderFunc, cr)
+	server, err := mockServer.StartMockPublisherServer(publisherServer)
 	require.NoError(t, err)
 	defer server.Stop()
 
