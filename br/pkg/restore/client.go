@@ -81,6 +81,7 @@ type Client struct {
 
 	restoreStores []uint64
 
+	cipher             *backuppb.CipherInfo
 	storage            storage.ExternalStorage
 	backend            *backuppb.StorageBackend
 	switchModeInterval time.Duration
@@ -131,6 +132,10 @@ func NewRestoreClient(
 // SetRateLimit to set rateLimit.
 func (rc *Client) SetRateLimit(rateLimit uint64) {
 	rc.rateLimit = rateLimit
+}
+
+func (rc *Client) SetCrypter(crypter *backuppb.CipherInfo) {
+	rc.cipher = crypter
 }
 
 // SetStorage set ExternalStorage for client.
@@ -629,7 +634,7 @@ func (rc *Client) RestoreFiles(
 						zap.Duration("take", time.Since(fileStart)))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.Import(ectx, filesReplica, rewriteRules)
+				return rc.fileImporter.Import(ectx, filesReplica, rewriteRules, rc.cipher)
 			})
 	}
 
@@ -670,7 +675,7 @@ func (rc *Client) RestoreRaw(
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				defer updateCh.Inc()
-				return rc.fileImporter.Import(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule())
+				return rc.fileImporter.Import(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher)
 			})
 	}
 	if err := eg.Wait(); err != nil {
