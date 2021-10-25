@@ -322,7 +322,7 @@ type GlobalStats struct {
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
+func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, histIDs []int64) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
@@ -332,11 +332,11 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		return
 	}
 	globalTableInfo := globalTable.Meta()
-	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, idxID)
+	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs)
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
-func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
+func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo, isIndex int, histIDs []int64) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	partitionIDs := make([]int64, 0, partitionNum)
 	for i := 0; i < partitionNum; i++ {
@@ -345,20 +345,16 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 
 	// initialized the globalStats
 	globalStats = new(GlobalStats)
-	var validColStatsIdx []int
-	if isIndex == 0 {
-		validColStatsIdx = make([]int, 0, len(globalTableInfo.Columns))
-		for i, col := range globalTableInfo.Columns {
+	if len(histIDs) == 0 {
+		for _, col := range globalTableInfo.Columns {
 			// The virtual generated column stats can not be merged to the global stats.
 			if col.IsGenerated() && !col.GeneratedStored {
 				continue
 			}
-			validColStatsIdx = append(validColStatsIdx, i)
+			histIDs = append(histIDs, col.ID)
 		}
-		globalStats.Num = len(validColStatsIdx)
-	} else {
-		globalStats.Num = 1
 	}
+	globalStats.Num = len(histIDs)
 	globalStats.Count = 0
 	globalStats.Hg = make([]*statistics.Histogram, globalStats.Num)
 	globalStats.Cms = make([]*statistics.CMSketch, globalStats.Num)
@@ -402,7 +398,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			} else {
 				indexName := ""
 				for _, idx := range tableInfo.Indices {
-					if idx.ID == idxID {
+					if idx.ID == histIDs[0] {
 						indexName = idx.Name.L
 					}
 				}
@@ -412,13 +408,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			return
 		}
 		for i := 0; i < globalStats.Num; i++ {
-			// If the statistics is the index stats, we should use the index ID.
-			ID := idxID
-			if isIndex == 0 {
-				// If the statistics is the column stats, we should use the column ID to replace the index ID.
-				ID = tableInfo.Columns[validColStatsIdx[i]].ID
-			}
-			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(ID, isIndex == 1)
+			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
 			if i == 0 {
 				// In a partition, we will only update globalStats.Count once
 				globalStats.Count += count
