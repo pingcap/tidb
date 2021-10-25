@@ -1120,6 +1120,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase:
 		return true
+	case ast.Sysdate:
+		return true
 	}
 	return false
 }
