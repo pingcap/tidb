@@ -480,3 +480,17 @@ func (s *testSerialIntegrationSuite) TestOutdatedStatsCheck(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(tk.HasPseudoStats("select * from t where a = 1"), IsTrue)
 }
+
+func TestAnalyzeLongString(t *testing.T) {
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("create table t(a longtext);")
+	tk.MustExec("insert into t value(repeat(\"a\",65536));")
+	tk.MustExec("insert into t value(repeat(\"b\",65536));")
+	tk.MustExec("analyze table t with 0 topn")
+}
