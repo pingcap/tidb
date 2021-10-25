@@ -78,7 +78,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	// build table & partition bundles if any.
-	bundles := make([]*placement.Bundle, 0)
+	var bundles []*placement.Bundle
 	tableBundle, err := newBundleFromTblInfo(t, job, tbInfo)
 	if err != nil {
 		return ver, errors.Trace(err)

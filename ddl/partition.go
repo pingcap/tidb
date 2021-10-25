@@ -153,14 +153,16 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			return ver, errors.Trace(err)
 		}
 
-		bundles := make([]*placement.Bundle, 0)
-
+		var bundles []*placement.Bundle
 		// bundle for table should be recomputed because it includes some default configs for partitions
 		tblBundle, err := newBundleFromTblInfo(t, job, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		bundles = append(bundles, tblBundle)
+
+		if tblBundle != nil {
+			bundles = append(bundles, tblBundle)
+		}
 
 		partitionBundles, err := newBundlesFromPartitionDefs(t, job, addingDefinitions)
 		if err != nil {
