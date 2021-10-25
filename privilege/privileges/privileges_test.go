@@ -1914,11 +1914,17 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 	defer sem.Disable()
 
 	// With SEM enabled nolocal does not have permission, but yeslocal does.
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
-	require.EqualError(t, err, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'local:///tmp/test';")
+	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
+
+	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'file:///tmp/test';")
+	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
+
+	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO '/tmp/test';")
+	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
 	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
-	require.EqualError(t, err, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
 }
 
