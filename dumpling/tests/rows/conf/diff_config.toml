@@ -1,0 +1,40 @@
+# diff Configuration.
+
+log-level = "info"
+
+chunk-size = 1000
+
+check-thread-count = 4
+
+sample-percent = 100
+
+use-checksum = true
+
+fix-sql-file = "fix.sql"
+
+# tables need to check.
+[[check-tables]]
+schema = "rows"
+tables = ["~t.*"]
+
+[[table-config]]
+schema = "rows"
+table = "t"
+
+[[table-config.source-tables]]
+instance-id = "source-1"
+schema = "rows"
+table  = "t"
+
+[[source-db]]
+host = "127.0.0.1"
+port = 3306
+user = "root"
+password = ""
+instance-id = "source-1"
+
+[target-db]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+password = ""
