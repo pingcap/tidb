@@ -1666,11 +1666,9 @@ func (b *builtinHexStrArgSig) evalString(row chunk.Row) (string, bool, error) {
 		return d, isNull, err
 	}
 	dBytes := hack.Slice(d)
-	if b.encoding.Enabled() {
-		dBytes, err = b.encoding.Encode(nil, dBytes)
-		if err != nil {
-			return d, false, err
-		}
+	dBytes, err = b.encoding.Encode(nil, dBytes)
+	if err != nil {
+		return d, false, err
 	}
 	return strings.ToUpper(hex.EncodeToString(dBytes)), false, nil
 }
@@ -1889,33 +1887,23 @@ func (b *builtinTrim3ArgsSig) evalString(row chunk.Row) (d string, isNull bool, 
 		return d, isNull, err
 	}
 	remstr, isRemStrNull, err = b.args[1].EvalString(b.ctx, row)
-	if err != nil {
-		return d, isNull, err
+	if err != nil || isRemStrNull {
+		return d, isRemStrNull, err
 	}
 	x, isNull, err = b.args[2].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return d, isNull, err
 	}
 	direction = ast.TrimDirectionType(x)
-	if direction == ast.TrimLeading {
-		if isRemStrNull {
-			d = strings.TrimLeft(str, spaceChars)
-		} else {
-			d = trimLeft(str, remstr)
-		}
-	} else if direction == ast.TrimTrailing {
-		if isRemStrNull {
-			d = strings.TrimRight(str, spaceChars)
-		} else {
-			d = trimRight(str, remstr)
-		}
-	} else {
-		if isRemStrNull {
-			d = strings.Trim(str, spaceChars)
-		} else {
-			d = trimLeft(str, remstr)
-			d = trimRight(d, remstr)
-		}
+	switch direction {
+	case ast.TrimLeading:
+		d = trimLeft(str, remstr)
+	case ast.TrimTrailing:
+		d = trimRight(str, remstr)
+	default:
+		d = trimLeft(str, remstr)
+		d = trimRight(d, remstr)
+
 	}
 	return d, false, nil
 }
