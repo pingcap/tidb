@@ -46,18 +46,3 @@ func TestMain(m *testing.M) {
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
-
-func TestExecutorPkg(t *testing.T) {
-
-	// executor_pkg_test.go
-	t.Run("ShowProcessList", SubTestShowProcessList)
-	t.Run("BuildKvRangesForIndexJoinWithoutCwc", SubTestBuildKvRangesForIndexJoinWithoutCwc)
-	t.Run("GetFieldsFromLine", SubTestGetFieldsFromLine)
-	t.Run("SlowQueryRuntimeStats", SubTestSlowQueryRuntimeStats)
-	t.Run("AggPartialResultMapperB", SubTestAggPartialResultMapperB)
-	t.Run("FilterTemporaryTableKeys", SubTestFilterTemporaryTableKeys)
-
-	// executor_pkg_serial_test.go
-	t.Run("LoadDataWithDifferentEscapeChar", SubTestLoadDataWithDifferentEscapeChar)
-	t.Run("SortSpillDisk", SubTestSortSpillDisk)
-}

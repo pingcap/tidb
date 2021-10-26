@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func SubTestLoadDataWithDifferentEscapeChar(t *testing.T) {
+func TestLoadDataWithDifferentEscapeChar(t *testing.T) {
 	tests := []struct {
 		input      string
 		escapeChar byte
@@ -56,7 +56,7 @@ func SubTestLoadDataWithDifferentEscapeChar(t *testing.T) {
 	}
 }
 
-func SubTestSortSpillDisk(t *testing.T) {
+func TestSortSpillDisk(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true

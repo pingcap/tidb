@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
-	txninfo "github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -91,6 +91,15 @@ func (msm *mockSessionManager) ServerID() uint64 {
 
 func (msm *mockSessionManager) SetServerID(serverID uint64) {
 	msm.serverID = serverID
+}
+
+func TestExecutorPkg(t *testing.T) {
+	t.Run("ShowProcessList", SubTestShowProcessList)
+	t.Run("BuildKvRangesForIndexJoinWithoutCwc", SubTestBuildKvRangesForIndexJoinWithoutCwc)
+	t.Run("GetFieldsFromLine", SubTestGetFieldsFromLine)
+	t.Run("SlowQueryRuntimeStats", SubTestSlowQueryRuntimeStats)
+	t.Run("AggPartialResultMapperB", SubTestAggPartialResultMapperB)
+	t.Run("FilterTemporaryTableKeys", SubTestFilterTemporaryTableKeys)
 }
 
 func SubTestShowProcessList(t *testing.T) {
