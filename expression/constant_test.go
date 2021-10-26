@@ -56,6 +56,8 @@ func newFunction(funcName string, args ...Expression) Expression {
 }
 
 func TestConstantPropagation(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		solver     []PropagateConstantSolver
 		conditions []Expression
@@ -176,12 +178,14 @@ func TestConstantPropagation(t *testing.T) {
 				result = append(result, v.String())
 			}
 			sort.Strings(result)
-			assert.Equal(t, tt.result, strings.Join(result, ", "), fmt.Sprintf("different for expr %s", tt.conditions))
+			assert.Equalf(t, tt.result, strings.Join(result, ", "), "different for expr %s", tt.conditions)
 		}
 	}
 }
 
 func TestConstantFolding(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		condition Expression
 		result    string
@@ -213,11 +217,13 @@ func TestConstantFolding(t *testing.T) {
 	}
 	for _, tt := range tests {
 		newConds := FoldConstant(tt.condition)
-		assert.Equal(t, tt.result, newConds.String(), fmt.Sprintf("different for expr %s", tt.condition))
+		assert.Equalf(t, tt.result, newConds.String(), "different for expr %s", tt.condition)
 	}
 }
 
 func TestDeferredParamNotNull(t *testing.T) {
+	t.Parallel()
+
 	ctx := mock.NewContext()
 	testTime := time.Now()
 	ctx.GetSessionVars().PreparedParams = []types.Datum{
@@ -261,69 +267,71 @@ func TestDeferredParamNotNull(t *testing.T) {
 	assert.Equal(t, mysql.TypeEnum, cstEnum.GetType().Tp)
 
 	d, _, err := cstInt.EvalInt(ctx, chunk.Row{})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, int64(1), d)
 	r, _, err := cstFloat64.EvalReal(ctx, chunk.Row{})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, float64(2.1), r)
 	de, _, err := cstDec.EvalDecimal(ctx, chunk.Row{})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "20170118123950.123", de.String())
 	s, _, err := cstBytes.EvalString(ctx, chunk.Row{})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "b", s)
 	evalTime, _, err := cstTime.EvalTime(ctx, chunk.Row{})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, 0, evalTime.Compare(ctx.GetSessionVars().PreparedParams[2].GetMysqlTime()))
 	dur, _, err := cstDuration.EvalDuration(ctx, chunk.Row{})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, types.ZeroDuration.Duration, dur.Duration)
 	evalJSON, _, err := cstJSON.EvalJSON(ctx, chunk.Row{})
-	require.Nil(t, err)
-	assert.NotNil(t, evalJSON)
+	require.NoError(t, err)
+	require.NotNil(t, evalJSON)
 }
 
 func TestDeferredExprNotNull(t *testing.T) {
+	t.Parallel()
+
 	m := &MockExpr{}
 	ctx := mock.NewContext()
 	cst := &Constant{DeferredExpr: m, RetType: newIntFieldType()}
 	m.i, m.err = nil, fmt.Errorf("ERROR")
 	_, _, err := cst.EvalInt(ctx, chunk.Row{})
-	assert.NotNil(t, err)
+	require.Error(t, err)
 	_, _, err = cst.EvalReal(ctx, chunk.Row{})
-	assert.NotNil(t, err)
+	require.Error(t, err)
 	_, _, err = cst.EvalDecimal(ctx, chunk.Row{})
-	assert.NotNil(t, err)
+	require.Error(t, err)
 	_, _, err = cst.EvalString(ctx, chunk.Row{})
-	assert.NotNil(t, err)
+	require.Error(t, err)
 	_, _, err = cst.EvalTime(ctx, chunk.Row{})
-	assert.NotNil(t, err)
+	require.Error(t, err)
 	_, _, err = cst.EvalDuration(ctx, chunk.Row{})
-	assert.NotNil(t, err)
+	require.Error(t, err)
 	_, _, err = cst.EvalJSON(ctx, chunk.Row{})
-	assert.NotNil(t, err)
+	require.Error(t, err)
 
 	m.i, m.err = nil, nil
 	_, isNull, err := cst.EvalInt(ctx, chunk.Row{})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	assert.True(t, isNull)
 	_, isNull, err = cst.EvalReal(ctx, chunk.Row{})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	assert.True(t, isNull)
 	_, isNull, err = cst.EvalDecimal(ctx, chunk.Row{})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	assert.True(t, isNull)
 	_, isNull, err = cst.EvalString(ctx, chunk.Row{})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	assert.True(t, isNull)
 	_, isNull, err = cst.EvalTime(ctx, chunk.Row{})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	assert.True(t, isNull)
 	_, isNull, err = cst.EvalDuration(ctx, chunk.Row{})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	assert.True(t, isNull)
 	_, isNull, err = cst.EvalJSON(ctx, chunk.Row{})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	assert.True(t, isNull)
 
 	m.i = int64(2333)
@@ -359,6 +367,8 @@ func TestDeferredExprNotNull(t *testing.T) {
 }
 
 func TestVectorizedConstant(t *testing.T) {
+	t.Parallel()
+
 	// fixed-length type with/without Sel
 	for _, cst := range []*Constant{
 		{RetType: newIntFieldType(), Value: types.NewIntDatum(2333)},
@@ -414,6 +424,8 @@ func TestVectorizedConstant(t *testing.T) {
 }
 
 func TestGetTypeThreadSafe(t *testing.T) {
+	t.Parallel()
+
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().PreparedParams = []types.Datum{
 		types.NewIntDatum(1),
