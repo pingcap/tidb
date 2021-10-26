@@ -387,7 +387,7 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.MustExec(dropUserSQL)
 
 	// Test alter user.
-	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123';`
+	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123', 'test4'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
 	alterUserSQL := `ALTER USER 'test1'@'localhost' IDENTIFIED BY '111';`
 	tk.MustExec(alterUserSQL)
@@ -399,9 +399,9 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("222")))
-	alterUserSQL = `ALTER USER 'test1'@'localhost' IDENTIFIED WITH 'auth_socket';`
+	alterUserSQL = `ALTER USER 'test4'@'localhost' IDENTIFIED WITH 'auth_socket';`
 	tk.MustExec(alterUserSQL)
-	result = tk.MustQuery(`SELECT plugin FROM mysql.User WHERE User="test1" and Host="localhost"`)
+	result = tk.MustQuery(`SELECT plugin FROM mysql.User WHERE User="test4" and Host="localhost"`)
 	result.Check(testkit.Rows("auth_socket"))
 
 	alterUserSQL = `ALTER USER IF EXISTS 'test2'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '1';`
