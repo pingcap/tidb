@@ -38,23 +38,18 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 // PlanReplayerSingleExec represents a plan replayer executor.
 type PlanReplayerSingleExec struct {
 	baseExecutor
-	info *PlanReplayerSingleInfo
-
-	endFlag bool
-}
-
-// PlanReplayerSingleInfo saves the information of plan replayer operation for single SQL statement.
-type PlanReplayerSingleInfo struct {
 	ExecStmt ast.StmtNode
 	Analyze  bool
 	Load     bool
 	File     string
-	Ctx      sessionctx.Context
+
+	endFlag bool
 }
 
 type tableNamePair struct {
@@ -93,25 +88,15 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
 	if e.endFlag {
 		return nil
 	}
-	if e.info.ExecStmt == nil {
+	if e.ExecStmt == nil {
 		return errors.New("plan replayer: sql is empty")
 	}
-	res, err := e.info.dumpSingle(filepath.Join(domain.GetPlanReplayerDirName(), fmt.Sprintf("%v", os.Getpid())))
+	res, err := e.dumpSingle(filepath.Join(domain.GetPlanReplayerDirName(), fmt.Sprintf("%v", os.Getpid())))
 	if err != nil {
 		return err
 	}
 	req.AppendString(0, res)
 	e.endFlag = true
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *PlanReplayerSingleExec) Close() error {
-	return nil
-}
-
-// Open implements the Executor Open interface.
-func (e *PlanReplayerSingleExec) Open(ctx context.Context) error {
 	return nil
 }
 
@@ -130,16 +115,15 @@ func (e *PlanReplayerSingleExec) Open(ctx context.Context) error {
 // |_explain
 //     |-explain.txt
 //
-func (e *PlanReplayerSingleInfo) dumpSingle(path string) (string, error) {
+func (e *PlanReplayerSingleExec) dumpSingle(path string) (string, error) {
 	// Create path
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
-		return "", errors.New("plan replayer: cannot create plan replayer path")
+		return "", errors.AddStack(err)
 	}
 
 	// Generate key and create zip file
-	startTime := time.Now()
-	time := startTime.UnixNano()
+	time := time.Now().UnixNano()
 	b := make([]byte, 16)
 	_, err = rand.Read(b)
 	if err != nil {
@@ -149,7 +133,7 @@ func (e *PlanReplayerSingleInfo) dumpSingle(path string) (string, error) {
 	fileName := fmt.Sprintf("replayer_single_%v_%v.zip", key, time)
 	zf, err := os.Create(filepath.Join(path, fileName))
 	if err != nil {
-		return "", errors.New("plan replayer: cannot create zip file")
+		return "", errors.AddStack(err)
 	}
 
 	// Create zip writer
@@ -157,11 +141,11 @@ func (e *PlanReplayerSingleInfo) dumpSingle(path string) (string, error) {
 	defer func() {
 		err := zw.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("Closing zip writer failed.")
+			logutil.BgLogger().Warn("Closing zip writer failed", zap.Error(err))
 		}
 		err = zf.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("Closing zip file failed.")
+			logutil.BgLogger().Warn("Closing zip file failed", zap.Error(err))
 		}
 	}()
 
@@ -176,18 +160,18 @@ func (e *PlanReplayerSingleInfo) dumpSingle(path string) (string, error) {
 	}
 
 	// Retrieve current DB
-	sessionVars := e.Ctx.GetSessionVars()
+	sessionVars := e.ctx.GetSessionVars()
 	dbName := model.NewCIStr(sessionVars.CurrentDB)
-	do := domain.GetDomain(e.Ctx)
+	do := domain.GetDomain(e.ctx)
 
 	// Retrieve all tables
 	pairs, err := extractTableNames(e.ExecStmt, dbName.L)
 	if err != nil {
-		return "", errors.New(fmt.Sprintf("plan replayer: invalid SQL text, err: %v", err))
+		return "", errors.AddStack(errors.New(fmt.Sprintf("plan replayer: invalid SQL text, err: %v", err)))
 	}
 
 	// Dump Schema
-	if err = dumpSchemas(e.Ctx, zw, pairs); err != nil {
+	if err = dumpSchemas(e.ctx, zw, pairs); err != nil {
 		return "", err
 	}
 
@@ -197,7 +181,7 @@ func (e *PlanReplayerSingleInfo) dumpSingle(path string) (string, error) {
 	}
 
 	// Dump variables
-	if err = dumpVariables(e.Ctx, zw); err != nil {
+	if err = dumpVariables(e.ctx, zw); err != nil {
 		return "", err
 	}
 
@@ -212,17 +196,17 @@ func (e *PlanReplayerSingleInfo) dumpSingle(path string) (string, error) {
 	}
 
 	// Dump session bindings
-	if err = dumpSessionBindings(e.Ctx, zw); err != nil {
+	if err = dumpSessionBindings(e.ctx, zw); err != nil {
 		return "", err
 	}
 
 	// Dump global bindings
-	if err = dumpGlobalBindings(e.Ctx, zw); err != nil {
+	if err = dumpGlobalBindings(e.ctx, zw); err != nil {
 		return "", err
 	}
 
 	// Dump explain
-	if err = dumpExplain(e.Ctx, zw, e.ExecStmt.Text(), e.Analyze); err != nil {
+	if err = dumpExplain(e.ctx, zw, e.ExecStmt.Text(), e.Analyze); err != nil {
 		return "", err
 	}
 
@@ -232,10 +216,10 @@ func (e *PlanReplayerSingleInfo) dumpSingle(path string) (string, error) {
 func dumpConfig(zw *zip.Writer) error {
 	cf, err := zw.Create("config.toml")
 	if err != nil {
-		return err
+		return errors.AddStack(err)
 	}
 	if err := toml.NewEncoder(cf).Encode(config.GetGlobalConfig()); err != nil {
-		return err
+		return errors.AddStack(err)
 	}
 	return nil
 }
@@ -243,11 +227,11 @@ func dumpConfig(zw *zip.Writer) error {
 func dumpMeta(zw *zip.Writer) error {
 	mt, err := zw.Create("meta.txt")
 	if err != nil {
-		return err
+		return errors.AddStack(err)
 	}
 	_, err = mt.Write([]byte(printer.GetTiDBInfo()))
 	if err != nil {
-		return err
+		return errors.AddStack(err)
 	}
 	return nil
 }
@@ -270,15 +254,15 @@ func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *domain.Doma
 		}
 		statsFw, err := zw.Create(fmt.Sprintf("stats/%v.%v.json", pair.DBName, pair.TableName))
 		if err != nil {
-			return err
+			return errors.AddStack(err)
 		}
 		data, err := json.Marshal(jsonTbl)
 		if err != nil {
-			return err
+			return errors.AddStack(err)
 		}
 		_, err = statsFw.Write(data)
 		if err != nil {
-			return err
+			return errors.AddStack(err)
 		}
 	}
 	return nil
@@ -296,13 +280,13 @@ func dumpVariables(ctx sessionctx.Context, zw *zip.Writer) error {
 	}
 	vf, err := zw.Create("variables.toml")
 	if err != nil {
-		return err
+		return errors.AddStack(err)
 	}
 	for _, row := range sRows {
 		varMap[row[0]] = row[1]
 	}
 	if err := toml.NewEncoder(vf).Encode(varMap); err != nil {
-		return err
+		return errors.AddStack(err)
 	}
 	if len(recordSets) > 0 {
 		if err := recordSets[0].Close(); err != nil {
@@ -323,7 +307,7 @@ func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	}
 	bf, err := zw.Create("session_bindings.sql")
 	if err != nil {
-		return err
+		return errors.AddStack(err)
 	}
 	for _, row := range sRows {
 		fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
@@ -347,7 +331,7 @@ func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 	}
 	bf, err := zw.Create("global_bindings.sql")
 	if err != nil {
-		return err
+		return errors.AddStack(err)
 	}
 	for _, row := range sRows {
 		fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
@@ -382,7 +366,7 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze b
 	}
 	fw, err := zw.Create("explain.txt")
 	if err != nil {
-		return err
+		return errors.AddStack(err)
 	}
 	for _, row := range sRows {
 		fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
@@ -426,7 +410,7 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 	}
 	fw, err := zw.Create(fmt.Sprintf("schema/%v.%v.schema.txt", pair.DBName, pair.TableName))
 	if err != nil {
-		return err
+		return errors.AddStack(err)
 	}
 	for _, row := range sRows {
 		fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
