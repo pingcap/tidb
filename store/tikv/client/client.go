@@ -57,6 +57,7 @@ const (
 	dialTimeout       = 5 * time.Second
 	ReadTimeoutShort  = 20 * time.Second // For requests that read/write several key-values.
 	ReadTimeoutMedium = 60 * time.Second // For requests that may need scan region.
+	ReadTimeoutLong   = 10 * time.Minute
 )
 
 // Grpc window size

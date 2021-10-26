@@ -26,6 +26,7 @@ type Client = client.Client
 const (
 	ReadTimeoutMedium = client.ReadTimeoutMedium
 	ReadTimeoutShort  = client.ReadTimeoutShort
+	ReadTimeoutLong   = client.ReadTimeoutLong
 )
 
 // NewTestRPCClient is for some external tests.

@@ -203,7 +203,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		Meta:        taskMeta,
 		EncodedPlan: req.Data,
 		// TODO: This is only an experience value. It's better to be configurable.
-		Timeout:   60,
+		Timeout:   600,
 		SchemaVer: req.SchemaVar,
 		Regions:   regionInfos,
 	}
@@ -220,7 +220,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	// In that case
 	if originalTask != nil {
 		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient())
-		rpcResp, retry, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
+		rpcResp, retry, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutLong)
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
 		// That's a hard job but we can try it in the future.
@@ -230,7 +230,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 			err = derr.ErrTiFlashServerTimeout
 		}
 	} else {
-		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutMedium)
+		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutLong)
 		if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 			retry = false
 		} else if err != nil {
