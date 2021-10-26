@@ -132,6 +132,7 @@ func genRowData(table *table) (string, error) {
 	return sql, nil
 }
 
+// #nosec G404
 func genColumnData(table *table, column *column) (string, error) {
 	tp := column.tp
 	incremental := column.incremental
