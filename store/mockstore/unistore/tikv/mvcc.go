@@ -309,7 +309,7 @@ func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.Pessimi
 			if req.ReturnValues {
 				resp.Values = append(resp.Values, val)
 			}
-			resp.NotFounds = append(resp.NotFounds, false)
+			resp.NotFounds = append(resp.NotFounds, len(val) == 0)
 		}
 	}
 	return nil, err
