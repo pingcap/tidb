@@ -132,7 +132,7 @@ func (s *testSuite5) TestAdminCheckIndexInCacheTable(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists cache_admin_test;")
 	tk.MustExec("create  table cache_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2))")
-	tk.MustExec("alter table cache_admin_test cache");
+	tk.MustExec("alter table cache_admin_test cache")
 	_, err := tk.Exec("admin check table cache_admin_test;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnCacheTable.GenWithStackByArgs("admin check table").Error())
 	_, err = tk.Exec("admin check index cache_admin_test c1;")
