@@ -30,13 +30,13 @@ import (
 
 // ReportClient sends data to the target server.
 type ReportClient interface {
-	Send(ctx context.Context, data reportData) error
+	Send(data reportData, timeout time.Duration)
 
 	// IsPending indicates that ReportClient is not expecting to receive records for now and may resume in the future.
 	IsPending() bool
 
-	// IsDown indicates that the client has been closed and can be cleared.
-	// Note that: once a ReportClient is closed, it cannot go back to be non-closed.
+	// IsDown indicates that the client has been down and can be cleared.
+	// Note that: once a ReportClient is down, it cannot go back to be up.
 	IsDown() bool
 
 	Close()
@@ -74,30 +74,69 @@ func (r *ReportClientRegistry) register(client ReportClient) {
 type GRPCReportClient struct {
 	curRPCAddr string
 	conn       *grpc.ClientConn
+	sendTask   chan struct {
+		data    reportData
+		timeout time.Duration
+	}
 	// calling decodePlan this can take a while, so should not block critical paths
 	decodePlan planBinaryDecodeFunc
 }
 
 // NewGRPCReportClient returns a new GRPCReportClient
 func NewGRPCReportClient(decodePlan planBinaryDecodeFunc) *GRPCReportClient {
-	return &GRPCReportClient{
+	client := &GRPCReportClient{
 		decodePlan: decodePlan,
+		sendTask: make(chan struct {
+			data    reportData
+			timeout time.Duration
+		}),
+	}
+
+	go client.run()
+	return client
+}
+
+func (r *GRPCReportClient) run() {
+	for task := range r.sendTask {
+		targetRPCAddr := config.GetGlobalConfig().TopSQL.ReceiverAddress
+		if targetRPCAddr == "" {
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), task.timeout)
+		start := time.Now()
+		err := r.doSend(ctx, targetRPCAddr, task.data)
+		cancel()
+		if err != nil {
+			logutil.BgLogger().Warn("[top-sql] client failed to send data to receiver", zap.Error(err))
+			reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		} else {
+			reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
+		}
 	}
 }
 
 var _ ReportClient = &GRPCReportClient{}
 
 // Send implements the ReportClient interface.
-// Currently the implementation will establish a new connection every time, which is suitable for a per-minute sending period
-func (r *GRPCReportClient) Send(ctx context.Context, data reportData) error {
-	targetRPCAddr := config.GetGlobalConfig().TopSQL.ReceiverAddress
-
-	if targetRPCAddr == "" {
-		return nil
+func (r *GRPCReportClient) Send(data reportData, timeout time.Duration) {
+	select {
+	case r.sendTask <- struct {
+		data    reportData
+		timeout time.Duration
+	}{data: data, timeout: timeout}:
+		// sent successfully
+	default:
+		ignoreReportChannelFullCounter.Inc()
+		logutil.BgLogger().Warn("[top-sql] report channel is full")
 	}
-	err := r.tryEstablishConnection(ctx, targetRPCAddr)
+}
+
+// Currently the doSend will establish a new connection every time, which is suitable for a per-minute sending period
+func (r *GRPCReportClient) doSend(ctx context.Context, addr string, data reportData) (err error) {
+	err = r.tryEstablishConnection(ctx, addr)
 	if err != nil {
-		return err
+		return
 	}
 
 	var wg sync.WaitGroup
@@ -118,12 +157,13 @@ func (r *GRPCReportClient) Send(ctx context.Context, data reportData) error {
 	}()
 	wg.Wait()
 	close(errCh)
-	for err := range errCh {
+	for err = range errCh {
 		if err != nil {
-			return err
+			return
 		}
 	}
-	return nil
+
+	return
 }
 
 // IsPending implements ReportClient interface.
@@ -138,6 +178,7 @@ func (r *GRPCReportClient) IsDown() bool {
 
 // Close uses to close grpc connection.
 func (r *GRPCReportClient) Close() {
+	close(r.sendTask)
 	if r.conn == nil {
 		return
 	}

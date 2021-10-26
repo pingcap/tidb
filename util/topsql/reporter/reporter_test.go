@@ -426,6 +426,8 @@ func TestCollectInternal(t *testing.T) {
 
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
 	tsr := initializeCache(maxSQLNum, 120, ":23333")
+	defer tsr.Close()
+
 	for i := 0; i < b.N; i++ {
 		populateCache(tsr, 0, maxSQLNum, uint64(i))
 	}
@@ -433,6 +435,8 @@ func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
 
 func BenchmarkTopSQL_CollectAndEvict(b *testing.B) {
 	tsr := initializeCache(maxSQLNum, 120, ":23333")
+	defer tsr.Close()
+
 	begin := 0
 	end := maxSQLNum
 	for i := 0; i < b.N; i++ {

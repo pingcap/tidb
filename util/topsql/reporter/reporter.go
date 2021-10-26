@@ -496,8 +496,6 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	select {
 	case tsr.reportCollectedDataChan <- data:
 	default:
-		// ignore if chan blocked
-		ignoreReportChannelFullCounter.Inc()
 	}
 }
 
@@ -607,16 +605,6 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	})
 
 	for i := range tsr.clients {
-		ctx, cancel := context.WithTimeout(tsr.ctx, timeout)
-		start := time.Now()
-
-		err := tsr.clients[i].Send(ctx, data)
-		if err != nil {
-			logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
-			reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
-		} else {
-			reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
-		}
-		cancel()
+		tsr.clients[i].Send(data, timeout)
 	}
 }

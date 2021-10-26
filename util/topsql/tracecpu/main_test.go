@@ -30,7 +30,7 @@ import (
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
 
-	variable.TopSQLVariable.Enable.Store(false)
+	variable.TopSQLVariable.InstanceEnable.Store(false)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "mock"
 	})
@@ -52,9 +52,10 @@ func TestPProfCPUProfile(t *testing.T) {
 	err := tracecpu.StartCPUProfile(buf)
 	require.NoError(t, err)
 	// enable top sql.
-	variable.TopSQLVariable.Enable.Store(true)
+	variable.TopSQLVariable.InstanceEnable.Store(true)
 	err = tracecpu.StopCPUProfile()
 	require.NoError(t, err)
 	_, err = profile.Parse(buf)
 	require.NoError(t, err)
+	variable.TopSQLVariable.InstanceEnable.Store(false)
 }
