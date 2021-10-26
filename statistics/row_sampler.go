@@ -33,7 +33,6 @@ import (
 // RowSampleCollector implements the needed interface for a row-based sample collector.
 type RowSampleCollector interface {
 	MergeCollector(collector RowSampleCollector)
-	FromProto(pbCollector *tipb.RowSampleCollector)
 	ToProto() *tipb.RowSampleCollector
 	sampleRow(row []types.Datum, rng *rand.Rand)
 	Base() *baseCollector
@@ -236,6 +235,30 @@ func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols [
 	return nil
 }
 
+func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
+	s.Count = pbCollector.Count
+	s.NullCount = pbCollector.NullCounts
+	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
+	for _, pbSketch := range pbCollector.FmSketch {
+		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
+	}
+	s.TotalSizes = pbCollector.TotalSize
+	s.Samples = make(WeightedRowSampleHeap, 0, len(pbCollector.Samples))
+	for _, pbSample := range pbCollector.Samples {
+		data := make([]types.Datum, 0, len(pbSample.Row))
+		for _, col := range pbSample.Row {
+			b := make([]byte, len(col))
+			copy(b, col)
+			data = append(data, types.NewBytesDatum(b))
+		}
+		// Directly copy the weight.
+		s.Samples = append(s.Samples, &ReservoirRowSampleItem{
+			Columns: data,
+			Weight:  pbSample.Weight,
+		})
+	}
+}
+
 // Base implements the RowSampleCollector interface.
 func (s *ReservoirRowSampleCollector) Base() *baseCollector {
 	return s.baseCollector
@@ -290,33 +313,6 @@ func (s *ReservoirRowSampleCollector) ToProto() *tipb.RowSampleCollector {
 		TotalSize:  s.TotalSizes,
 	}
 	return collector
-}
-
-// FromProto constructs the collector from the proto struct.
-func (s *ReservoirRowSampleCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
-	s.baseCollector = &baseCollector{}
-	s.Count = pbCollector.Count
-	s.NullCount = pbCollector.NullCounts
-	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
-	for _, pbSketch := range pbCollector.FmSketch {
-		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
-	}
-	s.TotalSizes = pbCollector.TotalSize
-	s.Samples = make(WeightedRowSampleHeap, 0, len(pbCollector.Samples))
-	for _, pbSample := range pbCollector.Samples {
-		data := make([]types.Datum, 0, len(pbSample.Row))
-		for _, col := range pbSample.Row {
-			b := make([]byte, len(col))
-			copy(b, col)
-			data = append(data, types.NewBytesDatum(b))
-		}
-		// The samples collected from regions are also organized by binary heap. So we can just copy the slice.
-		// No need to maintain the heap again.
-		s.Samples = append(s.Samples, &ReservoirRowSampleItem{
-			Columns: data,
-			Weight:  pbSample.Weight,
-		})
-	}
 }
 
 // MergeCollector merges the collectors to a final one.
@@ -409,35 +405,7 @@ func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleColle
 	for i := range subCollector.Base().TotalSizes {
 		s.TotalSizes[i] += subCollector.Base().TotalSizes[i]
 	}
-	for _, sample := range subCollector.Base().Samples {
-		s.baseCollector.Samples = append(s.baseCollector.Samples, sample)
-	}
-}
-
-// FromProto constructs the collector from the proto struct.
-func (s *BernoulliRowSampleCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
-	s.baseCollector = &baseCollector{}
-	s.Count = pbCollector.Count
-	s.NullCount = pbCollector.NullCounts
-	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
-	for _, pbSketch := range pbCollector.FmSketch {
-		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
-	}
-	s.TotalSizes = pbCollector.TotalSize
-	s.Samples = make(WeightedRowSampleHeap, 0, len(pbCollector.Samples))
-	for _, pbSample := range pbCollector.Samples {
-		data := make([]types.Datum, 0, len(pbSample.Row))
-		for _, col := range pbSample.Row {
-			b := make([]byte, len(col))
-			copy(b, col)
-			data = append(data, types.NewBytesDatum(b))
-		}
-		// The samples collected from regions are also organized by binary heap. So we can just copy the slice.
-		// No need to maintain the heap again.
-		s.Samples = append(s.Samples, &ReservoirRowSampleItem{
-			Columns: data,
-		})
-	}
+	s.baseCollector.Samples = append(s.baseCollector.Samples, subCollector.Base().Samples...)
 }
 
 // ToProto converts the collector to proto struct.

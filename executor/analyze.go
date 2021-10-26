@@ -1190,7 +1190,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 	failpoint.Inject("mockAnalyzeSamplingMergeWorkerPanic", func() {
 		panic("failpoint triggered")
 	})
-	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), *e.analyzePB.ColReq.SampleRate, l)
+	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for i := 0; i < l; i++ {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
@@ -1205,11 +1205,9 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 			resultCh <- &samplingMergeResult{err: err}
 			return
 		}
-		subCollector := &statistics.ReservoirRowSampleCollector{
-			MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
-		}
-		subCollector.FromProto(colResp.RowCollector)
-		e.job.Update(subCollector.Count)
+		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
+		subCollector.Base().FromProto(colResp.RowCollector)
+		e.job.Update(subCollector.Base().Count)
 		retCollector.MergeCollector(subCollector)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
