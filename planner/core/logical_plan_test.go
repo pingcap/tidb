@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
@@ -60,6 +61,7 @@ type testPlanSuite struct {
 func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockUnsignedTable(), MockView(), MockNoPKTable()})
 	s.ctx = MockContext()
+	domain.GetDomain(s.ctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	s.ctx.GetSessionVars().EnableWindowFunction = true
 	s.Parser = parser.New()
 	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
