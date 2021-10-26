@@ -1,0 +1,247 @@
+[
+  {
+    "name": "TestCBOWithoutAnalyze",
+    "cases": [
+      "explain format = 'brief' select * from t1, t2 where t1.a = t2.a",
+      "explain format = 'hint' select * from t1, t2 where t1.a = t2.a"
+    ]
+  },
+  {
+    "name": "TestTableDual",
+    "cases": [
+      "explain format = 'brief' select * from t where 1 = 0",
+      "explain format = 'brief' select * from t where 1 = 1 limit 0"
+    ]
+  },
+  {
+    "name": "TestEstimation",
+    "cases": [
+      "explain format = 'brief' select count(*) from t group by a"
+    ]
+  },
+  {
+    "name": "TestOutdatedAnalyze",
+    "cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
+        "RatioOfPseudoEstimate": 10.0
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
+        "RatioOfPseudoEstimate": 0.7
+      }
+    ]
+  },
+  {
+    "name": "TestInconsistentEstimation",
+    "cases": [
+      // Using the histogram (a, b) to estimate `a = 5` will get 1.22, while using the CM Sketch to estimate
+      // the `a = 5 and c = 5` will get 10, it is not consistent.
+      "explain format = 'brief' select * from t use index(ab) where a = 5 and c = 5"
+    ]
+  },
+  {
+    "name": "TestLimitCrossEstimation",
+    "cases": [
+      // Pseudo stats.
+      [
+        "set session tidb_opt_correlation_exp_factor = 0",
+        "explain format = 'brief' SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;"
+      ],
+      // Positive correlation.
+      [
+        "insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)",
+        "analyze table t",
+        "explain format = 'brief' SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
+      ],
+      // Negative correlation.
+      [
+        "truncate table t",
+        "insert into t (a, b) values (1, 25),(2, 24),(3, 23),(4, 23),(5, 21),(6, 20),(7, 19),(8, 18),(9, 17),(10, 16),(11, 15),(12, 14),(13, 13),(14, 12),(15, 11),(16, 10),(17, 9),(18, 8),(19, 7),(20, 6),(21, 5),(22, 4),(23, 3),(24, 2),(25, 1)",
+        "analyze table t",
+        "explain format = 'brief' SELECT * FROM t WHERE b <= 6 ORDER BY a limit 1"
+      ],
+      // Outer plan of index join (to test that correct column ID is used).
+      [
+        "explain format = 'brief' SELECT *, t1.a IN (SELECT t2.b FROM t t2) FROM t t1 WHERE t1.b <= 6 ORDER BY t1.a limit 1"
+      ],
+      // Desc TableScan.
+      [
+        "truncate table t",
+        "insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 2),(8, 2),(9, 2),(10, 2),(11, 2),(12, 2),(13, 2),(14, 2),(15, 2),(16, 2),(17, 2),(18, 2),(19, 2),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)",
+        "analyze table t",
+        "explain format = 'brief' SELECT * FROM t WHERE b = 1 ORDER BY a desc limit 1"
+      ],
+      // Correlation threshold not met.
+      [
+        "truncate table t",
+        "insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 2),(10, 1),(11, 1),(12, 1),(13, 1),(14, 2),(15, 2),(16, 1),(17, 2),(18, 1),(19, 2),(20, 1),(21, 2),(22, 1),(23, 1),(24, 1),(25, 1)",
+        "analyze table t",
+        "explain format = 'brief' SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
+      ],
+      [
+        "set session tidb_opt_correlation_exp_factor = 1",
+        "explain format = 'brief' SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
+      ],
+      // TableScan has access conditions, but correlation is 1.
+      [
+        "set session tidb_opt_correlation_exp_factor = 0",
+        "truncate table t",
+        "insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)",
+        "analyze table t",
+        "explain format = 'brief' SELECT * FROM t WHERE b = 2 and a > 0 ORDER BY a limit 1"
+      ],
+      // Multi-column filter.
+      [
+        "drop table t",
+        "create table t(a int primary key, b int, c int, d bigint default 2147483648, e bigint default 2147483648, f bigint default 2147483648, index idx(b,d,a,c))",
+        "insert into t(a, b, c) values (1, 1, 1),(2, 1, 2),(3, 1, 1),(4, 1, 2),(5, 1, 1),(6, 1, 2),(7, 1, 1),(8, 1, 2),(9, 1, 1),(10, 1, 2),(11, 1, 1),(12, 1, 2),(13, 1, 1),(14, 1, 2),(15, 1, 1),(16, 1, 2),(17, 1, 1),(18, 1, 2),(19, 1, 1),(20, 2, 2),(21, 2, 1),(22, 2, 2),(23, 2, 1),(24, 2, 2),(25, 2, 1)",
+        "analyze table t",
+        "explain format = 'brief' SELECT a FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1"
+      ]
+    ]
+  },
+  {
+    "name": "TestIssue9562",
+    "cases": [
+      [
+        "create table t1(a bigint, b bigint, c bigint)",
+        "create table t2(a bigint, b bigint, c bigint, index idx(a, b, c))",
+        "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c"
+      ],
+      [
+        "create table t(a int, b int, index idx_ab(a, b))",
+        "explain format = 'brief' select * from t t1 join t t2 where t1.b = t2.b and t2.b is null"
+      ]
+    ]
+  },
+  {
+    "name": "TestTiFlashCostModel",
+    "cases": [
+      [
+        "desc select * from t"
+      ],
+      [
+        "desc select /*+ read_from_storage(tikv[t]) */ * from t"
+      ],
+      [
+        "desc select * from t where t.a = 1 or t.a = 2"
+      ],
+      [
+        "set @@session.tidb_isolation_read_engines='tiflash'",
+        "desc select * from t where t.a = 1 or t.a = 2"
+      ]
+    ]
+  },
+  {
+    "name": "TestStraightJoin",
+    "cases": [
+      "explain format = 'brief' select straight_join * from t1, t2, t3, t4",
+      "explain format = 'brief' select * from t1 straight_join t2 straight_join t3 straight_join t4",
+      "explain format = 'brief' select straight_join * from t1, t2, t3, t4 where t1.a=t4.a"
+    ]
+  },
+  {
+    "name": "TestNullCount",
+    "cases": [
+      "explain format = 'brief' select * from t where a is null",
+      "explain format = 'brief' select * from t use index(idx) where a is null",
+      "explain format = 'brief' select * from t where b = 1",
+      "explain format = 'brief' select * from t where b < 1"
+    ]
+  },
+  {
+    "name": "TestCorrelatedEstimation",
+    "cases": [
+      "explain format = 'brief' select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
+      "explain format = 'brief' select (select concat(t1.a, \",\", t1.b) from t t1 where t1.a=t.a and t1.c=t.c) from t"
+    ]
+  },
+  {
+    "name": "TestLowSelIndexGreedySearch",
+    "cases": [
+      "explain format = 'brief' select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'"
+    ]
+  },
+  {
+    "name": "TestEmptyTable",
+    "cases": [
+      "select * from t where t.c1 <= 50",
+      "select * from t where c1 in (select c1 from t1)",
+      "select * from t, t1 where t.c1 = t1.c1",
+      "select * from t limit 0"
+    ]
+  },
+  {
+    "name": "TestIndexRead",
+    "cases": [
+      "select count(*) from t group by e",
+      "select count(*) from t where e <= 10 group by e",
+      "select count(*) from t where e <= 50",
+      "select count(*) from t where c > '1' group by b",
+      "select count(*) from t where e = 1 group by b",
+      "select count(*) from t where e > 1 group by b",
+      "select count(e) from t where t.b <= 20",
+      "select count(e) from t where t.b <= 30",
+      "select count(e) from t where t.b <= 40",
+      "select count(e) from t where t.b <= 50",
+      "select count(e) from t where t.b <= 100000000000",
+      "select * from t where t.b <= 40",
+      "select * from t where t.b <= 50",
+      "select * from t where t.b <= 10000000000",
+      // test panic
+      "select * from t where 1 and t.b <= 50",
+      "select * from t where t.b <= 100 order by t.a limit 1",
+      "select * from t where t.b <= 1 order by t.a limit 10",
+      "select * from t use index(b) where b = 1 order by a",
+      // test datetime
+      "select * from t where d < cast('1991-09-05' as datetime)",
+      // test timestamp
+      "select * from t where ts < '1991-09-05'",
+      "select sum(a) from t1 use index(idx) where a = 3 and b = 100000 group by a limit 1"
+    ]
+  },
+  {
+    "name": "TestAnalyze",
+    "cases": [
+      "analyze table t3",
+      // Test analyze full table.
+      "select * from t where t.a <= 2",
+      "select b from t where t.b < 2",
+      "select * from t where t.a = 1 and t.b <= 2",
+      // Test not analyzed table.
+      "select * from t1 where t1.a <= 2",
+      "select * from t1 where t1.a = 1 and t1.b <= 2",
+      // Test analyze single index.
+      "select * from t2 where t2.a <= 2",
+      // Test analyze all index.
+      "analyze table t2 index",
+      // Test partitioned table.
+      "select * from t4 where t4.a <= 2",
+      "select b from t4 where t4.b < 2",
+      "select * from t4 where t4.a = 1 and t4.b <= 2"
+      // TODO: Refine these tests in the future.
+      // "select * from t2 where t2.a = 1 and t2.b <= 2",
+    ]
+  },
+  {
+    "name": "TestIndexEqualUnknown",
+    "cases": [
+      // 7639902 is out of range for the analyzed histogram, and we know from the data writer that for each value
+      // of `a` in the table, there are 6 rows in average. Before this PR, the row count estimation is 150k, which is
+      // far from the real value.
+      "explain format = 'brief' select * from t where a = 7639902",
+      // Should choose `primary` index instead of index `b`.
+      "explain format = 'brief' select c, b from t where a = 7639902 order by b asc limit 6"
+    ]
+  },
+  {
+    "name": "TestLimitIndexEstimation",
+    "cases": [
+      // Should choose idx_a instead of idx_b, because idx_b would scan 990001 rows.
+      "explain format = 'brief' select * from t where a <= 10000 order by b limit 1",
+      // Should choose idx_b instead of idx_a, because idx_b would scan only 1 row.
+      "explain format = 'brief' select * from t where a >= 999900 order by b limit 1"
+    ]
+  }
+]

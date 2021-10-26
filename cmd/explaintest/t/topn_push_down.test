@@ -1,0 +1,194 @@
+CREATE TABLE `tr` (
+  `id` bigint(20) NOT NULL,
+  `biz_date` date NOT NULL,
+  `domain_type` tinyint(4) NOT NULL,
+  `business_type` tinyint(4) NOT NULL,
+  `trade_type` tinyint(4) NOT NULL DEFAULT '1',
+  `trade_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `trade_status` tinyint(4) NOT NULL DEFAULT '0',
+  `trade_pay_status` tinyint(4) NOT NULL DEFAULT '0',
+  `delivery_type` tinyint(4) NOT NULL DEFAULT '0',
+  `source` tinyint(4) NOT NULL,
+  `source_child` mediumint(9) DEFAULT NULL,
+  `trade_no` varchar(26) NOT NULL,
+  `sku_kind_count` int(11) NOT NULL,
+  `sale_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `privilege_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `trade_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `trade_amount_before` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `trade_memo` varchar(100) DEFAULT NULL,
+  `relate_trade_id` bigint(20) DEFAULT NULL,
+  `relate_trade_uuid` varchar(32) DEFAULT NULL,
+  `brand_identy` bigint(20) NOT NULL,
+  `shop_identy` bigint(20) NOT NULL,
+  `device_identy` varchar(36) NOT NULL,
+  `uuid` varchar(32) NOT NULL,
+  `status_flag` tinyint(4) NOT NULL,
+  `client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `client_update_time` timestamp(3) NULL DEFAULT NULL,
+  `server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  `creator_id` bigint(20) DEFAULT NULL,
+  `creator_name` varchar(32) DEFAULT NULL,
+  `updator_id` bigint(20) DEFAULT NULL,
+  `updator_name` varchar(32) DEFAULT NULL,
+  `trade_people_count` int(4) DEFAULT NULL,
+  `trade_pay_form` tinyint(4) NOT NULL DEFAULT '1',
+  `print_time` timestamp(3) NULL DEFAULT NULL,
+  `action_type` tinyint(4) NOT NULL DEFAULT '1',
+  `recycle_status` tinyint(1) NOT NULL DEFAULT '1',
+  `rds_source_calm` varchar(100) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uuid` (`uuid`),
+  KEY `idx_server_update_time` (`shop_identy`,`server_update_time`),
+  KEY `idx_server_create_time` (`server_create_time`),
+  KEY `idx_trade_no` (`trade_no`),
+  KEY `idx_relate_trade_id` (`relate_trade_id`),
+  KEY `idx_brand_identy_biz_date` (`brand_identy`,`biz_date`),
+  KEY `idx_trade_status_server_create_time` (`trade_status`,`server_create_time`),
+  KEY `idx_shop_identy_biz_date` (`shop_identy`,`biz_date`),
+  KEY `idx_shop_identy_server_create_time` (`shop_identy`,`server_create_time`),
+  KEY `idx_shop_identy_trade_status_business_type` (`shop_identy`,`trade_status`,`business_type`,`trade_pay_status`,`trade_type`,`delivery_type`,`source`,`biz_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='';
+
+
+CREATE TABLE `p` (
+  `id` bigint(20) NOT NULL,
+  `biz_date` date NOT NULL,
+  `payment_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `payment_type` int(11) NOT NULL,
+  `relate_id` bigint(20) DEFAULT NULL,
+  `relate_uuid` varchar(32) DEFAULT NULL,
+  `receivable_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `exempt_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `actual_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `handover_uuid` varchar(32) DEFAULT NULL,
+  `brand_identy` bigint(20) NOT NULL,
+  `shop_identy` bigint(20) NOT NULL,
+  `device_identy` varchar(36) NOT NULL,
+  `uuid` varchar(32) NOT NULL,
+  `status_flag` tinyint(4) NOT NULL DEFAULT '1',
+  `client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `client_update_time` timestamp(3) NULL DEFAULT NULL,
+  `server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  `creator_id` bigint(20) DEFAULT NULL,
+  `creator_name` varchar(32) DEFAULT NULL,
+  `updator_id` bigint(20) DEFAULT NULL,
+  `updator_name` varchar(32) DEFAULT NULL,
+  `is_paid` tinyint(4) DEFAULT '1',
+  `memo` varchar(100) DEFAULT NULL,
+  `recycle_status` tinyint(1) NOT NULL DEFAULT '1',
+  `shop_actual_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `rds_source_calm` varchar(100) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uuid` (`uuid`),
+  KEY `payment_relate_id` (`relate_id`),
+  KEY `idx_shop_identy_biz_date` (`shop_identy`,`biz_date`),
+  KEY `idx_relate_uuid` (`relate_uuid`(8)),
+  KEY `idx_shop_identy_server_update_time` (`shop_identy`,`server_update_time`),
+  KEY `idx_shop_identy_server_create_time` (`shop_identy`,`server_create_time`),
+  KEY `idx_server_create_time` (`server_create_time`),
+  KEY `idx_brand_identy_shop_identy_payment_time` (`brand_identy`,`shop_identy`,`payment_time`),
+  KEY `idx_handover_uuid` (`handover_uuid`(8)),
+  KEY `idx_shop_identy_handover_uuid_payment_time` (`shop_identy`,`handover_uuid`(1),`payment_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='';
+
+
+CREATE TABLE `te` (
+  `id` bigint(20) NOT NULL,
+  `trade_id` bigint(20) NOT NULL,
+  `trade_uuid` varchar(32) NOT NULL,
+  `number_plate` varchar(32) DEFAULT NULL,
+  `fix_type` tinyint(4) DEFAULT NULL,
+  `called` tinyint(4) DEFAULT NULL,
+  `invoice_title` varchar(64) DEFAULT NULL,
+  `expect_time` timestamp NULL DEFAULT NULL,
+  `receiver_phone` varchar(16) DEFAULT NULL,
+  `receiver_name` varchar(32) DEFAULT NULL,
+  `receiver_sex` tinyint(4) DEFAULT NULL,
+  `delivery_address_id` bigint(20) DEFAULT NULL,
+  `delivery_address` varchar(500) DEFAULT NULL,
+  `received_time` timestamp NULL DEFAULT NULL,
+  `delivery_fee` decimal(10,2) DEFAULT NULL,
+  `device_platform` varchar(20) DEFAULT NULL,
+  `device_token` varchar(128) DEFAULT NULL,
+  `open_identy` varchar(100) DEFAULT NULL,
+  `user_identy` bigint(20) DEFAULT NULL,
+  `third_tran_no` varchar(100) DEFAULT NULL,
+  `brand_identy` bigint(20) NOT NULL,
+  `shop_identy` bigint(20) NOT NULL,
+  `device_identy` varchar(36) NOT NULL,
+  `uuid` varchar(32) NOT NULL,
+  `status_flag` tinyint(4) NOT NULL,
+  `client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `client_update_time` timestamp(3) NULL DEFAULT NULL,
+  `server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  `creator_id` bigint(20) DEFAULT NULL,
+  `creator_name` varchar(32) DEFAULT NULL,
+  `updator_id` bigint(20) DEFAULT NULL,
+  `updator_name` varchar(32) DEFAULT NULL,
+  `call_dish_status` tinyint(4) NOT NULL DEFAULT '0',
+  `delivery_man` varchar(50) DEFAULT NULL,
+  `delivery_status` tinyint(4) NOT NULL DEFAULT '0',
+  `delivery_user_id` varchar(50) DEFAULT NULL,
+  `delivery_real_time` timestamp NULL DEFAULT NULL,
+  `send_area_id` bigint(20) DEFAULT NULL,
+  `order_tip` tinyint(4) NOT NULL DEFAULT '0',
+  `binding_delivery_user_time` timestamp(3) NULL DEFAULT NULL,
+  `square_up_time` timestamp(3) NULL DEFAULT NULL,
+  `is_sub_mch` tinyint(1) DEFAULT '0',
+  `serial_number` varchar(50) NOT NULL DEFAULT '',
+  `recycle_status` tinyint(1) NOT NULL DEFAULT '1',
+  `delivery_platform` bigint(20) NOT NULL DEFAULT '1',
+  `is_printed` tinyint(4) NOT NULL DEFAULT '1',
+  `third_serial_no` varchar(50) DEFAULT NULL,
+  `has_serving` tinyint(4) NOT NULL DEFAULT '1',
+  `device_no` varchar(6) DEFAULT NULL,
+  `third_service_charge` decimal(10,2) DEFAULT '0.00',
+  `third_subsidies` decimal(10,2) DEFAULT '0.00',
+  `rds_source_calm` varchar(100) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uuid` (`uuid`),
+  KEY `idx_trade_id` (`trade_id`),
+  KEY `idx_server_update_time` (`shop_identy`,`server_update_time`),
+  KEY `idx_receiver_phone` (`receiver_phone`(11)),
+  KEY `idx_delivery_status_delivery_user_id` (`delivery_status`,`delivery_user_id`(10)),
+  KEY `idx_trade_uuid` (`trade_uuid`(10)),
+  KEY `idx_third_tran_no` (`third_tran_no`(10))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='';
+
+explain format = 'brief' SELECT te.expect_time AS expected_time FROM
+    tr tr inner JOIN te te ON te.trade_id = tr.id
+    left JOIN p p ON p.relate_id = tr.id
+WHERE
+    tr.brand_identy = 32314 AND
+    tr.shop_identy = 810094178 AND
+    tr.domain_type = 2 AND
+    tr.business_type = 18 AND
+    tr.trade_type IN (1) AND
+    te.expect_time BETWEEN '2018-04-23 00:00:00.0' AND '2018-04-23 23:59:59.0'
+ORDER BY te.expect_time asc
+LIMIT 0, 5;
+
+-- test order by constant
+desc select 1 as a from dual order by a limit 1;
+
+-- test order by correlated column
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a bigint, b bigint);
+create table t2(a bigint, b bigint);
+desc select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b limit 1);
+desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
+
+-- test ExpectedCnt of join's children
+drop table if exists t;
+create table t(a int not null, index idx(a));
+explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;

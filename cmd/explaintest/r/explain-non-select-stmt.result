@@ -1,0 +1,29 @@
+use test;
+drop table if exists t;
+create table t(a bigint, b bigint);
+explain format = 'brief' insert into t values(1, 1);
+id	estRows	task	access object	operator info
+Insert	N/A	root		N/A
+explain format = 'brief' insert into t select * from t;
+id	estRows	task	access object	operator info
+Insert	N/A	root		N/A
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' delete from t where a > 100;
+id	estRows	task	access object	operator info
+Delete	N/A	root		N/A
+└─TableReader	3333.33	root		data:Selection
+  └─Selection	3333.33	cop[tikv]		gt(test.t.a, 100)
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' update t set b = 100 where a = 200;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+└─TableReader	10.00	root		data:Selection
+  └─Selection	10.00	cop[tikv]		eq(test.t.a, 200)
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' replace into t select a, 100 from t;
+id	estRows	task	access object	operator info
+Insert	N/A	root		N/A
+└─Projection	10000.00	root		test.t.a, 100->Column#6
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

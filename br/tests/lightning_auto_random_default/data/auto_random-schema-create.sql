@@ -1,0 +1,1 @@
+CREATE DATABASE `auto_random` /*!40100 DEFAULT CHARACTER SET utf8mb4 */;

@@ -1,0 +1,270 @@
+CREATE TABLE `tr` (
+`id` bigint(20) NOT NULL,
+`biz_date` date NOT NULL,
+`domain_type` tinyint(4) NOT NULL,
+`business_type` tinyint(4) NOT NULL,
+`trade_type` tinyint(4) NOT NULL DEFAULT '1',
+`trade_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+`trade_status` tinyint(4) NOT NULL DEFAULT '0',
+`trade_pay_status` tinyint(4) NOT NULL DEFAULT '0',
+`delivery_type` tinyint(4) NOT NULL DEFAULT '0',
+`source` tinyint(4) NOT NULL,
+`source_child` mediumint(9) DEFAULT NULL,
+`trade_no` varchar(26) NOT NULL,
+`sku_kind_count` int(11) NOT NULL,
+`sale_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+`privilege_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+`trade_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+`trade_amount_before` decimal(10,2) NOT NULL DEFAULT '0.00',
+`trade_memo` varchar(100) DEFAULT NULL,
+`relate_trade_id` bigint(20) DEFAULT NULL,
+`relate_trade_uuid` varchar(32) DEFAULT NULL,
+`brand_identy` bigint(20) NOT NULL,
+`shop_identy` bigint(20) NOT NULL,
+`device_identy` varchar(36) NOT NULL,
+`uuid` varchar(32) NOT NULL,
+`status_flag` tinyint(4) NOT NULL,
+`client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+`client_update_time` timestamp(3) NULL DEFAULT NULL,
+`server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+`server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+`creator_id` bigint(20) DEFAULT NULL,
+`creator_name` varchar(32) DEFAULT NULL,
+`updator_id` bigint(20) DEFAULT NULL,
+`updator_name` varchar(32) DEFAULT NULL,
+`trade_people_count` int(4) DEFAULT NULL,
+`trade_pay_form` tinyint(4) NOT NULL DEFAULT '1',
+`print_time` timestamp(3) NULL DEFAULT NULL,
+`action_type` tinyint(4) NOT NULL DEFAULT '1',
+`recycle_status` tinyint(1) NOT NULL DEFAULT '1',
+`rds_source_calm` varchar(100) DEFAULT NULL,
+PRIMARY KEY (`id`),
+UNIQUE KEY `uuid` (`uuid`),
+KEY `idx_server_update_time` (`shop_identy`,`server_update_time`),
+KEY `idx_server_create_time` (`server_create_time`),
+KEY `idx_trade_no` (`trade_no`),
+KEY `idx_relate_trade_id` (`relate_trade_id`),
+KEY `idx_brand_identy_biz_date` (`brand_identy`,`biz_date`),
+KEY `idx_trade_status_server_create_time` (`trade_status`,`server_create_time`),
+KEY `idx_shop_identy_biz_date` (`shop_identy`,`biz_date`),
+KEY `idx_shop_identy_server_create_time` (`shop_identy`,`server_create_time`),
+KEY `idx_shop_identy_trade_status_business_type` (`shop_identy`,`trade_status`,`business_type`,`trade_pay_status`,`trade_type`,`delivery_type`,`source`,`biz_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='';
+CREATE TABLE `p` (
+`id` bigint(20) NOT NULL,
+`biz_date` date NOT NULL,
+`payment_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+`payment_type` int(11) NOT NULL,
+`relate_id` bigint(20) DEFAULT NULL,
+`relate_uuid` varchar(32) DEFAULT NULL,
+`receivable_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+`exempt_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+`actual_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+`handover_uuid` varchar(32) DEFAULT NULL,
+`brand_identy` bigint(20) NOT NULL,
+`shop_identy` bigint(20) NOT NULL,
+`device_identy` varchar(36) NOT NULL,
+`uuid` varchar(32) NOT NULL,
+`status_flag` tinyint(4) NOT NULL DEFAULT '1',
+`client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+`client_update_time` timestamp(3) NULL DEFAULT NULL,
+`server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+`server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+`creator_id` bigint(20) DEFAULT NULL,
+`creator_name` varchar(32) DEFAULT NULL,
+`updator_id` bigint(20) DEFAULT NULL,
+`updator_name` varchar(32) DEFAULT NULL,
+`is_paid` tinyint(4) DEFAULT '1',
+`memo` varchar(100) DEFAULT NULL,
+`recycle_status` tinyint(1) NOT NULL DEFAULT '1',
+`shop_actual_amount` decimal(10,2) NOT NULL DEFAULT '0.00',
+`rds_source_calm` varchar(100) DEFAULT NULL,
+PRIMARY KEY (`id`),
+UNIQUE KEY `uuid` (`uuid`),
+KEY `payment_relate_id` (`relate_id`),
+KEY `idx_shop_identy_biz_date` (`shop_identy`,`biz_date`),
+KEY `idx_relate_uuid` (`relate_uuid`(8)),
+KEY `idx_shop_identy_server_update_time` (`shop_identy`,`server_update_time`),
+KEY `idx_shop_identy_server_create_time` (`shop_identy`,`server_create_time`),
+KEY `idx_server_create_time` (`server_create_time`),
+KEY `idx_brand_identy_shop_identy_payment_time` (`brand_identy`,`shop_identy`,`payment_time`),
+KEY `idx_handover_uuid` (`handover_uuid`(8)),
+KEY `idx_shop_identy_handover_uuid_payment_time` (`shop_identy`,`handover_uuid`(1),`payment_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='';
+CREATE TABLE `te` (
+`id` bigint(20) NOT NULL,
+`trade_id` bigint(20) NOT NULL,
+`trade_uuid` varchar(32) NOT NULL,
+`number_plate` varchar(32) DEFAULT NULL,
+`fix_type` tinyint(4) DEFAULT NULL,
+`called` tinyint(4) DEFAULT NULL,
+`invoice_title` varchar(64) DEFAULT NULL,
+`expect_time` timestamp NULL DEFAULT NULL,
+`receiver_phone` varchar(16) DEFAULT NULL,
+`receiver_name` varchar(32) DEFAULT NULL,
+`receiver_sex` tinyint(4) DEFAULT NULL,
+`delivery_address_id` bigint(20) DEFAULT NULL,
+`delivery_address` varchar(500) DEFAULT NULL,
+`received_time` timestamp NULL DEFAULT NULL,
+`delivery_fee` decimal(10,2) DEFAULT NULL,
+`device_platform` varchar(20) DEFAULT NULL,
+`device_token` varchar(128) DEFAULT NULL,
+`open_identy` varchar(100) DEFAULT NULL,
+`user_identy` bigint(20) DEFAULT NULL,
+`third_tran_no` varchar(100) DEFAULT NULL,
+`brand_identy` bigint(20) NOT NULL,
+`shop_identy` bigint(20) NOT NULL,
+`device_identy` varchar(36) NOT NULL,
+`uuid` varchar(32) NOT NULL,
+`status_flag` tinyint(4) NOT NULL,
+`client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+`client_update_time` timestamp(3) NULL DEFAULT NULL,
+`server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+`server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+`creator_id` bigint(20) DEFAULT NULL,
+`creator_name` varchar(32) DEFAULT NULL,
+`updator_id` bigint(20) DEFAULT NULL,
+`updator_name` varchar(32) DEFAULT NULL,
+`call_dish_status` tinyint(4) NOT NULL DEFAULT '0',
+`delivery_man` varchar(50) DEFAULT NULL,
+`delivery_status` tinyint(4) NOT NULL DEFAULT '0',
+`delivery_user_id` varchar(50) DEFAULT NULL,
+`delivery_real_time` timestamp NULL DEFAULT NULL,
+`send_area_id` bigint(20) DEFAULT NULL,
+`order_tip` tinyint(4) NOT NULL DEFAULT '0',
+`binding_delivery_user_time` timestamp(3) NULL DEFAULT NULL,
+`square_up_time` timestamp(3) NULL DEFAULT NULL,
+`is_sub_mch` tinyint(1) DEFAULT '0',
+`serial_number` varchar(50) NOT NULL DEFAULT '',
+`recycle_status` tinyint(1) NOT NULL DEFAULT '1',
+`delivery_platform` bigint(20) NOT NULL DEFAULT '1',
+`is_printed` tinyint(4) NOT NULL DEFAULT '1',
+`third_serial_no` varchar(50) DEFAULT NULL,
+`has_serving` tinyint(4) NOT NULL DEFAULT '1',
+`device_no` varchar(6) DEFAULT NULL,
+`third_service_charge` decimal(10,2) DEFAULT '0.00',
+`third_subsidies` decimal(10,2) DEFAULT '0.00',
+`rds_source_calm` varchar(100) DEFAULT NULL,
+PRIMARY KEY (`id`),
+UNIQUE KEY `uuid` (`uuid`),
+KEY `idx_trade_id` (`trade_id`),
+KEY `idx_server_update_time` (`shop_identy`,`server_update_time`),
+KEY `idx_receiver_phone` (`receiver_phone`(11)),
+KEY `idx_delivery_status_delivery_user_id` (`delivery_status`,`delivery_user_id`(10)),
+KEY `idx_trade_uuid` (`trade_uuid`(10)),
+KEY `idx_third_tran_no` (`third_tran_no`(10))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='';
+explain format = 'brief' SELECT te.expect_time AS expected_time FROM
+tr tr inner JOIN te te ON te.trade_id = tr.id
+left JOIN p p ON p.relate_id = tr.id
+WHERE
+tr.brand_identy = 32314 AND
+tr.shop_identy = 810094178 AND
+tr.domain_type = 2 AND
+tr.business_type = 18 AND
+tr.trade_type IN (1) AND
+te.expect_time BETWEEN '2018-04-23 00:00:00.0' AND '2018-04-23 23:59:59.0'
+ORDER BY te.expect_time asc
+LIMIT 0, 5;
+id	estRows	task	access object	operator info
+Limit	0.00	root		offset:0, count:5
+└─IndexJoin	0.00	root		left outer join, inner:IndexReader, outer key:test.tr.id, inner key:test.p.relate_id, equal cond:eq(test.tr.id, test.p.relate_id)
+  ├─TopN(Build)	0.00	root		test.te.expect_time, offset:0, count:5
+  │ └─IndexJoin	0.00	root		inner join, inner:IndexLookUp, outer key:test.tr.id, inner key:test.te.trade_id, equal cond:eq(test.tr.id, test.te.trade_id)
+  │   ├─IndexLookUp(Build)	0.00	root		
+  │   │ ├─Selection(Build)	0.00	cop[tikv]		eq(test.tr.business_type, 18), eq(test.tr.trade_type, 1)
+  │   │ │ └─IndexRangeScan	10.00	cop[tikv]	table:tr, index:idx_shop_identy_trade_status_business_type(shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date)	range:[810094178,810094178], keep order:false, stats:pseudo
+  │   │ └─Selection(Probe)	0.00	cop[tikv]		eq(test.tr.brand_identy, 32314), eq(test.tr.domain_type, 2)
+  │   │   └─TableRowIDScan	0.00	cop[tikv]	table:tr	keep order:false, stats:pseudo
+  │   └─IndexLookUp(Probe)	1.25	root		
+  │     ├─IndexRangeScan(Build)	50.00	cop[tikv]	table:te, index:idx_trade_id(trade_id)	range: decided by [eq(test.te.trade_id, test.tr.id)], keep order:false, stats:pseudo
+  │     └─Selection(Probe)	1.25	cop[tikv]		ge(test.te.expect_time, 2018-04-23 00:00:00.000000), le(test.te.expect_time, 2018-04-23 23:59:59.000000)
+  │       └─TableRowIDScan	50.00	cop[tikv]	table:te	keep order:false, stats:pseudo
+  └─IndexReader(Probe)	1.25	root		index:Selection
+    └─Selection	1.25	cop[tikv]		not(isnull(test.p.relate_id))
+      └─IndexRangeScan	1.25	cop[tikv]	table:p, index:payment_relate_id(relate_id)	range: decided by [eq(test.p.relate_id, test.tr.id)], keep order:false, stats:pseudo
+desc select 1 as a from dual order by a limit 1;
+id	estRows	task	access object	operator info
+Projection_6	1.00	root		1->Column#1
+└─TableDual_7	1.00	root		rows:1
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a bigint, b bigint);
+create table t2(a bigint, b bigint);
+desc select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b limit 1);
+id	estRows	task	access object	operator info
+Apply_15	9990.00	root		semi join, equal:[eq(test.t1.a, test.t2.a)]
+├─TableReader_18(Build)	9990.00	root		data:Selection_17
+│ └─Selection_17	9990.00	cop[tikv]		not(isnull(test.t1.a))
+│   └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_19(Probe)	0.80	root		not(isnull(test.t2.a))
+  └─Limit_20	1.00	root		offset:0, count:1
+    └─TableReader_25	1.00	root		data:Limit_24
+      └─Limit_24	1.00	cop[tikv]		offset:0, count:1
+        └─Selection_23	1.00	cop[tikv]		gt(test.t2.b, test.t1.b)
+          └─TableFullScan_22	1.25	cop[tikv]	table:t2	keep order:false, stats:pseudo
+desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
+id	estRows	task	access object	operator info
+Apply_17	9990.00	root		semi join, equal:[eq(test.t1.a, test.t2.a)]
+├─TableReader_20(Build)	9990.00	root		data:Selection_19
+│ └─Selection_19	9990.00	cop[tikv]		not(isnull(test.t1.a))
+│   └─TableFullScan_18	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_21(Probe)	0.80	root		not(isnull(test.t2.a))
+  └─Limit_23	1.00	root		offset:0, count:1
+    └─TableReader_28	1.00	root		data:Limit_27
+      └─Limit_27	1.00	cop[tikv]		offset:0, count:1
+        └─Selection_26	1.00	cop[tikv]		gt(test.t2.b, test.t1.b)
+          └─TableFullScan_25	1.25	cop[tikv]	table:t2	keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int not null, index idx(a));
+explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+id	estRows	task	access object	operator info
+Limit	5.00	root		offset:0, count:5
+└─IndexJoin	5.00	root		inner join, inner:IndexReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
+  ├─TableReader(Build)	4.00	root		data:TableFullScan
+  │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─IndexReader(Probe)	1.25	root		index:IndexRangeScan
+    └─IndexRangeScan	1.25	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo
+explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+id	estRows	task	access object	operator info
+Limit	5.00	root		offset:0, count:5
+└─Selection	5.00	root		isnull(test.t.a)
+  └─IndexJoin	5.00	root		left outer join, inner:IndexReader, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
+    ├─TableReader(Build)	4.00	root		data:TableFullScan
+    │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─IndexReader(Probe)	1.25	root		index:IndexRangeScan
+      └─IndexRangeScan	1.25	cop[tikv]	table:t2, index:idx(a)	range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo
+explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+id	estRows	task	access object	operator info
+Limit	5.00	root		offset:0, count:5
+└─MergeJoin	5.00	root		inner join, left key:test.t.a, right key:test.t.a
+  ├─IndexReader(Build)	4.00	root		index:IndexFullScan
+  │ └─IndexFullScan	4.00	cop[tikv]	table:t2, index:idx(a)	keep order:true, stats:pseudo
+  └─IndexReader(Probe)	4.00	root		index:IndexFullScan
+    └─IndexFullScan	4.00	cop[tikv]	table:t1, index:idx(a)	keep order:true, stats:pseudo
+explain format = 'brief' select /*+ TIDB_SMJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+id	estRows	task	access object	operator info
+Limit	5.00	root		offset:0, count:5
+└─Selection	5.00	root		isnull(test.t.a)
+  └─MergeJoin	5.00	root		left outer join, left key:test.t.a, right key:test.t.a
+    ├─IndexReader(Build)	4.00	root		index:IndexFullScan
+    │ └─IndexFullScan	4.00	cop[tikv]	table:t2, index:idx(a)	keep order:true, stats:pseudo
+    └─IndexReader(Probe)	4.00	root		index:IndexFullScan
+      └─IndexFullScan	4.00	cop[tikv]	table:t1, index:idx(a)	keep order:true, stats:pseudo
+explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
+id	estRows	task	access object	operator info
+Limit	5.00	root		offset:0, count:5
+└─HashJoin	5.00	root		inner join, equal:[eq(test.t.a, test.t.a)]
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	4.00	root		data:TableFullScan
+    └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select /*+ TIDB_HJ(t1, t2) */ * from t t1 left join t t2 on t1.a = t2.a where t2.a is null limit 5;
+id	estRows	task	access object	operator info
+Limit	5.00	root		offset:0, count:5
+└─Selection	5.00	root		isnull(test.t.a)
+  └─HashJoin	5.00	root		left outer join, equal:[eq(test.t.a, test.t.a)]
+    ├─TableReader(Build)	4.00	root		data:TableFullScan
+    │ └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableReader(Probe)	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo

@@ -1,0 +1,521 @@
+openapi: 3.0.2
+info:
+  title: TiDB Lightning web interface
+  version: 4.0.6
+servers:
+  - url: http://127.0.0.1:8289/
+tags:
+  - name: Tasks
+    description: Task queue management
+  - name: Progress
+    description: Task progress
+  - name: Pause
+    description: Pause/resume tasks
+  - name: Log
+    description: Logging
+components:
+  schemas:
+    Error:
+      type: object
+      required:
+        - error
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+          description: error message
+    TaskList:
+      type: object
+      required:
+        - current
+        - queue
+      additionalProperties: false
+      properties:
+        current:
+          type: integer
+          format: int64
+          nullable: true
+          description: ID of the currently running task
+        queue:
+          type: array
+          items:
+            type: integer
+            format: int64
+          description: IDs of the queued tasks
+    TaskConfig:
+      type: object
+      description: The serialized task configuration
+    TaskStatus:
+      type: integer
+      description: Task status
+      enum:
+        - 0 # Not started
+        - 1 # Running
+        - 2 # Completed
+      example: 1
+    ProgressTask:
+      type: object
+      required:
+        - t
+        - s
+      additionalProperties: false
+      properties:
+        t:
+          type: object
+          additionalProperties:
+            type: object
+            required:
+              - w
+              - z
+              - s
+            additionalProperties: false
+            properties:
+              w:
+                type: integer
+                format: int64
+                description: Total bytes parsed and delivered
+              z:
+                type: integer
+                format: int64
+                description: Total bytes of the entire table
+              s:
+                $ref: '#/components/schemas/TaskStatus'
+              m:
+                type: string
+                description: Error message of the table
+          description: Progress summary of each table.
+          example: {'`db`.`tbl`': {w: 390129, z: 557291, s: 1}}
+        s:
+          $ref: '#/components/schemas/TaskStatus'
+        m:
+          type: string
+          description: Error message from previous task
+          example: |-
+            some errors of previous task
+            (stack trace)
+    CheckpointStatus:
+      type: integer
+      description: Table status
+      enum:
+        - 0   # Missing
+        - 30  # Loaded
+        - 60  # AllWritten
+        - 90  # Closed
+        - 120 # Imported
+        - 140 # IndexImported
+        - 150 # AlteredAutoInc
+        - 170 # ChecksumSkipped
+        - 180 # Checksummed
+        - 200 # AnalyzeSkipped
+        - 210 # Analyzed
+        - 3   # LoadErrored
+        - 6   # WriteErrored
+        - 9   # CloseErrored
+        - 12  # ImportErrored
+        - 14  # IndexImportErrored
+        - 15  # AlterAutoIncErrored
+        - 18  # ChecksumErrored
+        - 21  # AnalyzeErrored
+      example: 60
+    TableCheckpoints:
+      type: object
+      required:
+        - Status
+        - AllocBase
+        - Engines
+      properties:
+        Status:
+          $ref: '#/components/schemas/CheckpointStatus'
+        AllocBase:
+          type: integer
+          format: int64
+          description: Current maximum value of AUTO_INCREMENT ID
+          example: 44819
+        Engines:
+          type: object
+          additionalProperties:
+            type: object
+            description: Engine progress
+            required:
+              - Status
+              - Chunks
+            additionalProperties: false
+            properties:
+              Status:
+                $ref: '#/components/schemas/CheckpointStatus'
+              Chunks:
+                type: array
+                items:
+                  type: object
+                  description: File progress
+                  required:
+                    - Key
+                    - ColumnPermutation
+                    - Chunk
+                    - Checksum
+                  additionalProperties: false
+                  properties:
+                    Key:
+                      type: object
+                      required:
+                        - Path
+                        - Offset
+                      additionalProperties: false
+                      properties:
+                        Path:
+                          type: string
+                          description: File path
+                        Offset:
+                          type: integer
+                          format: int64
+                          description: Start offset
+                          default: 0
+                    ColumnPermutation:
+                      type: array
+                      description: Column permutation
+                      items:
+                        type: integer
+                    Chunk:
+                      type: object
+                      description: Current progress
+                      required:
+                        - Offset
+                        - EndOffset
+                        - PrevRowIDMax
+                        - RowIDMax
+                      additionalProperties: false
+                      properties:
+                        Offset:
+                          type: integer
+                          format: int64
+                          description: Current file offset
+                        EndOffset:
+                          type: integer
+                          format: int64
+                          description: End file offset
+                        PrevRowIDMax:
+                          type: integer
+                          format: int64
+                          description: Current row ID
+                        RowIDMax:
+                          type: integer
+                          format: int64
+                          description: End row ID
+                    Checksum:
+                      type: object
+                      description: Partial checksum
+                      required:
+                        - checksum
+                        - size
+                        - kvs
+                      additionalProperties: false
+                      properties:
+                        checksum:
+                          type: integer
+                          format: int64
+                          description: XOR-combined CRC64 checksum
+                        size:
+                          type: integer
+                          format: int64
+                          description: Total encoded bytes
+                        kvs:
+                          type: integer
+                          format: int64
+                          description: Total number of KV pairs
+          example:
+            -1: {Status: 60, Chunks: []}
+            0: {Status: 90, Chunks: [{
+              Key: {Path: '/data/db1/db.tbl.01.sql', Offset: 0},
+              ColumnPermutation: [],
+              Chunk: {Offset: 3391, EndOffset: 450192, PrevRowIDMax: 318, RowIDMax: 40125},
+              Checksum: {checksum: 1785171221414119207, size: 9670, kvs: 1908}
+            }]}
+    Paused:
+      type: object
+      required:
+        - paused
+      additionalProperties: false
+      properties:
+        paused:
+          type: boolean
+    LogLevel:
+      type: object
+      required:
+        - level
+      additionalProperties: false
+      properties:
+        level:
+          type: string
+          description: Log level
+          enum:
+            - debug
+            - info
+            - warn
+            - error
+            - dpanic
+            - panic
+            - fatal
+  parameters:
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      description: The task ID
+      schema:
+        type: integer
+        format: int64
+      example: 1567890123456789012
+  requestBodies:
+    TaskConfig:
+      description: Task configuration in TOML format (`tidb-lightning.toml`)
+      required: true
+      content:
+        application/toml:
+          example: |
+            [mydumper]
+            data-source-dir = '/data/db1'
+    LogLevel:
+      description: Log level
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LogLevel'
+  responses:
+    serverModeDisabled:
+      description: Server mode disabled
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: {error: server-mode not enabled}
+    invalidTaskId:
+      description: Invalid task ID
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: {error: invalid task ID}
+    taskIdNotFound:
+      description: Task ID does not exist in the task queue
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: {error: task ID not found}
+
+paths:
+  /tasks:
+    get:
+      summary: Get IDs of the running and queued tasks
+      operationId: GetTask
+      tags: [Tasks]
+      responses:
+        200:
+          description: Received task list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskList'
+              examples:
+                empty:
+                  summary: Nothing to run
+                  value: {current: null, queue: []}
+                single:
+                  summary: Single task running
+                  value: {current: 1567890123456789012, queue: []}
+                multiple:
+                  summary: Multiple tasks queued
+                  value: {current: 1567890123456789012, queue: [1543210987654321098, 1585858585858585858]}
+        501:
+          $ref: '#/components/responses/serverModeDisabled'
+    post:
+      summary: Submit a new task
+      operationId: PostTask
+      tags: [Tasks]
+      requestBody:
+        $ref: '#/components/requestBodies/TaskConfig'
+      responses:
+        200:
+          description: Task is queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - id
+                properties:
+                  id:
+                    type: integer
+                    format: int64
+                    description: The new task ID
+              example: {id: 1567890123456789012}
+        400:
+          description: The submitted task configuration has syntax error or invalid settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example: {error: 'invalid task configuration: invalid `tidb.port` setting'}
+        501:
+          $ref: '#/components/responses/serverModeDisabled'
+  /tasks/{taskId}:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      summary: Get configuration of a single task
+      operationId: GetOneTask
+      tags: [Tasks]
+      responses:
+        200:
+          description: Received task configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskConfig'
+        400:
+          $ref: '#/components/responses/invalidTaskId'
+        404:
+          $ref: '#/components/responses/taskIdNotFound'
+        501:
+          $ref: '#/components/responses/serverModeDisabled'
+    delete:
+      summary: Stop and delete a single task from the task queue
+      operationId: DeleteOneTask
+      tags: [Tasks]
+      responses:
+        200:
+          description: Task is successfully deleted
+        400:
+          $ref: '#/components/responses/invalidTaskId'
+        404:
+          $ref: '#/components/responses/taskIdNotFound'
+        501:
+          $ref: '#/components/responses/serverModeDisabled'
+  /tasks/{taskId}/front:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    patch:
+      summary: Move the task to the front of the queue
+      operationId: PatchOneTaskFront
+      tags: [Tasks]
+      responses:
+        200:
+          description: Task is successfully moved to the front
+        400:
+          $ref: '#/components/responses/invalidTaskId'
+        404:
+          $ref: '#/components/responses/taskIdNotFound'
+        501:
+          $ref: '#/components/responses/serverModeDisabled'
+  /tasks/{taskId}/back:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    patch:
+      summary: Move the task to the back of the queue
+      operationId: PatchOneTaskBack
+      tags: [Tasks]
+      responses:
+        200:
+          description: Task is successfully moved to the back
+        400:
+          $ref: '#/components/responses/invalidTaskId'
+        404:
+          $ref: '#/components/responses/taskIdNotFound'
+        501:
+          $ref: '#/components/responses/serverModeDisabled'
+  /progress/task:
+    get:
+      summary: Get the progress summary of the current task
+      operationId: GetProgressTask
+      tags: [Progress]
+      responses:
+        200:
+          description: Progress of current task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgressTask'
+  /progress/table:
+    parameters:
+      - name: t
+        description: The name of the table
+        in: query
+        required: true
+        schema:
+          type: string
+        example: '`db`.`tbl`'
+    get:
+      summary: Get the progress summary of a table
+      operationId: GetProgressTable
+      tags: [Progress]
+      responses:
+        200:
+          description: Progress of the table
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TableCheckpoints'
+        404:
+          description: Table not found
+          content:
+            application/json:
+              schema:
+                type: string
+                description: Error message
+                example: '"table `db`.`tbl` not found"'
+  /pause:
+    get:
+      summary: Get whether the program is paused
+      operationId: GetPause
+      tags: [Pause]
+      responses:
+        200:
+          description: Result of whether the program is paused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Paused'
+    put:
+      summary: Pause the program
+      operationId: PutPause
+      tags: [Pause]
+      responses:
+        200:
+          description: The program is paused
+  /resume:
+    put:
+      summary: Resume the program
+      operationId: PutResume
+      tags: [Pause]
+      responses:
+        200:
+          description: The program is resumed
+  /loglevel:
+    get:
+      summary: Get the current log level
+      operationId: GetLogLevel
+      tags: [Log]
+      responses:
+        200:
+          description: Current log level
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogLevel'
+    put:
+      summary: Change the current log level
+      operationId: PutLogLevel
+      tags: [Log]
+      requestBody:
+        $ref: '#/components/requestBodies/LogLevel'
+      responses:
+        200:
+          description: Log level is updated
+        400:
+          description: Invalid log level
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+

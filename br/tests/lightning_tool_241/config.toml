@@ -1,0 +1,8 @@
+[lightning]
+table-concurrency = 3
+
+[tikv-importer]
+backend = 'local'
+
+[tidb]
+sql-mode = ''

@@ -1,0 +1,290 @@
+[
+  {
+    "Name": "TestOuterJoinPropConst",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on t1.a > t2.a and t1.a = 1",
+        "Result": [
+          "HashJoin 33233333.33 root  CARTESIAN left outer join, left cond:[eq(test.t1.a, 1)]",
+          "├─TableReader(Build) 3323.33 root  data:Selection",
+          "│ └─Selection 3323.33 cop[tikv]  gt(1, test.t2.a)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on t1.a > t2.a where t1.a = 1",
+        "Result": [
+          "HashJoin 33233.33 root  CARTESIAN left outer join",
+          "├─TableReader(Build) 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.t1.a, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 3323.33 root  data:Selection",
+          "  └─Selection 3323.33 cop[tikv]  gt(1, test.t2.a)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on t1.a = t2.a and t1.a > 1",
+        "Result": [
+          "HashJoin 10000.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)], left cond:[gt(test.t1.a, 1)]",
+          "├─TableReader(Build) 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  gt(test.t2.a, 1), not(isnull(test.t2.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on t1.a = t2.a where t1.a > 1",
+        "Result": [
+          "HashJoin 4166.67 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  gt(test.t2.a, 1), not(isnull(test.t2.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 3333.33 root  data:Selection",
+          "  └─Selection 3333.33 cop[tikv]  gt(test.t1.a, 1)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 right join t2 on t1.a > t2.a where t2.a = 1",
+        "Result": [
+          "HashJoin 33333.33 root  CARTESIAN right outer join",
+          "├─TableReader(Build) 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.t2.a, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 3333.33 root  data:Selection",
+          "  └─Selection 3333.33 cop[tikv]  gt(test.t1.a, 1)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 right join t2 on t1.a = t2.a where t2.a > 1",
+        "Result": [
+          "HashJoin 4166.67 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  gt(test.t1.a, 1), not(isnull(test.t1.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 3333.33 root  data:Selection",
+          "  └─Selection 3333.33 cop[tikv]  gt(test.t2.a, 1)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 right join t2 on t1.a = t2.a and t2.a > 1",
+        "Result": [
+          "HashJoin 10000.00 root  right outer join, equal:[eq(test.t1.a, test.t2.a)], right cond:gt(test.t2.a, 1)",
+          "├─TableReader(Build) 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  gt(test.t1.a, 1), not(isnull(test.t1.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 right join t2 on t1.a > t2.a and t2.a = 1",
+        "Result": [
+          "HashJoin 33333333.33 root  CARTESIAN right outer join, right cond:eq(test.t2.a, 1)",
+          "├─TableReader(Build) 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  gt(test.t1.a, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on t1.a = t2.a and t2.a > 1",
+        "Result": [
+          "HashJoin 10000.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  gt(test.t2.a, 1), not(isnull(test.t2.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on t1.a > t2.a and t2.a = 1",
+        "Result": [
+          "HashJoin 100000.00 root  CARTESIAN left outer join, other cond:gt(test.t1.a, test.t2.a)",
+          "├─TableReader(Build) 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.t2.a, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 right join t2 on t1.a > t2.a and t1.a = 1",
+        "Result": [
+          "HashJoin 100000.00 root  CARTESIAN right outer join, other cond:gt(test.t1.a, test.t2.a)",
+          "├─TableReader(Build) 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.t1.a, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 right join t2 on t1.a = t2.a and t1.a > 1",
+        "Result": [
+          "HashJoin 10000.00 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  gt(test.t1.a, 1), not(isnull(test.t1.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on t1.a = t1.b and t1.a > 1",
+        "Result": [
+          "HashJoin 100000000.00 root  CARTESIAN left outer join, left cond:[eq(test.t1.a, test.t1.b) gt(test.t1.a, 1)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on t2.a = t2.b and t2.a > 1",
+        "Result": [
+          "HashJoin 8888888.89 root  CARTESIAN left outer join",
+          "├─TableReader(Build) 888.89 root  data:Selection",
+          "│ └─Selection 888.89 cop[tikv]  eq(test.t2.a, test.t2.b), gt(test.t2.a, 1), gt(test.t2.b, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 and false",
+        "Result": [
+          "TableDual 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 and null",
+        "Result": [
+          "TableDual 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on true where t1.a = null",
+        "Result": [
+          "TableDual 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 and t1.a = 2",
+        "Result": [
+          "TableDual 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 and t1.a = 1",
+        "Result": [
+          "HashJoin 100000.00 root  CARTESIAN left outer join",
+          "├─TableReader(Build) 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.t1.a, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on false",
+        "Result": [
+          "HashJoin 80000000.00 root  CARTESIAN left outer join",
+          "├─TableDual(Build) 8000.00 root  rows:0",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 right join t2 on false",
+        "Result": [
+          "HashJoin 80000000.00 root  CARTESIAN right outer join",
+          "├─TableDual(Build) 8000.00 root  rows:0",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on t1.a = 1 and t1.a = 2",
+        "Result": [
+          "HashJoin 80000000.00 root  CARTESIAN left outer join",
+          "├─TableDual(Build) 8000.00 root  rows:0",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on t1.a =1 where t1.a = 2",
+        "Result": [
+          "HashJoin 80000.00 root  CARTESIAN left outer join",
+          "├─TableReader(Build) 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.t1.a, 2)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableDual(Probe) 8000.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on t2.a = 1 and t2.a = 2",
+        "Result": [
+          "HashJoin 80000000.00 root  CARTESIAN left outer join",
+          "├─TableDual(Build) 8000.00 root  rows:0",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on t1.a = 1 or (t1.a = 2 and t1.a = 3)",
+        "Result": [
+          "HashJoin 100000000.00 root  CARTESIAN left outer join, left cond:[or(eq(test.t1.a, 1), 0)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 or (t1.a = 2 and t1.a = 3)",
+        "Result": [
+          "HashJoin 100000.00 root  CARTESIAN left outer join",
+          "├─TableReader(Build) 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  or(eq(test.t1.a, 1), 0)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 where t1.b > 1 or t1.b in (select b from t2)",
+        "Result": [
+          "Projection 8000.00 root  test.t1.id, test.t1.a, test.t1.b",
+          "└─Selection 8000.00 root  or(gt(test.t1.b, 1), Column#7)",
+          "  └─HashJoin 10000.00 root  CARTESIAN left outer semi join, other cond:eq(test.t1.b, test.t2.b)",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1 left join t2 on t1.a = t2.a where ifnull(t2.b, t1.a) = 1",
+        "Result": [
+          "Selection 9990.00 root  eq(ifnull(test.t2.b, test.t1.a), 1)",
+          "└─HashJoin 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]

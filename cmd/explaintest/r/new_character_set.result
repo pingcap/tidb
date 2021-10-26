@@ -1,0 +1,58 @@
+drop table if exists t;
+set names utf8mb4;
+create table t (a varchar(255) charset utf8mb4);
+insert into t values ('一二三四一');
+select hex(a) from t;
+hex(a)
+E4B880E4BA8CE4B889E59B9BE4B880
+select a from t;
+a
+一二三四一
+set @@character_set_results = 'gbk';
+select a from t;
+a
+һ������һ
+drop table if exists 一;
+create table 一 (二 char(20));
+show create table 一;
+Table	Create Table
+һ	CREATE TABLE `һ` (
+  `��` char(20) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+set names utf8mb4;
+create table t (a varchar(255) charset gbk, b varchar(255) charset utf8mb4, c varchar(255) charset binary);
+insert into t values ('一', '一', '一');
+set @@character_set_results = null;
+select * from t;
+a	b	c
+һ	一	一
+set @@character_set_results = BINARY;
+select * from t;
+a	b	c
+һ	一	一
+set @@character_set_results = "BINARY";
+select * from t;
+a	b	c
+һ	一	一
+set names utf8mb4;
+select * from t;
+a	b	c
+一	一	一
+set @@character_set_results = 'utf8mb4';
+drop table if exists t;
+create table t (a varchar(255) charset utf8mb4);
+set @@character_set_client = 'gbk';
+insert into t values ('中文');
+set @@character_set_client = 'utf8mb4';
+insert into t values ('中文');
+set @@character_set_client = 'gbk';
+prepare p1 from "insert into t values ('中文');";
+execute p1;
+
+select a, hex(a) from t;
+a	hex(a)
+涓?枃	E6B6933FE69E83
+中文	E4B8ADE69687
+涓?枃	E6B6933FE69E83
+set @@character_set_client = 'utf8mb4';

@@ -1,0 +1,246 @@
+DROP TABLE IF EXISTS t;
+
+CREATE TABLE t (
+    c1 int,
+    c2 int,
+    c3 int,
+    PRIMARY KEY (c1)
+);
+
+INSERT INTO t VALUES (1,2,3);
+set session tidb_hashagg_partial_concurrency = 1;
+set session tidb_hashagg_final_concurrency = 1;
+
+SELECT * from t;
+SELECT c1, c2, c3 from t;
+SELECT c1, c1 from t;
+SELECT c1 as a, c2 as a from t;
+
+SELECT 1;
+SELECT 1, 1;
+SET @@autocommit = 1;
+SELECT @@autocommit;
+SELECT @@autocommit, @@autocommit;
+SET @a = 10;
+SET @b = 11;
+SELECT @a, @@autocommit;
+SELECT @a, @b;
+SELECT 1, @a;
+SELECT 1, @a as a;
+SELECT 1, @a, @@autocommit as a, c1 from t;
+SET @b = "123";
+SELECT @b + "123";
+# TODO: the field name for 1 + 1 should be "1 + 1", but now is 2
+# we may discuss whether to support it like in MySQL later.
+SELECT 1 + 1;
+
+SELECT 1 a, 1 as a, 1 + 1 a;
+SELECT c1 a, c1 as a from t;
+
+SELECT * from t LIMIT 0,1;
+SELECT * from t LIMIT 1;
+SELECT * from t LIMIT 1,1;
+SELECT * from t LIMIT 1 OFFSET 0;
+
+DROP TABLE IF EXISTS t2;
+CREATE TABLE t2 (
+    c1 int,
+    c2 int,
+    PRIMARY KEY (c1)
+);
+
+INSERT INTO t2 VALUES (1,2);
+
+SELECT * from t a;
+SELECT * from t a, t2 b;
+SELECT * from t as a, t2 as b;
+SELECT * from t a left join t2 b on a.c1 = b.c1;
+
+--error ER_DUP_FIELDNAME
+SELECT * from (SELECT 1, 1) as a;
+
+--error ER_DUP_FIELDNAME
+SELECT * from (SELECT * FROM t, t2) as a;
+
+# Select bool field
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (c1 INT, c2 INT);
+INSERT INTO t VALUES (1, 2), (1, 1), (1, 3);
+SELECT c1=c2 FROM t;
+SELECT 1=1;
+
+SELECT t.c1 + t.c2 from t limit 1;
+SELECT t.c1 from t limit 1;
+SELECT t.c1 + c2 from t limit 1;
+SELECT c1 + 10 from t limit 1;
+SELECT t.c1 + 10 from t limit 1;
+
+# all
+SELECT all c1, c2 from t limit 1;
+
+# distinct
+SELECT distinct c1, c2 from t order by c1, c2 limit 1;
+
+# not
+SELECT c2 from t where not (c2 > 2);
+select c2 from t where not null is null;
+
+# unary field name
+select !(1 + 2);
+
+# - +
+select + - 1, --1, +-+-+1, + "123";
+select --------------------1, ++++++++++++++++++++1;
+select +(+(1)), (-+1), ((+1)), +1.23, +1e23, +1E23, +null, +true, +false, + ( ( 1 ) );
+select +
+(
++
+(
+1
+)
+)
+;
+select +	(	+	1	);
+select --+(1 + 1), +-+-(1 * 1);
+
+# where static condition
+select * from t where null;
+select * from t where 1;
+select * from t where 0;
+select * from t where 0 * 10;
+select * from t where null is not null;
+select * from t where !1;
+select * from t where 1 && 0 || 3 && null;
+
+# cross join
+select * from t as a, t2 as b;
+select * from t as a cross join t2 as b;
+select * from t as a join t2 as b;
+select * from t as a join t2 as b on a.c2 = b.c2;
+
+# from clause
+select * from (t);
+select * from (t as a, t2 as b);
+select * from (t as a cross join t2 as b);
+
+# table nil plan
+select 1 as a from t;
+select count(*), 1 from t;
+select *, 1 from t;
+
+# expr test
+select 1, count(1), sum(1);
+
+#test topn push down
+drop table if exists t1;
+create table t1(a int primary key, b int, c int, index idx(b, c));
+insert into t1 values(1, 2, 3);
+insert into t1 values(2, 3, 4);
+insert into t1 values(3 ,4, 5);
+insert into t1 values(4, 5, 6);
+insert into t1 values(5, 6, 7);
+insert into t1 values(6, 7, 8);
+insert into t1 values(7, 8, 9);
+insert into t1 values(9, 10, 11);
+explain format = 'brief' select a, c from t1 use index(idx) order by a limit 5;
+select c, a from t1 use index(idx) order by a limit 5;
+
+#test stream aggregation push down
+drop table if exists t;
+create table t (a int, b int, c int, key idx(a, b, c));
+#test for empty table
+explain format = 'brief' select count(a) from t;
+select count(a) from t;
+#test for one row
+insert t values(0,0,0);
+explain format = 'brief' select distinct b from t group by a;
+select distinct b from t group by a;
+explain format = 'brief' select count(b) from t group by a;
+select count(b) from t group by a;
+#test for rows
+insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);
+explain format = 'brief' select count(a) from t where b>0 group by a, b;
+select count(a) from t where b>0 group by a, b;
+explain format = 'brief' select count(a) from t where b>0 group by a, b order by a;
+select count(a) from t where b>0 group by a, b order by a;
+explain format = 'brief' select count(a) from t where b>0 group by a, b order by a limit 1;
+select count(a) from t where b>0 group by a, b order by a limit 1;
+
+# test outer join simplification, issue #7687
+drop table if exists t;
+create table t (id int primary key, a int, b int);
+explain format = 'brief' select * from (t t1 left join t t2 on t1.a = t2.a) left join (t t3 left join t t4 on t3.a = t4.a) on t2.b = 1;
+
+drop table if exists t;
+create table t(a bigint primary key, b bigint);
+desc select * from t where a = 1;
+desc select * from t where a = '1';
+
+desc select sysdate(), sleep(1), sysdate();
+
+# test select partition table
+drop table if exists th;
+set @@session.tidb_enable_table_partition = '1';
+create table th (a int, b int) partition by hash(a) partitions 3;
+insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
+insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
+desc select * from th where a=-2;
+desc select * from th;
+desc select * from th partition (p2,p1);
+
+# test != any(subq) and = all(subq)
+drop table if exists t;
+create table t(a int, b int);
+explain format = 'brief' select a != any (select a from t t2) from t t1;
+explain format = 'brief' select a = all (select a from t t2) from t t1;
+
+drop table if exists t;
+create table t(a int, b int);
+drop table if exists s;
+create table s(a varchar(20), b varchar(20));
+explain format = 'brief' select a in (select a from s where s.b = t.b) from t;
+explain format = 'brief' select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
+drop table t;
+create table t(a int not null, b int);
+explain format = 'brief' select a in (select a from t t2 where t2.b = t1.b) from t t1;
+
+# test sleep in subquery
+explain format = 'brief' select 1 from (select sleep(1)) t;
+
+# test order by rand()
+drop table if exists t;
+create table t(a int, b int);
+explain format = 'brief' select a from t order by rand();
+explain format = 'brief' select a, b from t order by abs(2);
+explain format = 'brief' select a from t order by abs(rand())+1;
+
+# test order by correlated column
+drop table if exists t1;
+create table t1(a int, b int);
+drop table if exists t2;
+create table t2(a int, b int);
+explain format = 'brief' select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b);
+
+# test fields with windows function
+drop table t;
+CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,
+    i int(10) unsigned DEFAULT NULL,
+    x int(10) unsigned DEFAULT '0',
+    PRIMARY KEY (`id`)
+);
+explain format = 'brief' select row_number() over( partition by i ) - x as rnk from t;
+
+# for issue 21692
+create table precise_types (
+    a BIGINT UNSIGNED NOT NULL,
+    b BIGINT NOT NULL,
+    c DECIMAL(21,1) NOT NULL,
+    d DOUBLE(21,1) NOT NULL
+);
+insert into precise_types values (
+    18446744073709551614,
+    -9223372036854775806,
+    99999999999999999999,
+    18446744073709551614
+);
+SELECT a, b, c, d FROM precise_types;

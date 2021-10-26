@@ -1,0 +1,10 @@
+[checkpoint]
+enable = true
+driver = "file"
+dsn = "/tmp/cp_error_destroy.pb"
+
+[tikv-importer]
+backend = "local"
+
+[tidb]
+sql-mode = 'STRICT_ALL_TABLES'

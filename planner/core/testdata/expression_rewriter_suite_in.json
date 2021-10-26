@@ -1,0 +1,11 @@
+[
+  {
+    "name": "TestMultiColInExpression",
+    "cases": [
+      "select * from t1 where (t1.a, t1.b) in (select a, b from t2)",
+      "select * from t1 where (t1.a, t1.b) not in (select a, b from t2)",
+      "select t1.a from t1 group by t1.a having (a, count(1)) in (select a, b from t2)",
+      "select t1.a from t1 group by t1.a having (a, count(1)) not in (select a, b from t2)"
+    ]
+  }
+]

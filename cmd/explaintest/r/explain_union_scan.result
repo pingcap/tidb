@@ -1,0 +1,31 @@
+drop table if exists city;
+CREATE TABLE `city` (
+`id` varchar(70) NOT NULL,
+`province_id` int(15) DEFAULT NULL,
+`city_name` varchar(90) DEFAULT NULL,
+`description` varchar(90) DEFAULT NULL,
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+load stats "s/explain_union_scan.json";
+insert into city values("06766b3ef41d484d8878606393f1ed0b", 88, "chongqing", "chongqing city");
+begin;
+update city set province_id = 77 where id="06766b3ef41d484d8878606393f1ed0b";
+explain format = 'brief' select t1.*, t2.province_id as provinceID, t2.city_name as cityName, t3.description as description from city t1 inner join city t2 on t1.id = t2.id left join city t3 on t1.province_id = t3.province_id where t1.province_id > 1 and t1.province_id < 100 limit 10;
+id	estRows	task	access object	operator info
+Limit	10.00	root		offset:0, count:10
+└─HashJoin	10.00	root		left outer join, equal:[eq(test.city.province_id, test.city.province_id)]
+  ├─Limit(Build)	10.00	root		offset:0, count:10
+  │ └─IndexJoin	10.00	root		inner join, inner:UnionScan, outer key:test.city.id, inner key:test.city.id, equal cond:eq(test.city.id, test.city.id)
+  │   ├─UnionScan(Build)	10.00	root		
+  │   │ └─TableReader	10.00	root		data:TableFullScan
+  │   │   └─TableFullScan	10.00	cop[tikv]	table:t2	keep order:false
+  │   └─UnionScan(Probe)	1.00	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100)
+  │     └─IndexLookUp	1.00	root		
+  │       ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t1, index:PRIMARY(id)	range: decided by [eq(test.city.id, test.city.id)], keep order:false
+  │       └─Selection(Probe)	1.00	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100)
+  │         └─TableRowIDScan	1.00	cop[tikv]	table:t1	keep order:false
+  └─UnionScan(Probe)	536284.00	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
+    └─TableReader	536284.00	root		data:Selection
+      └─Selection	536284.00	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
+        └─TableFullScan	536284.00	cop[tikv]	table:t3	keep order:false
+commit;

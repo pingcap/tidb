@@ -1,0 +1,27 @@
+use test;
+drop table if exists e, lo;
+create table e(a int, b int, key idx_a(a), key idx_b(b)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+load stats 's/explain_join_stats_e.json';
+create table lo(a int(11) NOT NULL AUTO_INCREMENT, PRIMARY KEY (a)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=30002;
+load stats 's/explain_join_stats_lo.json';
+explain format = 'brief' select count(*) from e, lo where lo.a=e.a and e.b=22336;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:count(1)->Column#5
+└─HashJoin	19977.00	root		inner join, equal:[eq(test.lo.a, test.e.a)]
+  ├─TableReader(Build)	250.00	root		data:TableFullScan
+  │ └─TableFullScan	250.00	cop[tikv]	table:lo	keep order:false
+  └─IndexLookUp(Probe)	19977.00	root		
+    ├─IndexRangeScan(Build)	19977.00	cop[tikv]	table:e, index:idx_b(b)	range:[22336,22336], keep order:false
+    └─Selection(Probe)	19977.00	cop[tikv]		not(isnull(test.e.a))
+      └─TableRowIDScan	19977.00	cop[tikv]	table:e	keep order:false
+explain format = 'brief' select /*+ TIDB_INLJ(e) */ count(*) from e, lo where lo.a=e.a and e.b=22336;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:count(1)->Column#5
+└─IndexJoin	19977.00	root		inner join, inner:IndexLookUp, outer key:test.lo.a, inner key:test.e.a, equal cond:eq(test.lo.a, test.e.a)
+  ├─TableReader(Build)	250.00	root		data:TableFullScan
+  │ └─TableFullScan	250.00	cop[tikv]	table:lo	keep order:false
+  └─IndexLookUp(Probe)	79.91	root		
+    ├─Selection(Build)	4080.00	cop[tikv]		not(isnull(test.e.a))
+    │ └─IndexRangeScan	4080.00	cop[tikv]	table:e, index:idx_a(a)	range: decided by [eq(test.e.a, test.lo.a)], keep order:false
+    └─Selection(Probe)	79.91	cop[tikv]		eq(test.e.b, 22336)
+      └─TableRowIDScan	4080.00	cop[tikv]	table:e	keep order:false

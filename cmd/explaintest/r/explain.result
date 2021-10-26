@@ -1,0 +1,58 @@
+drop table if exists t;
+create table t (id int, c1 timestamp);
+show columns from t;
+Field	Type	Null	Key	Default	Extra
+id	int(11)	YES		NULL	
+c1	timestamp	YES		NULL	
+explain t;
+Field	Type	Null	Key	Default	Extra
+id	int(11)	YES		NULL	
+c1	timestamp	YES		NULL	
+describe t;
+Field	Type	Null	Key	Default	Extra
+id	int(11)	YES		NULL	
+c1	timestamp	YES		NULL	
+desc t;
+Field	Type	Null	Key	Default	Extra
+id	int(11)	YES		NULL	
+c1	timestamp	YES		NULL	
+desc t c1;
+Field	Type	Null	Key	Default	Extra
+c1	timestamp	YES		NULL	
+desc t id;
+Field	Type	Null	Key	Default	Extra
+id	int(11)	YES		NULL	
+drop table if exists t;
+create table t(id int primary key, a int, b int);
+set session tidb_hashagg_partial_concurrency = 1;
+set session tidb_hashagg_final_concurrency = 1;
+explain format = 'brief' select group_concat(a) from t group by id;
+id	estRows	task	access object	operator info
+StreamAgg	8000.00	root		group by:Column#6, funcs:group_concat(Column#5 separator ",")->Column#4
+└─Projection	10000.00	root		cast(test.t.a, var_string(20))->Column#5, test.t.id
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+explain format = 'brief' select group_concat(a, b) from t group by id;
+id	estRows	task	access object	operator info
+StreamAgg	8000.00	root		group by:Column#7, funcs:group_concat(Column#5, Column#6 separator ",")->Column#4
+└─Projection	10000.00	root		cast(test.t.a, var_string(20))->Column#5, cast(test.t.b, var_string(20))->Column#6, test.t.id
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+explain format = TRADITIONAL select group_concat(a, b) from t group by id;
+id	estRows	task	access object	operator info
+StreamAgg_8	8000.00	root		group by:Column#7, funcs:group_concat(Column#5, Column#6 separator ",")->Column#4
+└─Projection_18	10000.00	root		cast(test.t.a, var_string(20))->Column#5, cast(test.t.b, var_string(20))->Column#6, test.t.id
+  └─TableReader_15	10000.00	root		data:TableFullScan_14
+    └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+explain format = 'row' select group_concat(a, b) from t group by id;
+id	estRows	task	access object	operator info
+StreamAgg_8	8000.00	root		group by:Column#7, funcs:group_concat(Column#5, Column#6 separator ",")->Column#4
+└─Projection_18	10000.00	root		cast(test.t.a, var_string(20))->Column#5, cast(test.t.b, var_string(20))->Column#6, test.t.id
+  └─TableReader_15	10000.00	root		data:TableFullScan_14
+    └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+drop table t;
+drop view if exists v;
+create view v as select cast(replace(substring_index(substring_index("",',',1),':',-1),'"','') as CHAR(32)) as event_id;
+desc v;
+Field	Type	Null	Key	Default	Extra
+event_id	varchar(32)	NO		NULL	

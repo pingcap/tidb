@@ -1,0 +1,28 @@
+[
+  {
+    "name": "TestSimplifyExpressionByFlag",
+    "cases": [
+      "explain format = 'brief' select * from t where a is null",
+      "explain format = 'brief' select * from t where a is not null",
+      "explain format = 'brief' select * from t where a > -1",
+      "explain format = 'brief' select * from t where a <= -1",
+      "explain format = 'brief' select * from t where a < 0",
+      "explain format = 'brief' select * from t where a >= 0",
+      "explain format = 'brief' select * from t where a = -1",
+      "explain format = 'brief' select * from t where a <=> -1",
+      "explain format = 'brief' select * from t where a != -1",
+      "explain format = 'brief' select * from t where 0 > a",
+      "explain format = 'brief' select * from t where 0 <= a",
+      "explain format = 'brief' select * from t where -1 < a",
+      "explain format = 'brief' select * from t where -1 >= a",
+      "explain format = 'brief' select * from t where -1 = a",
+      "explain format = 'brief' select * from t where -1 <=> a",
+      "explain format = 'brief' select * from t where -1 != a",
+      // Tuples with null b should be filered out.
+      "explain format = 'brief' select * from t where b >= 0",
+      "explain format = 'brief' select * from t where b != -1",
+      // Int64 overflow corner case.
+      "explain format = 'brief' select * from t where a = 0xFFFFFFFFFFFFFFFF"
+    ]
+  }
+]

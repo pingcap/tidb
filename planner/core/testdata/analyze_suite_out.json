@@ -1,0 +1,499 @@
+[
+  {
+    "Name": "TestCBOWithoutAnalyze",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t1, t2 where t1.a = t2.a",
+        "Plan": [
+          "HashJoin 7.49 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 5.99 root  data:Selection",
+          "│ └─Selection 5.99 cop[tikv]  not(isnull(test.t2.a))",
+          "│   └─TableFullScan 6.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 5.99 root  data:Selection",
+          "  └─Selection 5.99 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─TableFullScan 6.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'hint' select * from t1, t2 where t1.a = t2.a",
+        "Plan": [
+          "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestTableDual",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where 1 = 0",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where 1 = 1 limit 0",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestEstimation",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(*) from t group by a",
+        "Plan": [
+          "HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
+          "└─TableReader 2.00 root  data:HashAgg",
+          "  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
+          "    └─TableFullScan 8.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestOutdatedAnalyze",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
+        "RatioOfPseudoEstimate": 10,
+        "Plan": [
+          "TableReader 28.80 root  data:Selection",
+          "└─Selection 28.80 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
+        "RatioOfPseudoEstimate": 0.7,
+        "Plan": [
+          "TableReader 8.84 root  data:Selection",
+          "└─Selection 8.84 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestInconsistentEstimation",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t use index(ab) where a = 5 and c = 5",
+        "Plan": [
+          "IndexLookUp 10.00 root  ",
+          "├─IndexRangeScan(Build) 12.50 cop[tikv] table:t, index:ab(a, b) range:[5,5], keep order:false",
+          "└─Selection(Probe) 10.00 cop[tikv]  eq(test.t.c, 5)",
+          "  └─TableRowIDScan 12.50 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestLimitCrossEstimation",
+    "Cases": [
+      {
+        "SQL": [
+          "set session tidb_opt_correlation_exp_factor = 0",
+          "explain format = 'brief' SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;"
+        ],
+        "Plan": [
+          "TopN 1.00 root  test.t.a, offset:0, count:1",
+          "└─IndexReader 1.00 root  index:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "    └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": [
+          "insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)",
+          "analyze table t",
+          "explain format = 'brief' SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
+        ],
+        "Plan": [
+          "TopN 1.00 root  test.t.a, offset:0, count:1",
+          "└─IndexReader 1.00 root  index:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "    └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
+        ]
+      },
+      {
+        "SQL": [
+          "truncate table t",
+          "insert into t (a, b) values (1, 25),(2, 24),(3, 23),(4, 23),(5, 21),(6, 20),(7, 19),(8, 18),(9, 17),(10, 16),(11, 15),(12, 14),(13, 13),(14, 12),(15, 11),(16, 10),(17, 9),(18, 8),(19, 7),(20, 6),(21, 5),(22, 4),(23, 3),(24, 2),(25, 1)",
+          "analyze table t",
+          "explain format = 'brief' SELECT * FROM t WHERE b <= 6 ORDER BY a limit 1"
+        ],
+        "Plan": [
+          "TopN 1.00 root  test.t.a, offset:0, count:1",
+          "└─IndexReader 1.00 root  index:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "    └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[-inf,6], keep order:false"
+        ]
+      },
+      {
+        "SQL": [
+          "explain format = 'brief' SELECT *, t1.a IN (SELECT t2.b FROM t t2) FROM t t1 WHERE t1.b <= 6 ORDER BY t1.a limit 1"
+        ],
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexJoin 1.00 root  left outer semi join, inner:IndexReader, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "  ├─TopN(Build) 1.00 root  test.t.a, offset:0, count:1",
+          "  │ └─IndexReader 1.00 root  index:TopN",
+          "  │   └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "  │     └─IndexRangeScan 6.00 cop[tikv] table:t1, index:idx_bc(b, c) range:[-inf,6], keep order:false",
+          "  └─IndexReader(Probe) 1.04 root  index:IndexRangeScan",
+          "    └─IndexRangeScan 1.04 cop[tikv] table:t2, index:idx_bc(b, c) range: decided by [eq(test.t.b, test.t.a)], keep order:false"
+        ]
+      },
+      {
+        "SQL": [
+          "truncate table t",
+          "insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 2),(8, 2),(9, 2),(10, 2),(11, 2),(12, 2),(13, 2),(14, 2),(15, 2),(16, 2),(17, 2),(18, 2),(19, 2),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)",
+          "analyze table t",
+          "explain format = 'brief' SELECT * FROM t WHERE b = 1 ORDER BY a desc limit 1"
+        ],
+        "Plan": [
+          "TopN 1.00 root  test.t.a:desc, offset:0, count:1",
+          "└─IndexReader 1.00 root  index:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.a:desc, offset:0, count:1",
+          "    └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[1,1], keep order:false"
+        ]
+      },
+      {
+        "SQL": [
+          "truncate table t",
+          "insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 2),(10, 1),(11, 1),(12, 1),(13, 1),(14, 2),(15, 2),(16, 1),(17, 2),(18, 1),(19, 2),(20, 1),(21, 2),(22, 1),(23, 1),(24, 1),(25, 1)",
+          "analyze table t",
+          "explain format = 'brief' SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
+        ],
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  eq(test.t.b, 2)",
+          "      └─TableFullScan 4.17 cop[tikv] table:t keep order:true"
+        ]
+      },
+      {
+        "SQL": [
+          "set session tidb_opt_correlation_exp_factor = 1",
+          "explain format = 'brief' SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
+        ],
+        "Plan": [
+          "TopN 1.00 root  test.t.a, offset:0, count:1",
+          "└─IndexReader 1.00 root  index:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "    └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
+        ]
+      },
+      {
+        "SQL": [
+          "set session tidb_opt_correlation_exp_factor = 0",
+          "truncate table t",
+          "insert into t (a, b) values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2)",
+          "analyze table t",
+          "explain format = 'brief' SELECT * FROM t WHERE b = 2 and a > 0 ORDER BY a limit 1"
+        ],
+        "Plan": [
+          "TopN 1.00 root  test.t.a, offset:0, count:1",
+          "└─IndexReader 1.00 root  index:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "    └─Selection 6.00 cop[tikv]  gt(test.t.a, 0)",
+          "      └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
+        ]
+      },
+      {
+        "SQL": [
+          "drop table t",
+          "create table t(a int primary key, b int, c int, d bigint default 2147483648, e bigint default 2147483648, f bigint default 2147483648, index idx(b,d,a,c))",
+          "insert into t(a, b, c) values (1, 1, 1),(2, 1, 2),(3, 1, 1),(4, 1, 2),(5, 1, 1),(6, 1, 2),(7, 1, 1),(8, 1, 2),(9, 1, 1),(10, 1, 2),(11, 1, 1),(12, 1, 2),(13, 1, 1),(14, 1, 2),(15, 1, 1),(16, 1, 2),(17, 1, 1),(18, 1, 2),(19, 1, 1),(20, 2, 2),(21, 2, 1),(22, 2, 2),(23, 2, 1),(24, 2, 2),(25, 2, 1)",
+          "analyze table t",
+          "explain format = 'brief' SELECT a FROM t WHERE b = 2 and c > 0 ORDER BY a limit 1"
+        ],
+        "Plan": [
+          "Projection 1.00 root  test.t.a",
+          "└─TopN 1.00 root  test.t.a, offset:0, count:1",
+          "  └─IndexReader 1.00 root  index:TopN",
+          "    └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "      └─Selection 6.00 cop[tikv]  gt(test.t.c, 0)",
+          "        └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx(b, d, a, c) range:[2,2], keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue9562",
+    "Cases": [
+      {
+        "SQL": [
+          "create table t1(a bigint, b bigint, c bigint)",
+          "create table t2(a bigint, b bigint, c bigint, index idx(a, b, c))",
+          "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t2.a=t1.a and t2.b>t1.b-1 and t2.b<t1.b+1 and t2.c=t1.c"
+        ],
+        "Plan": [
+          "IndexJoin 12475.01 root  inner join, inner:IndexReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.c, test.t2.c), other cond:gt(test.t2.b, minus(test.t1.b, 1)), lt(test.t2.b, plus(test.t1.b, 1))",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 1.25 root  index:Selection",
+          "  └─Selection 1.25 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.c))",
+          "    └─IndexRangeScan 1.25 cop[tikv] table:t2, index:idx(a, b, c) range: decided by [eq(test.t2.a, test.t1.a) gt(test.t2.b, minus(test.t1.b, 1)) lt(test.t2.b, plus(test.t1.b, 1))], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": [
+          "create table t(a int, b int, index idx_ab(a, b))",
+          "explain format = 'brief' select * from t t1 join t t2 where t1.b = t2.b and t2.b is null"
+        ],
+        "Plan": [
+          "Projection 0.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─HashJoin 0.00 root  inner join, equal:[eq(test.t.b, test.t.b)]",
+          "  ├─TableReader(Build) 0.00 root  data:Selection",
+          "  │ └─Selection 0.00 cop[tikv]  isnull(test.t.b), not(isnull(test.t.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestTiFlashCostModel",
+    "Cases": [
+      [
+        "TableReader_7 10000.00 root  data:TableFullScan_6",
+        "└─TableFullScan_6 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+      ],
+      [
+        "TableReader_5 10000.00 root  data:TableFullScan_4",
+        "└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+      ],
+      [
+        "Batch_Point_Get_5 2.00 root table:t handle:[1 2], keep order:false, desc:false"
+      ],
+      [
+        "TableReader_6 2.00 root  data:TableRangeScan_5",
+        "└─TableRangeScan_5 2.00 cop[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
+      ]
+    ]
+  },
+  {
+    "Name": "TestStraightJoin",
+    "Cases": [
+      [
+        "HashJoin 10000000000000000.00 root  CARTESIAN inner join",
+        "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+        "│ └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+        "└─HashJoin(Probe) 1000000000000.00 root  CARTESIAN inner join",
+        "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+        "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+        "  └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
+        "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+        "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+        "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+        "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+      ],
+      [
+        "HashJoin 10000000000000000.00 root  CARTESIAN inner join",
+        "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+        "│ └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+        "└─HashJoin(Probe) 1000000000000.00 root  CARTESIAN inner join",
+        "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+        "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+        "  └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
+        "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+        "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+        "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+        "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+      ],
+      [
+        "HashJoin 1248750000000.00 root  inner join, equal:[eq(test.t1.a, test.t4.a)]",
+        "├─TableReader(Build) 9990.00 root  data:Selection",
+        "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+        "│   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+        "└─HashJoin(Probe) 999000000000.00 root  CARTESIAN inner join",
+        "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+        "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+        "  └─HashJoin(Probe) 99900000.00 root  CARTESIAN inner join",
+        "    ├─TableReader(Build) 9990.00 root  data:Selection",
+        "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+        "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+        "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+        "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+      ]
+    ]
+  },
+  {
+    "Name": "TestNullCount",
+    "Cases": [
+      [
+        "TableReader 2.00 root  data:Selection",
+        "└─Selection 2.00 cop[tikv]  isnull(test.t.a)",
+        "  └─TableFullScan 2.00 cop[tikv] table:t keep order:false"
+      ],
+      [
+        "IndexLookUp 2.00 root  ",
+        "├─IndexRangeScan(Build) 2.00 cop[tikv] table:t, index:idx(a) range:[NULL,NULL], keep order:false",
+        "└─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false"
+      ],
+      [
+        "TableReader 0.00 root  data:Selection",
+        "└─Selection 0.00 cop[tikv]  eq(test.t.b, 1)",
+        "  └─TableFullScan 2.00 cop[tikv] table:t keep order:false"
+      ],
+      [
+        "TableReader 0.00 root  data:Selection",
+        "└─Selection 0.00 cop[tikv]  lt(test.t.b, 1)",
+        "  └─TableFullScan 2.00 cop[tikv] table:t keep order:false"
+      ]
+    ]
+  },
+  {
+    "Name": "TestCorrelatedEstimation",
+    "Cases": [
+      [
+        "Projection 10.00 root  Column#22",
+        "└─Apply 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#21)",
+        "  ├─TableReader(Build) 10.00 root  data:TableFullScan",
+        "  │ └─TableFullScan 10.00 cop[tikv] table:t keep order:false",
+        "  └─StreamAgg(Probe) 1.00 root  funcs:count(1)->Column#21",
+        "    └─HashJoin 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+        "      ├─TableReader(Build) 1.00 root  data:Selection",
+        "      │ └─Selection 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "      │   └─TableFullScan 10.00 cop[tikv] table:t1 keep order:false",
+        "      └─TableReader(Probe) 1.00 root  data:Selection",
+        "        └─Selection 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "          └─TableFullScan 10.00 cop[tikv] table:s keep order:false"
+      ],
+      [
+        "Projection 10.00 root  Column#13",
+        "└─Apply 10.00 root  CARTESIAN left outer join",
+        "  ├─TableReader(Build) 10.00 root  data:TableFullScan",
+        "  │ └─TableFullScan 10.00 cop[tikv] table:t keep order:false",
+        "  └─MaxOneRow(Probe) 1.00 root  ",
+        "    └─Projection 0.10 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#13",
+        "      └─IndexReader 0.10 root  index:Selection",
+        "        └─Selection 0.10 cop[tikv]  eq(test.t.a, test.t.a)",
+        "          └─IndexRangeScan 1.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"
+      ]
+    ]
+  },
+  {
+    "Name": "TestLowSelIndexGreedySearch",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:max(test.t.e)->Column#7",
+          "└─TopN 0.00 root  test.t.e:desc, offset:0, count:1",
+          "  └─IndexLookUp 0.00 root  ",
+          "    ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:idx2(a, c) range:[\"T3382\" \"TOPIC\",\"T3382\" \"TOPIC\"], keep order:false",
+          "    └─Selection(Probe) 0.00 cop[tikv]  eq(test.t.b, \"ECO\"), eq(test.t.d, \"23660fa1ace9455cb7f3ee831e14a342\"), not(isnull(test.t.e))",
+          "      └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestEmptyTable",
+    "Cases": [
+      "TableReader(Table(t)->Sel([le(test.t.c1, 50)]))",
+      "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))]))->HashAgg}(test.t.c1,test.t1.c1)",
+      "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))]))}(test.t.c1,test.t1.c1)",
+      "Dual"
+    ]
+  },
+  {
+    "Name": "TestIndexRead",
+    "Cases": [
+      "IndexReader(Index(t.e)[[NULL,+inf]])->HashAgg",
+      "IndexReader(Index(t.e)[[-inf,10]]->StreamAgg)->StreamAgg",
+      "IndexReader(Index(t.e)[[-inf,50]]->StreamAgg)->StreamAgg",
+      "IndexReader(Index(t.b_c)[[NULL,+inf]]->Sel([gt(test.t.c, 1)])->HashAgg)->HashAgg",
+      "IndexLookUp(Index(t.e)[[1,1]], Table(t))->HashAgg",
+      "TableReader(Table(t)->Sel([gt(test.t.e, 1)])->HashAgg)->HashAgg",
+      "IndexLookUp(Index(t.b)[[-inf,20]], Table(t)->HashAgg)->HashAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 30)])->StreamAgg)->StreamAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 40)])->StreamAgg)->StreamAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 50)])->StreamAgg)->StreamAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 100000000000)])->StreamAgg)->StreamAgg",
+      "TableReader(Table(t)->Sel([le(test.t.b, 40)]))",
+      "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
+      "TableReader(Table(t)->Sel([le(test.t.b, 10000000000)]))",
+      "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
+      "TableReader(Table(t)->Sel([le(test.t.b, 100)])->Limit)->Limit",
+      "IndexLookUp(Index(t.b)[[-inf,1]]->TopN([test.t.a],0,10), Table(t))->TopN([test.t.a],0,10)",
+      "IndexLookUp(Index(t.b)[[1,1]], Table(t))",
+      "IndexLookUp(Index(t.d)[[-inf,1991-09-05 00:00:00)], Table(t))",
+      "IndexLookUp(Index(t.ts)[[-inf,1991-09-05 00:00:00)], Table(t))",
+      "IndexLookUp(Index(t1.idx)[[3,3]], Table(t1)->Sel([eq(test.t1.b, 100000)]))->Projection->Projection->StreamAgg->Limit"
+    ]
+  },
+  {
+    "Name": "TestAnalyze",
+    "Cases": [
+      "Analyze{Table(_tidb_rowid, a, b, _tidb_rowid)}",
+      "TableReader(Table(t)->Sel([le(test.t.a, 2)]))",
+      "IndexReader(Index(t.b)[[-inf,2)])",
+      "TableReader(Table(t)->Sel([eq(test.t.a, 1) le(test.t.b, 2)]))",
+      "TableReader(Table(t1)->Sel([le(test.t1.a, 2)]))",
+      "IndexLookUp(Index(t1.a)[[1,1]], Table(t1)->Sel([le(test.t1.b, 2)]))",
+      "TableReader(Table(t2)->Sel([le(test.t2.a, 2)]))",
+      "Analyze{Table(_tidb_rowid, a, b, _tidb_rowid)}",
+      "PartitionUnionAll{TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))->TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))}",
+      "PartitionUnionAll{IndexReader(Index(t4.b)[[-inf,2)])->IndexReader(Index(t4.b)[[-inf,2)])}",
+      "TableReader(Table(t4)->Sel([eq(test.t4.a, 1) le(test.t4.b, 2)]))"
+    ]
+  },
+  {
+    "Name": "TestIndexEqualUnknown",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where a = 7639902",
+        "Plan": [
+          "IndexReader 5.95 root  index:IndexRangeScan",
+          "└─IndexRangeScan 5.95 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select c, b from t where a = 7639902 order by b asc limit 6",
+        "Plan": [
+          "Projection 5.95 root  test.t.c, test.t.b",
+          "└─TopN 5.95 root  test.t.b, offset:0, count:6",
+          "  └─IndexReader 5.95 root  index:TopN",
+          "    └─TopN 5.95 cop[tikv]  test.t.b, offset:0, count:6",
+          "      └─IndexRangeScan 5.95 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestLimitIndexEstimation",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from t where a <= 10000 order by b limit 1",
+        "Plan": [
+          "TopN 1.00 root  test.t.b, offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexRangeScan(Build) 10000.00 cop[tikv] table:t, index:idx_a(a) range:[-inf,10000], keep order:false",
+          "  └─TopN(Probe) 1.00 cop[tikv]  test.t.b, offset:0, count:1",
+          "    └─TableRowIDScan 10000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where a >= 999900 order by b limit 1",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─Projection 1.00 root  test.t.a, test.t.b",
+          "  └─IndexLookUp 1.00 root  ",
+          "    ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:idx_b(b) keep order:true",
+          "    └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.a, 999900)",
+          "      └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  }
+]

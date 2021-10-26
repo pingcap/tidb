@@ -1,0 +1,83 @@
+[
+  {
+    "name": "TestOrderedResultMode",
+    "cases": [
+      "select * from t use index(primary)",
+      "select b from t use index(b)",
+      "select a, b from t use index(b)",
+      "select b, c from t use index(b)",
+      "select b, c from t use index(primary)",
+      "select min(b), max(c) from t use index(primary) group by d",
+      "select min(b), max(c) from t use index(primary) group by a",
+      "select * from t use index(b) limit 10",
+      "select * from t use index(primary) limit 10",
+      "select b from t use index(b) order by b",
+      "select b, c, d from t use index(b) order by b",
+      "select t1.a, t2.a from t t1, t t2 where t1.a=t2.a",
+      "select b from t where a>0",
+      "select b from t where a>0 limit 1"
+    ]
+  },
+  {
+    "name": "TestOrderedResultModeOnDML",
+    "cases": [
+      "insert into t select * from t",
+      "insert into t select * from t where a>1",
+      "insert into t select t1.a, t2.b, t1.c+t2.c from t t1, t t2 where t1.a=t2.a",
+      "insert into t select min(a), max(b), sum(c) from t group by a",
+      "delete from t",
+      "delete from t where a>1",
+      "update t set a=a+1",
+      "update t set a=a+1 where a>1"
+    ]
+  },
+  {
+    "name": "TestOrderedResultModeOnSubQuery",
+    "cases": [
+      "select * from t1 where t1.a in (select b from t2)",
+      "select * from t1 where t1.a not in (select b from t2)",
+      "select * from t1 where t1.a in (select b from t2 where t2.c>t1.c)",
+      "select * from t1 where t1.a not in (select b from t2 where t2.c>t1.c)",
+      "select * from t1 where exists (select 1 from t2 where t2.c>t1.c)",
+      "select * from t1 where not exists (select 1 from t2 where t2.c>t1.c)",
+      "select * from t1 where exists (select 1 from t2 where t2.c=t1.c)",
+      "select * from t1 where not exists (select 1 from t2 where t2.c=t1.c)",
+      "select t1.* from t1, (select b from t2) tb where t1.b=tb.b"
+    ]
+  },
+  {
+    "name": "TestOrderedResultModeOnJoin",
+    "cases": [
+      "select * from t1, t2 where t1.a = t2.a",
+      "select * from t1, t2 where t1.a > t2.a and t1.b = t2.b and t1.c < t2.c",
+      "select t1.* from t1 left outer join t2 on t1.a=t2.a",
+      "select t1.* from t1 join t2 on t1.a!=t2.a"
+    ]
+  },
+  {
+    "name": "TestOrderedResultModeOnOtherOperators",
+    "cases": [
+      "select * from t1 where a = 1 or a = 222 or a = 33333",
+      "select * from t1 where a in (1, 2, 3, 4)",
+      "select b from t1 where b = 1 or b = 222 or b = 33333",
+      "select b from t1 where b in (1, 2, 3, 4)",
+      "select * from t1 where a > 10 union all select * from t2 where b > 20",
+      "select * from t1 where a > 10 union distinct select * from t2 where b > 20",
+      "select * from t1 where a > 10 intersect select * from t2 where b > 20",
+      "select * from t1 where a > 10 except select * from t2 where b > 20",
+      "select sum(b) over(partition by a) as sum_b from t1",
+      "select min(a), max(b), sum(c) from t1 group by d",
+      "select min(a), max(b), sum(c) from t1 group by d having max(b) < 20",
+      "select case when a=1 then 'a1' when a=2 then 'a2' else 'ax' end from t1 "
+    ]
+  },
+  {
+    "name": "TestOrderedResultModeOnPartitionTable",
+    "cases": [
+      "select * from thash where a in (1, 200)",
+      "select * from thash where a >= 50 and a <= 150",
+      "select * from trange where a in (1, 200)",
+      "select * from trange where a >= 50 and a <= 150"
+    ]
+  }
+]

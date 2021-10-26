@@ -1,0 +1,41 @@
+use test;
+drop table if exists t;
+create table t (a int);
+
+explain format = 'brief' select * from t where a < 1;
+
+insert into mysql.opt_rule_blacklist values('predicate_push_down');
+
+admin reload opt_rule_blacklist;
+
+explain format = 'brief' select * from t where a < 1;
+
+delete from mysql.opt_rule_blacklist where name='predicate_push_down';
+
+admin reload opt_rule_blacklist;
+
+explain format = 'brief' select * from t where a < 1;
+
+insert into mysql.expr_pushdown_blacklist values('<', 'tikv,tiflash,tidb', 'for test');
+
+admin reload expr_pushdown_blacklist;
+
+explain format = 'brief' select * from t where a < 1;
+
+delete from mysql.expr_pushdown_blacklist where name='<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
+
+admin reload expr_pushdown_blacklist;
+
+explain format = 'brief' select * from t where a < 1;
+
+insert into mysql.expr_pushdown_blacklist values('lt', 'tikv,tiflash,tidb', 'for test');
+
+admin reload expr_pushdown_blacklist;
+
+explain format = 'brief' select * from t where a < 1;
+
+delete from mysql.expr_pushdown_blacklist where name='lt' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
+
+admin reload expr_pushdown_blacklist;
+
+explain format = 'brief' select * from t where a < 1;

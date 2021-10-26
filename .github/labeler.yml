@@ -1,0 +1,42 @@
+sig/execution:
+  - distsql/*
+  - executor/*
+  - !executor/brie*
+  - util/chunk/*
+  - util/disk/*
+  - util/execdetails/*
+  - util/expensivequery/*
+  - util/filesort/*
+  - util/memory/*
+  - util/sqlexec/*
+
+component/expression:
+  - expression/*
+  - types/*
+
+sig/planner:
+  - planner/*
+  - bindinfo/*
+  - util/ranger/*
+  - util/plancodec/*
+
+component/statistics:
+  - statistics/*
+
+sig/sql-infra:
+  - ddl/*
+  - domain/*
+  - infoschema/*
+  - session/*
+  - server/*
+  - privilege/*
+  - plugin/*
+  - config/*
+  - meta/*
+  - owner/*
+
+component/config:
+  - config/*
+
+sig/migrate:
+  - executor/brie*

@@ -1,0 +1,126 @@
+use test;
+drop table if exists t;
+create table t (a int, b int, c timestamp, index idx(a));
+set @@tidb_enable_window_function = 1;
+set @@session.tidb_window_concurrency = 1;
+explain format = 'brief' select sum(a) over() from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over()
+  └─IndexReader	10000.00	root		index:IndexFullScan
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(a)	keep order:false, stats:pseudo
+explain format = 'brief' select sum(a) over(partition by a) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a)
+  └─IndexReader	10000.00	root		index:IndexFullScan
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(a)	keep order:true, stats:pseudo
+explain format = 'brief' select sum(a) over(partition by a order by b) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b range between unbounded preceding and current row)
+  └─Sort	10000.00	root		test.t.a, test.t.b
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select sum(a) over(partition by a order by b rows unbounded preceding) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b rows between unbounded preceding and current row)
+  └─Sort	10000.00	root		test.t.a, test.t.b
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select sum(a) over(partition by a order by b rows between 1 preceding and 1 following) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b rows between 1 preceding and 1 following)
+  └─Sort	10000.00	root		test.t.a, test.t.b
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select sum(a) over(partition by a order by b range between 1 preceding and 1 following) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b range between 1 preceding and 1 following)
+  └─Sort	10000.00	root		test.t.a, test.t.b
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select sum(a) over(partition by a order by c range between interval '2:30' minute_second preceding and interval '2:30' minute_second following) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.c range between interval "2:30" "MINUTE_SECOND" preceding and interval "2:30" "MINUTE_SECOND" following)
+  └─Sort	10000.00	root		test.t.a, test.t.c
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+set @@session.tidb_window_concurrency = 4;
+explain format = 'brief' select sum(a) over() from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over()
+  └─IndexReader	10000.00	root		index:IndexFullScan
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(a)	keep order:false, stats:pseudo
+explain format = 'brief' select sum(a) over(partition by a) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a)
+  └─IndexReader	10000.00	root		index:IndexFullScan
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(a)	keep order:true, stats:pseudo
+explain format = 'brief' select sum(a) over(partition by a order by b) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader]
+  └─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b range between unbounded preceding and current row)
+    └─Sort	10000.00	root		test.t.a, test.t.b
+      └─TableReader	10000.00	root		data:TableFullScan
+        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select sum(a) over(partition by a order by b rows unbounded preceding) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader]
+  └─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b rows between unbounded preceding and current row)
+    └─Sort	10000.00	root		test.t.a, test.t.b
+      └─TableReader	10000.00	root		data:TableFullScan
+        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select sum(a) over(partition by a order by b rows between 1 preceding and 1 following) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader]
+  └─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b rows between 1 preceding and 1 following)
+    └─Sort	10000.00	root		test.t.a, test.t.b
+      └─TableReader	10000.00	root		data:TableFullScan
+        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select sum(a) over(partition by a order by b range between 1 preceding and 1 following) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader]
+  └─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.b range between 1 preceding and 1 following)
+    └─Sort	10000.00	root		test.t.a, test.t.b
+      └─TableReader	10000.00	root		data:TableFullScan
+        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select sum(a) over(partition by a order by c range between interval '2:30' minute_second preceding and interval '2:30' minute_second following) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6
+└─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader]
+  └─Window	10000.00	root		sum(cast(test.t.a, decimal(32,0) BINARY))->Column#6 over(partition by test.t.a order by test.t.c range between interval "2:30" "MINUTE_SECOND" preceding and interval "2:30" "MINUTE_SECOND" following)
+    └─Sort	10000.00	root		test.t.a, test.t.c
+      └─TableReader	10000.00	root		data:TableFullScan
+        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t1;
+create table t1(a int primary key, b int);
+insert into t1 values(1, 1), (2, 1);
+analyze table t1;
+explain format = 'brief' select sum(a) over(partition by b) from t1;
+id	estRows	task	access object	operator info
+Projection	2.00	root		Column#4
+└─Window	2.00	root		sum(cast(test.t1.a, decimal(32,0) BINARY))->Column#4 over(partition by test.t1.b)
+  └─Sort	2.00	root		test.t1.b
+    └─TableReader	2.00	root		data:TableFullScan
+      └─TableFullScan	2.00	cop[tikv]	table:t1	keep order:false
+insert into t1 values(3, 3);
+analyze table t1;
+explain format = 'brief' select sum(a) over(partition by b) from t1;
+id	estRows	task	access object	operator info
+Projection	3.00	root		Column#4
+└─Shuffle	3.00	root		execution info: concurrency:2, data sources:[TableReader]
+  └─Window	3.00	root		sum(cast(test.t1.a, decimal(32,0) BINARY))->Column#4 over(partition by test.t1.b)
+    └─Sort	3.00	root		test.t1.b
+      └─TableReader	3.00	root		data:TableFullScan
+        └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false

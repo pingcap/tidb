@@ -1,0 +1,19 @@
+CREATE TABLE `access_path_selection` (
+`a` int,
+`b` int,
+KEY `IDX_a` (`a`),
+KEY `IDX_b` (`b`),
+KEY `IDX_ab` (`a`, `b`)
+);
+explain format = 'brief' select a from access_path_selection where a < 3;
+# In this query, IDX_ab is better than IDX_a.
+# The reason is that we have to do double scan if we use IDX_a since it doesn't contain column b.
+explain format = 'brief' select a, b from access_path_selection where a < 3;
+# In this query, IDX_ab can't be used, so IDX_b is the best.
+explain format = 'brief' select a, b from access_path_selection where b < 3;
+explain format = 'brief' select a, b from access_path_selection where a < 3 and b < 3;
+# _tidb_rowid should also be considered as PK.
+explain format = 'brief' select a, b from access_path_selection where a > 10 order by _tidb_rowid;
+explain format = 'brief' select max(_tidb_rowid) from access_path_selection;
+# Use indexPath in this query.
+explain format = 'brief' select count(1) from access_path_selection;
