@@ -182,7 +182,7 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
 
-	placementPolicyRef, directPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts, nil, nil)
+	placementPolicyRef, directPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts, dbInfo.PlacementPolicyRef, dbInfo.DirectPlacementOpts)
 	if err != nil {
 		return err
 	}
@@ -212,7 +212,7 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
-	placementPolicyRef, directPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts, schema.PlacementPolicyRef, schema.DirectPlacementOpts)
+	placementPolicyRef, directPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts, tb.Meta().PlacementPolicyRef, tb.Meta().DirectPlacementOpts)
 	if err != nil {
 		return err
 	}
@@ -6493,7 +6493,8 @@ func (d *ddl) AlterTablePartitionPlacement(ctx sessionctx.Context, tableIdent as
 	if err != nil {
 		return errors.Trace(err)
 	}
-	policyRefInfo, placementSettings, err = checkAndNormalizePlacement(ctx, policyRefInfo, placementSettings, nil, nil)
+	ptPlacementPolicyRef, ptPlacementSettings := tblInfo.Partition.GetPlacementByID(partitionID)
+	policyRefInfo, placementSettings, err = checkAndNormalizePlacement(ctx, policyRefInfo, placementSettings, ptPlacementPolicyRef, ptPlacementSettings)
 	if err != nil {
 		return errors.Trace(err)
 	}

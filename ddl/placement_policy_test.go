@@ -240,17 +240,17 @@ func (s *testDBSuite6) TestSkipPlacementValidation(c *C) {
 	))
 
 	// Test for `ALTER`
-	// Test `ALTER DATABASE`: Skip the check, and alter database with default placement option.
+	// Test `ALTER DATABASE`: Skip the check, keep the original opts.
 	tk.MustExec("alter database db_skip_validation PLACEMENT POLICY=\"x\"")
 	tk.MustQuery(`show create database db_skip_validation`).Check(testutil.RowsWithSep("|",
 		"db_skip_validation CREATE DATABASE `db_skip_validation` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
-	// Test `ALTER TABLE`: Skip the check, and inherit from the database placement policy when alter table
+	// Test `ALTER TABLE`: Skip the check, keep the original opts.
 	tk.MustExec("alter table t PLACEMENT POLICY=\"x\"")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */"))
-	// Test `ALTER PARTITION`: Skip the check, and inherit from the table placement policy when alter partition
+	// Test `ALTER PARTITION`: Skip the check, keep the original opts.
 	tk.MustExec("alter table t_range_p PARTITION p1 placement policy x;")
 	tk.MustQuery("show create table t_range_p").Check(testkit.Rows("t_range_p CREATE TABLE `t_range_p` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
