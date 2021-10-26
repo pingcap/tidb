@@ -73,7 +73,7 @@ func (s *HDFSStorage) WriteFile(ctx context.Context, name string, data []byte) e
 
 // ReadFile reads a complete file from storage, similar to os.ReadFile
 func (s *HDFSStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
-	panic("not implemented")
+	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
 // FileExists return true if file exists
@@ -97,12 +97,12 @@ func (s *HDFSStorage) FileExists(ctx context.Context, name string) (bool, error)
 
 // DeleteFile delete the file in storage
 func (s *HDFSStorage) DeleteFile(ctx context.Context, name string) error {
-	panic("not implemented")
+	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
 // Open a Reader by file path. path is relative path to storage base path
 func (s *HDFSStorage) Open(ctx context.Context, path string) (ExternalFileReader, error) {
-	panic("not implemented")
+	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
 // WalkDir traverse all the files in a dir.
@@ -112,7 +112,7 @@ func (s *HDFSStorage) Open(ctx context.Context, path string) (ExternalFileReader
 // function; the argument `size` is the size in byte of the file determined
 // by path.
 func (s *HDFSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(path string, size int64) error) error {
-	panic("not implemented")
+	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
 // URI returns the base path as a URI
@@ -122,5 +122,5 @@ func (s *HDFSStorage) URI() string {
 
 // Create opens a file writer by path. path is relative path to storage base path
 func (s *HDFSStorage) Create(ctx context.Context, path string) (ExternalFileWriter, error) {
-	panic("not implemented")
+	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }

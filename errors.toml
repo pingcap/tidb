@@ -51,6 +51,11 @@ error = '''
 internal error
 '''
 
+["BR:Common:ErrUnsupportedOperation"]
+error = '''
+the operation is not supported
+'''
+
 ["BR:Common:ErrVersionMismatch"]
 error = '''
 version mismatch
