@@ -1033,3 +1033,62 @@ func (s *testPrepareSerialSuite) TestSetOperations(c *C) {
 	tk.MustExec("prepare stmt from '(select * from t1 union all select * from t1 intersect select * from t2) order by a limit 2;'")
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "1"))
 }
+
+func (s *testPrepareSerialSuite) TestSPM(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, index idx_a(a));")
+	tk.MustExec("delete from mysql.bind_info where default_db='test';")
+	tk.MustExec("admin reload bindings;")
+
+	res := tk.MustQuery("explain format = 'brief' select * from t;")
+	c.Assert(res.Rows()[0][0], Matches, ".*TableReader.*")
+	c.Assert(res.Rows()[1][0], Matches, ".*TableFullScan.*")
+
+	tk.MustExec("prepare stmt from 'select * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(res.Rows()[0][0], Matches, ".*TableReader.*")
+	c.Assert(res.Rows()[1][0], Matches, ".*TableFullScan.*")
+
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a);")
+
+	res = tk.MustQuery("explain format = 'brief' select * from t;")
+	c.Assert(res.Rows()[0][0], Matches, ".*IndexReader.*")
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexFullScan.*")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	// The binding does not take effect for caches that have been cached.
+	c.Assert(res.Rows()[0][0], Matches, ".*TableReader.*")
+	c.Assert(res.Rows()[1][0], Matches, ".*TableFullScan.*")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+
+	tk.MustExec("delete from mysql.bind_info where default_db='test';")
+	tk.MustExec("admin reload bindings;")
+}
