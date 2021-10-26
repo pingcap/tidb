@@ -26,11 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -40,6 +35,11 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -152,6 +152,29 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+
+		var bundles []*placement.Bundle
+		// bundle for table should be recomputed because it includes some default configs for partitions
+		tblBundle, err := newBundleFromTblInfo(t, job, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		if tblBundle != nil {
+			bundles = append(bundles, tblBundle)
+		}
+
+		partitionBundles, err := newBundlesFromPartitionDefs(t, job, addingDefinitions)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		bundles = append(bundles, partitionBundles...)
+
+		if err = infosync.PutRuleBundles(context.TODO(), bundles); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddTablePartition, TableInfo: tblInfo, PartInfo: partInfo})
@@ -335,7 +358,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	if !enable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
 	}
 
@@ -350,7 +373,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 			return errors.Trace(err)
 		}
 		buf := new(bytes.Buffer)
-		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreBracketAroundBinaryOperation, buf)
 		if err := s.Expr.Restore(restoreCtx); err != nil {
 			return err
 		}
@@ -375,16 +398,61 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 }
 
 // buildPartitionDefinitionsInfo build partition definitions info without assign partition id. tbInfo will be constant
-func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
+func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) (partitions []model.PartitionDefinition, err error) {
 	switch tbInfo.Partition.Type {
 	case model.PartitionTypeRange:
-		return buildRangePartitionDefinitions(ctx, defs, tbInfo)
+		partitions, err = buildRangePartitionDefinitions(ctx, defs, tbInfo)
 	case model.PartitionTypeHash:
-		return buildHashPartitionDefinitions(ctx, defs, tbInfo)
+		partitions, err = buildHashPartitionDefinitions(ctx, defs, tbInfo)
 	case model.PartitionTypeList:
-		return buildListPartitionDefinitions(ctx, defs, tbInfo)
+		partitions, err = buildListPartitionDefinitions(ctx, defs, tbInfo)
 	}
-	return nil, nil
+
+	if err != nil {
+		return nil, err
+	}
+
+	for idx := range partitions {
+		def := &partitions[idx]
+		def.PlacementPolicyRef, def.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, def.PlacementPolicyRef, def.DirectPlacementOpts)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return partitions, nil
+}
+
+func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, options []*ast.TableOption) error {
+	// the partition inheritance of placement rules don't have to copy the placement elements to themselves.
+	// For example:
+	// t placement policy x (p1 placement policy y, p2)
+	// p2 will share the same rule as table t does, but it won't copy the meta to itself. we will
+	// append p2 range to the coverage of table t's rules. This mechanism is good for cascading change
+	// when policy x is altered.
+	for _, opt := range options {
+		switch opt.Tp {
+		case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
+			ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
+			ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
+			ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
+			ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
+			ast.TableOptionPlacementVoterConstraints:
+			if partition.DirectPlacementOpts == nil {
+				partition.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			err := SetDirectPlacementOpt(partition.DirectPlacementOpts, ast.PlacementOptionType(opt.Tp), opt.StrValue, opt.UintValue)
+			if err != nil {
+				return err
+			}
+		case ast.TableOptionPlacementPolicy:
+			partition.PlacementPolicyRef = &model.PolicyRefInfo{
+				Name: model.NewCIStr(opt.StrValue),
+			}
+		}
+	}
+
+	return nil
 }
 
 func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
@@ -434,6 +502,10 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
 			Comment: comment,
+		}
+
+		if err = setPartitionPlacementFromOptions(&piDef, def.Options); err != nil {
+			return nil, err
 		}
 
 		buf := new(bytes.Buffer)
@@ -494,6 +566,10 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
 			Comment: comment,
+		}
+
+		if err = setPartitionPlacementFromOptions(&piDef, def.Options); err != nil {
+			return nil, err
 		}
 
 		buf := new(bytes.Buffer)
@@ -932,7 +1008,7 @@ func dropLabelRules(d *ddlCtx, schemaName, tableName string, partNames []string)
 		deleteRules = append(deleteRules, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, schemaName, tableName, partName))
 	}
 	// delete batch rules
-	patch := label.NewRulePatch(nil, deleteRules)
+	patch := label.NewRulePatch([]*label.Rule{}, deleteRules)
 	return infosync.UpdateLabelRules(context.TODO(), patch)
 }
 
@@ -1124,7 +1200,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(oldID))
 		if ok && !oldBundle.IsEmpty() {
 			bundles = append(bundles, placement.NewBundle(oldID))
-			bundles = append(bundles, oldBundle.Clone().Reset(newPartitions[i].ID))
+			bundles = append(bundles, oldBundle.Clone().Reset(placement.RuleIndexPartition, []int64{newPartitions[i].ID}))
 		}
 	}
 
@@ -1134,30 +1210,32 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
-	oldRules := make([]string, 0, len(oldIDs))
-	newRules := make([]*label.Rule, 0, len(oldIDs))
-	oldRuleMap := make(map[string]struct{})
+	tableID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L)
+	oldPartRules := make([]string, 0, len(oldIDs))
 	for _, newPartition := range newPartitions {
-		oldRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, newPartition.Name.L)
-		oldRules = append(oldRules, oldRuleID)
-		oldRuleMap[oldRuleID] = struct{}{}
+		oldPartRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, newPartition.Name.L)
+		oldPartRules = append(oldPartRules, oldPartRuleID)
 	}
 
-	rules, err := infosync.GetLabelRules(context.TODO(), oldRules)
+	rules, err := infosync.GetLabelRules(context.TODO(), append(oldPartRules, tableID))
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to get label rules from PD")
 	}
 
-	for _, r := range rules {
-		for _, newPartition := range newPartitions {
-			if _, ok := oldRuleMap[r.ID]; ok {
-				newRules = append(newRules, r.Clone().Reset(newPartition.ID, job.SchemaName, tblInfo.Name.L, newPartition.Name.L))
-			}
+	newPartIDs := getPartitionIDs(tblInfo)
+	newRules := make([]*label.Rule, 0, len(oldIDs)+1)
+	if tr, ok := rules[tableID]; ok {
+		newRules = append(newRules, tr.Clone().Reset(job.SchemaName, tblInfo.Name.L, "", append(newPartIDs, tblInfo.ID)...))
+	}
+
+	for idx, newPartition := range newPartitions {
+		if pr, ok := rules[oldPartRules[idx]]; ok {
+			newRules = append(newRules, pr.Clone().Reset(job.SchemaName, tblInfo.Name.L, newPartition.Name.L, newPartition.ID))
 		}
 	}
 
-	patch := label.NewRulePatch(newRules, nil)
+	patch := label.NewRulePatch(newRules, []string{})
 	err = infosync.UpdateLabelRules(context.TODO(), patch)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -1247,27 +1325,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
-	// partition table base auto id
-	ptBaseID, err := t.GetAutoTableID(ptSchemaID, pt.ID)
+	// partition table auto IDs.
+	ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
-	ptRandID, err := t.GetAutoRandomID(ptSchemaID, pt.ID)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	// non-partition table base auto id
-	ntBaseID, err := t.GetAutoTableID(job.SchemaID, nt.ID)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	ntRandID, err := t.GetAutoRandomID(job.SchemaID, nt.ID)
+	// non-partition table auto IDs.
+	ntAutoIDs, err := t.GetAutoIDAccessors(job.SchemaID, nt.ID).Get()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1305,7 +1370,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	})
 
 	// recreate non-partition table meta info
-	err = t.DropTableOrView(job.SchemaID, partDef.ID, true)
+	err = t.DropTableOrView(job.SchemaID, partDef.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1317,35 +1382,21 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	// both pt and nt set the maximum auto_id between ntBaseID and ptBaseID
-	if ntBaseID > ptBaseID {
-		_, err = t.GenAutoTableID(ptSchemaID, pt.ID, ntBaseID-ptBaseID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
+	// Set both tables to the maximum auto IDs between normal table and partitioned table.
+	newAutoIDs := meta.AutoIDGroup{
+		RowID:       mathutil.MaxInt64(ptAutoIDs.RowID, ntAutoIDs.RowID),
+		IncrementID: mathutil.MaxInt64(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
+		RandomID:    mathutil.MaxInt64(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
 	}
-
-	_, err = t.GenAutoTableID(job.SchemaID, nt.ID, mathutil.MaxInt64(ptBaseID, ntBaseID))
+	err = t.GetAutoIDAccessors(ptSchemaID, pt.ID).Put(newAutoIDs)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
-	if ntRandID != 0 || ptRandID != 0 {
-		if ntRandID > ptRandID {
-			_, err = t.GenAutoRandomID(ptSchemaID, pt.ID, ntRandID-ptRandID)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-		}
-
-		_, err = t.GenAutoRandomID(job.SchemaID, nt.ID, mathutil.MaxInt64(ptRandID, ntRandID))
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
+	err = t.GetAutoIDAccessors(job.SchemaID, nt.ID).Put(newAutoIDs)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
 
 	// the follow code is a swap function for rules of two partitions
@@ -1356,14 +1407,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	ntBundle, ntOK := d.infoCache.GetLatest().BundleByName(placement.GroupID(nt.ID))
 	ntOK = ntOK && !ntBundle.IsEmpty()
 	if ptOK && ntOK {
-		bundles = append(bundles, ptBundle.Clone().Reset(nt.ID))
-		bundles = append(bundles, ntBundle.Clone().Reset(partDef.ID))
+		bundles = append(bundles, ptBundle.Clone().Reset(placement.RuleIndexPartition, []int64{nt.ID}))
+		bundles = append(bundles, ntBundle.Clone().Reset(placement.RuleIndexPartition, []int64{partDef.ID}))
 	} else if ptOK {
 		bundles = append(bundles, placement.NewBundle(partDef.ID))
-		bundles = append(bundles, ptBundle.Clone().Reset(nt.ID))
+		bundles = append(bundles, ptBundle.Clone().Reset(placement.RuleIndexPartition, []int64{nt.ID}))
 	} else if ntOK {
 		bundles = append(bundles, placement.NewBundle(nt.ID))
-		bundles = append(bundles, ntBundle.Clone().Reset(partDef.ID))
+		bundles = append(bundles, ntBundle.Clone().Reset(placement.RuleIndexPartition, []int64{partDef.ID}))
 	}
 	err = infosync.PutRuleBundles(context.TODO(), bundles)
 	if err != nil {
@@ -1380,28 +1431,22 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return 0, errors.Wrapf(err, "failed to get PD the label rules")
 	}
 
-	var ntr, ptr *label.Rule
-	for _, rule := range rules {
-		if rule.ID == ntrID {
-			ntr = rule
-		} else if rule.ID == ptrID {
-			ptr = rule
-		} else {
-			logutil.BgLogger().Error("[ddl] unexpected label rule", zap.Any("rule", rule))
-		}
-	}
+	ntr := rules[ntrID]
+	ptr := rules[ptrID]
+
+	partIDs := getPartitionIDs(nt)
 
 	var setRules []*label.Rule
 	var deleteRules []string
 	if ntr != nil && ptr != nil {
-		setRules = append(setRules, ntr.Clone().Reset(partDef.ID, job.SchemaName, pt.Name.L, partDef.Name.L))
-		setRules = append(setRules, ptr.Clone().Reset(nt.ID, job.SchemaName, nt.Name.L))
+		setRules = append(setRules, ntr.Clone().Reset(job.SchemaName, pt.Name.L, partDef.Name.L, partDef.ID))
+		setRules = append(setRules, ptr.Clone().Reset(job.SchemaName, nt.Name.L, "", append(partIDs, nt.ID)...))
 	} else if ptr != nil {
-		setRules = append(setRules, ptr.Clone().Reset(nt.ID, job.SchemaName, nt.Name.L))
+		setRules = append(setRules, ptr.Clone().Reset(job.SchemaName, nt.Name.L, "", append(partIDs, nt.ID)...))
 		// delete ptr
 		deleteRules = append(deleteRules, ptrID)
 	} else if ntr != nil {
-		setRules = append(setRules, ntr.Clone().Reset(partDef.ID, job.SchemaName, pt.Name.L, partDef.Name.L))
+		setRules = append(setRules, ntr.Clone().Reset(job.SchemaName, pt.Name.L, partDef.Name.L, partDef.ID))
 		// delete ntr
 		deleteRules = append(deleteRules, ntrID)
 	}
@@ -1720,7 +1765,7 @@ func findColumnByName(colName string, tblInfo *model.TableInfo) *model.ColumnInf
 
 func extractPartitionColumns(partExpr string, tblInfo *model.TableInfo) ([]*model.ColumnInfo, error) {
 	partExpr = "select " + partExpr
-	stmts, _, err := parser.New().Parse(partExpr, "", "")
+	stmts, _, err := parser.New().ParseSQL(partExpr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

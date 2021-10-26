@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -81,6 +81,7 @@ type Client struct {
 
 	restoreStores []uint64
 
+	cipher             *backuppb.CipherInfo
 	storage            storage.ExternalStorage
 	backend            *backuppb.StorageBackend
 	switchModeInterval time.Duration
@@ -131,6 +132,10 @@ func NewRestoreClient(
 // SetRateLimit to set rateLimit.
 func (rc *Client) SetRateLimit(rateLimit uint64) {
 	rc.rateLimit = rateLimit
+}
+
+func (rc *Client) SetCrypter(crypter *backuppb.CipherInfo) {
+	rc.cipher = crypter
 }
 
 // SetStorage set ExternalStorage for client.
@@ -300,7 +305,7 @@ func (rc *Client) ResetTS(ctx context.Context, pdAddrs []string) error {
 		idx := i % len(pdAddrs)
 		i++
 		return pdutil.ResetTS(ctx, pdAddrs[idx], restoreTS, rc.tlsConf)
-	}, newPDReqBackoffer())
+	}, utils.NewPDReqBackoffer())
 }
 
 // GetPlacementRules return the current placement rules.
@@ -313,7 +318,7 @@ func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]pl
 		i++
 		placementRules, err = pdutil.GetPlacementRules(ctx, pdAddrs[idx], rc.tlsConf)
 		return errors.Trace(err)
-	}, newPDReqBackoffer())
+	}, utils.NewPDReqBackoffer())
 	return placementRules, errors.Trace(errRetry)
 }
 
@@ -629,7 +634,7 @@ func (rc *Client) RestoreFiles(
 						zap.Duration("take", time.Since(fileStart)))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.Import(ectx, filesReplica, rewriteRules)
+				return rc.fileImporter.Import(ectx, filesReplica, rewriteRules, rc.cipher)
 			})
 	}
 
@@ -670,7 +675,7 @@ func (rc *Client) RestoreRaw(
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				defer updateCh.Inc()
-				return rc.fileImporter.Import(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule())
+				return rc.fileImporter.Import(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher)
 			})
 	}
 	if err := eg.Wait(); err != nil {

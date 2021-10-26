@@ -29,14 +29,12 @@ import (
 func TestTemporaryTableNoNetwork(t *testing.T) {
 	t.Run("global", func(t *testing.T) {
 		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
-			tk.MustExec("set tidb_enable_global_temporary_table=true")
 			tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
 		})
 	})
 
 	t.Run("local", func(t *testing.T) {
 		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
-			tk.MustExec("set tidb_enable_noop_functions=true")
 			tk.MustExec("create temporary table tmp_t (id int primary key, a int, b int, index(a))")
 		})
 	})

@@ -17,9 +17,9 @@ package types
 import (
 	"strconv"
 
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	ast "github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	ast "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/types/json"
 	utilMath "github.com/pingcap/tidb/util/math"
 )
@@ -48,11 +48,13 @@ func NewFieldType(tp byte) *FieldType {
 // NewFieldTypeWithCollation returns a FieldType,
 // with a type and other information about field type.
 func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType {
+	coll, _ := charset.GetCollationByName(collation)
 	return &FieldType{
 		Tp:      tp,
 		Flen:    length,
 		Decimal: UnspecifiedLength,
 		Collate: collation,
+		Charset: coll.CharsetName,
 	}
 }
 
@@ -193,6 +195,9 @@ func hasVariantFieldLength(tp *FieldType) bool {
 
 // DefaultTypeForValue returns the default FieldType for the value.
 func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate string) {
+	if value != nil {
+		tp.Flag |= mysql.NotNullFlag
+	}
 	switch x := value.(type) {
 	case nil:
 		tp.Tp = mysql.TypeNull
@@ -288,6 +293,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.Tp = mysql.TypeNewDecimal
 		tp.Flen = len(x.ToString())
 		tp.Decimal = int(x.digitsFrac)
+		// Add the length for `.`.
+		tp.Flen++
 		SetBinChsClnFlag(tp)
 	case Enum:
 		tp.Tp = mysql.TypeEnum
@@ -309,6 +316,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.Tp = mysql.TypeUnspecified
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = UnspecifiedLength
+		tp.Charset = charset.CharsetUTF8MB4
+		tp.Collate = charset.CollationUTF8MB4
 	}
 }
 

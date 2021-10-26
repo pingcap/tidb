@@ -17,8 +17,8 @@ package core
 import (
 	"math/bits"
 
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
 )
 
 type joinReorderDPSolver struct {
@@ -135,14 +135,14 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expressio
 }
 
 // bfsGraph bfs a sub graph starting at startPos. And relabel its label for future use.
-func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents [][]int, nodeID2VistID []int) []int {
+func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents [][]int, nodeID2VisitID []int) []int {
 	queue := []int{startNode}
 	visited[startNode] = true
 	var visitID2NodeID []int
 	for len(queue) > 0 {
 		curNodeID := queue[0]
 		queue = queue[1:]
-		nodeID2VistID[curNodeID] = len(visitID2NodeID)
+		nodeID2VisitID[curNodeID] = len(visitID2NodeID)
 		visitID2NodeID = append(visitID2NodeID, curNodeID)
 		for _, adjNodeID := range adjacents[curNodeID] {
 			if visited[adjNodeID] {

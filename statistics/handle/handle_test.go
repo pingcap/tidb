@@ -26,9 +26,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -61,6 +61,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_extended")
 	tk.MustExec("delete from mysql.stats_fm_sketch")
 	tk.MustExec("delete from mysql.schema_index_usage")
+	tk.MustExec("delete from mysql.column_stats_usage")
 	do.StatsHandle().Clear()
 }
 
@@ -903,14 +904,14 @@ func (s *testSerialStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.T
 
 // nolint:unused
 func (s *testSerialStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, t string, p string, topn, buckets int) {
-	delta := buckets/2 + 1
+	delta := buckets/2 + 10
 	for _, isIdx := range []int{0, 1} {
 		c.Assert(len(tk.MustQuery(fmt.Sprintf("show stats_topn where table_name='%v' and partition_name='%v' and is_index=%v", t, p, isIdx)).Rows()), Equals, topn)
 		numBuckets := len(tk.MustQuery(fmt.Sprintf("show stats_buckets where table_name='%v' and partition_name='%v' and is_index=%v", t, p, isIdx)).Rows())
 		// since the hist-building algorithm doesn't stipulate the final bucket number to be equal to the expected number exactly,
 		// we have to check the results by a range here.
-		c.Assert(numBuckets >= buckets-delta, IsTrue)
-		c.Assert(numBuckets <= buckets+delta, IsTrue)
+		c.Assert(numBuckets, GreaterEqual, buckets-delta)
+		c.Assert(numBuckets, LessEqual, buckets+delta)
 	}
 }
 

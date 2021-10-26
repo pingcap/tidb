@@ -28,10 +28,6 @@ import (
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -44,6 +40,10 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -79,17 +79,20 @@ type Domain struct {
 	sysSessionPool       *sessionPool
 	exit                 chan struct{}
 	etcdClient           *clientv3.Client
-	sysVarCache          SysVarCache // replaces GlobalVariableCache
+	sysVarCache          sysVarCache // replaces GlobalVariableCache
 	slowQuery            *topNSlowQueries
 	expensiveQueryHandle *expensivequery.Handle
 	wg                   sync.WaitGroup
 	statsUpdating        sync2.AtomicInt32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
+	planReplayer         *planReplayer
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
+
+	onClose func()
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -149,7 +152,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store()).InitWithDBInfos(schemas, bundles, neededSchemaVersion)
+	policies, err := do.fetchPolicies(m)
+	if err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
+
+	newISBuilder, err := infoschema.NewBuilder(do.Store()).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -161,6 +169,14 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	is := newISBuilder.Build()
 	do.infoCache.Insert(is, startTS)
 	return is, false, currentSchemaVersion, nil, nil
+}
+
+func (do *Domain) fetchPolicies(m *meta.Meta) ([]*model.PolicyInfo, error) {
+	allPolicies, err := m.ListPolicies()
+	if err != nil {
+		return nil, err
+	}
+	return allPolicies, nil
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
@@ -627,13 +643,17 @@ func (do *Domain) Close() {
 	do.cancel()
 	do.wg.Wait()
 	do.sysSessionPool.Close()
+	variable.UnregisterStatistics(do.bindHandle)
+	if do.onClose != nil {
+		do.onClose()
+	}
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, factory pools.Factory) *Domain {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, planReplayerGCLease time.Duration, factory pools.Factory, onClose func()) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
 		store:               store,
@@ -643,6 +663,8 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoCache:           infoschema.NewCache(16),
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
+		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
+		onClose:             onClose,
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -715,21 +737,28 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
 	)
-	err = do.ddl.Start(sysCtxPool)
-	if err != nil {
-		return err
-	}
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
-			if err := do.ddl.Stop(); err != nil {
-				logutil.BgLogger().Error("stop DDL failed", zap.Error(err))
-			}
 			do.ddl = d
 		}
 	})
-
+	// step 1: prepare the info/schema syncer which domain reload needed.
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
+	if err != nil {
+		return err
+	}
 	err = do.ddl.SchemaSyncer().Init(ctx)
+	if err != nil {
+		return err
+	}
+	// step 2: domain reload the infoSchema.
+	err = do.Reload()
+	if err != nil {
+		return err
+	}
+	// step 3: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
+	err = do.ddl.Start(sysCtxPool)
 	if err != nil {
 		return err
 	}
@@ -750,15 +779,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 			// set serverID for standalone deployment to enable 'KILL'.
 			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
 		}
-	}
-
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
-	if err != nil {
-		return err
-	}
-	err = do.Reload()
-	if err != nil {
-		return err
 	}
 
 	// Only when the store is local that the lease value is 0.
@@ -911,7 +931,8 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
 // it should be called only once in BootstrapSession.
 func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
-	err := do.sysVarCache.RebuildSysVarCache(ctx)
+	ctx.GetSessionVars().InRestrictedSQL = true
+	err := do.rebuildSysVarCache(ctx)
 	if err != nil {
 		return err
 	}
@@ -960,7 +981,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			}
 			count = 0
 			logutil.BgLogger().Debug("Rebuilding sysvar cache from etcd watch event.")
-			err := do.sysVarCache.RebuildSysVarCache(ctx)
+			err := do.rebuildSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
@@ -1115,6 +1136,28 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 				return
 			case <-time.After(telemetry.SubWindowSize):
 				telemetry.RotateSubWindow()
+			}
+		}
+	}()
+}
+
+// PlanReplayerLoop creates a goroutine that handles `exit` and `gc`.
+func (do *Domain) PlanReplayerLoop() {
+	do.wg.Add(1)
+	go func() {
+		gcTicker := time.NewTicker(do.planReplayer.planReplayerGCLease)
+		defer func() {
+			gcTicker.Stop()
+			do.wg.Done()
+			logutil.BgLogger().Info("PlanReplayerLoop exited.")
+			util.Recover(metrics.LabelDomain, "PlanReplayerLoop", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-gcTicker.C:
+				do.planReplayer.planReplayerGC(time.Hour)
 			}
 		}
 	}()
@@ -1367,7 +1410,7 @@ const (
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
-func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
+func (do *Domain) NotifyUpdatePrivilege() error {
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), privilegeKey, "")
@@ -1376,19 +1419,19 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 		}
 	}
 	// update locally
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	if stmt, err := exec.ParseWithParams(context.Background(), `FLUSH PRIVILEGES`); err == nil {
-		_, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
-		if err != nil {
-			logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
-		}
+	sysSessionPool := do.SysSessionPool()
+	ctx, err := sysSessionPool.Get()
+	if err != nil {
+		return err
 	}
+	defer sysSessionPool.Put(ctx)
+	return do.PrivilegeHandle().Update(ctx.(sessionctx.Context))
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
 // clients are subscribed to for updates. For the caller, the cache is also built
 // synchronously so that the effect is immediate.
-func (do *Domain) NotifyUpdateSysVarCache(ctx sessionctx.Context) {
+func (do *Domain) NotifyUpdateSysVarCache() {
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), sysVarCacheKey, "")
@@ -1397,7 +1440,7 @@ func (do *Domain) NotifyUpdateSysVarCache(ctx sessionctx.Context) {
 		}
 	}
 	// update locally
-	if err := do.sysVarCache.RebuildSysVarCache(ctx); err != nil {
+	if err := do.rebuildSysVarCache(nil); err != nil {
 		logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/benchdaily"
 )
 
 func BenchmarkEncodeRowKeyWithHandle(b *testing.B) {
@@ -52,4 +53,16 @@ func BenchmarkDecodeRowKey(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkEncodeRowKeyWithHandle,
+		BenchmarkEncodeEndKey,
+		BenchmarkEncodeRowKeyWithPrefixNex,
+		BenchmarkDecodeRowKey,
+		BenchmarkHasTablePrefix,
+		BenchmarkHasTablePrefixBuiltin,
+		BenchmarkEncodeValue,
+	)
 }
