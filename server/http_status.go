@@ -31,6 +31,7 @@ import (
 	rpprof "runtime/pprof"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -195,10 +197,52 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	ballast := make([]byte, 0)
+	ballastMaxSz := 1024 * 1024 * 1024 * 2
+	var ballastLock sync.Mutex
+	getBallastSize := func() int {
+		var sz int
+		ballastLock.Lock()
+		sz = len(ballast)
+		ballastLock.Unlock()
+		return sz
+	}
+	setBallastSize := func(newSz int) error {
+		if newSz < 0 {
+			return fmt.Errorf("newSz cannnot be negative: %d", newSz)
+		}
+		if newSz > ballastMaxSz {
+			return fmt.Errorf("newSz cannnot be bigger than %d but it has value %d", ballastMaxSz, newSz)
+		}
+		ballastLock.Lock()
+		ballast = make([]byte, newSz)
+		ballastLock.Unlock()
+		return nil
+	}
+	{
+		if s.cfg.MaxBallastObjectSize > 0 {
+			ballastMaxSz = s.cfg.MaxBallastObjectSize
+		} else {
+			// we try to use the total amount of ram as a reference to set the default ballastMaxSz
+			// since the fatal throw "runtime: out of memory" would never yield to `recover`
+			totalRAMSz, err := memory.MemTotal()
+			if err != nil {
+				logutil.BgLogger().Error("failed to get the total amount of RAM on this system", zap.Error(err))
+			} else {
+				maxSzAdvice := totalRAMSz >> 2
+				if uint64(ballastMaxSz) > maxSzAdvice {
+					ballastMaxSz = int(maxSzAdvice)
+				}
+			}
+		}
+		err := setBallastSize(s.cfg.BallastObjectSize)
+		if err != nil {
+			logutil.BgLogger().Error("set initial ballast object size failed", zap.Error(err))
+		}
+	}
 	serverMux.HandleFunc("/debug/ballast-object-sz", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			_, err := w.Write([]byte(strconv.Itoa(len(ballast))))
+			_, err := w.Write([]byte(strconv.Itoa(getBallastSize())))
 			terror.Log(err)
 		case http.MethodPost:
 			body, err := io.ReadAll(r.Body)
@@ -207,20 +251,17 @@ func (s *Server) startHTTPServer() {
 				return
 			}
 			newSz, err := strconv.Atoi(string(body))
-			if err != nil || newSz < 0 {
+			if err == nil {
+				err = setBallastSize(newSz)
+			}
+			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
-				var errStr string
-				if err != nil {
-					errStr = err.Error()
-				} else {
-					errStr = fmt.Sprintf("the input new sz cannot be negative: %d", newSz)
-				}
+				errStr := err.Error()
 				if _, err := w.Write([]byte(errStr)); err != nil {
 					terror.Log(err)
 				}
 				return
 			}
-			ballast = make([]byte, newSz)
 		}
 	})
 	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
