@@ -2411,23 +2411,35 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 	return nil
 }
 
-func setStatsOption(statsOptions *model.StatsOptions, statsOptionType ast.StatsOptionType, stringVal string, uintVal uint64) error {
+func setStatsOption(statsOptions *model.StatsOptions, statsOptionType ast.StatsOptionType, op *ast.TableOption) error {
 	switch statsOptionType {
 	case ast.StatsOptionBuckets:
-		statsOptions.Buckets = uintVal
+		statsOptions.Buckets = op.UintValue
 	case ast.StatsOptionTopN:
-		statsOptions.TopN = uintVal
+		statsOptions.TopN = op.UintValue
 	case ast.StatsOptionSampleRate:
-		floatRate, err := strconv.ParseFloat(stringVal, 64)
-		if err != nil {
-			return err
-		}
-		statsOptions.SampleRate = floatRate
+		statsOptions.SampleRate = op.Value.GetValue().(float64)
 	case ast.StatsOptionColsChoice:
-		statsOptions.ColumnChoice = model.ColumnChoice(uintVal)
-	// TODO
+		switch strings.ToLower(op.StrValue) {
+		case "all":
+			statsOptions.ColumnChoice = model.AllColumns
+		case "list":
+			statsOptions.ColumnChoice = model.ColumnList
+		case "predicate":
+			statsOptions.ColumnChoice = model.PredicateColumns
+		default:
+			statsOptions.ColumnChoice = model.AllColumns
+		}
+	case ast.StatsOptionColList:
+		cols := strings.Split(op.StrValue, ",")
+		colList := make([]model.CIStr, len(cols))
+		for _, colStr := range cols {
+			colName := strings.TrimSpace(colStr)
+			colList = append(colList, model.NewCIStr(colName))
+		}
+		statsOptions.ColumnList = colList
 	default:
-		return errors.Trace(errors.New("unknown placement policy option"))
+		return errors.Trace(errors.New("unknown table stats option"))
 	}
 	return nil
 }
@@ -2487,14 +2499,14 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if tbInfo.StatsOptions == nil {
 				tbInfo.StatsOptions = model.NewStatsOptions()
 			}
-			tbInfo.StatsOptions.AutoRecalc = op.BoolValue
+			tbInfo.StatsOptions.AutoRecalc = op.UintValue == 1
 		case ast.TableOptionStatsBuckets, ast.TableOptionStatsTopN,
 			ast.TableOptionStatsColsChoice, ast.TableOptionStatsColList,
 			ast.TableOptionStatsSampleRate:
 			if tbInfo.StatsOptions == nil {
 				tbInfo.StatsOptions = model.NewStatsOptions()
 			}
-			err := setStatsOption(tbInfo.StatsOptions, ast.StatsOptionType(op.Tp), op.StrValue, op.UintValue)
+			err := setStatsOption(tbInfo.StatsOptions, ast.StatsOptionType(op.Tp), op)
 			if err != nil {
 				return err
 			}
@@ -6444,6 +6456,33 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 						return fmt.Errorf("%w: %s", errors.New("STATS_TOPN should be a unit"), val)
 					}
 					statsOptions.TopN = topn
+				case "SAMPLE_RATE":
+					sampleRate, err0 := strconv.ParseFloat(val, 64)
+					if err0 != nil {
+						return fmt.Errorf("%w: %s", errors.New("STATS_SAMPLE_RATE should be a float"), val)
+					}
+					statsOptions.SampleRate = sampleRate
+				case "COL_CHOICE":
+					switch strings.ToLower(val) {
+					case "all":
+						statsOptions.ColumnChoice = model.AllColumns
+					case "list":
+						statsOptions.ColumnChoice = model.ColumnList
+					case "predicate":
+						statsOptions.ColumnChoice = model.PredicateColumns
+					default:
+						statsOptions.ColumnChoice = model.AllColumns
+					}
+				case "COL_LIST":
+					cols := strings.Split(val, ",")
+					colList := make([]model.CIStr, len(cols))
+					for _, colStr := range cols {
+						colName := strings.TrimSpace(colStr)
+						colList = append(colList, model.NewCIStr(colName))
+					}
+					statsOptions.ColumnList = colList
+				default:
+					return errors.Trace(errors.New("unknown table stats option"))
 				}
 			}
 		}

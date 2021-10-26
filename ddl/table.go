@@ -1358,7 +1358,8 @@ func onAlterTableStatsOptions(t *meta.Meta, job *model.Job) (ver int64, err erro
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	// do not pass new tblInfo for binlog compatibility
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, nil)
 	return ver, nil
 }
 

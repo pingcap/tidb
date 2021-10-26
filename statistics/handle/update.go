@@ -905,6 +905,18 @@ func (h *Handle) getAutoAnalyzeOptions(statsOptions *model.StatsOptions) string 
 		return ""
 	}
 	var optBuilder strings.Builder
+	switch statsOptions.ColumnChoice {
+	case model.PredicateColumns:
+		optBuilder.WriteString(" PREDICATE COLUMNS ")
+	case model.ColumnList:
+		optBuilder.WriteString(" COLUMNS ")
+		colStrs := make([]string, len(statsOptions.ColumnList))
+		for _, col := range statsOptions.ColumnList {
+			colStrs = append(colStrs, col.L)
+		}
+		optBuilder.WriteString(strings.Join(colStrs, ",") + " ")
+	default:
+	}
 	buckets := statsOptions.Buckets
 	if buckets > 0 {
 		optBuilder.WriteString(" WITH ")
@@ -921,7 +933,16 @@ func (h *Handle) getAutoAnalyzeOptions(statsOptions *model.StatsOptions) string 
 		optBuilder.WriteString(strconv.FormatUint(topN, 10))
 		optBuilder.WriteString(" TOPN")
 	}
-	// TODO handle sample_ratio, columns later
+	sampleRate := statsOptions.SampleRate
+	if sampleRate > 0 {
+		if optBuilder.Len() > 0 {
+			optBuilder.WriteString(", ")
+		} else {
+			optBuilder.WriteString(" WITH ")
+		}
+		optBuilder.WriteString(strconv.FormatFloat(sampleRate, 'f', -1, 64))
+		optBuilder.WriteString(" SAMPLERATE")
+	}
 	return optBuilder.String()
 }
 
