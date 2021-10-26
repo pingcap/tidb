@@ -21,7 +21,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -30,10 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 var _ = SerialSuites(&testEvaluatorSerialSuites{})
@@ -42,23 +38,8 @@ var _ = Suite(&testVectorizeSuite1{})
 var _ = Suite(&testVectorizeSuite2{})
 
 func TestT(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
-	tikv.EnableFailpoints()
-
-	testleak.BeforeTest()
-	defer testleak.AfterTestT(t)()
-
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
-
-	// Some test depends on the values of timeutil.SystemLocation()
-	// If we don't SetSystemTZ() here, the value would change unpredictable.
-	// Affectd by the order whether a testsuite runs before or after integration test.
-	// Note, SetSystemTZ() is a sync.Once operation.
-	timeutil.SetSystemTZ("system")
 
 	fpname := "github.com/pingcap/tidb/expression/PanicIfPbCodeUnspecified"
 	err := failpoint.Enable(fpname, "return(true)")
