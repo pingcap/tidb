@@ -1488,7 +1488,7 @@ invalid as of timestamp: %s
 
 ["planner:8242"]
 error = '''
-`%s` is unsupported on cache tables.
+'%s' is unsupported on cache tables.
 '''
 
 ["privilege:1141"]
