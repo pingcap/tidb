@@ -934,7 +934,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				spec.AuthOpt.AuthPlugin = authplugin
 			}
 			switch spec.AuthOpt.AuthPlugin {
-			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthSocket:
+			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthSocket, "":
 			default:
 				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
 			}
