@@ -183,7 +183,8 @@ type Config struct {
 	// if one of the following conditions happens:
 	// 1. there is a network partition problem between TiDB and PD leader.
 	// 2. there is a network partition problem between TiDB and TiKV leader.
-	EnableForwarding bool `toml:"enable-forwarding" json:"enable-forwarding"`
+	EnableForwarding bool       `toml:"enable-forwarding" json:"enable-forwarding"`
+	TrxSummary       TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -508,12 +509,35 @@ type PessimisticTxn struct {
 	DeadlockHistoryCollectRetryable bool `toml:"deadlock-history-collect-retryable" json:"deadlock-history-collect-retryable"`
 }
 
+// TrxSummary is the config for transaction summary collecting.
+type TrxSummary struct {
+	// how many transaction summary in `transaction_summary` each TiDB node should keep.
+	TransactionSummaryCapacity uint `toml:"transaction-summary-capacity" json:"transaction-summary-capacity"`
+	// how long a transaction should be executed to make it be recorded in `transaction_id_digest`.
+	TransactionIdDigestMinDuration uint `toml:"transaction-id-digest-min-duration" json:"transaction-id-digest-min-duration"`
+}
+
+// Validate TrxSummary configs
+func (config *TrxSummary) Valid() error {
+	if config.TransactionSummaryCapacity > 5000 {
+		return errors.New("transaction-summary.transaction-summary-capacity should not be larger than 5000")
+	}
+	return nil
+}
+
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
 		MaxRetryCount:                   256,
 		DeadlockHistoryCapacity:         10,
 		DeadlockHistoryCollectRetryable: false,
+	}
+}
+
+func DefaultTrxSummary() TrxSummary {
+	return TrxSummary{
+		TransactionSummaryCapacity:     500,
+		TransactionIdDigestMinDuration: 2147483647,
 	}
 }
 
@@ -698,6 +722,7 @@ var defaultConf = Config{
 	EnableEnumLengthLimit:        true,
 	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
 	EnableForwarding:             defTiKVCfg.EnableForwarding,
+	TrxSummary:                   DefaultTrxSummary(),
 }
 
 var (
@@ -890,6 +915,9 @@ func (c *Config) Valid() error {
 
 	// For tikvclient.
 	if err := c.TiKVClient.Valid(); err != nil {
+		return err
+	}
+	if err := c.TrxSummary.Valid(); err != nil {
 		return err
 	}
 

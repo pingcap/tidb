@@ -101,11 +101,18 @@ func (s *trxSummaries) dumpTrxSummary() [][]types.Datum {
 	return result
 }
 
+func (s *trxSummaries) resize(capacity uint) {
+	s.capacity = capacity
+	s.size = 0
+	s.cache = list.New()
+	s.elements = make(map[uint64]*list.Element)
+}
+
 // TrxHistoryRecorder is a history recorder for transaction.
 type TrxHistoryRecorder struct {
-	mu sync.Mutex
-
-	summaries trxSummaries
+	mu          sync.Mutex
+	minDuration time.Duration
+	summaries   trxSummaries
 }
 
 // DumpTrxSummary dumps the transaction summary to Datum for displaying in `TRX_SUMMARY` table.
@@ -119,7 +126,7 @@ func (recorder *TrxHistoryRecorder) DumpTrxSummary() [][]types.Datum {
 func (recorder *TrxHistoryRecorder) OnTrxEnd(info *TxnInfo) {
 	now := time.Now()
 	startTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
-	if now.Sub(startTime) < time.Second {
+	if now.Sub(startTime) < recorder.minDuration {
 		return
 	}
 	recorder.mu.Lock()
@@ -129,7 +136,8 @@ func (recorder *TrxHistoryRecorder) OnTrxEnd(info *TxnInfo) {
 
 func new(summariesCap uint) TrxHistoryRecorder {
 	return TrxHistoryRecorder{
-		summaries: newTrxSummaries(summariesCap),
+		summaries:   newTrxSummaries(summariesCap),
+		minDuration: 1 * time.Second,
 	}
 }
 
@@ -138,5 +146,19 @@ func (recorder *TrxHistoryRecorder) Clean() {
 	recorder.summaries.size = 0
 }
 
+// SetMinDuration sets the minimum duration for a transaction to be recorded.
+func (recorder *TrxHistoryRecorder) SetMinDuration(d time.Duration) {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	recorder.minDuration = d
+}
+
+// ResizeSummaries resizes the summaries capacity.
+func (recorder *TrxHistoryRecorder) ResizeSummaries(capacity uint) {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	recorder.summaries.resize(capacity)
+}
+
 // Recorder is the recorder instance.
-var Recorder TrxHistoryRecorder = new(8192)
+var Recorder TrxHistoryRecorder = new(0)
