@@ -753,13 +753,13 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 	}{
 		{nil, 0, true, false},
 		{int64(0), float64(0), false, false},
-		{math.Pi, float64(math.Sin(math.Pi)), false, false}, // Pie ==> 0
-		{-math.Pi, float64(math.Sin(-math.Pi)), false, false},
-		{math.Pi / 2, float64(math.Sin(math.Pi / 2)), false, false}, // Pie/2 ==> 1
-		{-math.Pi / 2, float64(math.Sin(-math.Pi / 2)), false, false},
-		{math.Pi / 6, float64(math.Sin(math.Pi / 6)), false, false}, // Pie/6(30 degrees) ==> 0.5
-		{-math.Pi / 6, float64(math.Sin(-math.Pi / 6)), false, false},
-		{math.Pi * 2, float64(math.Sin(math.Pi * 2)), false, false},
+		{math.Pi, math.Sin(math.Pi), false, false}, // Pie ==> 0
+		{-math.Pi, math.Sin(-math.Pi), false, false},
+		{math.Pi / 2, math.Sin(math.Pi / 2), false, false}, // Pie/2 ==> 1
+		{-math.Pi / 2, math.Sin(-math.Pi / 2), false, false},
+		{math.Pi / 6, math.Sin(math.Pi / 6), false, false}, // Pie/6(30 degrees) ==> 0.5
+		{-math.Pi / 6, math.Sin(-math.Pi / 6), false, false},
+		{math.Pi * 2, math.Sin(math.Pi * 2), false, false},
 		{"adfsdfgs", 0, false, true},
 		{"0.000", 0, false, false},
 	}
@@ -798,8 +798,8 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 		{int64(0), float64(1), false, false},
 		{math.Pi, float64(-1), false, false}, // cos pi equals -1
 		{-math.Pi, float64(-1), false, false},
-		{math.Pi / 2, float64(math.Cos(math.Pi / 2)), false, false}, // Pi/2 is some near 0 (6.123233995736766e-17) but not 0. Even in math it is 0.
-		{-math.Pi / 2, float64(math.Cos(-math.Pi / 2)), false, false},
+		{math.Pi / 2, math.Cos(math.Pi / 2), false, false}, // Pi/2 is some near 0 (6.123233995736766e-17) but not 0. Even in math it is 0.
+		{-math.Pi / 2, math.Cos(-math.Pi / 2), false, false},
 		{"0.000", float64(1), false, false}, // string value case
 		{"sdfgsfsdf", float64(0), false, true},
 	}

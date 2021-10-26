@@ -572,12 +572,12 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testVectorizeSuite2) TestVectorizedBuiltinTimeEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinTimeCases)
+func TestVectorizedBuiltinTimeEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinTimeCases)
 }
 
-func (s *testVectorizeSuite2) TestVectorizedBuiltinTimeFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinTimeCases)
+func TestVectorizedBuiltinTimeFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinTimeCases)
 }
 
 func BenchmarkVectorizedBuiltinTimeEvalOneVec(b *testing.B) {

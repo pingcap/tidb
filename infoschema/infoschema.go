@@ -317,9 +317,8 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 	return
 }
 
-// SequenceByName implements the interface of SequenceSchema defined in util package.
-// It could be used in expression package without import cycle problem.
-func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.SequenceTable, error) {
+// GetSequenceByName gets the sequence by name.
+func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
 	tbl, err := is.TableByName(schema, sequence)
 	if err != nil {
 		return nil, err
@@ -354,6 +353,9 @@ func init() {
 		Tables:  infoSchemaTables,
 	}
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
+	util.GetSequenceByName = func(is interface{}, schema, sequence model.CIStr) (util.SequenceTable, error) {
+		return GetSequenceByName(is.(InfoSchema), schema, sequence)
+	}
 }
 
 // HasAutoIncrementColumn checks whether the table has auto_increment columns, if so, return true and the column name.
