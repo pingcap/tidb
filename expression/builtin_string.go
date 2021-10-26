@@ -3599,6 +3599,12 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+	argTp := b.args[0].GetType()
+	if !types.IsBinaryStr(argTp) {
+		if encodedStr, err := charset.NewEncoding(argTp.Charset).EncodeString(str); err == nil {
+			str = encodedStr
+		}
+	}
 	needEncodeLen := base64NeededEncodedLength(len(str))
 	if needEncodeLen == -1 {
 		return "", true, nil
