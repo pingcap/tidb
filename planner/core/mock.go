@@ -405,7 +405,6 @@ func MockContext() sessionctx.Context {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
 	domain.BindDomain(ctx, do)
-
 	return ctx
 }
 
