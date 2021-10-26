@@ -49,7 +49,7 @@ func (do *Domain) rebuildSysVarCacheIfNeeded() (err error) {
 	do.sysVarCache.RUnlock()
 	if cacheNeedsRebuild {
 		logutil.BgLogger().Warn("sysvar cache is empty, triggering rebuild")
-		if err = do.rebuildSysVarCache(); err != nil {
+		if err = do.rebuildSysVarCache(nil); err != nil {
 			logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 		}
 	}
@@ -110,20 +110,23 @@ func (do *Domain) fetchTableValues(ctx sessionctx.Context) (map[string]string, e
 
 // rebuildSysVarCache rebuilds the sysvar cache both globally and for session vars.
 // It needs to be called when sysvars are added or removed.
-func (do *Domain) rebuildSysVarCache() error {
+func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
-	sysSessionPool := do.SysSessionPool()
-	ctx, err := sysSessionPool.Get()
-	if err != nil {
-		return err
+	if ctx == nil {
+		sysSessionPool := do.SysSessionPool()
+		res, err := sysSessionPool.Get()
+		if err != nil {
+			return err
+		}
+		defer sysSessionPool.Put(res)
+		ctx = res.(sessionctx.Context)
 	}
-	defer sysSessionPool.Put(ctx)
 	// Only one rebuild can be in progress at a time, this prevents a lost update race
 	// where an earlier fetchTableValues() finishes last.
 	do.sysVarCache.rebuildLock.Lock()
 	defer do.sysVarCache.rebuildLock.Unlock()
-	tableContents, err := do.fetchTableValues(ctx.(sessionctx.Context))
+	tableContents, err := do.fetchTableValues(ctx)
 	if err != nil {
 		return err
 	}

@@ -152,6 +152,29 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+
+		var bundles []*placement.Bundle
+		// bundle for table should be recomputed because it includes some default configs for partitions
+		tblBundle, err := newBundleFromTblInfo(t, job, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		if tblBundle != nil {
+			bundles = append(bundles, tblBundle)
+		}
+
+		partitionBundles, err := newBundlesFromPartitionDefs(t, job, addingDefinitions)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		bundles = append(bundles, partitionBundles...)
+
+		if err = infosync.PutRuleBundles(context.TODO(), bundles); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddTablePartition, TableInfo: tblInfo, PartInfo: partInfo})
@@ -375,16 +398,61 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 }
 
 // buildPartitionDefinitionsInfo build partition definitions info without assign partition id. tbInfo will be constant
-func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
+func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) (partitions []model.PartitionDefinition, err error) {
 	switch tbInfo.Partition.Type {
 	case model.PartitionTypeRange:
-		return buildRangePartitionDefinitions(ctx, defs, tbInfo)
+		partitions, err = buildRangePartitionDefinitions(ctx, defs, tbInfo)
 	case model.PartitionTypeHash:
-		return buildHashPartitionDefinitions(ctx, defs, tbInfo)
+		partitions, err = buildHashPartitionDefinitions(ctx, defs, tbInfo)
 	case model.PartitionTypeList:
-		return buildListPartitionDefinitions(ctx, defs, tbInfo)
+		partitions, err = buildListPartitionDefinitions(ctx, defs, tbInfo)
 	}
-	return nil, nil
+
+	if err != nil {
+		return nil, err
+	}
+
+	for idx := range partitions {
+		def := &partitions[idx]
+		def.PlacementPolicyRef, def.DirectPlacementOpts, err = checkAndNormalizePlacement(ctx, def.PlacementPolicyRef, def.DirectPlacementOpts)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return partitions, nil
+}
+
+func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, options []*ast.TableOption) error {
+	// the partition inheritance of placement rules don't have to copy the placement elements to themselves.
+	// For example:
+	// t placement policy x (p1 placement policy y, p2)
+	// p2 will share the same rule as table t does, but it won't copy the meta to itself. we will
+	// append p2 range to the coverage of table t's rules. This mechanism is good for cascading change
+	// when policy x is altered.
+	for _, opt := range options {
+		switch opt.Tp {
+		case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
+			ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
+			ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
+			ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
+			ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
+			ast.TableOptionPlacementVoterConstraints:
+			if partition.DirectPlacementOpts == nil {
+				partition.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			err := SetDirectPlacementOpt(partition.DirectPlacementOpts, ast.PlacementOptionType(opt.Tp), opt.StrValue, opt.UintValue)
+			if err != nil {
+				return err
+			}
+		case ast.TableOptionPlacementPolicy:
+			partition.PlacementPolicyRef = &model.PolicyRefInfo{
+				Name: model.NewCIStr(opt.StrValue),
+			}
+		}
+	}
+
+	return nil
 }
 
 func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
@@ -434,6 +502,10 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
 			Comment: comment,
+		}
+
+		if err = setPartitionPlacementFromOptions(&piDef, def.Options); err != nil {
+			return nil, err
 		}
 
 		buf := new(bytes.Buffer)
@@ -487,44 +559,17 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 			}
 		}
 		comment, _ := def.Comment()
-		var directPlacementOpts *model.PlacementSettings
-		var placementPolicyRef *model.PolicyRefInfo
-		// the partition inheritance of placement rules don't have to copy the placement elements to themselves.
-		// For example:
-		// t placement policy x (p1 placement policy y, p2)
-		// p2 will share the same rule as table t does, but it won't copy the meta to itself. we will
-		// append p2 range to the coverage of table t's rules. This mechanism is good for cascading change
-		// when policy x is altered.
-		for _, opt := range def.Options {
-			switch opt.Tp {
-			case ast.TableOptionPlacementPrimaryRegion, ast.TableOptionPlacementRegions,
-				ast.TableOptionPlacementFollowerCount, ast.TableOptionPlacementVoterCount,
-				ast.TableOptionPlacementLearnerCount, ast.TableOptionPlacementSchedule,
-				ast.TableOptionPlacementConstraints, ast.TableOptionPlacementLeaderConstraints,
-				ast.TableOptionPlacementLearnerConstraints, ast.TableOptionPlacementFollowerConstraints,
-				ast.TableOptionPlacementVoterConstraints:
-				if directPlacementOpts == nil {
-					directPlacementOpts = &model.PlacementSettings{}
-				}
-				err := SetDirectPlacementOpt(directPlacementOpts, ast.PlacementOptionType(opt.Tp), opt.StrValue, opt.UintValue)
-				if err != nil {
-					return nil, err
-				}
-			case ast.TableOptionPlacementPolicy:
-				placementPolicyRef = &model.PolicyRefInfo{
-					Name: model.NewCIStr(opt.StrValue),
-				}
-			}
-		}
 		err := checkTooLongTable(def.Name)
 		if err != nil {
 			return nil, err
 		}
 		piDef := model.PartitionDefinition{
-			Name:                def.Name,
-			Comment:             comment,
-			DirectPlacementOpts: directPlacementOpts,
-			PlacementPolicyRef:  placementPolicyRef,
+			Name:    def.Name,
+			Comment: comment,
+		}
+
+		if err = setPartitionPlacementFromOptions(&piDef, def.Options); err != nil {
+			return nil, err
 		}
 
 		buf := new(bytes.Buffer)
@@ -1720,7 +1765,7 @@ func findColumnByName(colName string, tblInfo *model.TableInfo) *model.ColumnInf
 
 func extractPartitionColumns(partExpr string, tblInfo *model.TableInfo) ([]*model.ColumnInfo, error) {
 	partExpr = "select " + partExpr
-	stmts, _, err := parser.New().Parse(partExpr, "", "")
+	stmts, _, err := parser.New().ParseSQL(partExpr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

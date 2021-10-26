@@ -1676,7 +1676,6 @@ func BenchmarkInsertIntoSelect(b *testing.B) {
 		st.Close()
 	}()
 
-	mustExecute(se, `set @@tidb_enable_global_temporary_table = 1`)
 	mustExecute(se, `set @@tmp_table_size = 1000000000`)
 	mustExecute(se, `create global temporary table tmp (id int, dt varchar(512)) on commit delete rows`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)
@@ -1808,7 +1807,7 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 // The format of the json output is described by the BenchOutput.
 // Used by this command in the Makefile
 // 	make bench-daily TO=xxx.json
-func BenchmarkDaily(b *testing.B) {
+func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkPreparedPointGet,
 		BenchmarkPointGet,

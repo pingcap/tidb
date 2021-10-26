@@ -4,10 +4,16 @@ insert into t values ('一二三', '一二三', '一二三');
 select hex(a), hex(b), hex(c) from t;
 hex(a)	hex(b)	hex(c)
 E4B880E4BA8CE4B889	D2BBB6FEC8FD	E4B880E4BA8CE4B8890000000000000000000000
+select length(a), length(b), length(c) from t;
+length(a)	length(b)	length(c)
+9	6	20
 set @@tidb_enable_vectorized_expression = true;
 select hex(a), hex(b), hex(c) from t;
 hex(a)	hex(b)	hex(c)
 E4B880E4BA8CE4B889	D2BBB6FEC8FD	E4B880E4BA8CE4B8890000000000000000000000
+select length(a), length(b), length(c) from t;
+length(a)	length(b)	length(c)
+9	6	20
 set @@tidb_enable_vectorized_expression = false;
 drop table if exists t;
 create table t (a char(100) charset utf8mb4, b char(100) charset gbk);
@@ -15,8 +21,25 @@ insert into t values ('àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜ�
 select upper(a), upper(b) from t;
 upper(a)	upper(b)
 ÀÁÈÉÊÌÍÒÓÙÚÜĀĒĚĪŃŇŌŪǍǏǑǓǕǗǙǛⅪⅫ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
+select lower(a), lower(b) from t;
+lower(a)	lower(b)
+àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅺⅻ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
 set @@tidb_enable_vectorized_expression = true;
 select upper(a), upper(b) from t;
 upper(a)	upper(b)
 ÀÁÈÉÊÌÍÒÓÙÚÜĀĒĚĪŃŇŌŪǍǏǑǓǕǗǙǛⅪⅫ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
+select lower(a), lower(b) from t;
+lower(a)	lower(b)
+àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅺⅻ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select to_base64(a), to_base64(b), to_base64(c) from t;
+to_base64(a)	to_base64(b)	to_base64(c)
+5LiA5LqM5LiJ	0ru2/sj9	5LiA5LqM5LiJAAAAAAAAAAAAAAA=
+set @@tidb_enable_vectorized_expression = true;
+select to_base64(a), to_base64(b), to_base64(c) from t;
+to_base64(a)	to_base64(b)	to_base64(c)
+5LiA5LqM5LiJ	0ru2/sj9	5LiA5LqM5LiJAAAAAAAAAAAAAAA=
 set @@tidb_enable_vectorized_expression = false;

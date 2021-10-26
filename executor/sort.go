@@ -137,40 +137,6 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-type partitionPointer struct {
-	row         chunk.Row
-	partitionID int
-	consumed    int
-}
-
-type multiWayMerge struct {
-	lessRowFunction func(rowI chunk.Row, rowJ chunk.Row) bool
-	elements        []partitionPointer
-}
-
-func (h *multiWayMerge) Less(i, j int) bool {
-	rowI := h.elements[i].row
-	rowJ := h.elements[j].row
-	return h.lessRowFunction(rowI, rowJ)
-}
-
-func (h *multiWayMerge) Len() int {
-	return len(h.elements)
-}
-
-func (h *multiWayMerge) Push(x interface{}) {
-	// Should never be called.
-}
-
-func (h *multiWayMerge) Pop() interface{} {
-	h.elements = h.elements[:len(h.elements)-1]
-	return nil
-}
-
-func (h *multiWayMerge) Swap(i, j int) {
-	h.elements[i], h.elements[j] = h.elements[j], h.elements[i]
-}
-
 func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	if e.multiWayMerge == nil {
 		e.multiWayMerge = &multiWayMerge{e.lessRow, make([]partitionPointer, 0, len(e.partitionList))}
@@ -294,6 +260,40 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 		}
 	}
 	return false
+}
+
+type partitionPointer struct {
+	row         chunk.Row
+	partitionID int
+	consumed    int
+}
+
+type multiWayMerge struct {
+	lessRowFunction func(rowI chunk.Row, rowJ chunk.Row) bool
+	elements        []partitionPointer
+}
+
+func (h *multiWayMerge) Less(i, j int) bool {
+	rowI := h.elements[i].row
+	rowJ := h.elements[j].row
+	return h.lessRowFunction(rowI, rowJ)
+}
+
+func (h *multiWayMerge) Len() int {
+	return len(h.elements)
+}
+
+func (h *multiWayMerge) Push(x interface{}) {
+	// Should never be called.
+}
+
+func (h *multiWayMerge) Pop() interface{} {
+	h.elements = h.elements[:len(h.elements)-1]
+	return nil
+}
+
+func (h *multiWayMerge) Swap(i, j int) {
+	h.elements[i], h.elements[j] = h.elements[j], h.elements[i]
 }
 
 // TopNExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.

@@ -391,8 +391,8 @@ func (s *testSuite3) TestGrantOnNonExistTable(c *C) {
 	tk.MustExec("use test")
 	_, err := tk.Exec("select * from nonexist")
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
-	_, err = tk.Exec("grant Select,Insert on nonexist to 'genius'")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotExists), IsTrue)
+	// GRANT ON non-existent table success, see issue #28533
+	tk.MustExec("grant Select,Insert on nonexist to 'genius'")
 
 	tk.MustExec("create table if not exists xx (id int)")
 	// Case sensitive
