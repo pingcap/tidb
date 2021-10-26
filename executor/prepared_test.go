@@ -433,6 +433,69 @@ func (s *testPrepareSuite) TestPlanCacheOperators(c *C) {
 	cases := []PrepCase{
 		{"use test", nil},
 
+		// cases for IndexReader on PK
+		{"create table t (a int, b int, primary key(a))", nil},
+		{"insert into values (1,1), (2,2), (3,3), (4,4), (5,5), (null,null)", nil},
+		{"select a from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select a from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "null"}, true},
+		}},
+		{"select a from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "null"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexReader on UK
+		{"create table t (a int, b int, unique key(a))", nil},
+		{"insert into values (1,1), (2,2), (3,3), (4,4), (5,5), (null,null)", nil},
+		{"select a from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select a from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "null"}, true},
+		}},
+		{"select a from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "null"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexReader on Index
+		{"create table t (a int, b int, key(a))", nil},
+		{"insert into values (1,1), (2,2), (3,3), (4,4), (5,5), (null,null)", nil},
+		{"select a from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select a from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "null"}, true},
+		}},
+		{"select a from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "null"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexLookUp on PK
+		// cases for IndexLookUp on Index
+
 		// cases for Limit
 		{"create table t (a int)", nil},
 		{"insert into t values (1), (1), (2), (2), (3), (4), (5), (6), (7), (8), (9), (0), (0)", nil},
