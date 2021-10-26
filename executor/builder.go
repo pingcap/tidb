@@ -2163,14 +2163,8 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 			colGroup := &tipb.AnalyzeColumnGroup{
 				ColumnOffsets: make([]int64, 0, len(idx.Columns)),
 			}
-			for _, idxCol := range idx.Columns {
-				colInfo := task.TblInfo.Columns[idxCol.Offset]
-				for i, col := range task.ColsInfo {
-					if colInfo.ID == col.ID {
-						colGroup.ColumnOffsets = append(colGroup.ColumnOffsets, int64(i))
-						break
-					}
-				}
+			for _, col := range idx.Columns {
+				colGroup.ColumnOffsets = append(colGroup.ColumnOffsets, int64(col.Offset))
 			}
 			colGroups = append(colGroups, colGroup)
 		}

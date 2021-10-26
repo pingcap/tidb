@@ -1715,15 +1715,23 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 }
 
 // BuildHandleColsForAnalyze is exported for test.
-func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo) HandleCols {
+func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo, colsInfo []*model.ColumnInfo) HandleCols {
 	var handleCols HandleCols
 	switch {
 	case tblInfo.PKIsHandle:
 		pkCol := tblInfo.GetPkColInfo()
+		var index int
+		if colsInfo == nil || len(tblInfo.Columns) == len(colsInfo) {
+			// If all the columns need to be analyzed, we just set index to pkCol.Offset.
+			index = pkCol.Offset
+		} else {
+			// If only a part of the columns need to be analyzed, we need to set index according to colsInfo.
+			index = getColOffsetForAnalyze(colsInfo, pkCol.ID)
+		}
 		handleCols = &IntHandleCols{col: &expression.Column{
 			ID:      pkCol.ID,
 			RetType: &pkCol.FieldType,
-			Index:   pkCol.Offset,
+			Index:   index,
 		}}
 	case tblInfo.IsCommonHandle:
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
@@ -1731,14 +1739,24 @@ func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo)
 		columns := make([]*expression.Column, pkColLen)
 		for i := 0; i < pkColLen; i++ {
 			colInfo := tblInfo.Columns[pkIdx.Columns[i].Offset]
+			var index int
+			if colsInfo == nil || len(tblInfo.Columns) == len(colsInfo) {
+				// If all the columns need to be analyzed, we just set index to colInfo.Offset.
+				index = colInfo.Offset
+			} else {
+				// If only a part of the columns need to be analyzed, we need to set index according to colsInfo.
+				index = getColOffsetForAnalyze(colsInfo, colInfo.ID)
+			}
 			columns[i] = &expression.Column{
 				ID:      colInfo.ID,
 				RetType: &colInfo.FieldType,
-				Index:   colInfo.Offset,
+				Index:   index,
 			}
 		}
 		handleCols = &CommonHandleCols{
 			tblInfo: tblInfo,
+			// We don't modify IndexColumn.Offset for idxInfo since we use Column.Index of columns to fetch column stats in (*AnalyzeColumnsExec).buildSamplingStats
+			// instead of IndexColumn.Offset. However, the way is error-prone and we need a better way.
 			idxInfo: pkIdx,
 			columns: columns,
 			sc:      ctx.GetSessionVars().StmtCtx,
@@ -1802,7 +1820,7 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 	} else {
 		return tblInfo.Columns, nil
 	}
-	missingCols := make(map[int64]struct{}, len(tblInfo.Columns) - len(columnIDs))
+	missingCols := make(map[int64]struct{}, len(tblInfo.Columns)-len(columnIDs))
 	if len(tblInfo.Indices) > 0 {
 		// add indexed columns
 		// Some indexed columns are generated columns so we also need to add the columns that make up those generated columns.
@@ -1880,6 +1898,37 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 	return columnsInfo, nil
 }
 
+func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
+	for i, col := range colsInfo {
+		if colID == col.ID {
+			return i
+		}
+	}
+	return -1
+}
+
+func getAnalyzeIndexesInfo(tblInfo *model.TableInfo, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
+	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+	for _, originIdx := range tblInfo.Indices {
+		if originIdx.State != model.StatePublic {
+			continue
+		}
+		if len(tblInfo.Columns) == len(colsInfo) {
+			// If all the columns need to be analyzed, we don't need to modify IndexColumn.Offset.
+			idxsInfo = append(idxsInfo, originIdx)
+			continue
+		}
+		// If only a part of the columns need to be analyzed, we need to set IndexColumn.Offset according to colsInfo.
+		idx := originIdx.Clone()
+		for i, idxCol := range idx.Columns {
+			colID := tblInfo.Columns[idxCol.Offset].ID
+			idx.Columns[i].Offset = getColOffsetForAnalyze(colsInfo, colID)
+		}
+		idxsInfo = append(idxsInfo, idx)
+	}
+	return idxsInfo
+}
+
 func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	as *ast.AnalyzeTableStmt,
 	taskSlice []AnalyzeColumnsTask,
@@ -1888,13 +1937,6 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	tbl *ast.TableName,
 	version int,
 ) ([]AnalyzeColumnsTask, error) {
-	idxInfos := make([]*model.IndexInfo, 0, len(tbl.TableInfo.Indices))
-	for _, idx := range tbl.TableInfo.Indices {
-		if idx.State != model.StatePublic {
-			continue
-		}
-		idxInfos = append(idxInfos, idx)
-	}
 	if as.Incremental {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
@@ -1914,12 +1956,14 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		if err != nil {
 			return nil, err
 		}
+		indexes := getAnalyzeIndexesInfo(tbl.TableInfo, colsInfo)
+		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, colsInfo)
 		newTask := AnalyzeColumnsTask{
-			HandleCols:  BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo),
+			HandleCols:  handleCols,
 			ColsInfo:    colsInfo,
 			AnalyzeInfo: info,
 			TblInfo:     tbl.TableInfo,
-			Indexes:     idxInfos,
+			Indexes:     indexes,
 		}
 		if newTask.HandleCols == nil {
 			extraCol := model.NewExtraHandleColInfo()
@@ -1995,7 +2039,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				})
 			}
 		}
-		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo)
+		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, nil)
 		if len(colInfo) > 0 || handleCols != nil {
 			for i, id := range physicalIDs {
 				if id == tbl.TableInfo.ID {
@@ -2046,7 +2090,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	}
 	for _, idxName := range as.IndexNames {
 		if isPrimaryIndex(idxName) {
-			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
+			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, nil)
 			// Fast analyze use analyze column to solve int handle.
 			if handleCols != nil && handleCols.IsInt() && b.ctx.GetSessionVars().EnableFastAnalyze {
 				for i, id := range physicalIDs {
@@ -2127,7 +2171,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 			}
 		}
 	}
-	handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
+	handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, nil)
 	if handleCols != nil {
 		for i, id := range physicalIDs {
 			if id == tblInfo.ID {
