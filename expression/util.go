@@ -231,12 +231,11 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			substituted, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
 			if substituted {
 				// Workaround for issue https://github.com/pingcap/tidb/issues/28804
-				refExprArr := cowExprRef{v.GetArgs(), nil}
-				e := NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
-				e.SetCoercibility(newFunc.Coercibility())
+				e := NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, newFunc.GetArgs()...)
+				e.SetCoercibility(v.Coercibility())
 				return true, e
 			}
-			return true, newFunc
+			return false, newFunc
 		}
 		// cowExprRef is a copy-on-write util, args array allocation happens only
 		// when expr in args is changed

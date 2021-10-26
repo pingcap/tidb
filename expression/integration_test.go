@@ -10412,6 +10412,7 @@ PARTITION p20210907 VALUES LESS THAN (1631030400),
 PARTITION p20210908 VALUES LESS THAN (1631116800),
 PARTITION p20210909 VALUES LESS THAN (1631203200)
 );`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	tk.MustExec("INSERT INTO `perf_offline_day` VALUES ('dd082c8a-3bab-4431-943a-348fe0592abd','2021-09-08 13:00:07','Xg9C8zq81jGNbugM', 'pc', 12345);")
 	tk.MustQuery("SELECT cast(floor(hour(ts) / 4) as char) as win_start FROM perf_offline_day partition (p20210907, p20210908) GROUP BY win_start;").Check(testkit.Rows("3"))
 }
