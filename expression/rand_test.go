@@ -18,10 +18,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRandWithTime(t *testing.T) {
+	t.Parallel()
+
 	rng1 := NewWithTime()
 	// NOTE: On windows platform, this Sleep is necessary. Because time.Now() is
 	// imprecise, calling UnixNano() twice returns the same value. We have to make
@@ -30,16 +32,18 @@ func TestRandWithTime(t *testing.T) {
 	rng2 := NewWithTime()
 	got1 := rng1.Gen()
 	got2 := rng2.Gen()
-	assert.True(t, got1 < 1.0)
-	assert.True(t, got1 >= 0.0)
-	assert.True(t, got1 != rng1.Gen())
-	assert.True(t, got2 < 1.0)
-	assert.True(t, got2 >= 0.0)
-	assert.True(t, got2 != rng2.Gen())
-	assert.True(t, got1 != got2)
+	require.True(t, got1 < 1.0)
+	require.True(t, got1 >= 0.0)
+	require.True(t, got1 != rng1.Gen())
+	require.True(t, got2 < 1.0)
+	require.True(t, got2 >= 0.0)
+	require.True(t, got2 != rng2.Gen())
+	require.True(t, got1 != got2)
 }
 
 func TestRandWithSeed(t *testing.T) {
+	t.Parallel()
+
 	tests := [4]struct {
 		seed  int64
 		once  float64
@@ -51,8 +55,8 @@ func TestRandWithSeed(t *testing.T) {
 	for _, test := range tests {
 		rng := NewWithSeed(test.seed)
 		got1 := rng.Gen()
-		assert.True(t, got1 == test.once)
+		require.True(t, got1 == test.once)
 		got2 := rng.Gen()
-		assert.True(t, got2 == test.twice)
+		require.True(t, got2 == test.twice)
 	}
 }
