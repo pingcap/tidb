@@ -172,17 +172,41 @@ Besides `SHOW CREATE PLACEMENT POLICY x` and `SHOW CREATE TABLE t1` it should be
 
 A new system table `information_schema.placement_rules` is added to view all explicit placement rules. An explicit rule is one that has been defined by the user and does not use inheritance rules, such as how partitions will use the same rules as the table they belong to.
 
-The table contains columns such as:
+The table definition is as follows:
 
-* `rule_definition`: the placement policy definition (could be `PLACEMENT POLICY=x`, syntactic sugar variant or full list of constraints)
-* `followers`: the number of followers
-* `learners`: the number of learners
-* `schema_name`: the schema this applies to.
-* `table_name`: the table this applies to.
-* `partition_name`: the partition this applies to (NULL if not applicable)
-* `scheduling state`: the scheduling state of the placement rule.
+```sql
++----------------------+--------------+------+------+---------+-------+
+| Field                | Type         | Null | Key  | Default | Extra |
++----------------------+--------------+------+------+---------+-------+
+| POLICY_ID            | bigint(64)   | NO   |      | NULL    |       |
+| CATALOG_NAME         | varchar(512) | NO   |      | NULL    |       |
+| POLICY_NAME          | varchar(5)   | YES  |      | NULL    |       |
+| SCHEMA_NAME          | varchar(5)   | YES  |      | NULL    |       |
+| TABLE_NAME           | varchar(5)   | YES  |      | NULL    |       |
+| PARTITION_NAME       | varchar(5)   | YES  |      | NULL    |       |
+| PRIMARY_REGION       | varchar(5)   | NO   |      | NULL    |       |
+| REGIONS              | varchar(5)   | NO   |      | NULL    |       |
+| CONSTRAINTS          | varchar(5)   | NO   |      | NULL    |       |
+| LEADER_CONSTRAINTS   | varchar(5)   | NO   |      | NULL    |       |
+| FOLLOWER_CONSTRAINTS | varchar(5)   | NO   |      | NULL    |       |
+| LEARNER_CONSTRAINTS  | varchar(5)   | NO   |      | NULL    |       |
+| SCHEDULE             | varchar(20)  | NO   |      | NULL    |       |
+| FOLLOWERS            | bigint(64)   | NO   |      | NULL    |       |
+| LEARNERS             | bigint(64)   | NO   |      | NULL    |       |
++----------------------+--------------+------+------+---------+-------+
+15 rows in set (0.00 sec)
+```
 
-The system table is a virtual table, which doesn’t persist data. When querying the table, TiDB queries PD and integrates the result in a table format. That also means the metadata is stored on PD instead of TiKV.
+##### information_schema.tables and information_schema.partitions
+
+The information_schema tables for `tables` and `partitions` should be modified to have additional fields for `tidb_placement_policy_name` and `tidb_direct_placement`:
+
+```golang
+{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
+{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: types.UnspecifiedLength}
+```
+
+This helps make the information match what is available in `SHOW CREATE TABLE`, but in a structured format.
 
 ##### SHOW PLACEMENT
 
@@ -231,7 +255,6 @@ SHOW PLACEMENT FOR DATABASE test;
 | TABLE test.t1 PARTITION p1 | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | INPROGRESS       |
 +----------------------------+----------------------------------------------------------------------+------------------+
 3 rows in set (0.00 sec)
-
 ```
 
 
@@ -546,33 +569,33 @@ In this case the default rules will apply to placement, and the output from `SHO
 For a more complex rule using partitions, consider the following example:
 
 ```sql
-ALTER TABLE t1 PARTITION p0 PLACEMENT="acdc";
+ALTER TABLE t1 PARTITION p0 PLACEMENT POLICY="acdc";
 --> 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
  PARTITION BY RANGE( YEAR(purchased) ) (
-  PARTITION p0 VALUES LESS THAN (2000) PLACEMENT="acdc",
+  PARTITION p0 VALUES LESS THAN (2000) PLACEMENT POLICY="acdc",
   PARTITION p1 VALUES LESS THAN (2005)
  );
 
-ALTER TABLE t1 PLACEMENT="xyz";
+ALTER TABLE t1 PLACEMENT POLICY="xyz";
 --> 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
  PARTITION BY RANGE( YEAR(purchased) ) (
-  PARTITION p0 VALUES LESS THAN (2000) PLACEMENT="acdc",
+  PARTITION p0 VALUES LESS THAN (2000) PLACEMENT POLICY="acdc",
   PARTITION p1 VALUES LESS THAN (2005)
- ) PLACEMENT="xyz";
+ ) PLACEMENT POLICY="xyz";
 
-ALTER TABLE t1 PARTITION p0 PLACEMENT=DEFAULT;
+ALTER TABLE t1 PARTITION p0 PLACEMENT POLICY=DEFAULT;
 --> 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
  PARTITION BY RANGE( YEAR(purchased) ) (
   PARTITION p0 VALUES LESS THAN (2000),
   PARTITION p1 VALUES LESS THAN (2005)
- ) PLACEMENT="xyz";
+ ) PLACEMENT POLICY="xyz";
  
 ```
 
-The behavior above is described as `ALTER TABLE t1 PARTITION p0 PLACEMENT=DEFAULT` resets the placement of the partition `p0` to be inherited from the table `t1`.
+The behavior above is described as `ALTER TABLE t1 PARTITION p0 PLACEMENT POLICY=DEFAULT` resets the placement of the partition `p0` to be inherited from the table `t1`.
 
 #### Sequences
 
