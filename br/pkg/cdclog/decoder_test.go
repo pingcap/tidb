@@ -19,10 +19,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/stretchr/testify/require"
 )
-
 
 type batchSuite struct {
 	ddlEvents     []*MessageDDL
