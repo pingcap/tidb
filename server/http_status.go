@@ -158,6 +158,34 @@ func (b *Ballast) SetSize(newSz int) error {
 	return nil
 }
 
+func (ballast *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, err := w.Write([]byte(strconv.Itoa(ballast.GetSize())))
+			terror.Log(err)
+		case http.MethodPost:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				terror.Log(err)
+				return
+			}
+			newSz, err := strconv.Atoi(string(body))
+			if err == nil {
+				err = ballast.SetSize(newSz)
+			}
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				errStr := err.Error()
+				if _, err := w.Write([]byte(errStr)); err != nil {
+					terror.Log(err)
+				}
+				return
+			}
+		}
+	}
+}
+
 func (s *Server) startHTTPServer() {
 	router := mux.NewRouter()
 
@@ -253,31 +281,8 @@ func (s *Server) startHTTPServer() {
 			logutil.BgLogger().Error("set initial ballast object size failed", zap.Error(err))
 		}
 	}
-	serverMux.HandleFunc("/debug/ballast-object-sz", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			_, err := w.Write([]byte(strconv.Itoa(ballast.GetSize())))
-			terror.Log(err)
-		case http.MethodPost:
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				terror.Log(err)
-				return
-			}
-			newSz, err := strconv.Atoi(string(body))
-			if err == nil {
-				err = ballast.SetSize(newSz)
-			}
-			if err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				errStr := err.Error()
-				if _, err := w.Write([]byte(errStr)); err != nil {
-					terror.Log(err)
-				}
-				return
-			}
-		}
-	})
+	serverMux.HandleFunc("/debug/ballast-object-sz", ballast.GenHTTPHandler())
+
 	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
