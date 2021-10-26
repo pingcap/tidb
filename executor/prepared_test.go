@@ -407,7 +407,7 @@ func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
 	}
 }
 
-func (s *testPrepareSuite) TestPlanCacheXXX(c *C) {
+func (s *testPrepareSuite) TestPlanCacheOperators(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
@@ -432,6 +432,212 @@ func (s *testPrepareSuite) TestPlanCacheXXX(c *C) {
 
 	cases := []PrepCase{
 		{"use test", nil},
+
+		// cases for TableReader on PK
+		{"create table t (a int, b int, primary key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select a from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select a from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select a from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexReader on UK
+		{"create table t (a int, b int, unique key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select a from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select a from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select a from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexReader on Index
+		{"create table t (a int, b int, key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select a from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select a from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select a from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexLookUp on UK
+		{"create table t (a int, b int, unique key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select * from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select * from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select * from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexLookUp on Index
+		{"create table t (a int, b int, key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select * from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select * from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select * from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for HashJoin
+		{"create table t (a int, b int, key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
+			{[]string{"1", "10"}, false},
+			{[]string{"3", "5"}, true},
+			{[]string{"5", "3"}, true},
+		}},
+
+		// cases for MergeJoin
+		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
+			{[]string{"1", "10"}, false},
+			{[]string{"3", "5"}, true},
+			{[]string{"5", "3"}, true},
+		}},
+
+		// cases for IndexJoin
+		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
+			{[]string{"1", "10"}, false},
+			{[]string{"3", "5"}, true},
+			{[]string{"5", "3"}, true},
+		}},
+
+		// cases for NestedLoopJoin (Apply)
+		{"select * from t t1 where t1.b>? and t1.a > (select min(t2.a) from t t2 where t2.b < t1.b)", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, false}, // plans with sub-queries cannot be cached, but the result must be correct
+			{[]string{"5"}, false},
+		}},
+		{"select * from t t1 where t1.a > (select min(t2.a) from t t2 where t2.b < t1.b+?)", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, false},
+			{[]string{"5"}, false},
+		}},
+		{"select * from t t1 where t1.b>? and t1.a > (select min(t2.a) from t t2 where t2.b < t1.b+?)", []ExecCase{
+			{[]string{"1", "1"}, false},
+			{[]string{"3", "2"}, false},
+			{[]string{"5", "3"}, false},
+		}},
+		{"drop table t", nil},
+
+		// cases for Window
+		{"create table t (name varchar(50), y int, sale decimal(14,2))", nil},
+		{"insert into t values ('Bob',2016,2.4), ('Bob',2017,3.2), ('Bob',2018,2.1), ('Alice',2016,1.4), ('Alice',2017,2), ('Alice',2018,3.3), ('John',2016,4), ('John',2017,2.1), ('John',2018,5)", nil},
+		{"select *, sum(sale) over (partition by y order by sale) total from t where sale>? order by y", []ExecCase{
+			{[]string{"0.1"}, false},
+			{[]string{"0.5"}, true},
+			{[]string{"1.5"}, true},
+			{[]string{"3.5"}, true},
+		}},
+		{"select *, sum(sale) over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
+			{[]string{"0.1"}, false},
+			{[]string{"0.5"}, true},
+			{[]string{"1.5"}, true},
+			{[]string{"3.5"}, true},
+		}},
+		{"select *, rank() over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
+			{[]string{"0.1"}, false},
+			{[]string{"0.5"}, true},
+			{[]string{"1.5"}, true},
+			{[]string{"3.5"}, true},
+		}},
+		{"select *, first_value(sale) over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
+			{[]string{"0.1"}, false},
+			{[]string{"0.5"}, true},
+			{[]string{"1.5"}, true},
+			{[]string{"3.5"}, true},
+		}},
+		{"select *, first_value(sale) over (partition by y order by sale rows ? preceding) total from t order by y", []ExecCase{
+			{[]string{"1"}, false}, // window plans with parameters in frame cannot be cached
+			{[]string{"2"}, false},
+			{[]string{"3"}, false},
+			{[]string{"4"}, false},
+		}},
+		{"drop table t", nil},
 
 		// cases for Limit
 		{"create table t (a int)", nil},
