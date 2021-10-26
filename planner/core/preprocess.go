@@ -693,25 +693,13 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 			return
 		}
 		tempTableType := tableInfo.Meta().TempTableType
-		isRightTp := stmt.Tp == ast.AdminCheckTable || stmt.Tp == ast.AdminChecksumTable || stmt.Tp == ast.AdminCheckIndex
-		if isRightTp && tempTableType != model.TempTableNone {
+		if (stmt.Tp == ast.AdminCheckTable || stmt.Tp == ast.AdminChecksumTable || stmt.Tp == ast.AdminCheckIndex) && tempTableType != model.TempTableNone {
 			if stmt.Tp == ast.AdminChecksumTable {
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table")
 			} else if stmt.Tp == ast.AdminCheckTable {
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table")
 			} else {
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin check index")
-			}
-			return
-		}
-		tableCacheStatusType := tableInfo.Meta().TableCacheStatusType
-		if isRightTp && tableCacheStatusType != model.TableCacheStatusDisable {
-			if stmt.Tp == ast.AdminChecksumTable {
-				p.err = ErrOptOnCacheTable.GenWithStackByArgs("admin checksum table")
-			} else if stmt.Tp == ast.AdminCheckTable {
-				p.err = ErrOptOnCacheTable.GenWithStackByArgs("admin check table")
-			} else {
-				p.err = ErrOptOnCacheTable.GenWithStackByArgs("admin check index")
 			}
 			return
 		}
