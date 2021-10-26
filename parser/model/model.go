@@ -1227,7 +1227,7 @@ type StatsOptions struct {
 	*StatsWindowSettings
 	AutoRecalc   bool         `json:"auto_recalc"`
 	ColumnChoice ColumnChoice `json:"column_choice"`
-	ColumnList   []int64      `json:"column_list"`
+	ColumnList   []CIStr      `json:"column_list"`
 	SampleNum    uint64       `json:"sample_num"`
 	SampleRate   float64      `json:"sample_rate"`
 	Buckets      uint64       `json:"buckets"`
@@ -1239,7 +1239,7 @@ func NewStatsOptions() *StatsOptions {
 	return &StatsOptions{
 		AutoRecalc:   true,
 		ColumnChoice: AllColumns,
-		ColumnList:   []int64{},
+		ColumnList:   []CIStr{},
 		SampleNum:    uint64(0),
 		SampleRate:   0.0,
 		Buckets:      uint64(0),

@@ -299,6 +299,9 @@ import (
 	ascii                 "ASCII"
 	attributes            "ATTRIBUTES"
 	statsOptions          "STATS_OPTIONS"
+	statsSampleRate       "STATS_SAMPLE_RATE"
+	statsColChoice        "STATS_COL_CHOICE"
+	statsColList          "STATS_COL_LIST"
 	autoIdCache           "AUTO_ID_CACHE"
 	autoIncrement         "AUTO_INCREMENT"
 	autoRandom            "AUTO_RANDOM"
@@ -5828,6 +5831,9 @@ UnReservedKeyword:
 |	"ASCII"
 |	"ATTRIBUTES"
 |	"STATS_OPTIONS"
+|   "STATS_SAMPLE_RATE"
+|   "STATS_COL_CHOICE"
+|   "STATS_COL_LIST"
 |	"AUTO_ID_CACHE"
 |	"AUTO_INCREMENT"
 |	"AFTER"
@@ -11299,6 +11305,18 @@ TableOption:
 |	"STATS_TOPN" EqOpt LengthNum
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsTopN, UintValue: $3.(uint64)}
+	}
+|	"STATS_SAMPLE_RATE" EqOpt NumLiteral
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsSampleRate, Value: ast.NewValueExpr($3, "", "")}
+	}
+|	"STATS_COL_CHOICE" EqOpt stringLit
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsColsChoice, StrValue: $3}
+	}
+|	"STATS_COL_LIST" EqOpt stringLit
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsColList, StrValue: $3}
 	}
 |	"SHARD_ROW_ID_BITS" EqOpt LengthNum
 	{

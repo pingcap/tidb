@@ -2067,6 +2067,7 @@ type TableOption struct {
 	StrValue   string
 	UintValue  uint64
 	BoolValue  bool
+	Value      ValueExpr
 	TableNames []*TableName
 }
 
@@ -2310,6 +2311,30 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("DEFAULT")
 		} else {
 			ctx.WritePlainf("%d", n.UintValue)
+		}
+	case TableOptionStatsSampleRate:
+		ctx.WriteKeyWord("STATS_SAMPLE_RATE ")
+		ctx.WritePlain("= ")
+		if n.Default {
+			ctx.WriteKeyWord("DEFAULT")
+		} else {
+			ctx.WritePlainf("%v", n.Value.GetValue())
+		}
+	case TableOptionStatsColsChoice:
+		ctx.WriteKeyWord("STATS_COL_CHOICE ")
+		ctx.WritePlain("= ")
+		if n.Default {
+			ctx.WriteKeyWord("DEFAULT")
+		} else {
+			ctx.WriteString(n.StrValue)
+		}
+	case TableOptionStatsColList:
+		ctx.WriteKeyWord("STATS_COL_LIST ")
+		ctx.WritePlain("= ")
+		if n.Default {
+			ctx.WriteKeyWord("DEFAULT")
+		} else {
+			ctx.WriteString(n.StrValue)
 		}
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
