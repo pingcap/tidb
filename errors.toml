@@ -1596,6 +1596,11 @@ error = '''
 '%-.192s.%-.192s' is not %s
 '''
 
+["schema:1382"]
+error = '''
+The '%-.64s' syntax is reserved for purposes internal to the MySQL server
+'''
+
 ["schema:1831"]
 error = '''
 Duplicate index '%-.64s' defined on the table '%-.64s.%-.64s'. This is deprecated and will be disallowed in a future release.
@@ -2024,5 +2029,10 @@ The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1
 ["variable:8055"]
 error = '''
 snapshot is older than GC safe point %s
+'''
+
+["variable:8136"]
+error = '''
+option '%s' is no longer supported. Reason: %s
 '''
 

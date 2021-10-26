@@ -78,6 +78,28 @@ func (s *testEvaluatorSuite) TestLengthAndOctetLength(c *C) {
 
 	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result int64
+	}{
+		{"abc", "gbk", 3},
+		{"一二三", "gbk", 6},
+		{"一二三", "", 9},
+		{"一二三!", "gbk", 7},
+		{"一二三!", "", 10},
+	}
+	for _, t := range tbl {
+		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, t.chs)
+		c.Assert(err, IsNil)
+		f, err := newFunctionForTest(s.ctx, ast.Length, s.primitiveValsToConstants([]interface{}{t.input})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.GetInt64(), Equals, t.result)
+	}
 }
 
 func (s *testEvaluatorSuite) TestASCII(c *C) {
@@ -1070,8 +1092,7 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		{[]interface{}{"xxxbarxxx", "x", int(ast.TrimLeading)}, false, false, "barxxx"},
 		{[]interface{}{"barxxyz", "xyz", int(ast.TrimTrailing)}, false, false, "barx"},
 		{[]interface{}{"xxxbarxxx", "x", int(ast.TrimBoth)}, false, false, "bar"},
-		// FIXME: the result for this test shuold be nil, current is "bar"
-		{[]interface{}{"bar", nil, int(ast.TrimLeading)}, false, false, "bar"},
+		{[]interface{}{"bar", nil, int(ast.TrimLeading)}, true, false, ""},
 		{[]interface{}{errors.New("must error")}, false, true, ""},
 	}
 	for _, t := range cases {
@@ -2303,6 +2324,28 @@ func (s *testEvaluatorSuite) TestToBase64(c *C) {
 
 	_, err := funcs[ast.ToBase64].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result string
+	}{
+		{"abc", "gbk", "YWJj"},
+		{"一二三", "gbk", "0ru2/sj9"},
+		{"一二三", "", "5LiA5LqM5LiJ"},
+		{"一二三!", "gbk", "0ru2/sj9IQ=="},
+		{"一二三!", "", "5LiA5LqM5LiJIQ=="},
+	}
+	for _, t := range tbl {
+		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, t.chs)
+		c.Assert(err, IsNil)
+		f, err := newFunctionForTest(s.ctx, ast.ToBase64, s.primitiveValsToConstants([]interface{}{t.input})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.GetString(), Equals, t.result)
+	}
 }
 
 func (s *testEvaluatorSuite) TestToBase64Sig(c *C) {
