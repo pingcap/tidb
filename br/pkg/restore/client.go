@@ -406,11 +406,12 @@ func (rc *Client) createTable(
 	dom *domain.Domain,
 	table *metautil.Table,
 	newTS uint64,
+	ddlTables map[UniqueTableName]bool,
 ) (CreatedTable, error) {
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
-		err := db.CreateTable(ctx, table)
+		err := db.CreateTable(ctx, table, ddlTables)
 		if err != nil {
 			return CreatedTable{}, errors.Trace(err)
 		}
@@ -449,6 +450,7 @@ func (rc *Client) GoCreateTables(
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
 
+	ddlTables := rc.DDLJobsMap()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.GoCreateTables", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -462,7 +464,7 @@ func (rc *Client) GoCreateTables(
 			return c.Err()
 		default:
 		}
-		rt, err := rc.createTable(c, db, dom, t, newTS)
+		rt, err := rc.createTable(c, db, dom, t, newTS, ddlTables)
 		if err != nil {
 			log.Error("create table failed",
 				zap.Error(err),
@@ -1060,6 +1062,24 @@ func (rc *Client) EnableSkipCreateSQL() {
 // IsSkipCreateSQL returns whether we need skip create schema and tables in restore.
 func (rc *Client) IsSkipCreateSQL() bool {
 	return rc.noSchema
+}
+
+// DDLJobsMap returns a map[UniqueTableName]bool about < db table, hasCreate/hasTruncate DDL >.
+// if we execute some DDLs before create table.
+// we may get two situation that need to rebase auto increment/random id.
+// 1. truncate table: truncate will generate new id cache.
+// 2. create table/create and rename table: the first create table will lock down the id cache.
+// because we cannot create onExistReplace table.
+// so the final create DDL with the correct auto increment/random id won't be executed.
+func (rc *Client) DDLJobsMap() map[UniqueTableName]bool {
+	m := make(map[UniqueTableName]bool)
+	for _, job := range rc.ddlJobs {
+		switch job.Type {
+		case model.ActionTruncateTable, model.ActionCreateTable, model.ActionRenameTable:
+			m[UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}] = true
+		}
+	}
+	return m
 }
 
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
