@@ -232,7 +232,9 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 			if substituted {
 				// Workaround for issue https://github.com/pingcap/tidb/issues/28804
 				refExprArr := cowExprRef{v.GetArgs(), nil}
-				return true, NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+				e := NewFunctionInternal(v.GetCtx(), v.FuncName.L, v.RetType, refExprArr.Result()...)
+				e.SetCoercibility(newFunc.Coercibility())
+				return true, e
 			}
 			return true, newFunc
 		}
