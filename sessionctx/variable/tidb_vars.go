@@ -767,7 +767,7 @@ const (
 // Process global variables.
 var (
 	ProcessGeneralLog           = atomic.NewBool(false)
-	GlobalLogMaxDays             = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
 	EnablePProfSQLCPU           = atomic.NewBool(false)
 	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
