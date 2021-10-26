@@ -13,6 +13,7 @@ require (
 	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
 	github.com/stretchr/testify v1.7.0
+	go.uber.org/goleak v1.1.10 // indirect
 	go.uber.org/zap v1.18.1
 	golang.org/x/text v0.3.6
 )
