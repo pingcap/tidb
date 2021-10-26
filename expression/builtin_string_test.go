@@ -2324,6 +2324,28 @@ func (s *testEvaluatorSuite) TestToBase64(c *C) {
 
 	_, err := funcs[ast.ToBase64].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result string
+	}{
+		{"abc", "gbk", "YWJj"},
+		{"一二三", "gbk", "0ru2/sj9"},
+		{"一二三", "", "5LiA5LqM5LiJ"},
+		{"一二三!", "gbk", "0ru2/sj9IQ=="},
+		{"一二三!", "", "5LiA5LqM5LiJIQ=="},
+	}
+	for _, t := range tbl {
+		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, t.chs)
+		c.Assert(err, IsNil)
+		f, err := newFunctionForTest(s.ctx, ast.ToBase64, s.primitiveValsToConstants([]interface{}{t.input})...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.GetString(), Equals, t.result)
+	}
 }
 
 func (s *testEvaluatorSuite) TestToBase64Sig(c *C) {

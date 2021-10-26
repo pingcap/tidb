@@ -167,6 +167,160 @@ func (s *testPrepareSerialSuite) TestPrepareCacheIndexScan(c *C) {
 	tk.MustQuery("execute stmt1 using @a, @b").Check(testkit.Rows("1 3", "1 3"))
 }
 
+// dtype: tinyint, unsigned, float, decimal, year
+// rtype: null, valid, out-of-range, invalid, str, exists
+func randValue(tk *testkit.TestKit, tbl, col, dtype, rtype string) string {
+	if rtype == "" {
+		rtypes := []string{"null", "valid", "out-of-range", "invalid", "str", "exists"}
+		rtype = rtypes[rand.Intn(len(rtypes))]
+	}
+	if rtype == "null" {
+		return "null"
+	}
+	if rtype == "exists" {
+		res := tk.MustQuery(fmt.Sprintf("select %v from %v limit 1", col, tbl)).Rows()[0][0].(string)
+		if res == "<nil>" {
+			res = "null"
+		}
+		return res
+	}
+	switch dtype {
+	case "tinyint":
+		switch rtype {
+		case "valid":
+			return fmt.Sprintf("%v", -128+rand.Intn(256))
+		case "out-of-range":
+			return fmt.Sprintf("%v", 128+rand.Intn(1024))
+		case "invalid":
+			return "'invalid-tinyint'"
+		case "str":
+			return fmt.Sprintf("'%v'", -128+rand.Intn(256))
+		}
+	case "unsigned":
+		switch rtype {
+		case "valid":
+			return fmt.Sprintf("%v", rand.Intn(4294967295))
+		case "out-of-range":
+			return fmt.Sprintf("-%v", rand.Intn(4294967295))
+		case "invalid":
+			return "'invalid-unsigned-int'"
+		case "str":
+			return fmt.Sprintf("'%v'", rand.Intn(4294967295))
+		}
+	case "float":
+		switch rtype {
+		case "valid":
+			return fmt.Sprintf("%v%vE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
+		case "out-of-range":
+			return fmt.Sprintf("%v%vE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(100)+38)
+		case "invalid":
+			return "'invalid-float'"
+		case "str":
+			return fmt.Sprintf("'%v%vE%v'", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
+		}
+	case "decimal": // (10,2)
+		switch rtype {
+		case "valid":
+			return fmt.Sprintf("%v%v.%v", []string{"+", "-"}[rand.Intn(2)], rand.Intn(99999999), rand.Intn(100))
+		case "out-of-range":
+			switch rand.Intn(2) {
+			case 0:
+				return fmt.Sprintf("%v%v.%v", []string{"+", "-"}[rand.Intn(2)], rand.Intn(99999999), rand.Intn(100000)+100000)
+			case 1:
+				return fmt.Sprintf("%v%v.%v", []string{"+", "-"}[rand.Intn(2)], rand.Intn(99999999)+99999999+1, rand.Intn(100))
+			}
+		case "invalid":
+			return "'invalid-decimal'"
+		case "str":
+			return fmt.Sprintf("'%v%v.%v'", []string{"+", "-"}[rand.Intn(2)], rand.Intn(99999999), rand.Intn(100))
+		}
+	case "year":
+		switch rtype {
+		case "valid":
+			return fmt.Sprintf("%v", 1901+rand.Intn(2155-1901))
+		case "out-of-range":
+			return fmt.Sprintf("%v", 2156+rand.Intn(2155-1901))
+		case "invalid":
+			return "'invalid-year'"
+		case "str":
+			return fmt.Sprintf("'%v'", 1901+rand.Intn(2155-1901))
+		}
+	}
+	return "'invalid-type-" + dtype + "'"
+}
+
+func (s *testPrepareSerialSuite) TestPrepareCacheChangingParamType(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t_tinyint, t_unsigned, t_float, t_decimal, t_year`)
+	tk.MustExec(`create table t_tinyint (a tinyint, b tinyint, key(a))`)
+	tk.MustExec(`create table t_unsigned (a int unsigned, b int unsigned, key(a))`)
+	tk.MustExec(`create table t_float(a float, b float, key(a))`)
+	tk.MustExec(`create table t_decimal(a decimal(10,2), b decimal(10,2), key(a))`)
+	tk.MustExec(`create table t_year(a year, b year, key(a))`)
+	for _, dtype := range []string{"tinyint", "unsigned", "float", "decimal", "year"} {
+		tbl := "t_" + dtype
+		for i := 0; i < 10; i++ {
+			tk.MustExec(fmt.Sprintf("insert into %v values (%v, %v)", tbl, randValue(nil, "", "", dtype, "valid"), randValue(nil, "", "", dtype, "valid")))
+		}
+		tk.MustExec(fmt.Sprintf("insert into %v values (null, null)", tbl))
+		tk.MustExec(fmt.Sprintf("insert into %v values (%v, null)", tbl, randValue(nil, "", "", dtype, "valid")))
+		tk.MustExec(fmt.Sprintf("insert into %v values (null, %v)", tbl, randValue(nil, "", "", dtype, "valid")))
+
+		for round := 0; round < 10; round++ {
+			tk.MustExec(fmt.Sprintf(`prepare s1 from 'select * from %v where a=?'`, tbl))
+			tk.MustExec(fmt.Sprintf(`prepare s2 from 'select * from %v where b=?'`, tbl))
+			tk.MustExec(fmt.Sprintf(`prepare s3 from 'select * from %v where a in (?, ?, ?)'`, tbl))
+			tk.MustExec(fmt.Sprintf(`prepare s4 from 'select * from %v where b in (?, ?, ?)'`, tbl))
+			tk.MustExec(fmt.Sprintf(`prepare s5 from 'select * from %v where a>?'`, tbl))
+			tk.MustExec(fmt.Sprintf(`prepare s6 from 'select * from %v where b>?'`, tbl))
+			tk.MustExec(fmt.Sprintf(`prepare s7 from 'select * from %v where a>? and b>?'`, tbl))
+
+			for query := 0; query < 10; query++ {
+				a1, a2, a3 := randValue(tk, tbl, "a", dtype, ""), randValue(tk, tbl, "a", dtype, ""), randValue(tk, tbl, "a", dtype, "")
+				b1, b2, b3 := randValue(tk, tbl, "b", dtype, ""), randValue(tk, tbl, "b", dtype, ""), randValue(tk, tbl, "b", dtype, "")
+				tk.MustExec(fmt.Sprintf(`set @a1=%v,@a2=%v,@a3=%v`, a1, a2, a3))
+				tk.MustExec(fmt.Sprintf(`set @b1=%v,@b2=%v,@b3=%v`, b1, b2, b3))
+
+				compareResult := func(sql1, sql2 string) {
+					raw, err := tk.Exec(sql1)
+					if err != nil {
+						err := tk.ExecToErr(sql2)
+						c.Assert(err, NotNil)
+						return
+					}
+					rs := tk.ResultSetToResult(raw, Commentf("sql1:%s, sql2:%v", sql1, sql2))
+					rs.Sort().Check(tk.MustQuery(sql2).Sort().Rows())
+				}
+
+				compareResult(`execute s1 using @a1`, fmt.Sprintf(`select * from %v where a=%v`, tbl, a1))
+				compareResult(`execute s2 using @b1`, fmt.Sprintf(`select * from %v where b=%v`, tbl, b1))
+				compareResult(`execute s3 using @a1,@a2,@a3`, fmt.Sprintf(`select * from %v where a in (%v,%v,%v)`, tbl, a1, a2, a3))
+				compareResult(`execute s4 using @b1,@b2,@b3`, fmt.Sprintf(`select * from %v where b in (%v,%v,%v)`, tbl, b1, b2, b3))
+				compareResult(`execute s5 using @a1`, fmt.Sprintf(`select * from %v where a>%v`, tbl, a1))
+				compareResult(`execute s6 using @b1`, fmt.Sprintf(`select * from %v where b>%v`, tbl, b1))
+				compareResult(`execute s7 using @a1,@b1`, fmt.Sprintf(`select * from %v where a>%v and b>%v`, tbl, a1, b1))
+			}
+		}
+	}
+}
+
 func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
