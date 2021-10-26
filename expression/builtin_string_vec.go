@@ -2424,6 +2424,10 @@ func (b *builtinToBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		return err
 	}
 
+	argTp := b.args[0].GetType()
+	enc := charset.NewEncoding(argTp.Charset)
+	isBinaryStr := types.IsBinaryStr(argTp)
+
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
@@ -2431,6 +2435,11 @@ func (b *builtinToBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 		str := buf.GetString(i)
+		if !isBinaryStr {
+			if encodedStr, err := enc.EncodeString(str); err == nil {
+				str = encodedStr
+			}
+		}
 		needEncodeLen := base64NeededEncodedLength(len(str))
 		if needEncodeLen == -1 {
 			result.AppendNull()
