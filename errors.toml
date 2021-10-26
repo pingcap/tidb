@@ -2031,3 +2031,8 @@ error = '''
 snapshot is older than GC safe point %s
 '''
 
+["variable:8136"]
+error = '''
+option '%s' is no longer supported. Reason: %s
+'''
+
