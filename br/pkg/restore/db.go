@@ -22,6 +22,11 @@ type DB struct {
 	se glue.Session
 }
 
+type UniqueTableName struct {
+	DB    string
+	Table string
+}
+
 // NewDB returns a new DB.
 func NewDB(g glue.Glue, store kv.Storage) (*DB, error) {
 	se, err := g.CreateSession(store)
@@ -97,7 +102,7 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 }
 
 // CreateTable executes a CREATE TABLE SQL.
-func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
+func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
 	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
 	if err != nil {
 		log.Error("create table failed",
@@ -107,7 +112,11 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
 		return errors.Trace(err)
 	}
 
-	if table.Info.IsSequence() {
+	var restoreMetaSQL string
+	switch {
+	case table.Info.IsView():
+		return nil
+	case table.Info.IsSequence():
 		setValFormat := fmt.Sprintf("do setval(%s.%s, %%d);",
 			utils.EncloseName(table.DB.Name.O),
 			utils.EncloseName(table.Info.Name.O))
@@ -148,8 +157,38 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
 				return errors.Trace(err)
 			}
 		}
-		restoreMetaSQL := fmt.Sprintf(setValFormat, table.Info.AutoIncID)
-		if err = db.se.Execute(ctx, restoreMetaSQL); err != nil {
+		restoreMetaSQL = fmt.Sprintf(setValFormat, table.Info.AutoIncID)
+		err = db.se.Execute(ctx, restoreMetaSQL)
+		if err != nil {
+			log.Error("restore meta sql failed",
+				zap.String("query", restoreMetaSQL),
+				zap.Stringer("db", table.DB.Name),
+				zap.Stringer("table", table.Info.Name),
+				zap.Error(err))
+			return errors.Trace(err)
+		}
+	// only table exists in ddlJobs during incremental restoration should do alter after creation.
+	case ddlTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
+		if utils.NeedAutoID(table.Info) {
+			restoreMetaSQL = fmt.Sprintf(
+				"alter table %s.%s auto_increment = %d;",
+				utils.EncloseName(table.DB.Name.O),
+				utils.EncloseName(table.Info.Name.O),
+				table.Info.AutoIncID)
+		} else if table.Info.PKIsHandle && table.Info.ContainsAutoRandomBits() {
+			restoreMetaSQL = fmt.Sprintf(
+				"alter table %s.%s auto_random_base = %d",
+				utils.EncloseName(table.DB.Name.O),
+				utils.EncloseName(table.Info.Name.O),
+				table.Info.AutoRandID)
+		} else {
+			log.Info("table exists in incremental ddl jobs, but don't need to be altered",
+				zap.Stringer("db", table.DB.Name),
+				zap.Stringer("table", table.Info.Name))
+			return nil
+		}
+		err = db.se.Execute(ctx, restoreMetaSQL)
+		if err != nil {
 			log.Error("restore meta sql failed",
 				zap.String("query", restoreMetaSQL),
 				zap.Stringer("db", table.DB.Name),
@@ -196,20 +235,15 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 		}
 	}
 
-	type namePair struct {
-		db    string
-		table string
-	}
-
 	for _, table := range tables {
 		tableIDs := make(map[int64]bool)
 		tableIDs[table.Info.ID] = true
-		tableNames := make(map[namePair]bool)
-		name := namePair{table.DB.Name.String(), table.Info.Name.String()}
+		tableNames := make(map[UniqueTableName]bool)
+		name := UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}
 		tableNames[name] = true
 		for _, job := range allDDLJobs {
 			if job.BinlogInfo.TableInfo != nil {
-				name := namePair{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}
+				name = UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}
 				if tableIDs[job.TableID] || tableNames[name] {
 					ddlJobs = append(ddlJobs, job)
 					tableIDs[job.TableID] = true
