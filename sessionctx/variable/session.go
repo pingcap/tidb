@@ -1192,6 +1192,7 @@ func NewSessionVars() *SessionVars {
 		TMPTableSize:                DefTMPTableSize,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
+		EnablePlacementChecks:       DefEnablePlacementCheck,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
