@@ -92,6 +92,11 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	}
 
 	if followerCount > 0 {
+		// if user did not specify leader, add one
+		if len(LeaderConstraints) == 0 {
+			Rules = append(Rules, NewRule(Leader, 1, NewConstraintsDirect()))
+		}
+
 		FollowerRules, err := NewRules(Voter, followerCount, followerConstraints)
 		if err != nil {
 			return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)

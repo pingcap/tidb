@@ -768,6 +768,18 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	})
 
 	tests = append(tests, TestCase{
+		name: "direct syntax: omit leader",
+		input: &model.PlacementSettings{
+			Followers:           2,
+			FollowerConstraints: "[+region=bj]",
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect()),
+			NewRule(Voter, 2, NewConstraintsDirect(NewConstraintDirect("region", In, "bj"))),
+		},
+	})
+
+	tests = append(tests, TestCase{
 		name: "direct syntax: conflicts 1",
 		input: &model.PlacementSettings{
 			Constraints:       "[+region=us]",
