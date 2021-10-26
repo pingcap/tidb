@@ -16,7 +16,7 @@ store = "unistore"
 path = "/tmp/tidb"
 
 # The socket file to use for connection.
-socket = ""
+socket = "/tmp/tidb.sock"
 
 # Run ddl worker on this tidb-server.
 run-ddl = true

@@ -928,9 +928,6 @@ type SessionVars struct {
 	// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_tmp_table_size
 	TMPTableSize int64
 
-	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
-	EnableGlobalTemporaryTable bool
-
 	// EnableStableResultMode if stabilize query results.
 	EnableStableResultMode bool
 
@@ -1190,7 +1187,6 @@ func NewSessionVars() *SessionVars {
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
 		TMPTableSize:                DefTMPTableSize,
-		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 	}
@@ -1365,6 +1361,20 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 	charset = s.systems[CharacterSetConnection]
 	collation = s.systems[CollationConnection]
 	return
+}
+
+// GetParseParams gets the parse parameters from session variables.
+func (s *SessionVars) GetParseParams() []parser.ParseParam {
+	chs, coll := s.GetCharsetInfo()
+	cli, err := GetSessionOrGlobalSystemVar(s, CharacterSetClient)
+	if err != nil {
+		cli = ""
+	}
+	return []parser.ParseParam{
+		parser.CharsetConnection(chs),
+		parser.CollationConnection(coll),
+		parser.CharsetClient(cli),
+	}
 }
 
 // SetUserVar set the value and collation for user defined variable.
