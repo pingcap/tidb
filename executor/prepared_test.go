@@ -617,6 +617,65 @@ func (s *testSerialSuite) TestIssue28087And28162(c *C) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
+func (s *testPrepareSuite) TestParameterPushDown(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a int, b int, c int, key(a))`)
+	tk.MustExec(`insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6)`)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec(`set @x1=1,@x5=5,@x10=10,@x20=20`)
+
+	var input []struct {
+		SQL string
+	}
+	var output []struct {
+		Result    []string
+		Plan      []string
+		FromCache string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+
+	for i, tt := range input {
+		if strings.HasPrefix(tt.SQL, "execute") {
+			res := tk.MustQuery(tt.SQL).Sort()
+			fromCache := tk.MustQuery("select @@last_plan_from_cache")
+			tk.MustQuery(tt.SQL)
+			tkProcess := tk.Se.ShowProcess()
+			ps := []*util.ProcessInfo{tkProcess}
+			tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+			plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+
+			s.testData.OnRecord(func() {
+				output[i].Result = s.testData.ConvertRowsToStrings(res.Rows())
+				output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+				output[i].FromCache = fromCache.Rows()[0][0].(string)
+			})
+
+			res.Check(testkit.Rows(output[i].Result...))
+			plan.Check(testkit.Rows(output[i].Plan...))
+			c.Assert(output[i].FromCache, Equals, fromCache.Rows()[0][0].(string))
+		} else {
+			tk.MustExec(tt.SQL)
+			s.testData.OnRecord(func() {
+				output[i].Result = nil
+			})
+		}
+	}
+}
+
 func (s *testSerialSuite) TestPreparePlanCache4Function(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
