@@ -109,6 +109,7 @@ func (s *Server) listenStatusHTTPServer() error {
 	return nil
 }
 
+// Ballast try to reduce the GC frequency by using Ballast Object
 type Ballast struct {
 	ballast     []byte
 	ballastLock sync.Mutex
@@ -137,6 +138,7 @@ func newBallast(maxSize int) *Ballast {
 	return &b
 }
 
+// GetSize get the size of ballast object
 func (b *Ballast) GetSize() int {
 	var sz int
 	b.ballastLock.Lock()
@@ -145,6 +147,7 @@ func (b *Ballast) GetSize() int {
 	return sz
 }
 
+// SetSize set the size of ballast object
 func (b *Ballast) SetSize(newSz int) error {
 	if newSz < 0 {
 		return fmt.Errorf("newSz cannnot be negative: %d", newSz)
@@ -158,11 +161,12 @@ func (b *Ballast) SetSize(newSz int) error {
 	return nil
 }
 
-func (ballast *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) {
+// GenHTTPHandler generate a HTTP handler to get/set the size of this ballast object
+func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			_, err := w.Write([]byte(strconv.Itoa(ballast.GetSize())))
+			_, err := w.Write([]byte(strconv.Itoa(b.GetSize())))
 			terror.Log(err)
 		case http.MethodPost:
 			body, err := io.ReadAll(r.Body)
@@ -172,7 +176,7 @@ func (ballast *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Req
 			}
 			newSz, err := strconv.Atoi(string(body))
 			if err == nil {
-				err = ballast.SetSize(newSz)
+				err = b.SetSize(newSz)
 			}
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
