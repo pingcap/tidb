@@ -57,16 +57,16 @@ func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 	tk.MustExec("create placement policy x " +
 		"LEARNERS=1 " +
 		"LEARNER_CONSTRAINTS=\"[+region=cn-west-1]\" " +
-		"VOTERS=3 " +
-		"VOTER_CONSTRAINTS=\"[+disk=ssd]\"")
+		"FOLLOWERS=3 " +
+		"FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\"")
 
 	checkFunc := func(policyInfo *model.PolicyInfo) {
 		c.Assert(policyInfo.ID != 0, Equals, true)
 		c.Assert(policyInfo.Name.L, Equals, "x")
-		c.Assert(policyInfo.Followers, Equals, uint64(0))
-		c.Assert(policyInfo.FollowerConstraints, Equals, "")
-		c.Assert(policyInfo.Voters, Equals, uint64(3))
-		c.Assert(policyInfo.VoterConstraints, Equals, "[+disk=ssd]")
+		c.Assert(policyInfo.Followers, Equals, uint64(3))
+		c.Assert(policyInfo.FollowerConstraints, Equals, "[+disk=ssd]")
+		c.Assert(policyInfo.Voters, Equals, uint64(0))
+		c.Assert(policyInfo.VoterConstraints, Equals, "")
 		c.Assert(policyInfo.Learners, Equals, uint64(1))
 		c.Assert(policyInfo.LearnerConstraints, Equals, "[+region=cn-west-1]")
 		c.Assert(policyInfo.State, Equals, model.StatePublic)
@@ -154,7 +154,7 @@ func (s *testDBSuite6) TestPlacementValidation(c *C) {
 		},
 		{
 			name: "constraints may be incompatible with itself",
-			settings: "LEARNERS=1 " +
+			settings: "FOLLOWERS=3 LEARNERS=1 " +
 				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-2]\"",
 			errmsg: "invalid label constraints format: should be [constraint1, ...] (error conflicting label constraints: '+zone=cn-west-2' and '+zone=cn-west-1'), {constraint1: cnt1, ...} (error yaml: unmarshal errors:\n" +
 				"  line 1: cannot unmarshal !!seq into map[string]int), or any yaml compatible representation: invalid LearnerConstraints",
@@ -874,7 +874,7 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 
 	// error for invalid placement opt
 	err = tk.ExecToErr("alter database db2 primary_region='r2' regions='r2' leader_constraints='[+region=bj]'")
-	c.Assert(err.Error(), Equals, "invalid placement option: should be PRIMARY_REGION=.. REGIONS=.. FOLLOWERS=.. SCHEDULE=.., mixed other constraints into options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
+	c.Assert(err.Error(), Equals, "invalid placement option: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
 
 	// failed alter has no effect
 	tk.MustQuery("show create database db2").Check(testkit.Rows(
@@ -956,7 +956,7 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 
 	// error for invalid placement opt
 	err = tk.ExecToErr("alter table tp primary_region='r2' regions='r2' leader_constraints='[+region=bj]'")
-	c.Assert(err.Error(), Equals, "invalid placement option: should be PRIMARY_REGION=.. REGIONS=.. FOLLOWERS=.. SCHEDULE=.., mixed other constraints into options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
+	c.Assert(err.Error(), Equals, "invalid placement option: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
 
 	// failed alter has no effect
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
@@ -1067,7 +1067,7 @@ func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
 
 	// error for invalid placement opt
 	err = tk.ExecToErr("alter table tp partition p1 primary_region='r2' regions='r2' leader_constraints='[+region=bj]'")
-	c.Assert(err.Error(), Equals, "invalid placement option: should be PRIMARY_REGION=.. REGIONS=.. FOLLOWERS=.. SCHEDULE=.., mixed other constraints into options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
+	c.Assert(err.Error(), Equals, "invalid placement option: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
 
 	// error invalid partition name
 	err = tk.ExecToErr("alter table tp partition p2 primary_region='r2' regions='r2'")
@@ -1142,7 +1142,7 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 
 	// error for invalid placement opt
 	err = tk.ExecToErr("alter table tp add partition (partition p5 values less than (10000000) primary_region='r2' regions='r2' leader_constraints='[+region=bj]')")
-	c.Assert(err.Error(), Equals, "invalid placement option: should be PRIMARY_REGION=.. REGIONS=.. FOLLOWERS=.. SCHEDULE=.., mixed other constraints into options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
+	c.Assert(err.Error(), Equals, "invalid placement option: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
 
 	// failed alter has no effect
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
