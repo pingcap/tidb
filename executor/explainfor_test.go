@@ -892,13 +892,13 @@ func (s *testPrepareSerialSuite) TestIndexMerge(c *C) {
 	c.Assert(res.Rows()[3][4], Equals, "range:(1,+inf], keep order:false, stats:pseudo")
 
 	// test for prefix index
-	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(a int primary key, b varchar(255), c int, index idx_c(c));")
-	tk.MustExec("create unique index b on t1(b(3));")
+	tk.MustExec("create unique index idx_b on t1(b(3));")
 	tk.MustExec("insert into t1 values(1,'abcdfsafd',1),(2,'addfdsafd',2),(3,'ddcdsaf',3),(4,'bbcsa',4);")
-	tk.MustExec("prepare stmt from 'select /*+ USE_INDEX_MERGE(t1, primary, idx_b, idx_c) */ * from t1 where b = ? or a > 10 or c > 10")
+	tk.MustExec("prepare stmt from 'select /*+ USE_INDEX_MERGE(t1, primary, idx_b, idx_c) */ * from t1 where b = ? or a > 10 or c > 10;';")
 	tk.MustExec("set @a='bbcsa', @b='ddcdsaf';")
-	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("4 'bbcsa' 4"))
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("4 bbcsa 4"))
 
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
@@ -906,13 +906,53 @@ func (s *testPrepareSerialSuite) TestIndexMerge(c *C) {
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
 
-	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 'ddcdsaf' 3"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 ddcdsaf 3"))
 	// TODO: should use plan cache here
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
-	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 'ddcdsaf' 3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 ddcdsaf 3"))
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
+
+	// rewrite the origin indexMerge test
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a), key(b))")
+	tk.MustExec("prepare stmt from 'select /*+ inl_join(t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.c = t2.c where t2.a = 1 or t2.b = 1;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int primary key, b int, c int, key(b), key(c));")
+	tk.MustExec("INSERT INTO t1 VALUES (10, 10, 10), (11, 11, 11)")
+	tk.MustExec("prepare stmt from 'select /*+ use_index_merge(t1) */ * from t1 where c=? or (b=? and a=?);';")
+	tk.MustExec("set @a = 10, @b = 11;")
+	tk.MustQuery("execute stmt using @a, @a, @a").Check(testkit.Rows("10 10 10"))
+	tk.MustQuery("execute stmt using @b, @b, @b").Check(testkit.Rows("11 11 11"))
+	// TODO: should use plan cache here
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT AS (1), c1 INT PRIMARY KEY)")
+	tk.MustExec("INSERT INTO t0(c1) VALUES (0)")
+	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
+	tk.MustExec("prepare stmt from 'SELECT /*+ USE_INDEX_MERGE(t0, i0, PRIMARY)*/ t0.c0 FROM t0 WHERE t0.c1 OR t0.c0;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	// The plan contains the generated column, so it can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
+	tk.MustExec("create index t1a on t1(a)")
+	tk.MustExec("create index t1b on t1(b)")
+	tk.MustExec("create table t2(id int primary key, a int)")
+	tk.MustExec("create index t2a on t2(a)")
+	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
+	tk.MustExec("insert into t2 values(1,1),(5,5)")
+	tk.MustExec("prepare stmt from 'select /*+ use_index_merge(t1, t1a, t1b) */ sum(t1.a) from t1 join t2 on t1.id = t2.id where t1.a < ? or t1.b > ?';")
+	tk.MustExec("set @a=2, @b=4, @c=5;")
+	tk.MustQuery("execute stmt using @a, @b").Check(testkit.Rows("6"))
+	tk.MustQuery("execute stmt using @a, @c").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
