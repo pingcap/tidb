@@ -407,7 +407,7 @@ func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
 	}
 }
 
-func (s *testPrepareSuite) TestPlanCacheXXX(c *C) {
+func (s *testPrepareSuite) TestPlanCacheOperators(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
