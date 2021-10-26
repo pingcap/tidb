@@ -251,19 +251,21 @@ func (s *testDBSuite6) TestSkipPlacementValidation(c *C) {
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */"))
 	// Test `ALTER PARTITION`: Skip the check, keep the original opts.
-	tk.MustExec("alter table t_range_p PARTITION p1 placement policy x;")
+	tk.MustExec("alter table t_range_p PARTITION p1 placement policy y;")
+	tk.MustExec("alter table t_range_p PARTITION p0 placement policy x;")
 	tk.MustQuery("show create table t_range_p").Check(testkit.Rows("t_range_p CREATE TABLE `t_range_p` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */\n" +
 		"PARTITION BY RANGE ( `id` ) (\n" +
 		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
-		"  PARTITION `p1` VALUES LESS THAN (1000)\n)",
+		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`y` */\n)",
 	))
 
 	tk.MustExec("SET PLACEMENT_CHECKS = 1;")
 	tk.MustExec("drop table if exists t, t_range_p")
 	tk.MustExec("alter database test placement policy='default'")
 	tk.MustExec("drop database db_skip_validation;")
+	tk.MustExec("drop placement policy if exists y;")
 }
 
 func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {
