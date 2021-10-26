@@ -150,10 +150,10 @@ func (b *Ballast) GetSize() int {
 // SetSize set the size of ballast object
 func (b *Ballast) SetSize(newSz int) error {
 	if newSz < 0 {
-		return fmt.Errorf("newSz cannnot be negative: %d", newSz)
+		return fmt.Errorf("newSz cannot be negative: %d", newSz)
 	}
 	if newSz > b.maxSize {
-		return fmt.Errorf("newSz cannnot be bigger than %d but it has value %d", b.maxSize, newSz)
+		return fmt.Errorf("newSz cannot be bigger than %d but it has value %d", b.maxSize, newSz)
 	}
 	b.ballastLock.Lock()
 	b.ballast = make([]byte, newSz)
