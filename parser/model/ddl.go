@@ -86,7 +86,9 @@ const (
 	ActionDropPlacementPolicy           ActionType = 53
 	ActionAlterTablePartitionPolicy     ActionType = 54
 	ActionModifySchemaDefaultPlacement  ActionType = 55
-	ActionAlterTableStatsOptions        ActionType = 56
+	ActionAlterTablePlacement           ActionType = 56
+	ActionAlterCacheTable               ActionType = 57
+	ActionAlterTableStatsOptions        ActionType = 58
 )
 
 var actionMap = map[ActionType]string{
@@ -143,6 +145,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterPlacementPolicy:          "alter placement policy",
 	ActionDropPlacementPolicy:           "drop placement policy",
 	ActionModifySchemaDefaultPlacement:  "modify schema default placement",
+	ActionAlterCacheTable:               "alter cache table",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 }
 
