@@ -1067,8 +1067,7 @@ func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select trim(''), trim('x' from '')`)
 	result.Check(testutil.RowsWithSep(",", ","))
 	result = tk.MustQuery(`select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar')`)
-	// FIXME: the result for trim(leading null from 'bar') should be <nil>, current is 'bar'
-	result.Check(testkit.Rows("<nil> <nil> <nil> bar"))
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 
 	// for locate
 	tk.MustExec("drop table if exists t")
@@ -10415,4 +10414,17 @@ PARTITION p20210909 VALUES LESS THAN (1631203200)
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	tk.MustExec("INSERT INTO `perf_offline_day` VALUES ('dd082c8a-3bab-4431-943a-348fe0592abd','2021-09-08 13:00:07','Xg9C8zq81jGNbugM', 'pc', 12345);")
 	tk.MustQuery("SELECT cast(floor(hour(ts) / 4) as char) as win_start FROM perf_offline_day partition (p20210907, p20210908) GROUP BY win_start;").Check(testkit.Rows("3"))
+}
+
+func (s *testIntegrationSuite) TestIssue28643(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(4));")
+	tk.MustExec("insert into t values(\"-838:59:59.000000\");")
+	tk.MustExec("insert into t values(\"838:59:59.000000\");")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
 }

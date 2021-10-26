@@ -562,6 +562,106 @@ func TestSelectViewSecurity(t *testing.T) {
 	require.EqualError(t, err, core.ErrViewInvalid.GenWithStackByArgs("test", "selectviewsecurity").Error())
 }
 
+func TestShowViewPriv(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`DROP VIEW IF EXISTS test.v`)
+	tk.MustExec(`CREATE VIEW test.v AS SELECT 1`)
+	tk.MustExec("CREATE USER vnobody, vshowview, vselect, vshowandselect")
+	tk.MustExec("GRANT SHOW VIEW ON test.v TO vshowview")
+	tk.MustExec("GRANT SELECT ON test.v TO vselect")
+	tk.MustExec("GRANT SHOW VIEW, SELECT ON test.v TO vshowandselect")
+
+	tests := []struct {
+		userName     string
+		showViewErr  string
+		showTableErr string
+		explainErr   string
+		explainRes   string
+		descErr      string
+		descRes      string
+		tablesNum    string
+		columnsNum   string
+	}{
+		{"vnobody",
+			"[planner:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"[planner:1142]SHOW VIEW command denied to user 'vnobody'@'%' for table 'v'",
+			"[executor:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"",
+			"[executor:1142]SELECT command denied to user 'vnobody'@'%' for table 'v'",
+			"",
+			"0",
+			"0",
+		},
+		{"vshowview",
+			"[planner:1142]SELECT command denied to user 'vshowview'@'%' for table 'v'",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"1",
+			"0",
+		},
+		{"vselect",
+			"[planner:1142]SHOW VIEW command denied to user 'vselect'@'%' for table 'v'",
+			"[planner:1142]SHOW VIEW command denied to user 'vselect'@'%' for table 'v'",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"1",
+			"1",
+		},
+		{"vshowandselect",
+			"",
+			"",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"",
+			"1 bigint(1) NO  <nil> ",
+			"1",
+			"1",
+		},
+	}
+
+	for _, test := range tests {
+		tk.Session().Auth(&auth.UserIdentity{Username: test.userName, Hostname: "localhost"}, nil, nil)
+		err := tk.ExecToErr("SHOW CREATE VIEW test.v")
+		if test.showViewErr != "" {
+			require.EqualError(t, err, test.showViewErr, test)
+		} else {
+			require.NoError(t, err, test)
+		}
+		err = tk.ExecToErr("SHOW CREATE TABLE test.v")
+		if test.showTableErr != "" {
+			require.EqualError(t, err, test.showTableErr, test)
+		} else {
+			require.NoError(t, err, test)
+		}
+		if test.explainErr != "" {
+			err = tk.QueryToErr("explain test.v")
+			require.EqualError(t, err, test.explainErr, test)
+		} else {
+			// TODO: expecting empty set but got one row for vshowview.
+			// tk.MustQuery("explain test.v").Check(testkit.Rows(test.explainRes))
+		}
+		if test.descErr != "" {
+			err = tk.QueryToErr("explain test.v")
+			require.EqualError(t, err, test.descErr, test)
+		} else {
+			// TODO: expecting empty set but got one row for vshowview.
+			// tk.MustQuery("desc test.v").Check(testkit.Rows(test.descRes))
+		}
+		tk.MustQuery("select count(*) from information_schema.tables where table_schema='test' and table_name='v'").Check(testkit.Rows(test.tablesNum))
+		// TODO: expecting 0 but got 1 for vshowview.
+		// tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows(test.columnsNum))
+	}
+}
+
 func TestRoleAdminSecurity(t *testing.T) {
 	t.Parallel()
 	store, clean := newStore(t)
@@ -1814,11 +1914,17 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 	defer sem.Disable()
 
 	// With SEM enabled nolocal does not have permission, but yeslocal does.
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
-	require.EqualError(t, err, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'local:///tmp/test';")
+	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
+
+	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'file:///tmp/test';")
+	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
+
+	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO '/tmp/test';")
+	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
 	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
-	require.EqualError(t, err, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
 }
 
@@ -2491,6 +2597,59 @@ func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
 	mustExec(t, se, "grant select on metrics_schema.up to test_user;")
 }
 
+func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	defer func() {
+		require.True(t, tk.Session().Auth(&auth.UserIdentity{
+			Username: "root",
+			Hostname: "localhost",
+		}, nil, nil))
+		tk.MustExec(`DROP SCHEMA IF EXISTS placment_rule_db`)
+		tk.MustExec(`DROP USER IF EXISTS placement_rule_user_scheam`)
+		tk.MustExec(`DROP USER IF EXISTS placement_rule_user_table`)
+	}()
+	tk.MustExec("CREATE DATABASE placement_rule_db")
+	tk.MustExec("USE placement_rule_db")
+	tk.MustExec(`CREATE TABLE placement_rule_table_se (a int) PRIMARY_REGION="se" REGIONS="se,nl"`)
+	tk.MustExec(`CREATE TABLE placement_rule_table_nl (a int) PRIMARY_REGION="nl" REGIONS="se,nl"`)
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
+		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl se,nl      0 0",
+		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
+	tk.MustExec("CREATE USER placement_rule_user_schema")
+	tk.MustExec("CREATE USER placement_rule_user_table")
+	tk.MustExec("GRANT SELECT ON placement_rule_db.placement_rule_table_se TO placement_rule_user_table")
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "placement_rule_user_schema",
+		Hostname: "somehost",
+	}, nil, nil))
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows())
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "placement_rule_user_table",
+		Hostname: "somehost",
+	}, nil, nil))
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Check(testkit.Rows("<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil))
+	tk.MustExec("GRANT SELECT ON placement_rule_db.* TO placement_rule_user_schema")
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{
+		Username: "placement_rule_user_schema",
+		Hostname: "somehost",
+	}, nil, nil))
+	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
+		"<nil> def <nil> placement_rule_db placement_rule_table_nl <nil> nl se,nl      0 0",
+		"<nil> def <nil> placement_rule_db placement_rule_table_se <nil> se se,nl      0 0"))
+}
+
 func TestGrantCreateTmpTables(t *testing.T) {
 	t.Parallel()
 	store, clean := newStore(t)
@@ -2513,6 +2672,23 @@ func TestGrantCreateTmpTables(t *testing.T) {
 		`GRANT CREATE TEMPORARY TABLES ON create_tmp_table_db.* TO 'u1'@'%'`))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE create_tmp_table_db")
+}
+
+func TestRevokeSecondSyntax(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	tk.MustExec(`drop user if exists ss1;`)
+	tk.MustExec(`create user ss1;`)
+	tk.MustExec(`revoke all privileges, grant option from ss1;`)
+	tk.MustQuery("show grants for ss1").Check(testkit.Rows("GRANT USAGE ON *.* TO 'ss1'@'%'"))
 }
 
 func TestGrantEvent(t *testing.T) {

@@ -67,7 +67,7 @@ func SubTestInfo(t *testing.T) {
 		Storage: s,
 		pdAddrs: []string{cluster.Members[0].GRPCAddr()}}
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory, nil)
+	dom := NewDomain(mockStore, ddlLease, 0, 0, 0, mockFactory, nil)
 	defer func() {
 		dom.Close()
 		err := s.Close()
@@ -85,7 +85,6 @@ func SubTestInfo(t *testing.T) {
 		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
 	)
-	require.NoError(t, dom.ddl.Start(nil))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/MockReplaceDDL", `return(true)`))
 	require.NoError(t, dom.Init(ddlLease, sysMockFactory))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockReplaceDDL"))
@@ -160,7 +159,7 @@ func SubTestDomain(t *testing.T) {
 	require.NoError(t, err)
 
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, mockFactory, nil)
+	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory, nil)
 	err = dom.Init(ddlLease, sysMockFactory)
 	require.NoError(t, err)
 

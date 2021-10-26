@@ -86,6 +86,7 @@ type Domain struct {
 	statsUpdating        sync2.AtomicInt32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
+	planReplayer         *planReplayer
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -652,7 +653,7 @@ func (do *Domain) Close() {
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, factory pools.Factory, onClose func()) *Domain {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, planReplayerGCLease time.Duration, factory pools.Factory, onClose func()) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
 		store:               store,
@@ -662,6 +663,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoCache:           infoschema.NewCache(16),
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
+		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
 		onClose:             onClose,
 	}
 
@@ -735,21 +737,28 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
 	)
-	err = do.ddl.Start(sysCtxPool)
-	if err != nil {
-		return err
-	}
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
-			if err := do.ddl.Stop(); err != nil {
-				logutil.BgLogger().Error("stop DDL failed", zap.Error(err))
-			}
 			do.ddl = d
 		}
 	})
-
+	// step 1: prepare the info/schema syncer which domain reload needed.
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
+	if err != nil {
+		return err
+	}
 	err = do.ddl.SchemaSyncer().Init(ctx)
+	if err != nil {
+		return err
+	}
+	// step 2: domain reload the infoSchema.
+	err = do.Reload()
+	if err != nil {
+		return err
+	}
+	// step 3: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
+	err = do.ddl.Start(sysCtxPool)
 	if err != nil {
 		return err
 	}
@@ -770,15 +779,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 			// set serverID for standalone deployment to enable 'KILL'.
 			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
 		}
-	}
-
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
-	if err != nil {
-		return err
-	}
-	err = do.Reload()
-	if err != nil {
-		return err
 	}
 
 	// Only when the store is local that the lease value is 0.
@@ -931,7 +931,8 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
 // it should be called only once in BootstrapSession.
 func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
-	err := do.rebuildSysVarCache()
+	ctx.GetSessionVars().InRestrictedSQL = true
+	err := do.rebuildSysVarCache(ctx)
 	if err != nil {
 		return err
 	}
@@ -980,7 +981,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			}
 			count = 0
 			logutil.BgLogger().Debug("Rebuilding sysvar cache from etcd watch event.")
-			err := do.rebuildSysVarCache()
+			err := do.rebuildSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
@@ -1135,6 +1136,28 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 				return
 			case <-time.After(telemetry.SubWindowSize):
 				telemetry.RotateSubWindow()
+			}
+		}
+	}()
+}
+
+// PlanReplayerLoop creates a goroutine that handles `exit` and `gc`.
+func (do *Domain) PlanReplayerLoop() {
+	do.wg.Add(1)
+	go func() {
+		gcTicker := time.NewTicker(do.planReplayer.planReplayerGCLease)
+		defer func() {
+			gcTicker.Stop()
+			do.wg.Done()
+			logutil.BgLogger().Info("PlanReplayerLoop exited.")
+			util.Recover(metrics.LabelDomain, "PlanReplayerLoop", nil, false)
+		}()
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-gcTicker.C:
+				do.planReplayer.planReplayerGC(time.Hour)
 			}
 		}
 	}()
@@ -1417,7 +1440,7 @@ func (do *Domain) NotifyUpdateSysVarCache() {
 		}
 	}
 	// update locally
-	if err := do.rebuildSysVarCache(); err != nil {
+	if err := do.rebuildSysVarCache(nil); err != nil {
 		logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 	}
 }

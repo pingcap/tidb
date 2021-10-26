@@ -552,7 +552,7 @@ func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, is
 }
 func (m *MockExpr) EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error) {
 	if x, ok := m.i.(float64); ok {
-		return float64(x), false, m.err
+		return x, false, m.err
 	}
 	return 0, m.i == nil, m.err
 }

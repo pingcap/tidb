@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/copr"
+	error2 "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/table"
@@ -281,12 +282,12 @@ func (s *testSuiteP1) TestLoadStats(c *C) {
 	c.Assert(tk.ExecToErr("load stats ./xxx.json"), NotNil)
 }
 
-func (s *testSuiteP1) TestPlanRecreator(c *C) {
+func (s *testSuiteP1) TestPlanReplayer(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
-	tk.MustExec("plan recreator dump explain select * from t where a=10")
+	tk.MustExec("plan replayer dump explain select * from t where a=10")
 }
 
 func (s *testSuiteP1) TestShow(c *C) {
@@ -3243,6 +3244,37 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 
 }
 
+func (s *testSuite) TestSelectForUpdateOf(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t (i int)")
+	tk.MustExec("create table t1 (i int)")
+	tk.MustExec("insert t values (1)")
+	tk.MustExec("insert t1 values (1)")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t, t1 where t.i = t1.i for update of t").Check(testkit.Rows("1 1"))
+
+	tk1.MustExec("begin pessimistic")
+
+	// no lock for t
+	tk1.MustQuery("select * from t1 for update").Check(testkit.Rows("1"))
+
+	// meet lock for t1
+	err := tk1.ExecToErr("select * from t for update nowait")
+	c.Assert(terror.ErrorEqual(err, error2.ErrLockAcquireFailAndNoWaitSet), IsTrue, Commentf("error: ", err))
+
+	// t1 rolled back, tk1 acquire the lock
+	tk.MustExec("rollback")
+	tk1.MustQuery("select * from t for update nowait").Check(testkit.Rows("1"))
+
+	tk1.MustExec("rollback")
+}
+
 func (s *testSuite) TestEmptyEnum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5231,7 +5263,6 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 
 	// Test show table regions and split table on global temporary table.
 	tk.MustExec("drop table if exists t_regions_temporary_table")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t_regions_temporary_table (a int key, b int, c int, index idx(b), index idx2(c)) ON COMMIT DELETE ROWS;")
 	// Test show table regions.
 	_, err = tk.Exec("show table t_regions_temporary_table regions")
@@ -5642,7 +5673,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustQuery("show charset").Check(testkit.Rows(
 		"ascii US ASCII ascii_bin 1",
 		"binary binary binary 1",
-		"gbk Chinese Internal Code Specification gbk_bin 2",
+		"gbk Chinese Internal Code Specification gbk_chinese_ci 2",
 		"latin1 Latin1 latin1_bin 1",
 		"utf8 UTF-8 Unicode utf8_bin 3",
 		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
@@ -5651,6 +5682,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 		"ascii_bin ascii 65 Yes Yes 1",
 		"binary binary 63 Yes Yes 1",
 		"gbk_bin gbk 87  Yes 1",
+		"gbk_chinese_ci gbk 28 Yes Yes 1",
 		"latin1_bin latin1 47 Yes Yes 1",
 		"utf8_bin utf8 83 Yes Yes 1",
 		"utf8_general_ci utf8 33  Yes 1",
@@ -5662,13 +5694,13 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 
 	tk.MustExec("set names gbk;")
 	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
-	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_bin"))
+	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_chinese_ci"))
 	tk.MustExec("set @@character_set_client=gbk;")
 	tk.MustQuery("select @@character_set_client;").Check(testkit.Rows("gbk"))
 	tk.MustExec("set names utf8mb4;")
 	tk.MustExec("set @@character_set_connection=gbk;")
 	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
-	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_bin"))
+	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_chinese_ci"))
 
 	tk.MustGetErrCode("select _gbk 'a';", errno.ErrUnknownCharacterSet)
 
@@ -5680,13 +5712,13 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
 		"  `a` char(10) DEFAULT NULL,\n" +
 		"  `b` char(10) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin",
+		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci",
 	))
 	tk.MustExec("create table t4(a char(10));")
 	tk.MustExec("alter table t4 add column b char(10) charset gbk;")
 	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n" +
 		"  `a` char(10) DEFAULT NULL,\n" +
-		"  `b` char(10) CHARACTER SET gbk COLLATE gbk_bin DEFAULT NULL\n" +
+		"  `b` char(10) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -5695,7 +5727,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustExec("create table t1(a char(10));")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `a` char(10) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin",
+		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci",
 	))
 }
 
@@ -6078,7 +6110,6 @@ func (s *testRecoverTable) TestRecoverTempTable(c *C) {
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t_recover (a int) on commit delete rows;")
 
 	tk.MustExec("use test_recover")
@@ -8832,7 +8863,6 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
 
-	tk.MustExec("set @@tidb_enable_global_temporary_table=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tmp1")
 	tk.MustExec("create global temporary table tmp1 " +
@@ -8954,7 +8984,6 @@ func (s *testSuite) TestTableSampleTemporaryTable(c *C) {
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
 
-	tk.MustExec("set @@tidb_enable_global_temporary_table=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tmp1")
 	tk.MustExec("create global temporary table tmp1 " +
@@ -9110,4 +9139,17 @@ func (s *testSuite) TestGetResultRowsCount(c *C) {
 		cnt := executor.GetResultRowsCount(tk.Se, p)
 		c.Assert(ca.row, Equals, cnt, Commentf("sql: %v", ca.sql))
 	}
+}
+
+func (s *testSuiteP1) TestIssue28935(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_vectorized_expression=true")
+	tk.MustQuery(`select trim(leading from " a "), trim(both from " a "), trim(trailing from " a ")`).Check(testkit.Rows("a  a  a"))
+	tk.MustQuery(`select trim(leading null from " a "), trim(both null from " a "), trim(trailing null from " a ")`).Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustQuery(`select trim(null from " a ")`).Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("set @@tidb_enable_vectorized_expression=false")
+	tk.MustQuery(`select trim(leading from " a "), trim(both from " a "), trim(trailing from " a ")`).Check(testkit.Rows("a  a  a"))
+	tk.MustQuery(`select trim(leading null from " a "), trim(both null from " a "), trim(trailing null from " a ")`).Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustQuery(`select trim(null from " a ")`).Check(testkit.Rows("<nil>"))
 }
