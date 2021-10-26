@@ -264,12 +264,17 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
-	latestIndexes, check, err := getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
+	latestIndexes, changed, err := getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
 	if err != nil {
 		return
 	}
 	for _, index := range ds.table.Meta().Indices {
-		if latestIndex, ok := latestIndexes[index.ID]; !check || !ok || latestIndex.State != model.StatePublic {
+		if changed {
+			latestIndex, ok := latestIndexes[index.ID]
+			if !ok || latestIndex.State != model.StatePublic {
+				continue
+			}
+		} else if index.State != model.StatePublic {
 			continue
 		}
 		if uniqueKey, newKey := checkIndexCanBeKey(index, ds.Columns, selfSchema); newKey != nil {
