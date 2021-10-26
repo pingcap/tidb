@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -754,6 +755,21 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				writeError(w, err)
 				return
 			}
+		}
+		if transactionSummaryCapacity := req.Form.Get("transaction_summary_capacity"); transactionSummaryCapacity != "" {
+			capacity, err := strconv.Atoi(transactionSummaryCapacity)
+			if err != nil {
+				writeError(w, errors.New("illegal argument"))
+				return
+			} else if capacity < 0 || capacity > 5000 {
+				writeError(w, errors.New("transaction_summary_capacity out of range, should be in 0 to 5000"))
+				return
+			}
+			cfg := config.GetGlobalConfig()
+			cfg.TrxSummary.TransactionSummaryCapacity = uint(capacity)
+			config.StoreGlobalConfig(cfg)
+			// deadlockhistory.GlobalDeadlockHistory.Resize(uint(capacity))
+			txninfo.Recorder.ResizeSummaries(uint(capacity))
 		}
 	} else {
 		writeData(w, config.GetGlobalConfig())

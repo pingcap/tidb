@@ -263,9 +263,10 @@ type Config struct {
 	// to support the upgrade process. They can be removed in future.
 
 	// EnableBatchDML, MemQuotaQuery, OOMAction unused since bootstrap v90
-	EnableBatchDML bool   `toml:"enable-batch-dml" json:"enable-batch-dml"`
-	MemQuotaQuery  int64  `toml:"mem-quota-query" json:"mem-quota-query"`
-	OOMAction      string `toml:"oom-action" json:"oom-action"`
+	EnableBatchDML bool       `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	MemQuotaQuery  int64      `toml:"mem-quota-query" json:"mem-quota-query"`
+	OOMAction      string     `toml:"oom-action" json:"oom-action"`
+	TrxSummary     TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -713,6 +714,22 @@ type PessimisticTxn struct {
 	PessimisticAutoCommit AtomicBool `toml:"pessimistic-auto-commit" json:"pessimistic-auto-commit"`
 }
 
+// TrxSummary is the config for transaction summary collecting.
+type TrxSummary struct {
+	// how many transaction summary in `transaction_summary` each TiDB node should keep.
+	TransactionSummaryCapacity uint `toml:"transaction-summary-capacity" json:"transaction-summary-capacity"`
+	// how long a transaction should be executed to make it be recorded in `transaction_id_digest`.
+	TransactionIdDigestMinDuration uint `toml:"transaction-id-digest-min-duration" json:"transaction-id-digest-min-duration"`
+}
+
+// Validate TrxSummary configs
+func (config *TrxSummary) Valid() error {
+	if config.TransactionSummaryCapacity > 5000 {
+		return errors.New("transaction-summary.transaction-summary-capacity should not be larger than 5000")
+	}
+	return nil
+}
+
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
@@ -720,6 +737,13 @@ func DefaultPessimisticTxn() PessimisticTxn {
 		DeadlockHistoryCapacity:         10,
 		DeadlockHistoryCollectRetryable: false,
 		PessimisticAutoCommit:           *NewAtomicBool(false),
+	}
+}
+
+func DefaultTrxSummary() TrxSummary {
+	return TrxSummary{
+		TransactionSummaryCapacity:     500,
+		TransactionIdDigestMinDuration: 2147483647,
 	}
 }
 
@@ -907,6 +931,7 @@ var defaultConf = Config{
 	EnableForwarding:                     defTiKVCfg.EnableForwarding,
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
+	TrxSummary:                           DefaultTrxSummary(),
 }
 
 var (
@@ -1125,6 +1150,9 @@ func (c *Config) Valid() error {
 
 	// For tikvclient.
 	if err := c.TiKVClient.Valid(); err != nil {
+		return err
+	}
+	if err := c.TrxSummary.Valid(); err != nil {
 		return err
 	}
 
