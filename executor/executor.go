@@ -961,10 +961,10 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
+	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime, len(e.keys)), e.keys...)
 }
 
-func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
+func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64, numKeys int) *tikvstore.LockCtx {
 	var planDigest *parser.Digest
 	_, sqlDigest := seVars.StmtCtx.SQLDigest()
 	if variable.TopSQLEnabled() {
@@ -984,6 +984,11 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 		}
 		rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
 		deadlockhistory.GlobalDeadlockHistory.Push(rec)
+	}
+	// TODO: Make this configurable
+	if lockCtx.ForUpdateTS > 0 {
+		lockCtx.CheckExistence = true
+		lockCtx.InitCheckExistence(numKeys)
 	}
 	return lockCtx
 }

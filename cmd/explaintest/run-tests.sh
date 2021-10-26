@@ -229,18 +229,18 @@ sleep 5
 if [ $record -eq 1 ]; then
     if [ "$record_case" = 'all' ]; then
         echo "record all cases"
-        $explain_test -port "$port" -status "$status" --record --log-level=error
+        $explain_test -port "$port" -status "$status" --record --log-level=debug
     else
         echo "record result for case: \"$record_case\""
-        $explain_test -port "$port" -status "$status" --record $record_case --log-level=error
+        $explain_test -port "$port" -status "$status" --record $record_case --log-level=debug
     fi
 elif [ $create -eq 1 ]; then
     if [ "$create_case" = 'all' ]; then
         echo "create all cases"
-        $explain_test -port "$port" -status "$status" --create --log-level=error
+        $explain_test -port "$port" -status "$status" --create --log-level=debug
     else
         echo "create result for case: \"$create_case\""
-        $explain_test -port "$port" -status "$status" --create $create_case --log-level=error
+        $explain_test -port "$port" -status "$status" --create $create_case --log-level=debug
     fi
 else
     if [ -z "$tests" ]; then
@@ -248,7 +248,7 @@ else
     else
         echo "run explain test cases: $tests"
     fi
-    $explain_test -port "$port" -status "$status" --log-level=error $tests
+    $explain_test -port "$port" -status "$status" --log-level=debug $tests
 fi
 
 race=`grep 'DATA RACE' $explain_test_log || true`

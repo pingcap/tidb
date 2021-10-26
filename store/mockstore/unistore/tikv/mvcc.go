@@ -293,17 +293,23 @@ func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.Pessimi
 		resp.Value = val
 		resp.CommitTs = dbMeta.CommitTS()
 	}
-	if req.ReturnValues {
+	if req.ReturnValues || req.CheckExistence {
 		for _, item := range items {
 			if item == nil {
-				resp.Values = append(resp.Values, nil)
+				if req.ReturnValues {
+					resp.Values = append(resp.Values, nil)
+				}
+				resp.NotFounds = append(resp.NotFounds, true)
 				continue
 			}
 			val, err1 := item.ValueCopy(nil)
 			if err1 != nil {
 				return nil, err1
 			}
-			resp.Values = append(resp.Values, val)
+			if req.ReturnValues {
+				resp.Values = append(resp.Values, val)
+			}
+			resp.NotFounds = append(resp.NotFounds, false)
 		}
 	}
 	return nil, err

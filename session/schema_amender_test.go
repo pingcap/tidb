@@ -75,7 +75,7 @@ func mutationsEqual(res *transaction.PlainMutations, expected *transaction.Plain
 		}
 		c.Assert(foundIdx, GreaterEqual, 0)
 		c.Assert(res.GetOps()[i], Equals, expected.GetOps()[foundIdx])
-		c.Assert(res.GetPessimisticFlags()[i], Equals, expected.GetPessimisticFlags()[foundIdx])
+		c.Assert(res.IsPessimisticLock(i), Equals, expected.IsPessimisticLock(foundIdx))
 		c.Assert(res.GetKeys()[i], BytesEquals, expected.GetKeys()[foundIdx])
 		c.Assert(res.GetValues()[i], BytesEquals, expected.GetValues()[foundIdx])
 	}
@@ -448,13 +448,13 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			// Validate generated results.
 			c.Assert(len(res.GetKeys()), Equals, len(res.GetOps()))
 			c.Assert(len(res.GetValues()), Equals, len(res.GetOps()))
-			c.Assert(len(res.GetPessimisticFlags()), Equals, len(res.GetOps()))
+			c.Assert(len(res.GetFlags()), Equals, len(res.GetOps()))
 			for i := 0; i < len(expectedMutations.GetKeys()); i++ {
 				logutil.BgLogger().Info("[TEST] expected mutations",
 					zap.Stringer("key", kv.Key(expectedMutations.GetKeys()[i])),
 					zap.Stringer("val", kv.Key(expectedMutations.GetKeys()[i])),
 					zap.Stringer("op_type", expectedMutations.GetOps()[i]),
-					zap.Bool("is_pessimistic", expectedMutations.GetPessimisticFlags()[i]),
+					zap.Bool("is_pessimistic", expectedMutations.IsPessimisticLock(i)),
 				)
 			}
 			for i := 0; i < len(res.GetKeys()); i++ {
@@ -462,7 +462,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 					zap.Stringer("key", kv.Key(res.GetKeys()[i])),
 					zap.Stringer("val", kv.Key(res.GetKeys()[i])),
 					zap.Stringer("op_type", res.GetOps()[i]),
-					zap.Bool("is_pessimistic", res.GetPessimisticFlags()[i]),
+					zap.Bool("is_pessimistic", res.IsPessimisticLock(i)),
 				)
 			}
 			mutationsEqual(res, &expectedMutations, c)
