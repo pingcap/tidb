@@ -17,7 +17,6 @@ package expression
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/tidb/parser/ast"
@@ -30,27 +29,29 @@ import (
 )
 
 func TestCompareString(t *testing.T) {
+	t.Parallel()
+
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
-	assert.Equal(t, 0, types.CompareString("a", "A", "utf8_general_ci"))
-	assert.Equal(t, 0, types.CompareString("À", "A", "utf8_general_ci"))
-	assert.Equal(t, 0, types.CompareString("😜", "😃", "utf8_general_ci"))
-	assert.Equal(t, 0, types.CompareString("a ", "a  ", "utf8_general_ci"))
-	assert.Equal(t, 0, types.CompareString("ß", "s", "utf8_general_ci"))
-	assert.NotEqual(t, 0, types.CompareString("ß", "ss", "utf8_general_ci"))
+	require.Equal(t, 0, types.CompareString("a", "A", "utf8_general_ci"))
+	require.Equal(t, 0, types.CompareString("À", "A", "utf8_general_ci"))
+	require.Equal(t, 0, types.CompareString("😜", "😃", "utf8_general_ci"))
+	require.Equal(t, 0, types.CompareString("a ", "a  ", "utf8_general_ci"))
+	require.Equal(t, 0, types.CompareString("ß", "s", "utf8_general_ci"))
+	require.NotEqual(t, 0, types.CompareString("ß", "ss", "utf8_general_ci"))
 
-	assert.Equal(t, 0, types.CompareString("a", "A", "utf8_unicode_ci"))
-	assert.Equal(t, 0, types.CompareString("À", "A", "utf8_unicode_ci"))
-	assert.Equal(t, 0, types.CompareString("😜", "😃", "utf8_unicode_ci"))
-	assert.Equal(t, 0, types.CompareString("a ", "a  ", "utf8_unicode_ci"))
-	assert.NotEqual(t, 0, types.CompareString("ß", "s", "utf8_unicode_ci"))
-	assert.Equal(t, 0, types.CompareString("ß", "ss", "utf8_unicode_ci"))
+	require.Equal(t, 0, types.CompareString("a", "A", "utf8_unicode_ci"))
+	require.Equal(t, 0, types.CompareString("À", "A", "utf8_unicode_ci"))
+	require.Equal(t, 0, types.CompareString("😜", "😃", "utf8_unicode_ci"))
+	require.Equal(t, 0, types.CompareString("a ", "a  ", "utf8_unicode_ci"))
+	require.NotEqual(t, 0, types.CompareString("ß", "s", "utf8_unicode_ci"))
+	require.Equal(t, 0, types.CompareString("ß", "ss", "utf8_unicode_ci"))
 
-	assert.NotEqual(t, 0, types.CompareString("a", "A", "binary"))
-	assert.NotEqual(t, 0, types.CompareString("À", "A", "binary"))
-	assert.NotEqual(t, 0, types.CompareString("😜", "😃", "binary"))
-	assert.NotEqual(t, 0, types.CompareString("a ", "a  ", "binary"))
+	require.NotEqual(t, 0, types.CompareString("a", "A", "binary"))
+	require.NotEqual(t, 0, types.CompareString("À", "A", "binary"))
+	require.NotEqual(t, 0, types.CompareString("😜", "😃", "binary"))
+	require.NotEqual(t, 0, types.CompareString("a ", "a  ", "binary"))
 
 	ctx := mock.NewContext()
 	ft := types.NewFieldType(mysql.TypeVarString)
@@ -74,8 +75,8 @@ func TestCompareString(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		v, isNull, err := CompareStringWithCollationInfo(ctx, col1, col2, chk.GetRow(0), chk.GetRow(0), "utf8_general_ci")
 		require.Nil(t, err)
-		assert.False(t, isNull)
-		assert.Equal(t, int64(0), v)
+		require.False(t, isNull)
+		require.Equal(t, int64(0), v)
 	}
 }
 
@@ -87,6 +88,8 @@ func newExpression(coercibility Coercibility, repertoire Repertoire, chs, coll s
 }
 
 func TestInferCollation(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		exprs []Expression
 		err   bool
@@ -319,6 +322,8 @@ func newColInt(coercibility Coercibility) *Column {
 }
 
 func TestDeriveCollation(t *testing.T) {
+	t.Parallel()
+
 	ctx := mock.NewContext()
 	tests := []struct {
 		fcs    []string
