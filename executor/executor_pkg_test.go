@@ -158,7 +158,7 @@ func SubTestShowProcessList(t *testing.T) {
 	}
 	err = e.Next(context.Background(), chk)
 	require.NoError(t, err)
-	require.Equal(t, chk.NumRows(), 0)
+	require.Equal(t, 0, chk.NumRows())
 	err = e.Close()
 	require.NoError(t, err)
 }
@@ -306,9 +306,9 @@ func SubTestLoadDataWithDifferentEscapeChar(t *testing.T) {
 }
 
 func assertEqualStrings(t *testing.T, got []field, expect []string) {
-	require.Equal(t, len(got), len(expect))
+	require.Equal(t, len(expect), len(got))
 	for i := 0; i < len(got); i++ {
-		require.Equal(t, string(got[i].str), expect[i])
+		require.Equal(t, expect[i], string(got[i].str))
 	}
 }
 
@@ -356,8 +356,8 @@ func SubTestSortSpillDisk(t *testing.T) {
 	}
 	// Test only 1 partition and all data in memory.
 	require.Len(t, exec.partitionList, 1)
-	require.Equal(t, exec.partitionList[0].AlreadySpilledSafeForTest(), false)
-	require.Equal(t, exec.partitionList[0].NumRow(), 2048)
+	require.Equal(t, false, exec.partitionList[0].AlreadySpilledSafeForTest())
+	require.Equal(t, 2048, exec.partitionList[0].NumRow())
 	err = exec.Close()
 	require.NoError(t, err)
 
@@ -378,14 +378,14 @@ func SubTestSortSpillDisk(t *testing.T) {
 	// Golang goroutine scheduling. So the result has two possibilities.
 	if len(exec.partitionList) == 2 {
 		require.Len(t, exec.partitionList, 2)
-		require.Equal(t, exec.partitionList[0].AlreadySpilledSafeForTest(), true)
-		require.Equal(t, exec.partitionList[1].AlreadySpilledSafeForTest(), true)
-		require.Equal(t, exec.partitionList[0].NumRow(), 1024)
-		require.Equal(t, exec.partitionList[1].NumRow(), 1024)
+		require.Equal(t, true, exec.partitionList[0].AlreadySpilledSafeForTest())
+		require.Equal(t, true, exec.partitionList[1].AlreadySpilledSafeForTest())
+		require.Equal(t, 1024, exec.partitionList[0].NumRow())
+		require.Equal(t, 1024, exec.partitionList[1].NumRow())
 	} else {
 		require.Len(t, exec.partitionList, 1)
-		require.Equal(t, exec.partitionList[0].AlreadySpilledSafeForTest(), true)
-		require.Equal(t, exec.partitionList[0].NumRow(), 2048)
+		require.Equal(t, true, exec.partitionList[0].AlreadySpilledSafeForTest())
+		require.Equal(t, 2048, exec.partitionList[0].NumRow())
 	}
 
 	err = exec.Close()
@@ -404,8 +404,8 @@ func SubTestSortSpillDisk(t *testing.T) {
 	}
 	// Test only 1 partition but spill disk.
 	require.Len(t, exec.partitionList, 1)
-	require.Equal(t, exec.partitionList[0].AlreadySpilledSafeForTest(), true)
-	require.Equal(t, exec.partitionList[0].NumRow(), 2048)
+	require.Equal(t, true, exec.partitionList[0].AlreadySpilledSafeForTest())
+	require.Equal(t, 2048, exec.partitionList[0].NumRow())
 	err = exec.Close()
 	require.NoError(t, err)
 
@@ -459,10 +459,10 @@ func SubTestSlowQueryRuntimeStats(t *testing.T) {
 		parseLog:     int64(time.Millisecond * 100),
 		concurrent:   15,
 	}
-	require.Equal(t, stats.String(), "initialize: 1ms, read_file: 1s, parse_log: {time:100ms, concurrency:15}, total_file: 2, read_file: 2, read_size: 1024 MB")
-	require.Equal(t, stats.String(), stats.Clone().String())
+	require.Equal(t, "initialize: 1ms, read_file: 1s, parse_log: {time:100ms, concurrency:15}, total_file: 2, read_file: 2, read_size: 1024 MB", stats.String())
+	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
-	require.Equal(t, stats.String(), "initialize: 2ms, read_file: 2s, parse_log: {time:200ms, concurrency:15}, total_file: 4, read_file: 4, read_size: 2 GB")
+	require.Equal(t, "initialize: 2ms, read_file: 2s, parse_log: {time:200ms, concurrency:15}, total_file: 4, read_file: 4, read_size: 2 GB", stats.String())
 }
 
 // Test whether the actual buckets in Golang Map is same with the estimated number.
@@ -526,8 +526,8 @@ func SubTestAggPartialResultMapperB(t *testing.T) {
 			aggMap[strconv.Itoa(num)] = tempSlice
 		}
 
-		require.Equal(t, getB(aggMap), tc.expectedB)
-		require.Equal(t, getGrowing(aggMap), tc.expectedGrowing)
+		require.Equal(t, tc.expectedB, getB(aggMap))
+		require.Equal(t, tc.expectedGrowing, getGrowing(aggMap))
 	}
 }
 
