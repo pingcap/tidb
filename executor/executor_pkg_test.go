@@ -94,6 +94,7 @@ func (msm *mockSessionManager) SetServerID(serverID uint64) {
 }
 
 func SubTestShowProcessList(t *testing.T) {
+	t.Parallel()
 	// Compose schema.
 	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 	ftypes := []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
@@ -167,6 +168,7 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 }
 
 func SubTestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
+	t.Parallel()
 	indexRanges := make([]*ranger.Range, 0, 6)
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
@@ -211,6 +213,7 @@ func generateDatumSlice(vals ...int64) []types.Datum {
 }
 
 func SubTestGetFieldsFromLine(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input    string
 		expected []string
@@ -269,6 +272,7 @@ func assertEqualStrings(t *testing.T, got []field, expect []string) {
 }
 
 func SubTestSlowQueryRuntimeStats(t *testing.T) {
+	t.Parallel()
 	stats := &slowQueryRuntimeStats{
 		totalFileNum: 2,
 		readFileNum:  2,
@@ -379,6 +383,7 @@ func getGrowing(m aggPartialResultMapper) bool {
 }
 
 func SubTestFilterTemporaryTableKeys(t *testing.T) {
+	t.Parallel()
 	vars := variable.NewSessionVars()
 	const tableID int64 = 3
 	vars.TxnCtx = &variable.TransactionContext{

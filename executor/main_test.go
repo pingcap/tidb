@@ -48,7 +48,6 @@ func TestMain(m *testing.M) {
 }
 
 func TestExecutorPkg(t *testing.T) {
-	t.Parallel()
 
 	// executor_pkg_test.go
 	t.Run("ShowProcessList", SubTestShowProcessList)
