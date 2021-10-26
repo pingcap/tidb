@@ -8653,9 +8653,8 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	tk.MustExec("create table t(a int, b int, unique index idx(a));")
 	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = "mock-agent"
-	})
+	variable.TopSQLVariable.InstanceEnable.Store(true)
+	defer variable.TopSQLVariable.InstanceEnable.Store(false)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
