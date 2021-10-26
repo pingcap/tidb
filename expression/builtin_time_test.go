@@ -23,10 +23,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -2634,6 +2634,10 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestConvertTz(c *C) {
+	loc1, _ := time.LoadLocation("Europe/Tallinn")
+	loc2, _ := time.LoadLocation("Local")
+	t1, _ := time.ParseInLocation("2006-01-02 15:04:00", "2021-10-22 10:00:00", loc1)
+	t2, _ := time.ParseInLocation("2006-01-02 15:04:00", "2021-10-22 10:00:00", loc2)
 	tests := []struct {
 		t       interface{}
 		fromTz  interface{}
@@ -2647,11 +2651,11 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 		{"2004-01-01 12:00:00", "GMT", "MET", true, "2004-01-01 13:00:00"},
 		{"2004-01-01 12:00:00", "-01:00", "-12:00", true, "2004-01-01 01:00:00"},
 		{"2004-01-01 12:00:00", "-00:00", "+13:00", true, "2004-01-02 01:00:00"},
-		{"2004-01-01 12:00:00", "-00:00", "-13:00", true, ""},
+		{"2004-01-01 12:00:00", "-00:00", "-13:00", true, "2003-12-31 23:00:00"},
 		{"2004-01-01 12:00:00", "-00:00", "-12:88", true, ""},
 		{"2004-01-01 12:00:00", "+10:82", "GMT", true, ""},
-		{"2004-01-01 12:00:00", "+00:00", "GMT", true, ""},
-		{"2004-01-01 12:00:00", "GMT", "+00:00", true, ""},
+		{"2004-01-01 12:00:00", "+00:00", "GMT", true, "2004-01-01 12:00:00"},
+		{"2004-01-01 12:00:00", "GMT", "+00:00", true, "2004-01-01 12:00:00"},
 		{20040101, "+00:00", "+10:32", true, "2004-01-01 10:32:00"},
 		{3.14159, "+00:00", "+10:32", true, ""},
 		{"2004-01-01 12:00:00", "", "GMT", true, ""},
@@ -2663,6 +2667,25 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 		{nil, "GMT", "+00:00", true, ""},
 		{"2004-01-01 12:00:00", nil, "+00:00", true, ""},
 		{"2004-01-01 12:00:00", "GMT", nil, true, ""},
+		{"2004-01-01 12:00:00", "GMT", "+10:00", true, "2004-01-01 22:00:00"},
+		{"2004-01-01 12:00:00", "+00:00", "MET", true, "2004-01-01 13:00:00"},
+		{"2004-01-01 12:00:00", "+00:00", "+14:00", true, "2004-01-02 02:00:00"},
+		{"2021-10-31 02:59:59", "+02:00", "Europe/Amsterdam", true, "2021-10-31 02:59:59"},
+		{"2021-10-31 03:00:00", "+01:00", "Europe/Amsterdam", true, "2021-10-31 03:00:00"},
+		{"2021-10-31 02:00:00", "+02:00", "Europe/Amsterdam", true, "2021-10-31 02:00:00"},
+		{"2021-10-31 02:59:59", "+02:00", "Europe/Amsterdam", true, "2021-10-31 02:59:59"},
+		{"2021-10-31 03:00:00", "+02:00", "Europe/Amsterdam", true, "2021-10-31 02:00:00"},
+		{"2021-10-31 02:30:00", "+01:00", "Europe/Amsterdam", true, "2021-10-31 02:30:00"},
+		{"2021-10-31 03:00:00", "+01:00", "Europe/Amsterdam", true, "2021-10-31 03:00:00"},
+		// Europe/Amsterdam during DST transition +02:00 -> +01:00, Summer to normal time,
+		// will be interpreted as +01:00, normal time.
+		{"2021-10-31 02:00:00", "Europe/Amsterdam", "+02:00", true, "2021-10-31 03:00:00"},
+		{"2021-10-31 02:59:59", "Europe/Amsterdam", "+02:00", true, "2021-10-31 03:59:59"},
+		{"2021-10-31 02:00:00", "Europe/Amsterdam", "+01:00", true, "2021-10-31 02:00:00"},
+		{"2021-10-31 03:00:00", "Europe/Amsterdam", "+01:00", true, "2021-10-31 03:00:00"},
+		{"2021-03-28 02:30:00", "Europe/Amsterdam", "UTC", true, ""},
+		{"2021-10-22 10:00:00", "Europe/Tallinn", "SYSTEM", true, t1.In(loc2).Format("2006-01-02 15:04:00")},
+		{"2021-10-22 10:00:00", "SYSTEM", "Europe/Tallinn", true, t2.In(loc1).Format("2006-01-02 15:04:00")},
 	}
 	fc := funcs[ast.ConvertTz]
 	for _, test := range tests {

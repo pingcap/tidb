@@ -25,4 +25,6 @@ header:
     - '**/go.sum'
     - 'LICENSE'
     - '.github/'
+    - 'parser/'
+    - 'dumpling/'
   comment: on-failure

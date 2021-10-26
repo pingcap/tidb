@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -552,7 +552,7 @@ func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, is
 }
 func (m *MockExpr) EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error) {
 	if x, ok := m.i.(float64); ok {
-		return float64(x), false, m.err
+		return x, false, m.err
 	}
 	return 0, m.i == nil, m.err
 }
@@ -607,6 +607,8 @@ func (m *MockExpr) SupportReverseEval() bool                                    
 func (m *MockExpr) HasCoercibility() bool                                         { return false }
 func (m *MockExpr) Coercibility() Coercibility                                    { return 0 }
 func (m *MockExpr) SetCoercibility(Coercibility)                                  {}
+func (m *MockExpr) Repertoire() Repertoire                                        { return UNICODE }
+func (m *MockExpr) SetRepertoire(Repertoire)                                      {}
 
 func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
 	return "", ""

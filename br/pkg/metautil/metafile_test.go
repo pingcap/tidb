@@ -10,6 +10,7 @@ import (
 
 	"github.com/golang/mock/gomock"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	mockstorage "github.com/pingcap/tidb/br/pkg/mock/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -28,13 +29,17 @@ func TestWalkMetaFileEmpty(t *testing.T) {
 
 	files := []*backuppb.MetaFile{}
 	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
-	err := walkLeafMetaFile(context.Background(), nil, nil, collect)
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
+
+	err := walkLeafMetaFile(context.Background(), nil, nil, &cipher, collect)
 
 	require.NoError(t, err)
 	require.Len(t, files, 0)
 
 	empty := &backuppb.MetaFile{}
-	err = walkLeafMetaFile(context.Background(), nil, empty, collect)
+	err = walkLeafMetaFile(context.Background(), nil, empty, &cipher, collect)
 
 	require.NoError(t, err)
 	require.Len(t, files, 1)
@@ -48,8 +53,11 @@ func TestWalkMetaFileLeaf(t *testing.T) {
 		{Db: []byte("db"), Table: []byte("table")},
 	}}
 	files := []*backuppb.MetaFile{}
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
 	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
-	err := walkLeafMetaFile(context.Background(), nil, leaf, collect)
+	err := walkLeafMetaFile(context.Background(), nil, leaf, &cipher, collect)
 
 	require.NoError(t, err)
 	require.Len(t, files, 1)
@@ -73,8 +81,11 @@ func TestWalkMetaFileInvalid(t *testing.T) {
 		{Name: "leaf", Sha256: []byte{}},
 	}}
 
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
 	collect := func(m *backuppb.MetaFile) { panic("unreachable") }
-	err := walkLeafMetaFile(ctx, mockStorage, root, collect)
+	err := walkLeafMetaFile(ctx, mockStorage, root, &cipher, collect)
 
 	require.Regexp(t, regexp.MustCompile(".*ErrInvalidMetaFile.*"), err)
 }
@@ -130,12 +141,87 @@ func TestWalkMetaFile(t *testing.T) {
 	}}
 
 	files := []*backuppb.MetaFile{}
+	cipher := backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+	}
 	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
-	err := walkLeafMetaFile(ctx, mockStorage, root, collect)
+	err := walkLeafMetaFile(ctx, mockStorage, root, &cipher, collect)
 	require.NoError(t, err)
 
 	require.Len(t, files, len(expect))
 	for i := range expect {
 		require.Equal(t, expect[i], files[i])
+	}
+}
+
+type encryptTest struct {
+	method   encryptionpb.EncryptionMethod
+	rightKey string
+	wrongKey string
+}
+
+func TestEncryptAndDecrypt(t *testing.T) {
+	t.Parallel()
+
+	originalData := []byte("pingcap")
+	testCases := []encryptTest{
+		{
+			method: encryptionpb.EncryptionMethod_UNKNOWN,
+		},
+		{
+			method: encryptionpb.EncryptionMethod_PLAINTEXT,
+		},
+		{
+			method:   encryptionpb.EncryptionMethod_AES128_CTR,
+			rightKey: "0123456789012345",
+			wrongKey: "012345678901234",
+		},
+		{
+			method:   encryptionpb.EncryptionMethod_AES192_CTR,
+			rightKey: "012345678901234567890123",
+			wrongKey: "0123456789012345678901234",
+		},
+		{
+			method:   encryptionpb.EncryptionMethod_AES256_CTR,
+			rightKey: "01234567890123456789012345678901",
+			wrongKey: "01234567890123456789012345678902",
+		},
+	}
+
+	for _, v := range testCases {
+		cipher := backuppb.CipherInfo{
+			CipherType: v.method,
+			CipherKey:  []byte(v.rightKey),
+		}
+		encryptData, iv, err := Encrypt(originalData, &cipher)
+		if v.method == encryptionpb.EncryptionMethod_UNKNOWN {
+			require.Error(t, err)
+		} else if v.method == encryptionpb.EncryptionMethod_PLAINTEXT {
+			require.Nil(t, err)
+			require.Equal(t, originalData, encryptData)
+
+			decryptData, err := Decrypt(encryptData, &cipher, iv)
+			require.Nil(t, err)
+			require.Equal(t, decryptData, originalData)
+		} else {
+			require.Nil(t, err)
+			require.NotEqual(t, originalData, encryptData)
+
+			decryptData, err := Decrypt(encryptData, &cipher, iv)
+			require.Nil(t, err)
+			require.Equal(t, decryptData, originalData)
+
+			wrongCipher := backuppb.CipherInfo{
+				CipherType: v.method,
+				CipherKey:  []byte(v.wrongKey),
+			}
+			decryptData, err = Decrypt(encryptData, &wrongCipher, iv)
+			if len(v.rightKey) != len(v.wrongKey) {
+				require.Error(t, err)
+			} else {
+				require.Nil(t, err)
+				require.NotEqual(t, decryptData, originalData)
+			}
+		}
 	}
 }

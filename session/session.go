@@ -38,13 +38,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
@@ -926,7 +926,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i))
 			}
+			_, digest := s.sessionVars.StmtCtx.SQLDigest()
+			s.txn.onStmtStart(digest.String())
 			_, err = st.Exec(ctx)
+			s.txn.onStmtEnd()
 			if err != nil {
 				s.StmtRollback()
 				break
@@ -1161,7 +1164,7 @@ func (s *session) GetTiDBTableValue(name string) (string, error) {
 
 var _ sqlexec.SQLParser = &session{}
 
-func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
+func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1172,7 +1175,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	defer parserPool.Put(p)
 	p.SetSQLMode(s.sessionVars.SQLMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
-	tmp, warn, err := p.Parse(sql, charset, collation)
+	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
 	if len(tmp) == 1 {
 		s.cache[0] = tmp[0]
@@ -1323,9 +1326,8 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
-	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 	parseStartTime := time.Now()
-	stmts, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	stmts, warns, err := s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -1376,11 +1378,10 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		// Charsets from clients may give chance injections.
 		// Refer to https://stackoverflow.com/questions/5741187/sql-injection-that-gets-around-mysql-real-escape-string/12118602.
 		parseStartTime = time.Now()
-		stmts, warns, err = s.ParseSQL(ctx, sql, mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation)
+		stmts, warns, err = s.ParseSQL(ctx, sql)
 	} else {
-		charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 		parseStartTime = time.Now()
-		stmts, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
+		stmts, warns, err = s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	}
 	if len(stmts) != 1 {
 		err = errors.New("run multiple statements internally is not supported")
@@ -1625,7 +1626,7 @@ var querySpecialKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
 	executor.IndexAdviseVarKey,
-	executor.PlanRecreatorVarKey,
+	executor.PlanReplayerVarKey,
 }
 
 func (s *session) hasQuerySpecial() bool {
@@ -2438,6 +2439,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+	se.GetSessionVars().InRestrictedSQL = true
 
 	// get system tz from mysql.tidb
 	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
@@ -2549,6 +2551,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	dom.PlanReplayerLoop()
+
 	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {

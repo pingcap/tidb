@@ -29,16 +29,16 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -132,7 +132,7 @@ const (
 		Grantor		CHAR(77),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
-		Column_priv	SET('Select','Insert','Update'),
+		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
@@ -142,7 +142,7 @@ const (
 		Table_name	CHAR(64),
 		Column_name	CHAR(64),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		Column_priv	SET('Select','Insert','Update'),
+		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
@@ -197,7 +197,7 @@ const (
 		stats_ver 			BIGINT(64) NOT NULL DEFAULT 0,
 		flag 				BIGINT(64) NOT NULL DEFAULT 0,
 		correlation 		DOUBLE NOT NULL DEFAULT 0,
-		last_analyze_pos 	BLOB DEFAULT NULL,
+		last_analyze_pos 	LONGBLOB DEFAULT NULL,
 		UNIQUE INDEX tbl(table_id, is_index, hist_id)
 	);`
 
@@ -209,8 +209,8 @@ const (
 		bucket_id 	BIGINT(64) NOT NULL,
 		count 		BIGINT(64) NOT NULL,
 		repeats 	BIGINT(64) NOT NULL,
-		upper_bound BLOB NOT NULL,
-		lower_bound BLOB ,
+		upper_bound LONGBLOB NOT NULL,
+		lower_bound LONGBLOB ,
 		ndv         BIGINT NOT NULL DEFAULT 0,
 		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
 	);`
@@ -347,6 +347,14 @@ const (
 		filter_value varchar(32) NOT NULL,
 		key idx(filter_type),
 		primary key(id)
+	);`
+	// CreateColumnStatsUsageTable stores the column stats usage information.
+	CreateColumnStatsUsageTable = `CREATE TABLE IF NOT EXISTS mysql.column_stats_usage (
+		table_id BIGINT(64) NOT NULL,
+		column_id BIGINT(64) NOT NULL,
+		last_used_at TIMESTAMP,
+		last_analyzed_at TIMESTAMP,
+		PRIMARY KEY (table_id, column_id) CLUSTERED
 	);`
 )
 
@@ -513,11 +521,17 @@ const (
 	version74 = 74
 	// version75 update mysql.*.host from char(60) to char(255)
 	version75 = 75
+	// version76 update mysql.columns_priv from SET('Select','Insert','Update') to SET('Select','Insert','Update','References')
+	version76 = 76
+	// version77 adds mysql.column_stats_usage table
+	version77 = 77
+	// version78 updates mysql.stats_buckets.lower_bound, mysql.stats_buckets.upper_bound and mysql.stats_histograms.last_analyze_pos from BLOB to LONGBLOB.
+	version78 = 78
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version75
+var currentBootstrapVersion int64 = version78
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -596,6 +610,9 @@ var (
 		upgradeToVer73,
 		upgradeToVer74,
 		upgradeToVer75,
+		upgradeToVer76,
+		upgradeToVer77,
+		upgradeToVer78,
 	}
 )
 
@@ -1571,6 +1588,29 @@ func upgradeToVer75(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Host CHAR(255)")
 }
 
+func upgradeToVer76(s Session, ver int64) {
+	if ver >= version76 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Column_priv SET('Select','Insert','Update','References')")
+}
+
+func upgradeToVer77(s Session, ver int64) {
+	if ver >= version77 {
+		return
+	}
+	doReentrantDDL(s, CreateColumnStatsUsageTable)
+}
+
+func upgradeToVer78(s Session, ver int64) {
+	if ver >= version78 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY upper_bound LONGBLOB NOT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY lower_bound LONGBLOB")
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY last_analyze_pos LONGBLOB DEFAULT NULL")
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1651,6 +1691,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGlobalGrantsTable)
 	// Create capture_plan_baselines_blacklist
 	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
+	// Create column_stats_usage table
+	mustExecute(s, CreateColumnStatsUsageTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

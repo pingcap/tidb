@@ -20,16 +20,15 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -386,8 +385,8 @@ func locateStringWithCollation(str, substr, coll string) int64 {
 }
 
 // timeZone2Duration converts timezone whose format should satisfy the regular condition
-// `(^(+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^+13:00$)` to time.Duration.
-func timeZone2Duration(tz string) time.Duration {
+// `(^(+|-)(0?[0-9]|1[0-2]):[0-5]?\d$)|(^+13:00$)` to int for use by time.FixedZone().
+func timeZone2int(tz string) int {
 	sign := 1
 	if strings.HasPrefix(tz, "-") {
 		sign = -1
@@ -398,7 +397,7 @@ func timeZone2Duration(tz string) time.Duration {
 	terror.Log(err)
 	m, err := strconv.Atoi(tz[i+1:])
 	terror.Log(err)
-	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
+	return sign * ((h * 3600) + (m * 60))
 }
 
 var logicalOps = map[string]struct{}{
@@ -827,10 +826,6 @@ func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 	exists := make(map[string]struct{}, len(exprs))
 	sc := ctx.GetSessionVars().StmtCtx
 	for _, expr := range exprs {
-		if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-			res = append(res, expr)
-			continue
-		}
 		key := string(expr.HashCode(sc))
 		if _, ok := exists[key]; !ok || IsMutableEffectsExpr(expr) {
 			res = append(res, expr)
@@ -993,7 +988,7 @@ func GetFormatBytes(bytes float64) string {
 	if divisor == 1 {
 		return strconv.FormatFloat(bytes, 'f', 0, 64) + " " + unit
 	}
-	value := float64(bytes) / divisor
+	value := bytes / divisor
 	if math.Abs(value) >= 100000.0 {
 		return strconv.FormatFloat(value, 'e', 2, 64) + " " + unit
 	}
@@ -1032,7 +1027,7 @@ func GetFormatNanoTime(time float64) string {
 	if divisor == 1 {
 		return strconv.FormatFloat(time, 'f', 0, 64) + " " + unit
 	}
-	value := float64(time) / divisor
+	value := time / divisor
 	if math.Abs(value) >= 100000.0 {
 		return strconv.FormatFloat(value, 'e', 2, 64) + " " + unit
 	}

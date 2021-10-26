@@ -26,9 +26,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -61,6 +61,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_extended")
 	tk.MustExec("delete from mysql.stats_fm_sketch")
 	tk.MustExec("delete from mysql.schema_index_usage")
+	tk.MustExec("delete from mysql.column_stats_usage")
 	do.StatsHandle().Clear()
 }
 

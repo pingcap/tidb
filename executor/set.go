@@ -19,11 +19,11 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -107,6 +107,9 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
+		if variable.IsRemovedSysVar(name) {
+			return nil // removed vars permit parse-but-ignore
+		}
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	if v.IsGlobal {
@@ -182,7 +185,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		}
 	}
 
-	err = e.loadSnapshotInfoSchemaIfNeeded(newSnapshotTS)
+	err = e.loadSnapshotInfoSchemaIfNeeded(name, newSnapshotTS)
 	if err != nil {
 		fallbackOldSnapshotTS()
 		return err
@@ -255,7 +258,10 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 	return nativeVal.ToString()
 }
 
-func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(snapshotTS uint64) error {
+func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uint64) error {
+	if name != variable.TiDBSnapshot && name != variable.TiDBTxnReadTS {
+		return nil
+	}
 	vars := e.ctx.GetSessionVars()
 	if snapshotTS == 0 {
 		vars.SnapshotInfoschema = nil
