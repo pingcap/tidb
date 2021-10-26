@@ -1802,6 +1802,7 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 	} else {
 		return tblInfo.Columns, nil
 	}
+	missingCols := make(map[int64]struct{}, len(tblInfo.Columns) - len(columnIDs))
 	if len(tblInfo.Indices) > 0 {
 		// add indexed columns
 		// Some indexed columns are generated columns so we also need to add the columns that make up those generated columns.
@@ -1813,7 +1814,10 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 		for _, idx := range tblInfo.Indices {
 			for _, idxCol := range idx.Columns {
 				colInfo := tblInfo.Columns[idxCol.Offset]
-				columnIDs[colInfo.ID] = struct{}{}
+				if _, ok := columnIDs[colInfo.ID]; !ok {
+					columnIDs[colInfo.ID] = struct{}{}
+					missingCols[colInfo.ID] = struct{}{}
+				}
 				if expr := columns[idxCol.Offset].VirtualExpr; expr != nil {
 					virtualExprs = append(virtualExprs, expr)
 				}
@@ -1824,7 +1828,10 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 			relatedCols = expression.ExtractColumnsFromExpressions(relatedCols, virtualExprs, nil)
 			virtualExprs = virtualExprs[:0]
 			for _, col := range relatedCols {
-				columnIDs[col.ID] = struct{}{}
+				if _, ok := columnIDs[col.ID]; !ok {
+					columnIDs[col.ID] = struct{}{}
+					missingCols[col.ID] = struct{}{}
+				}
 				if col.VirtualExpr != nil {
 					virtualExprs = append(virtualExprs, col.VirtualExpr)
 				}
@@ -1834,7 +1841,10 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 	}
 	if tblInfo.PKIsHandle {
 		pkCol := tblInfo.GetPkColInfo()
-		columnIDs[pkCol.ID] = struct{}{}
+		if _, ok := columnIDs[pkCol.ID]; !ok {
+			columnIDs[pkCol.ID] = struct{}{}
+			missingCols[pkCol.ID] = struct{}{}
+		}
 	}
 	if b.ctx.GetSessionVars().EnableExtendedStats {
 		// add the columns related to extended stats
@@ -1846,8 +1856,20 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 			return nil, err
 		}
 		for _, colID := range extendedStatsColIDs {
-			columnIDs[colID] = struct{}{}
+			if _, ok := columnIDs[colID]; !ok {
+				columnIDs[colID] = struct{}{}
+				missingCols[colID] = struct{}{}
+			}
 		}
+	}
+	if len(missingCols) > 0 {
+		missingNames := make([]string, 0, len(missingCols))
+		for _, col := range tblInfo.Columns {
+			if _, ok := missingCols[col.ID]; ok {
+				missingNames = append(missingNames, col.Name.O)
+			}
+		}
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Columns %s are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.", strings.Join(missingNames, ",")))
 	}
 	columnsInfo := make([]*model.ColumnInfo, 0, len(columnIDs))
 	for _, col := range tblInfo.Columns {
