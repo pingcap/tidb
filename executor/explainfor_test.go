@@ -956,3 +956,80 @@ func (s *testPrepareSerialSuite) TestIndexMerge(c *C) {
 	tk.MustQuery("execute stmt using @a, @c").Check(testkit.Rows("1"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
+
+func (s *testPrepareSerialSuite) TestSetOperations(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("CREATE TABLE `t1` (a int);")
+	tk.MustExec("CREATE TABLE `t2` (a int);")
+	tk.MustExec("insert into t1 values(1), (2);")
+	tk.MustExec("insert into t2 values(1), (3);")
+	// test for UNION
+	tk.MustExec("prepare stmt from 'select * from t1 where a > ? union select * from t2 where a > ?;';")
+	tk.MustExec("set @a=0, @b=1;")
+	tk.MustQuery("execute stmt using @a, @b;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("execute stmt using @b, @a;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b, @b;").Sort().Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a, @a;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt from 'select * from t1 where a > ? union all select * from t2 where a > ?;';")
+	tk.MustExec("set @a=0, @b=1;")
+	tk.MustQuery("execute stmt using @a, @b;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("execute stmt using @b, @a;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b, @b;").Sort().Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a, @a;").Sort().Check(testkit.Rows("1", "1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	// test for EXCEPT
+	tk.MustExec("prepare stmt from 'select * from t1 where a > ? except select * from t2 where a > ?;';")
+	tk.MustExec("set @a=0, @b=1;")
+	tk.MustQuery("execute stmt using @a, @a;").Sort().Check(testkit.Rows("2"))
+	tk.MustQuery("execute stmt using @b, @a;").Sort().Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b, @b;").Sort().Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a, @b;").Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	// test for INTERSECT
+	tk.MustExec("prepare stmt from 'select * from t1 where a > ? union select * from t2 where a > ?;';")
+	tk.MustExec("set @a=0, @b=1;")
+	tk.MustQuery("execute stmt using @a, @a;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("execute stmt using @b, @a;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b, @b;").Sort().Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a, @b;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	// test for UNION + INTERSECT
+	tk.MustExec("prepare stmt from 'select * from t1 union all select * from t1 intersect select * from t2;'")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "1", "2"))
+
+	tk.MustExec("prepare stmt from '(select * from t1 union all select * from t1) intersect select * from t2;'")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1"))
+
+	// test for order by and limit
+	tk.MustExec("prepare stmt from '(select * from t1 union all select * from t1 intersect select * from t2) order by a limit 2;'")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "1"))
+}
