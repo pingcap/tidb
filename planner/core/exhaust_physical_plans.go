@@ -707,12 +707,16 @@ func (p *LogicalJoin) getIndexJoinBuildHelper(ds *DataSource, innerJoinKeys []*e
 	}
 	for _, path := range ds.possibleAccessPaths {
 		if checkPathValid(path) {
-			emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys, outerJoinKeys)
-			if emptyRange {
-				return nil, nil
-			}
+			ok, emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys, outerJoinKeys)
 			if err != nil {
 				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
+				continue
+			}
+			if !ok {
+				continue
+			}
+			if emptyRange {
+				return nil, nil
 			}
 		}
 	}
@@ -1337,9 +1341,9 @@ func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expres
 	return notKeyEqAndIn, nil
 }
 
-func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath, innerPlan *DataSource, innerJoinKeys []*expression.Column, outerJoinKeys []*expression.Column) (emptyRange bool, err error) {
+func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath, innerPlan *DataSource, innerJoinKeys []*expression.Column, outerJoinKeys []*expression.Column) (ok, emptyRange bool, err error) {
 	if len(path.IdxCols) == 0 {
-		return false, nil
+		return true, false, nil
 	}
 	accesses := make([]expression.Expression, 0, len(path.IdxCols))
 	ijHelper.resetContextForIndex(innerJoinKeys, path.IdxCols, path.IdxColLens, outerJoinKeys)
@@ -1349,7 +1353,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
 	// If no join key is matched while join keys actually are not empty. We don't choose index join for now.
 	if matchedKeyCnt <= 0 && len(innerJoinKeys) > 0 {
-		return false, nil
+		return true, false, nil
 	}
 	accesses = append(accesses, notKeyEqAndIn...)
 	remained = append(remained, remainedEqAndIn...)
@@ -1357,7 +1361,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
 	// A more strict check is applied later.
 	if lastColPos <= 0 {
-		return false, nil
+		return true, false, nil
 	}
 	// If all the index columns are covered by eq/in conditions, we don't need to consider other conditions anymore.
 	if lastColPos == len(path.IdxCols) {
@@ -1365,18 +1369,21 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1. And t2 has index(a, b).
 		//      If we don't have the following check, TiDB will build index join for this case.
 		if matchedKeyCnt <= 0 {
-			return false, nil
+			return true, false, nil
 		}
 		remained = append(remained, rangeFilterCandidates...)
-		ranges, emptyRange, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false)
+		ok, ranges, emptyRange, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false)
 		if err != nil {
-			return false, err
+			return false, false, err
+		}
+		if !ok {
+			return ok, false, nil
 		}
 		if emptyRange {
-			return true, nil
+			return true, true, nil
 		}
 		ijHelper.updateBestChoice(ranges, path, accesses, remained, nil, lastColPos)
-		return false, nil
+		return true, false, nil
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
 	lastColManager := &ColWithCmpFuncManager{
@@ -1391,7 +1398,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1 and t2.c > 10 and t2.c < 20. And t2 has index(a, b, c).
 		//      If we don't have the following check, TiDB will build index join for this case.
 		if matchedKeyCnt <= 0 {
-			return false, nil
+			return true, false, nil
 		}
 		colAccesses, colRemained := ranger.DetachCondsForColumn(ijHelper.join.ctx, rangeFilterCandidates, lastPossibleCol)
 		var ranges, nextColRange []*ranger.Range
@@ -1399,15 +1406,18 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		if len(colAccesses) > 0 {
 			nextColRange, err = ranger.BuildColumnRange(colAccesses, ijHelper.join.ctx.GetSessionVars().StmtCtx, lastPossibleCol.RetType, path.IdxColLens[lastColPos])
 			if err != nil {
-				return false, err
+				return true, false, err
 			}
 		}
-		ranges, emptyRange, err = ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nextColRange, false)
+		ok, ranges, emptyRange, err = ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nextColRange, false)
 		if err != nil {
-			return false, err
+			return true, false, err
+		}
+		if !ok {
+			return ok, false, nil
 		}
 		if emptyRange {
-			return true, nil
+			return true, true, nil
 		}
 		remained = append(remained, colRemained...)
 		if path.IdxColLens[lastColPos] != types.UnspecifiedLength {
@@ -1418,19 +1428,22 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 			lastColPos = lastColPos + 1
 		}
 		ijHelper.updateBestChoice(ranges, path, accesses, remained, nil, lastColPos)
-		return false, nil
+		return true, false, nil
 	}
 	accesses = append(accesses, lastColAccess...)
 	remained = append(remained, rangeFilterCandidates...)
-	ranges, emptyRange, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, true)
+	ok, ranges, emptyRange, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, true)
 	if err != nil {
-		return false, err
+		return true, false, err
+	}
+	if !ok {
+		return ok, false, nil
 	}
 	if emptyRange {
-		return true, nil
+		return true, true, nil
 	}
 	ijHelper.updateBestChoice(ranges, path, accesses, remained, lastColManager, lastColPos+1)
-	return false, nil
+	return true, false, nil
 }
 
 func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, path *util.AccessPath, accesses,
@@ -1463,7 +1476,7 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, p
 	ijHelper.lastColManager = lastColManager
 }
 
-func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ranges []*ranger.Range, emptyRange bool, err error) {
+func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ok bool, ranges []*ranger.Range, emptyRange bool, err error) {
 	pointLength := matchedKeyCnt + len(eqAndInFuncs)
 	//nolint:gosimple // false positive unnecessary nil check
 	if nextColRange != nil {
@@ -1499,14 +1512,14 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 		}
 		exprs := []expression.Expression{eqAndInFuncs[j]}
 		if !sc.MaybeOverOptimized4PlanCache && expression.MaybeOverOptimized4PlanCache(ijHelper.join.ctx, exprs) {
-			sc.MaybeOverOptimized4PlanCache = true
+			return false, nil, false, nil
 		}
 		oneColumnRan, err := ranger.BuildColumnRange(exprs, sc, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j])
 		if err != nil {
-			return nil, false, err
+			return true, nil, false, err
 		}
 		if len(oneColumnRan) == 0 {
-			return nil, true, nil
+			return true, nil, true, nil
 		}
 		for _, ran := range ranges {
 			ran.LowVal[i] = oneColumnRan[0].LowVal[0]
@@ -1525,7 +1538,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 		}
 		j++
 	}
-	return ranges, false, nil
+	return true, ranges, false, nil
 }
 
 func filterIndexJoinBySessionVars(sc sessionctx.Context, indexJoins []PhysicalPlan) []PhysicalPlan {
