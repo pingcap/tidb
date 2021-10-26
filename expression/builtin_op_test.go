@@ -46,7 +46,7 @@ func (s *testEvaluatorSuite) TestUnary(c *C) {
 	}()
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.UnaryMinus, s.primitiveValsToConstants([]interface{}{t.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.UnaryMinus, primitiveValsToConstants(s.ctx, []interface{}{t.args})...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
 		if !t.getErr {
@@ -104,7 +104,7 @@ func (s *testEvaluatorSuite) TestLogicAnd(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.LogicAnd, s.primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.LogicAnd, primitiveValsToConstants(s.ctx, t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -142,7 +142,7 @@ func (s *testEvaluatorSuite) TestLeftShift(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.LeftShift, s.primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.LeftShift, primitiveValsToConstants(s.ctx, t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -173,7 +173,7 @@ func (s *testEvaluatorSuite) TestRightShift(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.RightShift, s.primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.RightShift, primitiveValsToConstants(s.ctx, t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -211,7 +211,7 @@ func (s *testEvaluatorSuite) TestBitXor(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Xor, s.primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.Xor, primitiveValsToConstants(s.ctx, t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -256,7 +256,7 @@ func (s *testEvaluatorSuite) TestBitOr(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Or, s.primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.Or, primitiveValsToConstants(s.ctx, t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -322,7 +322,7 @@ func (s *testEvaluatorSuite) TestLogicOr(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.LogicOr, s.primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.LogicOr, primitiveValsToConstants(s.ctx, t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -360,7 +360,7 @@ func (s *testEvaluatorSuite) TestBitAnd(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.And, s.primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.And, primitiveValsToConstants(s.ctx, t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -405,7 +405,7 @@ func (s *testEvaluatorSuite) TestBitNeg(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.BitNeg, s.primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.BitNeg, primitiveValsToConstants(s.ctx, t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -456,7 +456,7 @@ func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.UnaryNot, s.primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.UnaryNot, primitiveValsToConstants(s.ctx, t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -565,7 +565,7 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 	}
 
 	for _, tc := range testCases {
-		isTrueSig, err := funcs[ast.IsTruthWithoutNull].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
+		isTrueSig, err := funcs[ast.IsTruthWithoutNull].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(isTrueSig, NotNil)
 
@@ -575,7 +575,7 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 	}
 
 	for _, tc := range testCases {
-		isFalseSig, err := funcs[ast.IsFalsity].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
+		isFalseSig, err := funcs[ast.IsFalsity].getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(isFalseSig, NotNil)
 
@@ -625,7 +625,7 @@ func (s *testEvaluatorSuite) TestLogicXor(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.LogicXor, s.primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.LogicXor, primitiveValsToConstants(s.ctx, t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {

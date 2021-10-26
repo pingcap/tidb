@@ -46,7 +46,7 @@ func (s *testEvaluatorSuite) TestAbs(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.Abs]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
@@ -92,7 +92,7 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 
 	runCasesOn := func(funcName string, cases []testCase, exps []Expression) {
 		for _, test := range cases {
-			f, err := newFunctionForTest(s.ctx, funcName, s.primitiveValsToConstants([]interface{}{test.arg})...)
+			f, err := newFunctionForTest(s.ctx, funcName, primitiveValsToConstants(s.ctx, []interface{}{test.arg})...)
 			c.Assert(err, IsNil)
 
 			result, err := f.Eval(chunk.Row{})
@@ -142,7 +142,7 @@ func (s *testEvaluatorSuite) TestExp(c *C) {
 
 	for _, test := range tests {
 		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
-		f, err := newFunctionForTest(s.ctx, ast.Exp, s.primitiveValsToConstants([]interface{}{test.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Exp, primitiveValsToConstants(s.ctx, []interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
@@ -206,7 +206,7 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 		{genDuration(0, 12, 34), float64(1234), false, false},
 		{genTime(2017, 7, 19), float64(20170719000000), false, false},
 	} {
-		f, err := newFunctionForTest(s.ctx, ast.Floor, s.primitiveValsToConstants([]interface{}{test.arg})...)
+		f, err := newFunctionForTest(s.ctx, ast.Floor, primitiveValsToConstants(s.ctx, []interface{}{test.arg})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
@@ -260,7 +260,7 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 
 	for _, test := range tests {
 		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
-		f, err := newFunctionForTest(s.ctx, ast.Log, s.primitiveValsToConstants(test.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.Log, primitiveValsToConstants(s.ctx, test.args)...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
@@ -297,7 +297,7 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 
 	for _, test := range tests {
 		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
-		f, err := newFunctionForTest(s.ctx, ast.Log2, s.primitiveValsToConstants([]interface{}{test.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Log2, primitiveValsToConstants(s.ctx, []interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
@@ -334,7 +334,7 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 
 	for _, test := range tests {
 		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
-		f, err := newFunctionForTest(s.ctx, ast.Log10, s.primitiveValsToConstants([]interface{}{test.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Log10, primitiveValsToConstants(s.ctx, []interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
@@ -388,7 +388,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.Pow]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
@@ -406,7 +406,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 	errDtbl := tblToDtbl(errTbl)
 	for i, t := range errDtbl {
 		fc := funcs[ast.Pow]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		_, err = evalBuiltinFunc(f, chunk.Row{})
 		if i == 2 {
@@ -450,7 +450,7 @@ func (s *testEvaluatorSuite) TestRound(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.Round]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		switch f.(type) {
 		case *builtinRoundWithFracIntSig:
@@ -506,7 +506,7 @@ func (s *testEvaluatorSuite) TestTruncate(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.Truncate]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
@@ -533,7 +533,7 @@ func (s *testEvaluatorSuite) TestCRC32(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.CRC32]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
@@ -565,7 +565,7 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Conv, s.primitiveValsToConstants(t.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.Conv, primitiveValsToConstants(s.ctx, t.args)...)
 		c.Assert(err, IsNil)
 		tp := f.GetType()
 		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
@@ -630,7 +630,7 @@ func (s *testEvaluatorSuite) TestSign(c *C) {
 		{[]interface{}{uint64(9223372036854775808)}, int64(1)},
 	} {
 		fc := funcs[ast.Sign]
-		f, err := fc.getFunction(s.ctx, s.primitiveValsToConstants(t.num))
+		f, err := fc.getFunction(s.ctx, primitiveValsToConstants(s.ctx, t.num))
 		c.Assert(err, IsNil, Commentf("%v", t))
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, Commentf("%v", t))
@@ -661,7 +661,7 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 
 	for _, t := range cases {
 		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
-		f, err := newFunctionForTest(s.ctx, ast.Degrees, s.primitiveValsToConstants([]interface{}{t.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Degrees, primitiveValsToConstants(s.ctx, []interface{}{t.args})...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
 		if t.getWarning {
@@ -695,7 +695,7 @@ func (s *testEvaluatorSuite) TestSqrt(c *C) {
 
 	for _, t := range tbl {
 		fc := funcs[ast.Sqrt]
-		f, err := fc.getFunction(s.ctx, s.primitiveValsToConstants(t.Arg))
+		f, err := fc.getFunction(s.ctx, primitiveValsToConstants(s.ctx, t.Arg))
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
@@ -727,7 +727,7 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 	Dtbl := tblToDtbl(tbl)
 	for _, t := range Dtbl {
 		fc := funcs[ast.Radians]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
@@ -737,7 +737,7 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 
 	invalidArg := "notNum"
 	fc := funcs[ast.Radians]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}))
+	f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}))
 	c.Assert(err, IsNil)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
@@ -766,7 +766,7 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 
 	for _, t := range cases {
 		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
-		f, err := newFunctionForTest(s.ctx, ast.Sin, s.primitiveValsToConstants([]interface{}{t.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Sin, primitiveValsToConstants(s.ctx, []interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
 		d, err := f.Eval(chunk.Row{})
@@ -806,7 +806,7 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 
 	for _, t := range cases {
 		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
-		f, err := newFunctionForTest(s.ctx, ast.Cos, s.primitiveValsToConstants([]interface{}{t.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Cos, primitiveValsToConstants(s.ctx, []interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
 		d, err := f.Eval(chunk.Row{})
@@ -844,7 +844,7 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 
 	for _, test := range tests {
 		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
-		f, err := newFunctionForTest(s.ctx, ast.Acos, s.primitiveValsToConstants([]interface{}{test.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Acos, primitiveValsToConstants(s.ctx, []interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
@@ -882,7 +882,7 @@ func (s *testEvaluatorSuite) TestAsin(c *C) {
 
 	for _, test := range tests {
 		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
-		f, err := newFunctionForTest(s.ctx, ast.Asin, s.primitiveValsToConstants([]interface{}{test.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Asin, primitiveValsToConstants(s.ctx, []interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
@@ -920,7 +920,7 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 
 	for _, test := range tests {
 		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
-		f, err := newFunctionForTest(s.ctx, ast.Atan, s.primitiveValsToConstants(test.args)...)
+		f, err := newFunctionForTest(s.ctx, ast.Atan, primitiveValsToConstants(s.ctx, test.args)...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
@@ -959,7 +959,7 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 
 	for _, t := range cases {
 		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
-		f, err := newFunctionForTest(s.ctx, ast.Tan, s.primitiveValsToConstants([]interface{}{t.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Tan, primitiveValsToConstants(s.ctx, []interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
 		d, err := f.Eval(chunk.Row{})
@@ -999,7 +999,7 @@ func (s *testEvaluatorSuite) TestCot(c *C) {
 	}
 
 	for _, test := range tests {
-		f, err := newFunctionForTest(s.ctx, ast.Cot, s.primitiveValsToConstants([]interface{}{test.args})...)
+		f, err := newFunctionForTest(s.ctx, ast.Cot, primitiveValsToConstants(s.ctx, []interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})

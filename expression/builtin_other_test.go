@@ -57,7 +57,7 @@ func (s *testEvaluatorSuite) TestBitCount(c *C) {
 	}
 	for _, test := range bitCountCases {
 		in := types.NewDatum(test.origin)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{in}))
+		f, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{in}))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
 		count, err := evalBuiltinFunc(f, chunk.Row{})
@@ -120,7 +120,7 @@ func (s *testEvaluatorSuite) TestInFunc(c *C) {
 		{[]interface{}{json1, json1, json3, json4}, int64(1)},
 	}
 	for _, tc := range testCases {
-		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
+		fn, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		c.Assert(err, IsNil)
@@ -129,7 +129,7 @@ func (s *testEvaluatorSuite) TestInFunc(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	strD1 := types.NewCollationStringDatum("a", "utf8_general_ci", 0)
 	strD2 := types.NewCollationStringDatum("Á", "utf8_general_ci", 0)
-	fn, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{strD1, strD2}))
+	fn, err := fc.getFunction(s.ctx, datumsToConstants([]types.Datum{strD1, strD2}))
 	c.Assert(err, IsNil)
 	d, isNull, err := fn.evalInt(chunk.Row{})
 	c.Assert(isNull, IsFalse)
@@ -146,7 +146,7 @@ func (s *testEvaluatorSuite) TestInFunc(c *C) {
 
 func (s *testEvaluatorSuite) TestRowFunc(c *C) {
 	fc := funcs[ast.RowFunc]
-	_, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums([]interface{}{"1", 1.2, true, 120}...)))
+	_, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums([]interface{}{"1", 1.2, true, 120}...)))
 	c.Assert(err, IsNil)
 }
 
@@ -169,7 +169,7 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 		{[]interface{}{"g", timeDec}, timeDec},
 	}
 	for _, tc := range testCases {
-		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
+		fn, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		c.Assert(err, IsNil)
@@ -229,7 +229,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)
 		}
-		fn, err := BuildGetVarFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
+		fn, err := BuildGetVarFunction(s.ctx, datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
 		c.Assert(err, IsNil)
 		d, err := fn.Eval(chunk.Row{})
 		c.Assert(err, IsNil)
@@ -239,10 +239,10 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 
 func (s *testEvaluatorSuite) TestValues(c *C) {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
-	_, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("")))
+	_, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums("")))
 	c.Assert(err, ErrorMatches, "*Incorrect parameter count in the call to native function 'values'")
 
-	sig, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums()))
+	sig, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums()))
 	c.Assert(err, IsNil)
 
 	ret, err := evalBuiltinFunc(sig, chunk.Row{})

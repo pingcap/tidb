@@ -165,7 +165,7 @@ func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 	}
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Benchmark, s.primitiveValsToConstants([]interface{}{
+		f, err := newFunctionForTest(s.ctx, ast.Benchmark, primitiveValsToConstants(s.ctx, []interface{}{
 			t.LoopCount,
 			t.Expression,
 		})...)
@@ -187,21 +187,21 @@ func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 
 func (s *testEvaluatorSuite) TestCharset(c *C) {
 	fc := funcs[ast.Charset]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
+	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(f, IsNil)
 	c.Assert(err, ErrorMatches, "*FUNCTION CHARSET does not exist")
 }
 
 func (s *testEvaluatorSuite) TestCoercibility(c *C) {
 	fc := funcs[ast.Coercibility]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
+	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(f, NotNil)
 	c.Assert(err, IsNil)
 }
 
 func (s *testEvaluatorSuite) TestCollation(c *C) {
 	fc := funcs[ast.Collation]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
+	f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(f, NotNil)
 	c.Assert(err, IsNil)
 	c.Assert(f.getRetTp().Flen, Equals, 64)
@@ -227,7 +227,7 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 
 // TestTiDBVersion for tidb_server().
 func (s *testEvaluatorSuite) TestTiDBVersion(c *C) {
-	f, err := newFunctionForTest(s.ctx, ast.TiDBVersion, s.primitiveValsToConstants([]interface{}{})...)
+	f, err := newFunctionForTest(s.ctx, ast.TiDBVersion, primitiveValsToConstants(s.ctx, []interface{}{})...)
 	c.Assert(err, IsNil)
 	v, err := f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
@@ -261,7 +261,7 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 		}
 
 		if t.args != nil {
-			f, err = newFunctionForTest(s.ctx, ast.LastInsertId, s.primitiveValsToConstants([]interface{}{t.args})...)
+			f, err = newFunctionForTest(s.ctx, ast.LastInsertId, primitiveValsToConstants(s.ctx, []interface{}{t.args})...)
 		} else {
 			f, err = newFunctionForTest(s.ctx, ast.LastInsertId)
 		}
@@ -309,7 +309,7 @@ func (s *testEvaluatorSuite) TestFormatBytes(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.FormatBytes]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
@@ -337,7 +337,7 @@ func (s *testEvaluatorSuite) TestFormatNanoTime(c *C) {
 
 	for _, t := range Dtbl {
 		fc := funcs[ast.FormatNanoTime]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
+		f, err := fc.getFunction(s.ctx, datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)

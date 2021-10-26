@@ -49,7 +49,7 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 	for _, tt := range tests {
 		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
 		fc := funcs[ast.Like]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, int('\\'))))
+		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern, int('\\'))))
 		c.Assert(err, IsNil, commentf)
 		r, err := evalBuiltinFuncConcurrent(f, chunk.Row{})
 		c.Assert(err, IsNil, commentf)
@@ -96,7 +96,7 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 	for _, tt := range tests {
 		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
 		fc := funcs[ast.Like]
-		inputs := s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
+		inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
 		f, err := fc.getFunction(s.ctx, inputs)
 		c.Assert(err, IsNil, commentf)
 		f.setCollator(collate.GetCollator("utf8mb4_general_ci"))
@@ -108,7 +108,7 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 	for _, tt := range tests {
 		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
 		fc := funcs[ast.Like]
-		inputs := s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
+		inputs := datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
 		f, err := fc.getFunction(s.ctx, inputs)
 		c.Assert(err, IsNil, commentf)
 		f.setCollator(collate.GetCollator("utf8mb4_unicode_ci"))
@@ -141,7 +141,7 @@ func (s *testEvaluatorSuite) TestRegexp(c *C) {
 	}
 	for _, tt := range tests {
 		fc := funcs[ast.Regexp]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
+		f, err := fc.getFunction(s.ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
 		c.Assert(err, IsNil)
 		match, err := evalBuiltinFunc(f, chunk.Row{})
 		if tt.err == nil {
