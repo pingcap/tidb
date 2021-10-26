@@ -1054,6 +1054,70 @@ func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
+func (s *testPlanSerialSuite) TestIssue29101(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE customer (
+	  c_id int(11) NOT NULL,
+	  c_d_id int(11) NOT NULL,
+	  c_w_id int(11) NOT NULL,
+	  c_first varchar(16) DEFAULT NULL,
+	  c_last varchar(16) DEFAULT NULL,
+	  c_credit char(2) DEFAULT NULL,
+	  c_discount decimal(4,4) DEFAULT NULL,
+	  PRIMARY KEY (c_w_id,c_d_id,c_id),
+	  KEY idx_customer (c_w_id,c_d_id,c_last,c_first)
+	)`)
+	tk.MustExec(`CREATE TABLE warehouse (
+	  w_id int(11) NOT NULL,
+	  w_tax decimal(4,4) DEFAULT NULL,
+	  PRIMARY KEY (w_id)
+	)`)
+	tk.MustExec(`prepare s1 from 'SELECT c_discount, c_last, c_credit, w_tax FROM customer, warehouse WHERE w_id = ? AND c_w_id = w_id AND c_d_id = ? AND c_id = ?'`)
+	tk.MustExec(`set @a=936,@b=7,@c=158`)
+	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
+
+	tk.MustExec(`CREATE TABLE order_line (
+	  ol_o_id int(11) NOT NULL,
+	  ol_d_id int(11) NOT NULL,
+	  ol_w_id int(11) NOT NULL,
+	  ol_number int(11) NOT NULL,
+	  ol_i_id int(11) NOT NULL,
+	  PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number)
+	)`)
+	tk.MustExec(`CREATE TABLE stock (
+	  s_i_id int(11) NOT NULL,
+	  s_w_id int(11) NOT NULL,
+	  s_quantity int(11) DEFAULT NULL,
+	  PRIMARY KEY (s_w_id,s_i_id)
+	)`)
+	tk.MustExec(`prepare s1 from 'SELECT /*+ TIDB_INLJ(order_line,stock) */ COUNT(DISTINCT (s_i_id)) stock_count FROM order_line, stock  WHERE ol_w_id = ? AND ol_d_id = ? AND ol_o_id < ? AND ol_o_id >= ? - 20 AND s_w_id = ? AND s_i_id = ol_i_id AND s_quantity < ?'`)
+	tk.MustExec(`set @a=391,@b=1,@c=3058,@d=18`)
+	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
+}
+
 func (s *testPlanSerialSuite) TestIssue28942(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
