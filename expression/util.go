@@ -919,7 +919,7 @@ func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bo
 	}
 	if ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
 		// If the current statement can not be cached. We should remove the mutable constant.
-		removeMutableConst(ctx, exprs)
+		RemoveMutableConst(ctx, exprs)
 		return false
 	}
 	return containMutableConst(ctx, exprs)
@@ -942,15 +942,15 @@ func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 	return false
 }
 
-// removeMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
-func removeMutableConst(ctx sessionctx.Context, exprs []Expression) {
+// RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
+func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
 			v.ParamMarker = nil
 			v.DeferredExpr = nil
 		case *ScalarFunction:
-			removeMutableConst(ctx, v.GetArgs())
+			RemoveMutableConst(ctx, v.GetArgs())
 		}
 	}
 }

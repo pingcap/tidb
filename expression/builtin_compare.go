@@ -1381,17 +1381,11 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
 	if MaybeOverOptimized4PlanCache(ctx, args) {
-		// To keep the result be compatible with MySQL, refine
-		// `int non-constant <cmp> str constant` here and skip this refine operation
-		// in all other cases for safety.
-		if arg0IsInt && !arg0IsCon && arg1IsString && arg1IsCon {
+		// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
+		// here and skip this refine operation in all other cases for safety.
+		if (arg0IsInt && !arg0IsCon && arg1IsString && arg1IsCon) || (arg1IsInt && !arg1IsCon && arg0IsString && arg0IsCon) {
 			ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
-			arg1.DeferredExpr = nil
-			arg1.ParamMarker = nil
-		} else if arg1IsInt && !arg1IsCon && arg0IsString && arg0IsCon {
-			ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
-			arg0.DeferredExpr = nil
-			arg0.ParamMarker = nil
+			RemoveMutableConst(ctx, args)
 		} else {
 			return args
 		}
