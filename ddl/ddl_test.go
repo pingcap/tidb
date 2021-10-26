@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -95,14 +96,14 @@ func TestT(t *testing.T) {
 	testleak.AfterTestT(t)()
 }
 
-func testNewDDLAndStart(ctx context.Context, c *C, options ...Option) *ddl {
+func testNewDDLAndStart(ctx context.Context, t *testing.T, options ...Option) *ddl {
 	// init infoCache and a stub infoSchema
 	ic := infoschema.NewCache(2)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	options = append(options, WithInfoCache(ic))
 	d := newDDL(ctx, options...)
 	err := d.Start(nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	return d
 }
@@ -119,14 +120,14 @@ func testNewContext(d *ddl) sessionctx.Context {
 	return ctx
 }
 
-func getSchemaVer(c *C, ctx sessionctx.Context) int64 {
+func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
 	err := ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	m := meta.NewMeta(txn)
 	ver, err := m.GetSchemaVersion()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	return ver
 }
 
@@ -137,37 +138,37 @@ type historyJobArgs struct {
 	tblIDs map[int64]struct{}
 }
 
-func checkEqualTable(c *C, t1, t2 *model.TableInfo) {
-	c.Assert(t1.ID, Equals, t2.ID)
-	c.Assert(t1.Name, Equals, t2.Name)
-	c.Assert(t1.Charset, Equals, t2.Charset)
-	c.Assert(t1.Collate, Equals, t2.Collate)
-	c.Assert(t1.PKIsHandle, DeepEquals, t2.PKIsHandle)
-	c.Assert(t1.Comment, DeepEquals, t2.Comment)
-	c.Assert(t1.AutoIncID, DeepEquals, t2.AutoIncID)
+func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
+	require.Equal(t, t1.ID, t2.ID)
+	require.Equal(t, t1.Name, t2.Name)
+	require.Equal(t, t1.Charset, t2.Charset)
+	require.Equal(t, t1.Collate, t2.Collate)
+	require.Equal(t, t1.PKIsHandle, t2.PKIsHandle)
+	require.Equal(t, t1.Comment, t2.Comment)
+	require.Equal(t, t1.AutoIncID, t2.AutoIncID)
 }
 
 func checkHistoryJob(c *C, job *model.Job) {
 	c.Assert(job.State, Equals, model.JobStateSynced)
 }
 
-func checkHistoryJobArgs(c *C, ctx sessionctx.Context, id int64, args *historyJobArgs) {
+func checkHistoryJobArgs(tt *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(tt, err)
 	t := meta.NewMeta(txn)
 	historyJob, err := t.GetHistoryDDLJob(id)
-	c.Assert(err, IsNil)
-	c.Assert(historyJob.BinlogInfo.FinishedTS, Greater, uint64(0))
+	require.NoError(tt, err)
+	require.Greater(tt, historyJob.BinlogInfo.FinishedTS, uint64(0))
 
 	if args.tbl != nil {
-		c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)
-		checkEqualTable(c, historyJob.BinlogInfo.TableInfo, args.tbl)
+		require.Equal(tt, historyJob.BinlogInfo.SchemaVersion, args.ver)
+		checkEqualTable(tt, historyJob.BinlogInfo.TableInfo, args.tbl)
 		return
 	}
 
 	// for handling schema job
-	c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)
-	c.Assert(historyJob.BinlogInfo.DBInfo, DeepEquals, args.db)
+	require.Equal(tt, historyJob.BinlogInfo.SchemaVersion, args.ver)
+	require.Equal(tt, historyJob.BinlogInfo.DBInfo, args.db)
 	// only for creating schema job
 	if args.db != nil && len(args.tblIDs) == 0 {
 		return

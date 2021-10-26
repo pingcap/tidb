@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testColumnSuite{})
@@ -44,11 +46,11 @@ type testColumnSuite struct {
 	dbInfo *model.DBInfo
 }
 
-func (s *testColumnSuite) SetUpSuite(c *C) {
-	s.store = testCreateStore(c, "test_column")
+func (s *testColumnSuite) SetUpSuite(t *testing.T) {
+	s.store = testCreateStore(t, "test_column")
 	d := testNewDDLAndStart(
 		context.Background(),
-		c,
+		t,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
@@ -84,13 +86,13 @@ func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNam
 	return job
 }
 
-func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+func testCreateColumn(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
 	colName string, pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
 	job := buildCreateColumnJob(dbInfo, tblInfo, colName, pos, defaultValue)
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	require.NoError(t, err)
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 

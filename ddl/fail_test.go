@@ -16,40 +16,43 @@ package ddl
 
 import (
 	"context"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
+func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(t *testing.T) {
+	t.Parallel()
+
 	d := testNewDDLAndStart(
 		context.Background(),
-		c,
+		t,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	// create table t_fail (c1 int, c2 int);
-	tblInfo := testTableInfo(c, d, "t_fail", 2)
+	tblInfo := testTableInfo(t, d, "t_fail", 2)
 	ctx := testNewContext(d)
 	err := ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	require.NoError(t, err)
+	testCreateTable(t, ctx, d, s.dbInfo, tblInfo)
 	// insert t_fail values (1, 2);
-	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	originTable := testGetTable(t, d, s.dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
 	_, err = originTable.AddRecord(ctx, row)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	tc := &TestDDLCallback{}
 	first := true
@@ -61,17 +64,17 @@ func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
 			stateCnt++
 		} else if job.SchemaState == model.StateWriteReorganization {
 			if first {
-				c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs", `return(true)`), IsNil)
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs", `return(true)`))
 				first = false
 			} else {
-				c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs"), IsNil)
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs"))
 			}
 		}
 	}
 	d.SetHook(tc)
 	defaultValue := int64(3)
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
+	job := testCreateColumn(t, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
 	// Make sure the schema state only appears once.
-	c.Assert(stateCnt, Equals, 1)
-	testCheckJobDone(c, d, job, true)
+	require.Equal(t, 1, stateCnt)
+	testCheckJobDone(t, d, job, true)
 }

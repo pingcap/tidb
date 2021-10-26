@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testTableSuite{})
@@ -58,12 +60,12 @@ func testTableInfoWith2IndexOnFirstColumn(c *C, d *ddl, name string, num int) *m
 }
 
 // testTableInfo creates a test table with num int columns and with no index.
-func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
+func testTableInfo(t *testing.T, d *ddl, name string, num int) *model.TableInfo {
 	tblInfo := &model.TableInfo{
 		Name: model.NewCIStr(name),
 	}
 	genIDs, err := d.genGlobalIDs(1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tblInfo.ID = genIDs[0]
 
 	cols := make([]*model.ColumnInfo, num)
@@ -166,7 +168,7 @@ func testViewInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	return tblInfo
 }
 
-func testCreateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+func testCreateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -175,11 +177,11 @@ func testCreateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 		Args:       []interface{}{tblInfo},
 	}
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	v := getSchemaVer(c, ctx)
+	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	tblInfo.State = model.StateNone
 	return job
 }
@@ -316,9 +318,9 @@ func testCheckTableState(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.Tabl
 	c.Assert(err, IsNil)
 }
 
-func testGetTable(c *C, d *ddl, schemaID int64, tableID int64) table.Table {
+func testGetTable(t *testing.T, d *ddl, schemaID int64, tableID int64) table.Table {
 	tbl, err := testGetTableWithError(d, schemaID, tableID)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	return tbl
 }
 
