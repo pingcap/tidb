@@ -504,6 +504,25 @@ func (s *testSuite7) TestUser(c *C) {
 	createUserSQL = `create user foo@localhost identified with 'foobar';`
 	_, err = tk.Exec(createUserSQL)
 	c.Check(terror.ErrorEqual(err, executor.ErrPluginIsNotLoaded), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec(`create user joan;`)
+	tk.MustExec(`create user sally;`)
+	tk.MustExec(`create role engineering;`)
+	tk.MustExec(`create role consultants;`)
+	tk.MustExec(`create role qa;`)
+	tk.MustExec(`grant engineering to joan;`)
+	tk.MustExec(`grant engineering to sally;`)
+	tk.MustExec(`grant engineering, consultants to joan, sally;`)
+	tk.MustExec(`grant qa to consultants;`)
+	tk.MustExec("CREATE ROLE `engineering`@`US`;")
+	tk.MustExec("create role `engineering`@`INDIA`;")
+	_, err = tk.Exec("grant `engineering`@`US` TO `engineering`@`INDIA`;")
+	c.Check(err, IsNil)
+
+	tk.MustQuery("select user,host from mysql.user where user='engineering' and host = 'india'").
+		Check(testkit.Rows("engineering india"))
+	tk.MustQuery("select user,host from mysql.user where user='engineering' and host = 'us'").
+		Check(testkit.Rows("engineering us"))
 }
 
 func (s *testSuite3) TestSetPwd(c *C) {
