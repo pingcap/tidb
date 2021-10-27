@@ -612,18 +612,6 @@ func TestDeriveCollation(t *testing.T) {
 			false,
 			&ExprCollation{CoercibilitySysconst, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
-		{
-			[]string{
-				ast.Cast,
-			},
-			[]Expression{
-				newColInt(CoercibilityExplicit),
-			},
-			[]types.EvalType{types.ETInt},
-			types.ETString,
-			false,
-			&ExprCollation{CoercibilityExplicit, ASCII, charset.CharsetBinary, charset.CollationBin},
-		},
 	}
 
 	for i, test := range tests {

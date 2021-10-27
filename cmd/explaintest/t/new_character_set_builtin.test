@@ -31,6 +31,37 @@ insert into t values ('一二三', '一二三', '一二三');
 select to_base64(a), to_base64(b), to_base64(c) from t;
 set @@tidb_enable_vectorized_expression = true;
 select to_base64(a), to_base64(b), to_base64(c) from t;
+
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一', '一', 0xe4b880);
+insert into t values ('一', '一', 0xd2bb);
+insert into t values ('一', '一', 0xe4ba8c);
+insert into t values ('一', '一', 0xb6fe);
+select concat(a, c), concat(b, c) from t;
+select concat(a, 0xe4b880), concat(b, 0xd2bb) from t;
+select a = 0xe4b880, b = 0xd2bb from t;
+select a = c, b = c from t;
+select insert(a, 1, 2, 0xe4ba8c), insert(b, 1, 2, 0xb6fe) from t;
+select insert(a, 1, 2, c), insert(b, 1, 2, c) from t;
+select lpad(a, 5, 0xe4ba8c), lpad(b, 5, 0xb6fe) from t;
+select lpad(a, 5, c), lpad(b, 5, c) from t;
+select rpad(a, 5, 0xe4ba8c), rpad(b, 5, 0xb6fe) from t;
+select rpad(a, 5, c), rpad(b, 5, c) from t;
+select elt(2, a, 0xe4ba8c), elt(2, b, 0xb6fe) from t;
+select elt(2, a, c), elt(2, b, c) from t;
+select instr(a, 0xe4b880), instr(b, 0xd2bb) from t;
+select position(a in 0xe4b880), position(b in 0xd2bb) from t;
+select a like 0xe4b880, b like 0xd2bb from t;
+
+--error ER_CANNOT_CONVERT_STRING
+select a = 0xb6fe from t;
+--error ER_CANNOT_CONVERT_STRING
+select b = 0xe4ba8c from t;
+--error ER_CANNOT_CONVERT_STRING
+select concat(a, 0xb6fe) from t;
+--error ER_CANNOT_CONVERT_STRING
+select concat(b, 0xe4ba8c) from t;
 set @@tidb_enable_vectorized_expression = false;
 
 -- test for builtin function convert()
