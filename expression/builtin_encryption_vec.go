@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
@@ -423,13 +424,19 @@ func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 	}
 	result.ReserveString(n)
 	digest := md5.New() // #nosec G401
+	enc := charset.NewEncoding(b.args[0].GetType().Charset)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		cryptByte := buf.GetBytes(i)
-		_, err := digest.Write(cryptByte)
+		cryptBytes := buf.GetBytes(i)
+		dBytes, err := enc.Encode(nil, cryptBytes)
+		if err == nil {
+			_, err = digest.Write(dBytes)
+		} else {
+			_, err = digest.Write(cryptBytes)
+		}
 		if err != nil {
 			return err
 		}
