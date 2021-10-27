@@ -181,8 +181,6 @@ func checkEnableServerGlobalVar(name, sVal string) {
 		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(sVal, false)
-	case variable.TiDBEnableTopSQL:
-		// TODO: whether the topsql global variable is enabled or not doesn't affect instance enabled
 	case variable.TiDBTopSQLPrecisionSeconds:
 		var val int64
 		val, err = strconv.ParseInt(sVal, 10, 64)
