@@ -17,24 +17,20 @@ package executor
 import (
 	"strconv"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testApplyCacheSuite{})
-
-type testApplyCacheSuite struct {
-}
-
-func (s *testApplyCacheSuite) TestApplyCache(c *C) {
+func TestApplyCache(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().MemQuotaApplyCache = 100
 	applyCache, err := newApplyCache(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	value := make([]*chunk.List, 3)
@@ -48,36 +44,36 @@ func (s *testApplyCacheSuite) TestApplyCache(c *C) {
 		key[i] = []byte(strings.Repeat(strconv.Itoa(i), 100))
 
 		// TODO: *chunk.List.GetMemTracker().BytesConsumed() is not accurate, fix it later.
-		c.Assert(applyCacheKVMem(key[i], value[i]), Equals, int64(100))
+		require.Equal(t, int64(100), applyCacheKVMem(key[i], value[i]))
 	}
 
 	ok, err := applyCache.Set(key[0], value[0])
-	c.Assert(err, IsNil)
-	c.Assert(ok, Equals, true)
+	require.NoError(t, err)
+	require.True(t, ok)
 	result, err := applyCache.Get(key[0])
-	c.Assert(err, IsNil)
-	c.Assert(result, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
 
 	ok, err = applyCache.Set(key[1], value[1])
-	c.Assert(err, IsNil)
-	c.Assert(ok, Equals, true)
+	require.NoError(t, err)
+	require.True(t, ok)
 	result, err = applyCache.Get(key[1])
-	c.Assert(err, IsNil)
-	c.Assert(result, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
 
 	ok, err = applyCache.Set(key[2], value[2])
-	c.Assert(err, IsNil)
-	c.Assert(ok, Equals, true)
+	require.NoError(t, err)
+	require.True(t, ok)
 	result, err = applyCache.Get(key[2])
-	c.Assert(err, IsNil)
-	c.Assert(result, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
 
 	// Both key[0] and key[1] are not in the cache
 	result, err = applyCache.Get(key[0])
-	c.Assert(err, IsNil)
-	c.Assert(result, IsNil)
+	require.NoError(t, err)
+	require.Nil(t, result)
 
 	result, err = applyCache.Get(key[1])
-	c.Assert(err, IsNil)
-	c.Assert(result, IsNil)
+	require.NoError(t, err)
+	require.Nil(t, result)
 }

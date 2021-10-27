@@ -1131,6 +1131,9 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
 		return err
 	}
+	if sv.GlobalConfigName != "" {
+		domain.GetDomain(s).NotifyGlobalConfigChange(sv.GlobalConfigName, variable.OnOffToTrueFalse(value))
+	}
 	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
 }
 
@@ -2439,6 +2442,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+	se.GetSessionVars().InRestrictedSQL = true
 
 	// get system tz from mysql.tidb
 	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
@@ -2551,11 +2555,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	se8, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	dom.PlanReplayerLoop(se8)
+	dom.PlanReplayerLoop()
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()

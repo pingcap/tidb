@@ -164,10 +164,9 @@ func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
 	promQL := "avg(tidb_executor_statement_total{}) by (type)"
 	result, err := querySQLMetric(ctx, timepoint, promQL)
 	if err != nil {
-		analysisSQLUsage(result, SQLResult)
-	} else {
-		analysisSQLUsage(result, SQLResult)
+		return err
 	}
+	analysisSQLUsage(result, SQLResult)
 	return nil
 }
 
