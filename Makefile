@@ -44,7 +44,7 @@ goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
 check-static: tools/bin/golangci-lint
-	#GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES_TIDB_TESTS)) --config .golangci.yml
+	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES_TIDB_TESTS)) --config .golangci.yml
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(BR_PACKAGE_DIRECTORIES)) --config .golangci_br.yml
 
 unconvert:tools/bin/unconvert
