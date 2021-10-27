@@ -5652,6 +5652,6 @@ func (s *testSessionSuite2) TestDefend24029(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/tablecodec/injectNeedRestoredData", "return(false)"), IsNil)
 	_, err := tk.Exec("insert into t values (4, 'd', 'F');")
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "inconsistent index values"),IsTrue)
+	c.Assert(strings.Contains(err.Error(), "inconsistent index values"), IsTrue)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/tablecodec/injectNeedRestoredData"), IsNil)
 }

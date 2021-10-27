@@ -15,9 +15,14 @@
 package tables
 
 import (
+	"encoding/hex"
 	"fmt"
+	"math/rand"
+	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -66,6 +71,10 @@ func CheckDataConsistency(
 	txn kv.Transaction, sessVars *variable.SessionVars, t *TableCommon,
 	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle,
 ) error {
+	failpoint.Inject("corruptMutations", func(commands failpoint.Value) {
+		corruptMutations(t, txn, sh, commands.(string))
+	})
+
 	if t.Meta().GetPartitionInfo() != nil {
 		return nil
 	}
@@ -73,10 +82,20 @@ func CheckDataConsistency(
 		// some implementations of MemBuffer doesn't support staging, e.g. that in br/pkg/lightning/backend/kv
 		return nil
 	}
-	indexMutations, rowInsertion, err := collectTableMutationsFromBufferStage(t, memBuffer, sh)
+	indexMutations, rowInsertion, _, err := collectTableMutationsFromBufferStage(t, memBuffer, sh)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	failpoint.Inject("printMutation", func() {
+		fmt.Println("------------------------------------------------")
+		fmt.Printf("row to insert: %+v\nrow to remove: %+v\n", rowToInsert, rowToRemove)
+		fmt.Printf("row insertion: key: %v, value: %v\n", hex.EncodeToString(rowInsertion.key),
+			hex.EncodeToString(rowInsertion.value))
+		for _, im := range indexMutations {
+			fmt.Printf("index mutation: key: %v, value: %v\n", hex.EncodeToString(im.key), hex.EncodeToString(im.value))
+		}
+	})
 
 	columnMaps := getColumnMaps(txn, t)
 
@@ -203,6 +222,8 @@ func checkIndexKeys(
 		}
 
 		if len(m.value) == 0 {
+			logutil.BgLogger().Error("line 224", zap.String("mutation", fmt.Sprintf("%#v", m)), zap.Any("indexData",
+				indexData))
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo)
 		} else {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo)
@@ -254,14 +275,14 @@ func checkRowInsertionConsistency(
 }
 
 // collectTableMutationsFromBufferStage collects mutations of the current table from the mem buffer stage
-// It returns: (1) all index mutations (2) the only row insertion
-// If there are no row insertions, the 2nd returned value is nil
+// It returns: (1) all index mutations (2) the only row insertion (3) the only row deletion
+// If there are no row insertions/deletions, return nil
 // If there are multiple row insertions, an error is returned
 func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer, sh kv.StagingHandle) (
-	[]mutation, mutation, error,
+	[]mutation, mutation, mutation, error,
 ) {
 	indexMutations := make([]mutation, 0)
-	var rowInsertion mutation
+	var rowInsertion, rowDeletion mutation
 	var err error
 	inspector := func(key kv.Key, flags kv.KeyFlags, data []byte) {
 		// only check the current table
@@ -276,7 +297,16 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 							"multiple row mutations added/mutated, one = %+v, another = %+v", rowInsertion, m,
 						)
 					}
+				} else {
+					if rowDeletion.key == nil {
+						rowDeletion = m
+					} else {
+						err = errors.Errorf(
+							"multiple row mutations deleted, one = %+v, another = %+v", rowDeletion, m,
+						)
+					}
 				}
+
 			} else {
 				_, m.indexID, _, err = tablecodec.DecodeIndexKey(m.key)
 				if err != nil {
@@ -287,7 +317,7 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 		}
 	}
 	memBuffer.InspectStage(sh, inspector)
-	return indexMutations, rowInsertion, err
+	return indexMutations, rowInsertion, rowDeletion, err
 }
 
 // compareIndexData compares the decoded index data with the input data.
@@ -296,6 +326,7 @@ func compareIndexData(
 	sc *stmtctx.StatementContext, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
 ) error {
 	for i, decodedMutationDatum := range indexData {
+		logutil.BgLogger().Error("line 326", zap.Int("i", i), zap.Int("Offset", indexInfo.Columns[i].Offset))
 		expectedDatum := input[indexInfo.Columns[i].Offset]
 
 		tablecodec.TruncateIndexValue(
@@ -372,4 +403,89 @@ func getOrBuildColumnMaps(
 		setter(tableMaps)
 	}
 	return maps
+}
+
+// only used in tests
+// commands is a comma separated string, each representing a type of corruptions to the mutations
+// The injection depends on actual encoding rules.
+func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, cmds string) error {
+	commands := strings.Split(cmds, ",")
+	memBuffer := txn.GetMemBuffer()
+	rand := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	indexMutations, _, _, err := collectTableMutationsFromBufferStage(t, memBuffer, sh)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, cmd := range commands {
+		switch cmd {
+		case "extraIndex":
+			// an extra index mutation
+			// TODO: distinguish which part to corrupt, value or handle
+			{
+				if len(indexMutations) == 0 {
+					continue
+				}
+				indexMutation := indexMutations[rand.Intn(len(indexMutations))]
+				key := make([]byte, len(indexMutation.key))
+				copy(key, indexMutation.key)
+				key[len(key)-1] += 1
+				memBuffer.Set(key, indexMutation.value)
+			}
+		//case "extraIndexByHandle":
+		//	{
+		//	}
+		case "missingIndex":
+			// an index mutation is missing
+			// "missIndex" should be placed in front of "extraIndex"es,
+			// in case it removes the mutation that was just added
+			{
+				if len(indexMutations) == 0 {
+					continue
+				}
+				indexMutation := indexMutations[rand.Intn(len(indexMutations))]
+				memBuffer.DeleteKey(indexMutation.key)
+			}
+		case "corruptIndexKey":
+			// a corrupted index mutation.
+			// TODO: distinguish which part is corrupted, value or handle
+			{
+				if len(indexMutations) == 0 {
+					continue
+				}
+				indexMutation := indexMutations[rand.Intn(len(indexMutations))]
+				key := indexMutation.key
+				memBuffer.DeleteKey(key)
+				key[len(key)-1] += 1
+				memBuffer.Set(key, indexMutation.value)
+			}
+		//case "corruptIndexKeyByHandle":
+		//	{
+		//	}
+		case "corruptIndexValue":
+			// TODO: distinguish which part to corrupt, int handle, common handle, or restored data?
+			// It doesn't make much sense to always corrupt the last byte
+			{
+				if len(indexMutations) == 0 {
+					continue
+				}
+				indexMutation := indexMutations[rand.Intn(len(indexMutations))]
+				value := indexMutation.value
+				if len(value) > 0 {
+					value[len(value)-1] += 1
+				}
+				memBuffer.Set(indexMutation.key, value)
+			}
+		//case "corruptIndexValueCommonHandle":
+		//	{
+		//	}
+		//case "missIndexValueRestoredData":
+		//	{
+		//	}
+		default:
+			return errors.New(fmt.Sprintf("unknown command to corrupt mutation: %s", cmd))
+		}
+	}
+	return nil
 }
