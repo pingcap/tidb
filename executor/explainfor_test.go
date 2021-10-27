@@ -822,7 +822,7 @@ func (s *testPrepareSerialSuite) TestIssue28696(c *C) {
 	c.Assert(res.Rows()[4][0], Matches, ".*TableRowIDScan.*")
 }
 
-func (s *testPrepareSerialSuite) TestIndexMerge(c *C) {
+func (s *testPrepareSerialSuite) TestIndexMerge4PlanCache(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	orgEnable := core.PreparedPlanCacheEnabled()
@@ -957,7 +957,7 @@ func (s *testPrepareSerialSuite) TestIndexMerge(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
-func (s *testPrepareSerialSuite) TestSetOperations(c *C) {
+func (s *testPrepareSerialSuite) TestSetOperations4PlanCache(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	orgEnable := core.PreparedPlanCacheEnabled()
@@ -1034,7 +1034,7 @@ func (s *testPrepareSerialSuite) TestSetOperations(c *C) {
 	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "1"))
 }
 
-func (s *testPrepareSerialSuite) TestSPM(c *C) {
+func (s *testPrepareSerialSuite) TestSPM4PlanCache(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	orgEnable := core.PreparedPlanCacheEnabled()
@@ -1093,7 +1093,7 @@ func (s *testPrepareSerialSuite) TestSPM(c *C) {
 	tk.MustExec("admin reload bindings;")
 }
 
-func (s *testPrepareSerialSuite) TestHint(c *C) {
+func (s *testPrepareSerialSuite) TestHint4PlanCache(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	orgEnable := core.PreparedPlanCacheEnabled()
@@ -1122,4 +1122,121 @@ func (s *testPrepareSerialSuite) TestHint(c *C) {
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
+
+func (s *testPrepareSerialSuite) TestSelectView4PlanCache(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("create table view_t (a int,b int)")
+	tk.MustExec("insert into view_t values(1,2)")
+	tk.MustExec("create definer='root'@'localhost' view view1 as select * from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view2(c,d) as select * from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view3(c,d) as select a,b from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view4 as select * from (select * from (select * from view_t) tb1) tb;")
+	tk.MustExec("prepare stmt1 from 'select * from view1;'")
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt2 from 'select * from view2;'")
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt3 from 'select * from view3;'")
+	tk.MustQuery("execute stmt3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("execute stmt3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt4 from 'select * from view4;'")
+	tk.MustQuery("execute stmt4;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("execute stmt4;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table view_t;")
+	tk.MustExec("create table view_t(c int,d int)")
+	err = tk.ExecToErr("execute stmt1;")
+	c.Assert(err.Error(), Equals, "[planner:1356]View 'test.view1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
+	err = tk.ExecToErr("execute stmt2")
+	c.Assert(err.Error(), Equals, "[planner:1356]View 'test.view2' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
+	err = tk.ExecToErr("execute stmt3")
+	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "view3").Error())
+	tk.MustExec("drop table view_t;")
+	tk.MustExec("create table view_t(a int,b int,c int)")
+	tk.MustExec("insert into view_t values(1,2,3)")
+
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt4;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt4;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("alter table view_t drop column a")
+	tk.MustExec("alter table view_t add column a int after b")
+	tk.MustExec("update view_t set a=1;")
+
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt4;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt4;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table view_t;")
+	tk.MustExec("drop view view1,view2,view3,view4;")
+
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_window_function = 0")
+	}()
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values (1,1),(1,2),(2,1),(2,2)")
+	tk.MustExec("create definer='root'@'localhost' view v as select a, first_value(a) over(rows between 1 preceding and 1 following), last_value(a) over(rows between 1 preceding and 1 following) from t")
+	tk.MustExec("prepare stmt from 'select * from v;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1 1 1", "1 1 2", "2 1 2", "2 2 2"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1 1 1", "1 1 2", "2 1 2", "2 2 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop view v;")
 }
