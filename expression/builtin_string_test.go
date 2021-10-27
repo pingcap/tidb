@@ -158,7 +158,7 @@ func TestASCII(t *testing.T) {
 	for _, c := range tbl {
 		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.ASCII, primitiveValsToConstants([]interface{}{c.input})...)
+		f, err := newFunctionForTest(ctx, ast.ASCII, primitiveValsToConstants(ctx, []interface{}{c.input})...)
 		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
 		require.NoError(t, err)
