@@ -7661,8 +7661,10 @@ func (s *testDBSuite2) TestCreateTables(c *C) {
 		Name: model.NewCIStr("tables_3"),
 	})
 
+	// correct name
 	err := d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError, false)
 	c.Check(err, IsNil)
+
 
 	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
 	job := tk.MustQuery("admin show ddl jobs").Rows()[0]
@@ -7672,4 +7674,9 @@ func (s *testDBSuite2) TestCreateTables(c *C) {
 	c.Assert(job[4], Equals, "public")
 	// FIXME: we must change column type to give multiple id
 	// c.Assert(job[6], Matches, "[^,]+,[^,]+,[^,]+")
+
+	// duplicated name
+	infos[1].Name = model.NewCIStr("tables_1")
+	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError, false)
+	c.Check(err.Error(), Equals, "[schema:1050]Table 'test.tables_1' already exists")
 }
