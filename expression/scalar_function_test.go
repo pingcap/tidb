@@ -15,17 +15,16 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/util/mock"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestScalarFunction(t *testing.T) {
