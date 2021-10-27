@@ -2259,8 +2259,8 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 	if statsTbl.Count == 0 {
 		return 1
 	}
-	// We are expected to scan about 100000 rows.
-	return math.Min(1, 100000/float64(statsTbl.Count))
+	// We are expected to scan about 100000 rows or so.
+	return math.Min(1, 110000/float64(statsTbl.Count))
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
