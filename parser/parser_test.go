@@ -2227,6 +2227,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE TABLE foo (a.b, b);", false, ""},
 		{"CREATE TABLE foo (a, b.c);", false, ""},
 		{"CREATE TABLE (name CHAR(50) BINARY)", false, ""},
+		// test enable or disable cached table
+		{"ALTER TABLE tmp CACHE", true, "ALTER TABLE `tmp` CACHE"},
+		{"ALTER TABLE tmp NOCACHE", true, "ALTER TABLE `tmp` NOCACHE"},
 		// for create temporary table
 		{"CREATE TEMPORARY TABLE t (a varchar(50), b int);", true, "CREATE TEMPORARY TABLE `t` (`a` VARCHAR(50),`b` INT)"},
 		{"CREATE TEMPORARY TABLE t LIKE t1", true, "CREATE TEMPORARY TABLE `t` LIKE `t1`"},
@@ -3427,6 +3430,36 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"alter placement policy x primary_region='cn', leader_constraints='ww', leader_constraints='yy'", true, "ALTER PLACEMENT POLICY `x` PRIMARY_REGION = 'cn' LEADER_CONSTRAINTS = 'ww' LEADER_CONSTRAINTS = 'yy'"},
 		{"alter placement policy if exists x regions = 'us', follower_constraints='yy'", true, "ALTER PLACEMENT POLICY IF EXISTS `x` REGIONS = 'us' FOLLOWER_CONSTRAINTS = 'yy'"},
 		{"alter placement policy x placement policy y", false, ""},
+
+		// for table stats options
+		// 1. create table with options
+		{"CREATE TABLE t (a int) STATS_BUCKETS=1", true, "CREATE TABLE `t` (`a` INT) STATS_BUCKETS = 1"},
+		{"CREATE TABLE t (a int) STATS_BUCKETS='abc'", false, ""},
+		{"CREATE TABLE t (a int) STATS_BUCKETS=", false, ""},
+		{"CREATE TABLE t (a int) STATS_TOPN=1", true, "CREATE TABLE `t` (`a` INT) STATS_TOPN = 1"},
+		{"CREATE TABLE t (a int) STATS_TOPN='abc'", false, ""},
+		{"CREATE TABLE t (a int) STATS_AUTO_RECALC=1", true, "CREATE TABLE `t` (`a` INT) STATS_AUTO_RECALC = 1"},
+		{"CREATE TABLE t (a int) STATS_AUTO_RECALC='abc'", false, ""},
+		{"CREATE TABLE t(a int) STATS_SAMPLE_RATE=0.1", true, "CREATE TABLE `t` (`a` INT) STATS_SAMPLE_RATE = 0.1"},
+		{"CREATE TABLE t (a int) STATS_SAMPLE_RATE='abc'", false, ""},
+		{"CREATE TABLE t (a int) STATS_COL_CHOICE='all'", true, "CREATE TABLE `t` (`a` INT) STATS_COL_CHOICE = 'all'"},
+		{"CREATE TABLE t (a int) STATS_COL_CHOICE='list'", true, "CREATE TABLE `t` (`a` INT) STATS_COL_CHOICE = 'list'"},
+		{"CREATE TABLE t (a int) STATS_COL_CHOICE=1", false, ""},
+		{"CREATE TABLE t (a int, b int) STATS_COL_LIST='a,b'", true, "CREATE TABLE `t` (`a` INT,`b` INT) STATS_COL_LIST = 'a,b'"},
+		{"CREATE TABLE t (a int, b int) STATS_COL_LIST=1", false, ""},
+		{"CREATE TABLE t (a int) STATS_BUCKETS=1,STATS_TOPN=1", true, "CREATE TABLE `t` (`a` INT) STATS_BUCKETS = 1 STATS_TOPN = 1"},
+		// 2. create partition table with options
+		{"CREATE TABLE t (a int) STATS_BUCKETS=1,STATS_TOPN=1 PARTITION BY RANGE (a) (PARTITION p1 VALUES LESS THAN (200))", true, "CREATE TABLE `t` (`a` INT) STATS_BUCKETS = 1 STATS_TOPN = 1 PARTITION BY RANGE (`a`) (PARTITION `p1` VALUES LESS THAN (200))"},
+		// 3. alter table with options
+		{"ALTER TABLE t STATS_OPTIONS='str'", true, "ALTER TABLE `t` STATS_OPTIONS='str'"},
+		{"ALTER TABLE t STATS_OPTIONS='str1,str2'", true, "ALTER TABLE `t` STATS_OPTIONS='str1,str2'"},
+		{"ALTER TABLE t STATS_OPTIONS=\"str1,str2\"", true, "ALTER TABLE `t` STATS_OPTIONS='str1,str2'"},
+		{"ALTER TABLE t STATS_OPTIONS 'str1,str2'", true, "ALTER TABLE `t` STATS_OPTIONS='str1,str2'"},
+		{"ALTER TABLE t STATS_OPTIONS \"str1,str2\"", true, "ALTER TABLE `t` STATS_OPTIONS='str1,str2'"},
+		{"ALTER TABLE t STATS_OPTIONS=DEFAULT", true, "ALTER TABLE `t` STATS_OPTIONS=DEFAULT"},
+		{"ALTER TABLE t STATS_OPTIONS=default", true, "ALTER TABLE `t` STATS_OPTIONS=DEFAULT"},
+		{"ALTER TABLE t STATS_OPTIONS=DeFaUlT", true, "ALTER TABLE `t` STATS_OPTIONS=DEFAULT"},
+		{"ALTER TABLE t STATS_OPTIONS", false, ""},
 	}
 	s.RunTest(c, table)
 }
@@ -5110,6 +5143,8 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t partition a columns c1,c2 with 1024 buckets", true, "ANALYZE TABLE `t` PARTITION `a` COLUMNS `c1`,`c2` WITH 1024 BUCKETS"},
 		{"analyze table t index a columns c", false, ""},
 		{"analyze table t index a predicate columns", false, ""},
+		{"analyze table t with 10 samplerate", true, "ANALYZE TABLE `t` WITH 10 SAMPLERATE"},
+		{"analyze table t with 0.1 samplerate", true, "ANALYZE TABLE `t` WITH 0.1 SAMPLERATE"},
 	}
 	s.RunTest(c, table)
 }
@@ -6399,17 +6434,17 @@ func (s *testParserSuite) TestGBKEncoding(c *C) {
 	sql, err := encoder.String("create table 测试表 (测试列 varchar(255) default 'GBK测试用例');")
 	c.Assert(err, IsNil)
 
-	stmt, err := p.ParseOneStmt(sql, "", "")
+	stmt, _, err := p.ParseSQL(sql)
 	c.Assert(err, IsNil)
 	checker := &gbkEncodingChecker{}
-	_, _ = stmt.Accept(checker)
+	_, _ = stmt[0].Accept(checker)
 	c.Assert(checker.tblName, Not(Equals), "测试表")
 	c.Assert(checker.colName, Not(Equals), "测试列")
 
-	p.SetParserConfig(parser.ParserConfig{CharsetClient: "gbk"})
-	stmt, err = p.ParseOneStmt(sql, "", "")
+	gbkOpt := parser.CharsetClient("gbk")
+	stmt, _, err = p.ParseSQL(sql, gbkOpt)
 	c.Assert(err, IsNil)
-	_, _ = stmt.Accept(checker)
+	_, _ = stmt[0].Accept(checker)
 	c.Assert(checker.tblName, Equals, "测试表")
 	c.Assert(checker.colName, Equals, "测试列")
 	c.Assert(checker.expr, Equals, "GBK测试用例")
@@ -6417,13 +6452,14 @@ func (s *testParserSuite) TestGBKEncoding(c *C) {
 	utf8SQL := "select '芢' from `玚`;"
 	sql, err = encoder.String(utf8SQL)
 	c.Assert(err, IsNil)
-	stmt, err = p.ParseOneStmt(sql, "", "")
+	stmt, _, err = p.ParseSQL(sql, gbkOpt)
 	c.Assert(err, IsNil)
-	stmt, err = p.ParseOneStmt("select '\xc6\x5c' from `\xab\x60`;", "", "")
+	stmt, _, err = p.ParseSQL("select '\xc6\x5c' from `\xab\x60`;", gbkOpt)
+	c.Assert(err, IsNil)
+	stmt, _, err = p.ParseSQL(`prepare p1 from "insert into t values ('中文');";`, gbkOpt)
 	c.Assert(err, IsNil)
 
-	p.SetParserConfig(parser.ParserConfig{CharsetClient: ""})
-	stmt, err = p.ParseOneStmt("select _gbk '\xc6\x5c' from dual;", "", "")
+	stmt, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
 	c.Assert(err, NotNil)
 }
 

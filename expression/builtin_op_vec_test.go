@@ -152,8 +152,8 @@ func makeBinaryLogicOpDataGeners() []dataGenerator {
 		makeGivenValsOrDefaultGener(arg1s, types.ETInt)}
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinOpFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinOpCases)
+func TestVectorizedBuiltinOpFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinOpCases)
 }
 
 func BenchmarkVectorizedBuiltinOpFunc(b *testing.B) {

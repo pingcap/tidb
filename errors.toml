@@ -21,6 +21,11 @@ error = '''
 backup no leader
 '''
 
+["BR:Common:ErrEnvNotSpecified"]
+error = '''
+environment variable not found
+'''
+
 ["BR:Common:ErrFailedToConnect"]
 error = '''
 failed to make gRPC channels
@@ -44,6 +49,11 @@ undefined restore databases or tables
 ["BR:Common:ErrUnknown"]
 error = '''
 internal error
+'''
+
+["BR:Common:ErrUnsupportedOperation"]
+error = '''
+the operation is not supported
 '''
 
 ["BR:Common:ErrVersionMismatch"]
@@ -1486,6 +1496,11 @@ error = '''
 invalid as of timestamp: %s
 '''
 
+["planner:8242"]
+error = '''
+'%s' is unsupported on cache tables.
+'''
+
 ["privilege:1141"]
 error = '''
 There is no such grant defined for user '%-.48s' on host '%-.255s'
@@ -2029,5 +2044,10 @@ The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1
 ["variable:8055"]
 error = '''
 snapshot is older than GC safe point %s
+'''
+
+["variable:8136"]
+error = '''
+option '%s' is no longer supported. Reason: %s
 '''
 
