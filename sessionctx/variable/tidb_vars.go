@@ -762,6 +762,7 @@ const (
 	DefTiDBEnableOrderedResultMode               = false
 	DefEnableMPPBalanceWithContinuousRegion      = true
 	DefEnableMPPBalanceWithContinuousRegionCount = 20
+	DefEnablePlacementCheck                      = true
 )
 
 // Process global variables.
