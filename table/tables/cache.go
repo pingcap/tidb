@@ -1,0 +1,92 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+package tables
+
+import (
+	"fmt"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/tikv/client-go/v2/tikv"
+)
+
+var _ table.Table = &cachedTable{}
+var _ table.CachedTable = &cachedTable{}
+
+type cachedTable struct {
+	TableCommon
+	kv.MemBuffer
+}
+
+func (c *cachedTable) IsReadFromCache(ts uint64) bool {
+	// If first read cache table. directly return false, the backend go coroutine will help us update the lock information
+	// and read the data from the original table at the same time
+	if c.MemBuffer == nil {
+		return false
+	}
+	return true
+}
+
+func (c *cachedTable) GetMemCache() kv.MemBuffer {
+	return c.MemBuffer
+}
+
+// NewCachedTable creates a new CachedTable Instance
+func NewCachedTable(tbl *TableCommon) (table.Table, error) {
+	return &cachedTable{
+		TableCommon: *tbl,
+	}, nil
+}
+
+func (c *cachedTable) LoadDataFromOriginalTable(ctx sessionctx.Context) error {
+	prefix := tablecodec.GenTablePrefix(c.tableID)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	buffTxn, err := ctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
+	if err != nil {
+		return err
+	}
+	c.MemBuffer = buffTxn.GetMemBuffer()
+	it, err := txn.Iter(prefix, prefix.PrefixNext())
+	if err != nil {
+		return err
+	}
+	defer it.Close()
+	if !it.Valid() {
+		return nil
+	}
+	for it.Valid() && it.Key().HasPrefix(prefix) {
+		value := it.Value()
+		err = c.MemBuffer.Set(it.Key(), value)
+		if err != nil {
+			return err
+		}
+		err = it.Next()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (c *cachedTable) UpdateLockForRead(ctx sessionctx.Context, ts uint64) error {
+	// Now only the data is re-load here, and the lock information is not updated. any read-lock information update will in the next pr.
+	err := c.LoadDataFromOriginalTable(ctx)
+	if err != nil {
+		return fmt.Errorf("reload data error")
+	}
+	return nil
+}

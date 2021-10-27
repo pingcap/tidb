@@ -88,7 +88,10 @@ type StatementContext struct {
 	MaybeOverOptimized4PlanCache bool
 	IgnoreExplainIDSuffix        bool
 	IsStaleness                  bool
-
+	CacheTableInfo               struct {
+		IsReadCacheTable bool
+		TableID     int64
+	}
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -322,6 +325,10 @@ func (sc *StatementContext) InitMemTracker(label int, bytesLimit int64) {
 func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHintSet = true
 	sc.planHint = hint
+}
+func (sc *StatementContext) InitCacheTableInfo(tblID int64, cond bool) {
+	sc.CacheTableInfo.TableID = tblID
+	sc.CacheTableInfo.IsReadCacheTable = cond
 }
 
 // TableEntry presents table in db.

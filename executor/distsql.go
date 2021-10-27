@@ -201,7 +201,9 @@ func (e *IndexReaderExecutor) Close() error {
 	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
-
+	if e.table.Meta() != nil && e.table.Meta().TableCacheStatusType == model.TableCacheStatusEnable && e.ctx.GetSessionVars().StmtCtx.CacheTableInfo.IsReadCacheTable {
+		return nil
+	}
 	err := e.result.Close()
 	e.result = nil
 	e.ctx.StoreQueryFeedback(e.feedback)
@@ -214,7 +216,10 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		req.Reset()
 		return nil
 	}
-
+	if e.table.Meta() != nil && e.table.Meta().TableCacheStatusType == model.TableCacheStatusEnable && e.ctx.GetSessionVars().StmtCtx.CacheTableInfo.IsReadCacheTable {
+		req.Reset()
+		return nil
+	}
 	err := e.result.Next(ctx, req)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -282,7 +287,10 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
-
+	// Cache table is similar with temporary table, if it satisfies the read condition. avoid sending distsql request to TIKV.
+	if e.table.Meta() != nil && e.table.Meta().TableCacheStatusType == model.TableCacheStatusEnable && e.ctx.GetSessionVars().StmtCtx.CacheTableInfo.IsReadCacheTable {
+		return nil
+	}
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	var builder distsql.RequestBuilder
@@ -407,7 +415,10 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	if e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
-
+	// Cache table is similar with temporary table.
+	if e.table.Meta() != nil && e.table.Meta().TableCacheStatusType == model.TableCacheStatusEnable && e.ctx.GetSessionVars().StmtCtx.CacheTableInfo.IsReadCacheTable {
+		return nil
+	}
 	err = e.open(ctx)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -670,7 +681,9 @@ func (e *IndexLookUpExecutor) Close() error {
 	if e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
-
+	if e.table.Meta() != nil && e.table.Meta().TableCacheStatusType == model.TableCacheStatusEnable && e.ctx.GetSessionVars().StmtCtx.CacheTableInfo.IsReadCacheTable {
+		return nil
+	}
 	if !e.workerStarted || e.finished == nil {
 		return nil
 	}
@@ -695,7 +708,10 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		req.Reset()
 		return nil
 	}
-
+	if e.table.Meta() != nil && e.table.Meta().TableCacheStatusType == model.TableCacheStatusEnable && e.ctx.GetSessionVars().StmtCtx.CacheTableInfo.IsReadCacheTable {
+		req.Reset()
+		return nil
+	}
 	if !e.workerStarted {
 		if err := e.startWorkers(ctx, req.RequiredRows()); err != nil {
 			return err

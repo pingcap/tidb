@@ -17,6 +17,7 @@ package executor
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -324,6 +325,15 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 	if err != nil {
 		return err
 	}
+	var cachedTable table.CachedTable
+	cacheInfo := ctx.GetSessionVars().StmtCtx.CacheTableInfo
+	if cacheInfo.IsReadCacheTable {
+		tbl, ok := domain.GetDomain(ctx).InfoSchema().TableByID(cacheInfo.TableID)
+		if !ok {
+			return nil
+		}
+		cachedTable = tbl.(table.CachedTable)
+	}
 
 	tempTableData := ctx.GetSessionVars().TemporaryTableData
 	for _, rg := range kvRanges {
@@ -339,7 +349,16 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 				return err
 			}
 		}
-
+		if cachedTable != nil {
+			cacheIter, err := cachedTable.GetMemCache().Iter(rg.StartKey, rg.EndKey)
+			if err != nil {
+				return err
+			}
+			iter, err = transaction.NewUnionIter(iter, cacheIter, false)
+			if err != nil {
+				return err
+			}
+		}
 		for ; iter.Valid(); err = iter.Next() {
 			if err != nil {
 				return err
