@@ -202,15 +202,15 @@ func TestAESDecrypt(t *testing.T) {
 	}
 
 	for _, tt := range gbkTests {
-		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
-		err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
+		err = variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
 		require.NoError(t, err)
 		args := []types.Datum{fromHex(tt.crypt)}
 		for _, param := range tt.params {
 			args = append(args, types.NewDatum(param))
 		}
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
