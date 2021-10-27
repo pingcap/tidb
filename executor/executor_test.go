@@ -115,7 +115,6 @@ var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testPointGetSuite{})
-var _ = Suite(&testBatchPointGetSuite{})
 var _ = SerialSuites(&testRecoverTable{})
 var _ = SerialSuites(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
@@ -164,11 +163,6 @@ type baseTestSuite struct {
 	domain  *domain.Domain
 	*parser.Parser
 	ctx *mock.Context // nolint:structcheck
-}
-
-type testBatchPointGetSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
