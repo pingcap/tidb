@@ -9171,10 +9171,10 @@ func (s *testStaleTxnSuite) TestInvalidReadCacheTable(c *C) {
 	tk.MustExec("drop table if exists cache_tmp2")
 	tk.MustExec("create table cache_tmp2 (id int not null primary key, code int not null, value int default null, unique key code(code));")
 	tk.MustExec("alter table cache_tmp2 cache")
-	tk.MustExec("drop table if exists tmp3 , tmp4, tmp5")
-	tk.MustExec("create table tmp3 (id int not null primary key, code int not null, value int default null, unique key code(code));")
-	tk.MustExec("create table tmp4 (id int not null primary key, code int not null, value int default null, unique key code(code));")
-	tk.MustExec("create table tmp5 (id int primary key);")
+	tk.MustExec("drop table if exists cache_tmp3 , cache_tmp4, cache_tmp5")
+	tk.MustExec("create table cache_tmp3 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+	tk.MustExec("create table cache_tmp4 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+	tk.MustExec("create table cache_tmp5 (id int primary key);")
 	// sleep 1us to make test stale
 	time.Sleep(time.Microsecond)
 
@@ -9197,10 +9197,10 @@ func (s *testStaleTxnSuite) TestInvalidReadCacheTable(c *C) {
 			sql: "select * from cache_tmp1 where id > 1",
 		},
 		{
-			sql: "select /*+use_index(tmp1, code)*/ * from cache_tmp1 where code > 1",
+			sql: "select /*+use_index(cache_tmp1, code)*/ * from cache_tmp1 where code > 1",
 		},
 		{
-			sql: "select /*+use_index(tmp1, code)*/ code from cache_tmp1 where code > 1",
+			sql: "select /*+use_index(cache_tmp1, code)*/ code from cache_tmp1 where code > 1",
 		},
 	}
 
@@ -9229,14 +9229,14 @@ func (s *testStaleTxnSuite) TestInvalidReadCacheTable(c *C) {
 	}
 
 	// Test normal table when cache table exits.
-	tk.MustExec("insert into tmp5 values(1);")
+	tk.MustExec("insert into cache_tmp5 values(1);")
 	tk.MustExec("set @a=now(6);")
 	time.Sleep(time.Microsecond)
-	tk.MustExec("drop table tmp5")
-	tk.MustExec("create table tmp6 (id int primary key);")
-	tk.MustQuery("select * from tmp5 as of timestamp(@a) where id=1;").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from tmp4 as of timestamp(@a), tmp3 as of timestamp(@a) where tmp3.id=1;")
-	tk.MustGetErrMsg("select * from tmp4 as of timestamp(@a), cache_tmp2 as of timestamp(@a) where cache_tmp2.id=1;", "can not stale read cache table")
+	tk.MustExec("drop table cache_tmp5")
+	tk.MustExec("create table cache_tmp5 (id int primary key);")
+	tk.MustQuery("select * from cache_tmp5 as of timestamp(@a) where id=1;").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from cache_tmp4 as of timestamp(@a), cache_tmp3 as of timestamp(@a) where cache_tmp3.id=1;")
+	tk.MustGetErrMsg("select * from cache_tmp4 as of timestamp(@a), cache_tmp2 as of timestamp(@a) where cache_tmp2.id=1;", "can not stale read cache table")
 	tk.MustExec("set transaction read only as of timestamp NOW(6)")
 	tk.MustExec("start transaction")
 	for _, query := range queries {
