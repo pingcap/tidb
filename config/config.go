@@ -374,9 +374,10 @@ type Security struct {
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
 	// Allow automatic TLS certificate generation
-	AutoTLS       bool   `toml:"auto-tls" json:"auto-tls"`
-	MinTLSVersion string `toml:"tls-version" json:"tls-version"`
-	RSAKeySize    int    `toml:"rsa-key-size" json:"rsa-key-size"`
+	AutoTLS         bool   `toml:"auto-tls" json:"auto-tls"`
+	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
+	RSAKeySize      int    `toml:"rsa-key-size" json:"rsa-key-size"`
+	SecureBootstrap bool   `toml:"secure-bootstrap" json:"secure-bootstrap"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
