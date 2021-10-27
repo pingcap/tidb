@@ -1273,3 +1273,78 @@ func (s *testPrepareSerialSuite) TestInvisibleIndex4PlanCache(c *C) {
 	err = tk.ExecToErr("execute stmt;")
 	c.Assert(err.Error(), Equals, "[planner:1176]Key 'idx_c' doesn't exist in table 't'")
 }
+
+// TODO: need to check whether the CTE can not be cached
+func (s *testPrepareSerialSuite) TestCTE4PlanCache(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("prepare stmt from 'with recursive cte1 as (" +
+		"select ? c1 " +
+		"union all " +
+		"select c1 + 1 c1 from cte1 where c1 < ?) " +
+		"select * from cte1;';")
+	tk.MustExec("set @a=5, @b=4, @c=2, @d=1;")
+	tk.MustQuery("execute stmt using @d, @a").Check(testkit.Rows("1", "2", "3", "4", "5"))
+	tk.MustQuery("execute stmt using @d, @b").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @c, @b").Check(testkit.Rows("2", "3", "4"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	// Two seed parts.
+	tk.MustExec("prepare stmt from 'with recursive cte1 as (" +
+		"select 1 c1 " +
+		"union all " +
+		"select 2 c1 " +
+		"union all " +
+		"select c1 + 1 c1 from cte1 where c1 < ?) " +
+		"select * from cte1 order by c1;';")
+	tk.MustExec("set @a=10, @b=2;")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1", "2", "2", "3", "3", "4", "4", "5", "5", "6", "6", "7", "7", "8", "8", "9", "9", "10", "10"))
+	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("1", "2", "2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	// Two recursive parts.
+	tk.MustExec("prepare stmt from 'with recursive cte1 as (" +
+		"select 1 c1 " +
+		"union all " +
+		"select 2 c1 " +
+		"union all " +
+		"select c1 + 1 c1 from cte1 where c1 < ? " +
+		"union all " +
+		"select c1 + ? c1 from cte1 where c1 < ?) " +
+		"select * from cte1 order by c1;';")
+	tk.MustExec("set @a=1, @b=2, @c=3, @d=4, @e=5;")
+	tk.MustQuery("execute stmt using @c, @b, @e;").Check(testkit.Rows("1", "2", "2", "3", "3", "3", "4", "4", "5", "5", "5", "6", "6"))
+	tk.MustQuery("execute stmt using @b, @a, @d;").Check(testkit.Rows("1", "2", "2", "2", "3", "3", "3", "4", "4", "4"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int);")
+	tk.MustExec("insert into t1 values(1);")
+	tk.MustExec("insert into t1 values(2);")
+	tk.MustExec("prepare stmt from 'SELECT * FROM t1 dt WHERE EXISTS(WITH RECURSIVE qn AS (SELECT a*? AS b UNION ALL SELECT b+? FROM qn WHERE b=?) SELECT * FROM qn WHERE b=a);';")
+	tk.MustExec("set @a=1, @b=2, @c=3, @d=4, @e=5, @f=0;")
+
+	tk.MustQuery("execute stmt using @f, @a, @f").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a, @b, @a").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("prepare stmt from 'with recursive c(p) as (select ?), cte(a, b) as (select 1, 1 union select a+?, 1 from cte, c where a < ?)  select * from cte order by 1, 2;';")
+	tk.MustQuery("execute stmt using @a, @a, @e;").Check(testkit.Rows("1 1", "2 1", "3 1", "4 1", "5 1"))
+	tk.MustQuery("execute stmt using @b, @b, @c;").Check(testkit.Rows("1 1", "3 1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
