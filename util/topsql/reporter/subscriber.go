@@ -107,6 +107,7 @@ func (s *subClient) run(wg *sync.WaitGroup) {
 		if err != nil {
 			logutil.BgLogger().Warn("[top-sql] client failed to send data to subscriber", zap.Error(err))
 			reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			return
 		} else {
 			reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
