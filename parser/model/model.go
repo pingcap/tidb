@@ -337,10 +337,30 @@ type TableInfo struct {
 	// It's true when the engine of the table is TiFlash only.
 	IsColumnar bool `json:"is_columnar"`
 
-	TempTableType `json:"temp_table_type"`
+	TempTableType        `json:"temp_table_type"`
+	TableCacheStatusType `json:"cache_table_status"`
+	PlacementPolicyRef   *PolicyRefInfo     `json:"policy_ref_info"`
+	DirectPlacementOpts  *PlacementSettings `json:"placement_settings"`
+}
+type TableCacheStatusType int
 
-	PlacementPolicyRef  *PolicyRefInfo     `json:"policy_ref_info"`
-	DirectPlacementOpts *PlacementSettings `json:"placement_settings"`
+const (
+	TableCacheStatusDisable TableCacheStatusType = iota
+	TableCacheStatusEnable
+	TableCacheStatusSwitching
+)
+
+func (t TableCacheStatusType) String() string {
+	switch t {
+	case TableCacheStatusDisable:
+		return "disable"
+	case TableCacheStatusEnable:
+		return "enable"
+	case TableCacheStatusSwitching:
+		return "switching"
+	default:
+		return ""
+	}
 }
 
 type TempTableType byte
@@ -806,6 +826,17 @@ func (pi *PartitionInfo) GetNameByID(id int64) string {
 		}
 	}
 	return ""
+}
+
+// GetPlacementByID gets the partition placement by ID.
+func (pi *PartitionInfo) GetPlacementByID(id int64) (*PolicyRefInfo, *PlacementSettings) {
+	definitions := pi.Definitions
+	for i := range definitions {
+		if id == definitions[i].ID {
+			return definitions[i].PlacementPolicyRef, definitions[i].DirectPlacementOpts
+		}
+	}
+	return nil, nil
 }
 
 func (pi *PartitionInfo) GetStateByID(id int64) SchemaState {

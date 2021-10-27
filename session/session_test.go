@@ -3925,35 +3925,6 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "[planner:3126]Hint SET_VAR(group_concat_max_len=2048) is ignored as conflicting/duplicated.")
 }
 
-// TestDeprecateSlowLogMasking should be in serial suite because it changes a global variable.
-func (s *testSessionSerialSuite) TestDeprecateSlowLogMasking(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	tk.MustExec("set @@global.tidb_redact_log=0")
-	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@global.tidb_redact_log=1")
-	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@global.tidb_slow_log_masking=0")
-	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@session.tidb_redact_log=0")
-	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@session.tidb_redact_log=1")
-	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@session.tidb_slow_log_masking=0")
-	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("0"))
-}
-
 func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use environment
 	// use isolated store, because in below failpoint we will cancel its context
@@ -4810,34 +4781,6 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	tk.MustExec("insert into tl values (1, repeat('x', 512))")
 	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512))", errno.ErrRecordFileFull)
 	tk.MustExec("rollback")
-}
-
-func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {
-	// Test the @@tidb_enable_global_temporary_table system variable.
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	// variable 'tidb_enable_global_temporary_table' should be seen when show variables
-	tk.MustQuery("show variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows("tidb_enable_global_temporary_table ON"))
-	tk.MustQuery("show global variables like 'tidb_enable_global_temporary_table'").Check(testkit.Rows("tidb_enable_global_temporary_table ON"))
-
-	// variable 'tidb_enable_global_temporary_table' is turned on by default
-	tk.MustQuery("select @@global.tidb_enable_global_temporary_table").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("1"))
-	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsTrue)
-
-	// can create global temporary table when 'tidb_enable_global_temporary_table' is on
-	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
-	tk.MustQuery("show tables like 'temp_test'").Check(testkit.Rows("temp_test"))
-
-	// Get error messages when 'tidb_enable_global_temporary_table' is off
-	tk.MustExec("set tidb_enable_global_temporary_table=off")
-	tk.MustQuery("select @@tidb_enable_global_temporary_table").Check(testkit.Rows("0"))
-	c.Assert(tk.Se.GetSessionVars().EnableGlobalTemporaryTable, IsFalse)
-	tk.MustGetErrMsg(
-		"create global temporary table temp_test(id int primary key auto_increment) on commit delete rows",
-		"SET tidb_enable_global_temporary_table=1 to enable temporary tables",
-	)
 }
 
 func (s *testStatisticsSuite) cleanEnv(c *C, store kv.Storage, do *domain.Domain) {

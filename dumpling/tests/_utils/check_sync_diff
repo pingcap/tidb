@@ -1,0 +1,33 @@
+#!/bin/bash
+#
+# Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
+
+# parameter 1: config file for sync_diff_inspector
+# parameter 2: max check times
+
+conf=$1
+check_time=${2-10}
+
+LOG=$DUMPLING_OUTPUT_DIR/sync_diff_inspector.log
+
+i=0
+while [ $i -lt $check_time ]
+do
+    bin/sync_diff_inspector --config=$conf >> $LOG 2>&1
+    ret=$?
+    if [ "$ret" == 0 ]; then
+        echo "check diff successfully"
+        break
+    fi
+    ((i++))
+    echo "check diff failed $i-th time, retry later"
+    sleep 2
+done
+
+if [ $i -ge $check_time ]; then
+    echo "check data failed, some data are different!!"
+    # show \n and other blanks
+    printf "$(cat $LOG)\n"
+    exit 1
+fi
+cd $PWD

@@ -184,6 +184,12 @@ type Config struct {
 	// 1. there is a network partition problem between TiDB and PD leader.
 	// 2. there is a network partition problem between TiDB and TiKV leader.
 	EnableForwarding bool `toml:"enable-forwarding" json:"enable-forwarding"`
+	// MaxBallastObjectSize set the max size of the ballast object, the unit is byte.
+	// The default value is the smallest of the following two values: 2GB or
+	// one quarter of the total physical memory in the current system.
+	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
+	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
+	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed

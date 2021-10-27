@@ -26,4 +26,5 @@ header:
     - 'LICENSE'
     - '.github/'
     - 'parser/'
+    - 'dumpling/'
   comment: on-failure
