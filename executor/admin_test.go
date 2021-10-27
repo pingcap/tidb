@@ -137,6 +137,7 @@ func (s *testSuite5) TestAdminCheckIndexInCacheTable(c *C) {
 	tk.MustExec("admin check table cache_admin_test;")
 	tk.MustExec("admin check index cache_admin_test c1;")
 	tk.MustExec("admin check index cache_admin_test c2;")
+	tk.MustExec("drop table if exists cache_admin_test;")
 	tk.MustExec(`drop table if exists check_index_test;`)
 	tk.MustExec(`create table check_index_test (a int, b varchar(10), index a_b (a, b), index b (b))`)
 	tk.MustExec(`insert check_index_test values (3, "ab"),(2, "cd"),(1, "ef"),(-1, "hi")`)
