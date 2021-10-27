@@ -3489,99 +3489,99 @@ func TestErrorMsg(t *testing.T) {
 
 	p := parser.New()
 	_, _, err := p.Parse("select1 1", "", "")
-	require.Equal(t, "line 1 column 7 near \"select1 1\" ", err.Error())
+	require.EqualError(t, err, "line 1 column 7 near \"select1 1\" ")
 	_, _, err = p.Parse("select 1 from1 dual", "", "")
-	require.Equal(t, "line 1 column 19 near \"dual\" ", err.Error())
+	require.EqualError(t, err, "line 1 column 19 near \"dual\" ")
 	_, _, err = p.Parse("select * from t1 join t2 from t1.a = t2.a;", "", "")
-	require.Equal(t, "line 1 column 29 near \"from t1.a = t2.a;\" ", err.Error())
+	require.EqualError(t, err, "line 1 column 29 near \"from t1.a = t2.a;\" ")
 	_, _, err = p.Parse("select * from t1 join t2 one t1.a = t2.a;", "", "")
-	require.Equal(t, "line 1 column 31 near \"t1.a = t2.a;\" ", err.Error())
+	require.EqualError(t, err, "line 1 column 31 near \"t1.a = t2.a;\" ")
 	_, _, err = p.Parse("select * from t1 join t2 on t1.a >>> t2.a;", "", "")
-	require.Equal(t, "line 1 column 36 near \"> t2.a;\" ", err.Error())
+	require.EqualError(t, err, "line 1 column 36 near \"> t2.a;\" ")
 
 	_, _, err = p.Parse("create table t(f_year year(5))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", "", "")
-	require.Equal(t, "[parser:1818]Supports only YEAR or YEAR(4) column", err.Error())
+	require.EqualError(t, err, "[parser:1818]Supports only YEAR or YEAR(4) column")
 
 	_, _, err = p.Parse("select ifnull(a,0) & ifnull(a,0) like '55' ESCAPE '\\\\a' from t;", "", "")
-	require.Equal(t, "[parser:1210]Incorrect arguments to ESCAPE", err.Error())
+	require.EqualError(t, err, "[parser:1210]Incorrect arguments to ESCAPE")
 
 	_, _, err = p.Parse("load data infile 'aaa' into table aaa FIELDS  Enclosed by '\\\\b';", "", "")
-	require.Equal(t, "[parser:1083]Field separator argument is not what is expected; check the manual", err.Error())
+	require.EqualError(t, err, "[parser:1083]Field separator argument is not what is expected; check the manual")
 
 	_, _, err = p.Parse("load data infile 'aaa' into table aaa FIELDS  Escaped by '\\\\b';", "", "")
-	require.Equal(t, "[parser:1083]Field separator argument is not what is expected; check the manual", err.Error())
+	require.EqualError(t, err, "[parser:1083]Field separator argument is not what is expected; check the manual")
 
 	_, _, err = p.Parse("load data infile 'aaa' into table aaa FIELDS  Enclosed by '\\\\b' Escaped by '\\\\b' ;", "", "")
-	require.Equal(t, "[parser:1083]Field separator argument is not what is expected; check the manual", err.Error())
+	require.EqualError(t, err, "[parser:1083]Field separator argument is not what is expected; check the manual")
 
 	_, _, err = p.Parse("ALTER DATABASE `` CHARACTER SET = ''", "", "")
-	require.Equal(t, "[parser:1115]Unknown character set: ''", err.Error())
+	require.EqualError(t, err, "[parser:1115]Unknown character set: ''")
 
 	_, _, err = p.Parse("ALTER DATABASE t CHARACTER SET = ''", "", "")
-	require.Equal(t, "[parser:1115]Unknown character set: ''", err.Error())
+	require.EqualError(t, err, "[parser:1115]Unknown character set: ''")
 
 	_, _, err = p.Parse("ALTER SCHEMA t CHARACTER SET = 'SOME_INVALID_CHARSET'", "", "")
-	require.Equal(t, "[parser:1115]Unknown character set: 'SOME_INVALID_CHARSET'", err.Error())
+	require.EqualError(t, err, "[parser:1115]Unknown character set: 'SOME_INVALID_CHARSET'")
 
 	_, _, err = p.Parse("ALTER DATABASE t COLLATE = ''", "", "")
-	require.Equal(t, "[ddl:1273]Unknown collation: ''", err.Error())
+	require.EqualError(t, err, "[ddl:1273]Unknown collation: ''")
 
 	_, _, err = p.Parse("ALTER SCHEMA t COLLATE = 'SOME_INVALID_COLLATION'", "", "")
-	require.Equal(t, "[ddl:1273]Unknown collation: 'SOME_INVALID_COLLATION'", err.Error())
+	require.EqualError(t, err, "[ddl:1273]Unknown collation: 'SOME_INVALID_COLLATION'")
 
 	_, _, err = p.Parse("ALTER DATABASE CHARSET = 'utf8mb4' COLLATE = 'utf8_bin'", "", "")
-	require.Equal(t, "line 1 column 24 near \"= 'utf8mb4' COLLATE = 'utf8_bin'\" ", err.Error())
+	require.EqualError(t, err, "line 1 column 24 near \"= 'utf8mb4' COLLATE = 'utf8_bin'\" ")
 
 	_, _, err = p.Parse("ALTER DATABASE t ENCRYPTION = ''", "", "")
-	require.Equal(t, "[parser:1525]Incorrect argument (should be Y or N) value: ''", err.Error())
+	require.EqualError(t, err, "[parser:1525]Incorrect argument (should be Y or N) value: ''")
 
 	_, _, err = p.Parse("ALTER DATABASE", "", "")
-	require.Equal(t, "line 1 column 14 near \"\" ", err.Error())
+	require.EqualError(t, err, "line 1 column 14 near \"\" ")
 
 	_, _, err = p.Parse("ALTER SCHEMA `ANY_DB_NAME`", "", "")
-	require.Equal(t, "line 1 column 26 near \"\" ", err.Error())
+	require.EqualError(t, err, "line 1 column 26 near \"\" ")
 
 	_, _, err = p.Parse("alter table t partition by range FIELDS(a)", "", "")
-	require.Equal(t, "[ddl:1492]For RANGE partitions each partition must be defined", err.Error())
+	require.EqualError(t, err, "[ddl:1492]For RANGE partitions each partition must be defined")
 
 	_, _, err = p.Parse("alter table t partition by list FIELDS(a)", "", "")
-	require.Equal(t, "[ddl:1492]For LIST partitions each partition must be defined", err.Error())
+	require.EqualError(t, err, "[ddl:1492]For LIST partitions each partition must be defined")
 
 	_, _, err = p.Parse("alter table t partition by list FIELDS(a)", "", "")
-	require.Equal(t, "[ddl:1492]For LIST partitions each partition must be defined", err.Error())
+	require.EqualError(t, err, "[ddl:1492]For LIST partitions each partition must be defined")
 
 	_, _, err = p.Parse("alter table t partition by list FIELDS(a,b,c)", "", "")
-	require.Equal(t, "[ddl:1492]For LIST partitions each partition must be defined", err.Error())
+	require.EqualError(t, err, "[ddl:1492]For LIST partitions each partition must be defined")
 
 	_, _, err = p.Parse("alter table t lock = first", "", "")
-	require.Equal(t, "[parser:1801]Unknown LOCK type 'first'", err.Error())
+	require.EqualError(t, err, "[parser:1801]Unknown LOCK type 'first'")
 
 	_, _, err = p.Parse("alter table t lock = start", "", "")
-	require.Equal(t, "[parser:1801]Unknown LOCK type 'start'", err.Error())
+	require.EqualError(t, err, "[parser:1801]Unknown LOCK type 'start'")
 
 	_, _, err = p.Parse("alter table t lock = commit", "", "")
-	require.Equal(t, "[parser:1801]Unknown LOCK type 'commit'", err.Error())
+	require.EqualError(t, err, "[parser:1801]Unknown LOCK type 'commit'")
 
 	_, _, err = p.Parse("alter table t lock = binlog", "", "")
-	require.Equal(t, "[parser:1801]Unknown LOCK type 'binlog'", err.Error())
+	require.EqualError(t, err, "[parser:1801]Unknown LOCK type 'binlog'")
 
 	_, _, err = p.Parse("alter table t lock = randomStr123", "", "")
-	require.Equal(t, "[parser:1801]Unknown LOCK type 'randomStr123'", err.Error())
+	require.EqualError(t, err, "[parser:1801]Unknown LOCK type 'randomStr123'")
 
 	_, _, err = p.Parse("create table t (a longtext unicode)", "", "")
-	require.Equal(t, "[parser:1115]Unknown character set: 'ucs2'", err.Error())
+	require.EqualError(t, err, "[parser:1115]Unknown character set: 'ucs2'")
 
 	_, _, err = p.Parse("create table t (a long byte, b text unicode)", "", "")
-	require.Equal(t, "[parser:1115]Unknown character set: 'ucs2'", err.Error())
+	require.EqualError(t, err, "[parser:1115]Unknown character set: 'ucs2'")
 
 	_, _, err = p.Parse("create table t (a long ascii, b long unicode)", "", "")
-	require.Equal(t, "[parser:1115]Unknown character set: 'ucs2'", err.Error())
+	require.EqualError(t, err, "[parser:1115]Unknown character set: 'ucs2'")
 
 	_, _, err = p.Parse("create table t (a text unicode, b mediumtext ascii, c int)", "", "")
-	require.Equal(t, "[parser:1115]Unknown character set: 'ucs2'", err.Error())
+	require.EqualError(t, err, "[parser:1115]Unknown character set: 'ucs2'")
 
 	_, _, err = p.Parse("select 1 collate some_unknown_collation", "", "")
-	require.Equal(t, "[ddl:1273]Unknown collation: 'some_unknown_collation'", err.Error())
+	require.EqualError(t, err, "[ddl:1273]Unknown collation: 'some_unknown_collation'")
 }
 
 func TestOptimizerHints(t *testing.T) {
@@ -5902,7 +5902,7 @@ func TestSignedInt64OutOfRange(t *testing.T) {
 	for _, s := range cases {
 		_, err := p.ParseOneStmt(s, "", "")
 		require.Error(t, err)
-		require.True(t, strings.Contains(err.Error(), "out of range"))
+		require.Contains(t, err.Error(), "out of range")
 	}
 }
 
