@@ -17,7 +17,6 @@ package expression
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
@@ -33,8 +32,8 @@ var vecBuiltinLikeCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinLikeFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinLikeCases)
+func TestVectorizedBuiltinLikeFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinLikeCases)
 }
 
 func BenchmarkVectorizedBuiltinLikeFunc(b *testing.B) {
