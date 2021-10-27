@@ -957,14 +957,14 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
 	result.Check(testkit.Rows("167772161"))
 
-	tk.MustExec("set @@tidb_tmp_table_max_size=9223372036854775807")
+	tk.MustExec("set @@tidb_tmp_table_max_size=137438953472")
 	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
-	result.Check(testkit.Rows("9223372036854775807"))
+	result.Check(testkit.Rows("137438953472"))
 
-	tk.MustExec("set @@tidb_tmp_table_max_size=18446744073709551615")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '18446744073709551615'"))
+	tk.MustExec("set @@tidb_tmp_table_max_size=137438953473")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '137438953473'"))
 	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
-	result.Check(testkit.Rows("9223372036854775807"))
+	result.Check(testkit.Rows("137438953472"))
 
 	_, err = tk.Exec("set @@tidb_tmp_table_max_size='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
