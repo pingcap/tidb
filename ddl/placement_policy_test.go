@@ -242,6 +242,7 @@ func (s *testDBSuite6) TestSkipPlacementValidation(c *C) {
 	// Test for `ALTER`
 	// Test `ALTER DATABASE`: Skip the check, keep the original opts.
 	tk.MustExec("alter database db_skip_validation PLACEMENT POLICY=\"x\"")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	tk.MustQuery(`show create database db_skip_validation`).Check(testutil.RowsWithSep("|",
 		"db_skip_validation CREATE DATABASE `db_skip_validation` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
