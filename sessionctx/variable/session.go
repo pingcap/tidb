@@ -713,6 +713,9 @@ type SessionVars struct {
 	// EnableAlterPlacement indicates whether a user can alter table partition placement rules.
 	EnableAlterPlacement bool
 
+	// EnablePlacementChecks indicates whether a user can check validation of placement.
+	EnablePlacementChecks bool
+
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -1189,6 +1192,7 @@ func NewSessionVars() *SessionVars {
 		TMPTableSize:                DefTMPTableSize,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
+		EnablePlacementChecks:       DefEnablePlacementCheck,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1363,12 +1367,17 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 	return
 }
 
-// GetParseParams gets the parse parameters from session variables, for now, only charset and collation are retrieved.
+// GetParseParams gets the parse parameters from session variables.
 func (s *SessionVars) GetParseParams() []parser.ParseParam {
 	chs, coll := s.GetCharsetInfo()
+	cli, err := GetSessionOrGlobalSystemVar(s, CharacterSetClient)
+	if err != nil {
+		cli = ""
+	}
 	return []parser.ParseParam{
 		parser.CharsetConnection(chs),
 		parser.CollationConnection(coll),
+		parser.CharsetClient(cli),
 	}
 }
 

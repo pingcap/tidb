@@ -18,7 +18,6 @@ import (
 	"math/rand"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -529,12 +528,12 @@ var vecBuiltinStringCases2 = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testVectorizeSuite1) TestVectorizedBuiltinStringEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinStringCases)
+func TestVectorizedBuiltinStringEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinStringCases)
 }
 
-func (s *testVectorizeSuite1) TestVectorizedBuiltinStringFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinStringCases)
+func TestVectorizedBuiltinStringFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinStringCases)
 }
 
 func BenchmarkVectorizedBuiltinStringEvalOneVec(b *testing.B) {
@@ -545,12 +544,12 @@ func BenchmarkVectorizedBuiltinStringFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinStringCases)
 }
 
-func (s *testVectorizeSuite1) TestVectorizedBuiltinStringEvalOneVec2(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinStringCases2)
+func TestVectorizedBuiltinStringEvalOneVec2(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinStringCases2)
 }
 
-func (s *testVectorizeSuite1) TestVectorizedBuiltinStringFunc2(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinStringCases2)
+func TestVectorizedBuiltinStringFunc2(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinStringCases2)
 }
 
 func BenchmarkVectorizedBuiltinStringEvalOneVec2(b *testing.B) {
