@@ -703,7 +703,6 @@ func (tr *TableRestore) postProcess(
 	w := rc.checksumWorks.Apply()
 	defer rc.checksumWorks.Recycle(w)
 
-	finished := true
 	if cp.Status < checkpoints.CheckpointStatusChecksummed {
 		// 4. do table checksum
 		var localChecksum verify.KVChecksum
@@ -718,9 +717,14 @@ func (tr *TableRestore) postProcess(
 		hasDupe := false
 		if rc.cfg.TikvImporter.DuplicateDetection {
 			var err error
-			hasDupe, err = rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable)
+			hasLocalDupe, err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
+				if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgUnsafeNoop {
+					return false, err
+				}
+			} else {
+				hasDupe = hasLocalDupe
 			}
 		}
 
@@ -729,21 +733,33 @@ func (tr *TableRestore) postProcess(
 			return false, err
 		}
 
-		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateDetection {
-			hasRemoteDupe, err := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable)
-			if err != nil {
-				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(err))
-				err = nil
-			}
-			hasDupe = hasDupe || hasRemoteDupe
+		if !forcePostProcess && rc.cfg.PostRestore.PostProcessAtLast {
+			return true, nil
 		}
 
-		if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
-			tr.logger.Info("skip checksum")
-			if err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusChecksumSkipped); err != nil {
-				return false, errors.Trace(err)
+		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateDetection {
+			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName)
+			if e != nil {
+				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
+				if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgUnsafeNoop {
+					return false, e
+				}
+			} else {
+				hasDupe = hasDupe || hasRemoteDupe
 			}
-		} else if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
+		}
+
+		nextStage := checkpoints.CheckpointStatusChecksummed
+		if hasDupe {
+			if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
+				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
+				return false, err
+			}
+		} else if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
+			tr.logger.Info("skip checksum")
+			err = nil
+			nextStage = checkpoints.CheckpointStatusChecksumSkipped
+		} else {
 			if !needChecksum {
 				return false, nil
 			}
@@ -753,39 +769,29 @@ func (tr *TableRestore) postProcess(
 				tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
 			}
 
-			if hasDupe {
-				// If there are duplicate keys, do not set the `ChecksumMismatch` error
-				tr.logger.Warn("checksum not performed due to duplicated records")
-			} else {
-				remoteChecksum, err := DoChecksum(ctx, tr.tableInfo)
+			remoteChecksum, err := DoChecksum(ctx, tr.tableInfo)
+			if err != nil {
+				return false, err
+			}
+			err = tr.compareChecksum(remoteChecksum, localChecksum)
+			// with post restore level 'optional', we will skip checksum error
+			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
 				if err != nil {
-					return false, err
-				}
-				err = tr.compareChecksum(remoteChecksum, localChecksum)
-				// with post restore level 'optional', we will skip checksum error
-				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
-					if err != nil {
-						tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
-						err = nil
-					}
+					tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+					err = nil
 				}
 			}
-			if err == nil {
-				err = metaMgr.FinishTable(ctx)
-			}
-
-			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusChecksummed)
-			if err = firstErr(err, saveCpErr); err != nil {
-				return false, errors.Trace(err)
-			}
-
-			cp.Status = checkpoints.CheckpointStatusChecksummed
-		} else {
-			finished = false
 		}
-	}
-	if !finished {
-		return !finished, nil
+
+		if err == nil {
+			err = metaMgr.FinishTable(ctx)
+		}
+
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, nextStage)
+		if err = firstErr(err, saveCpErr); err != nil {
+			return false, errors.Trace(err)
+		}
+		cp.Status = nextStage
 	}
 
 	// 5. do table analyze
@@ -812,11 +818,11 @@ func (tr *TableRestore) postProcess(
 			}
 			cp.Status = checkpoints.CheckpointStatusAnalyzed
 		default:
-			finished = false
+			return true, nil
 		}
 	}
 
-	return !finished, nil
+	return true, nil
 }
 
 func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignoreColumns []string) ([]int, error) {

@@ -17,6 +17,7 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -51,6 +52,12 @@ func TestSysVar(t *testing.T) {
 
 	f = GetSysVar("tidb_enable_table_partition")
 	require.Equal(t, "ON", f.Value)
+
+	f = GetSysVar("version_compile_os")
+	require.Equal(t, runtime.GOOS, f.Value)
+
+	f = GetSysVar("version_compile_machine")
+	require.Equal(t, runtime.GOARCH, f.Value)
 }
 
 func TestTxnMode(t *testing.T) {
@@ -241,7 +248,7 @@ func TestDeprecation(t *testing.T) {
 
 	vars := NewSessionVars()
 
-	_, err := sysVar.Validate(vars, "1234", ScopeSession)
+	_, err := sysVar.Validate(vars, "123", ScopeSession)
 	require.NoError(t, err)
 
 	// There was no error but there is a deprecation warning.
@@ -750,4 +757,30 @@ func TestIdentity(t *testing.T) {
 	val, err = GetSessionOrGlobalSystemVar(vars, Identity)
 	require.NoError(t, err)
 	require.Equal(t, val, "21")
+}
+
+func TestDDLWorkers(t *testing.T) {
+	svWorkerCount, svBatchSize := GetSysVar(TiDBDDLReorgWorkerCount), GetSysVar(TiDBDDLReorgBatchSize)
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+
+	val, err := svWorkerCount.Validate(vars, "-100", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "1") // converts it to min value
+	val, err = svWorkerCount.Validate(vars, "1234", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "256") // converts it to max value
+	val, err = svWorkerCount.Validate(vars, "100", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "100") // unchanged
+
+	val, err = svBatchSize.Validate(vars, "10", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, fmt.Sprint(MinDDLReorgBatchSize)) // converts it to min value
+	val, err = svBatchSize.Validate(vars, "999999", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, fmt.Sprint(MaxDDLReorgBatchSize)) // converts it to max value
+	val, err = svBatchSize.Validate(vars, "100", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, val, "100") // unchanged
 }

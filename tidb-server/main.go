@@ -527,6 +527,8 @@ func setGlobalVars() {
 	session.SetStatsLease(statsLeaseDuration)
 	indexUsageSyncLeaseDuration := parseDuration(cfg.Performance.IndexUsageSyncLease)
 	session.SetIndexUsageSyncLease(indexUsageSyncLeaseDuration)
+	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
+	session.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
@@ -567,6 +569,7 @@ func setGlobalVars() {
 	if hostname, err := os.Hostname(); err != nil {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}
+	variable.GlobalLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))
 
 	if cfg.Security.EnableSEM {
 		sem.Enable()

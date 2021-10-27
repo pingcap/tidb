@@ -663,9 +663,10 @@ import (
 	placement             "PLACEMENT"
 	plan                  "PLAN"
 	position              "POSITION"
+	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
 	recent                "RECENT"
-	recreator             "RECREATOR"
+	replayer              "REPLAYER"
 	running               "RUNNING"
 	s3                    "S3"
 	schedule              "SCHEDULE"
@@ -708,6 +709,7 @@ import (
 	cancel                     "CANCEL"
 	cardinality                "CARDINALITY"
 	cmSketch                   "CMSKETCH"
+	columnStatsUsage           "COLUMN_STATS_USAGE"
 	correlation                "CORRELATION"
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
@@ -721,6 +723,7 @@ import (
 	pessimistic                "PESSIMISTIC"
 	pump                       "PUMP"
 	samples                    "SAMPLES"
+	sampleRate                 "SAMPLERATE"
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsMeta                  "STATS_META"
@@ -888,7 +891,7 @@ import (
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockTablesStmt             "Lock tables statement"
-	PlanRecreatorStmt          "Plan recreator statement"
+	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
 	SelectStmt                 "SELECT statement"
@@ -1309,6 +1312,7 @@ import (
 	PlacementSpec                          "Placement rules specification"
 	PlacementSpecList                      "Placement rules specifications"
 	AttributesOpt                          "Attributes options"
+	PredicateColumnsOpt                    "predicate columns option"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1592,14 +1596,7 @@ DirectPlacementOption:
 
 PlacementOption:
 	DirectPlacementOption
-|	"PLACEMENT" "POLICY" EqOpt stringLit
-	{
-		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
-	}
-|	"PLACEMENT" "POLICY" EqOpt PolicyName
-	{
-		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
-	}
+|	PlacementPolicyOption
 
 PlacementPolicyOption:
 	"PLACEMENT" "POLICY" EqOpt stringLit
@@ -1607,6 +1604,14 @@ PlacementPolicyOption:
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
 	}
 |	"PLACEMENT" "POLICY" EqOpt PolicyName
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
+	}
+|	"PLACEMENT" "POLICY" EqOpt "DEFAULT"
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
+	}
+|	"PLACEMENT" "POLICY" "SET" "DEFAULT"
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
 	}
@@ -2282,6 +2287,19 @@ AlterTableSpec:
 			PlacementSpecs: $1.([]*ast.PlacementSpec),
 		}
 	}
+// 	Support caching or non-caching a table in memory for tidb, It can be found in the official Oracle document, see: https://docs.oracle.com/database/121/SQLRF/statements_3001.htm
+|	"CACHE"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableCache,
+		}
+	}
+|	"NOCACHE"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableNoCache,
+		}
+	}
 
 ReorganizePartitionRuleOpt:
 	/* empty */ %prec lowerThanRemove
@@ -2656,9 +2674,9 @@ SplitSyntaxOption:
 	}
 
 AnalyzeTableStmt:
-	"ANALYZE" "TABLE" TableNameList AnalyzeOptionListOpt
+	"ANALYZE" "TABLE" TableNameList PredicateColumnsOpt AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), AnalyzeOpts: $4.([]ast.AnalyzeOpt)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), PredicateColumns: $4.(bool), AnalyzeOpts: $5.([]ast.AnalyzeOpt)}
 	}
 |	"ANALYZE" "TABLE" TableName "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
@@ -2668,9 +2686,9 @@ AnalyzeTableStmt:
 	{
 		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$4.(*ast.TableName)}, IndexNames: $6.([]model.CIStr), IndexFlag: true, Incremental: true, AnalyzeOpts: $7.([]ast.AnalyzeOpt)}
 	}
-|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList PredicateColumnsOpt AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, PartitionNames: $5.([]model.CIStr), AnalyzeOpts: $6.([]ast.AnalyzeOpt)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, PartitionNames: $5.([]model.CIStr), PredicateColumns: $6.(bool), AnalyzeOpts: $7.([]ast.AnalyzeOpt)}
 	}
 |	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
@@ -2710,6 +2728,31 @@ AnalyzeTableStmt:
 			HistogramOperation: ast.HistogramOperationDrop,
 		}
 	}
+|	"ANALYZE" "TABLE" TableName "COLUMNS" ColumnNameList AnalyzeOptionListOpt
+	{
+		$$ = &ast.AnalyzeTableStmt{
+			TableNames:  []*ast.TableName{$3.(*ast.TableName)},
+			ColumnNames: $5.([]*ast.ColumnName),
+			AnalyzeOpts: $6.([]ast.AnalyzeOpt)}
+	}
+|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "COLUMNS" ColumnNameList AnalyzeOptionListOpt
+	{
+		$$ = &ast.AnalyzeTableStmt{
+			TableNames:     []*ast.TableName{$3.(*ast.TableName)},
+			PartitionNames: $5.([]model.CIStr),
+			ColumnNames:    $7.([]*ast.ColumnName),
+			AnalyzeOpts:    $8.([]ast.AnalyzeOpt)}
+	}
+
+PredicateColumnsOpt:
+	/* empty */
+	{
+		$$ = false
+	}
+|	"PREDICATE" "COLUMNS"
+	{
+		$$ = true
+	}
 
 AnalyzeOptionListOpt:
 	{
@@ -2733,23 +2776,27 @@ AnalyzeOptionList:
 AnalyzeOption:
 	NUM "BUCKETS"
 	{
-		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumBuckets, Value: getUint64FromNUM($1)}
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumBuckets, Value: ast.NewValueExpr($1, "", "")}
 	}
 |	NUM "TOPN"
 	{
-		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumTopN, Value: getUint64FromNUM($1)}
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumTopN, Value: ast.NewValueExpr($1, "", "")}
 	}
 |	NUM "CMSKETCH" "DEPTH"
 	{
-		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptCMSketchDepth, Value: getUint64FromNUM($1)}
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptCMSketchDepth, Value: ast.NewValueExpr($1, "", "")}
 	}
 |	NUM "CMSKETCH" "WIDTH"
 	{
-		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptCMSketchWidth, Value: getUint64FromNUM($1)}
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptCMSketchWidth, Value: ast.NewValueExpr($1, "", "")}
 	}
 |	NUM "SAMPLES"
 	{
-		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumSamples, Value: getUint64FromNUM($1)}
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumSamples, Value: ast.NewValueExpr($1, "", "")}
+	}
+|	NumLiteral "SAMPLERATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr($1, "", "")}
 	}
 
 /*******************************************************************************************/
@@ -6095,6 +6142,7 @@ TiDBKeyword:
 |	"CANCEL"
 |	"CARDINALITY"
 |	"CMSKETCH"
+|	"COLUMN_STATS_USAGE"
 |	"CORRELATION"
 |	"DDL"
 |	"DEPENDENCY"
@@ -6106,6 +6154,7 @@ TiDBKeyword:
 |	"NODE_STATE"
 |	"PUMP"
 |	"SAMPLES"
+|	"SAMPLERATE"
 |	"STATISTICS"
 |	"STATS"
 |	"STATS_META"
@@ -6151,11 +6200,12 @@ NotKeywordToken:
 |	"MAX"
 |	"NOW"
 |	"RECENT"
-|	"RECREATOR"
+|	"REPLAYER"
 |	"RUNNING"
 |	"PLACEMENT"
 |	"PLAN"
 |	"POSITION"
+|	"PREDICATE"
 |	"S3"
 |	"STRICT"
 |	"SUBDATE"
@@ -7196,11 +7246,11 @@ FunctionCallNonKeyword:
 	}
 |	builtinTrim '(' TrimDirection "FROM" Expression ')'
 	{
-		nilVal := ast.NewValueExpr(nil, parser.charset, parser.collation)
+		spaceVal := ast.NewValueExpr(" ", parser.charset, parser.collation)
 		direction := &ast.TrimDirectionExpr{Direction: $3.(ast.TrimDirectionType)}
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
-			Args:   []ast.ExprNode{$5, nilVal, direction},
+			Args:   []ast.ExprNode{$5, spaceVal, direction},
 		}
 	}
 |	builtinTrim '(' TrimDirection Expression "FROM" Expression ')'
@@ -10674,6 +10724,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHealthy}
 	}
+|	"COLUMN_STATS_USAGE"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowColumnStatsUsage}
+	}
 |	"ANALYZE" "STATUS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowAnalyzeStatus}
@@ -10939,7 +10993,7 @@ Statement:
 |	KillStmt
 |	LoadDataStmt
 |	LoadStatsStmt
-|	PlanRecreatorStmt
+|	PlanReplayerStmt
 |	PreparedStmt
 |	PurgeImportStmt
 |	RollbackStmt
@@ -13642,9 +13696,9 @@ RowStmt:
 
 /********************************************************************
  *
- * Plan Recreator Statement
+ * Plan Replayer Statement
  *
- * PLAN RECREATOR
+ * PLAN REPLAYER
  * 		[DUMP EXPLAIN
  *			[ANALYZE]
  *			{ExplainableStmt
@@ -13654,10 +13708,10 @@ RowStmt:
  *  		  [LIMIT {[offset,] row_count | row_count OFFSET offset}]}
  *		| LOAD 'file_name']
  *******************************************************************/
-PlanRecreatorStmt:
-	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" ExplainableStmt
+PlanReplayerStmt:
+	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" ExplainableStmt
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    $5,
 			Analyze: false,
 			Load:    false,
@@ -13671,9 +13725,9 @@ PlanRecreatorStmt:
 
 		$$ = x
 	}
-|	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" "ANALYZE" ExplainableStmt
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" ExplainableStmt
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    $6,
 			Analyze: true,
 			Load:    false,
@@ -13687,9 +13741,9 @@ PlanRecreatorStmt:
 
 		$$ = x
 	}
-|	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    nil,
 			Analyze: false,
 			Load:    false,
@@ -13707,9 +13761,9 @@ PlanRecreatorStmt:
 
 		$$ = x
 	}
-|	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" "ANALYZE" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    nil,
 			Analyze: true,
 			Load:    false,
@@ -13727,9 +13781,9 @@ PlanRecreatorStmt:
 
 		$$ = x
 	}
-|	"PLAN" "RECREATOR" "LOAD" stringLit
+|	"PLAN" "REPLAYER" "LOAD" stringLit
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    nil,
 			Analyze: false,
 			Load:    true,

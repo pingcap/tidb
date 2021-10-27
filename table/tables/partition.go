@@ -1251,7 +1251,7 @@ func FindPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
 
 func parseExpr(p *parser.Parser, exprStr string) (ast.ExprNode, error) {
 	exprStr = "select " + exprStr
-	stmts, _, err := p.Parse(exprStr, "", "")
+	stmts, _, err := p.ParseSQL(exprStr)
 	if err != nil {
 		return nil, util.SyntaxWarn(err)
 	}

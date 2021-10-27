@@ -3,6 +3,9 @@
 package utils
 
 import (
+	"context"
+	"database/sql"
+	"io"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -102,8 +105,27 @@ func NewPDReqBackoffer() Backoffer {
 }
 
 func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
-	bo.delayTime = 2 * bo.delayTime
-	bo.attempt--
+	// bo.delayTime = 2 * bo.delayTime
+	// bo.attempt--
+	e := errors.Cause(err)
+	switch e { // nolint:errorlint
+	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
+		// Excepted error, finish the operation
+		bo.delayTime = 0
+		bo.attempt = 0
+	default:
+		switch status.Code(e) {
+		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss, codes.Unknown:
+			bo.delayTime = 2 * bo.delayTime
+			bo.attempt--
+		default:
+			// Unexcepted error
+			bo.delayTime = 0
+			bo.attempt = 0
+			log.Warn("unexcepted error, stop to retry", zap.Error(err))
+		}
+	}
+
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
 	}
