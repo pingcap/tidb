@@ -68,6 +68,7 @@ linters:
     - dupl
     - deadcode
     - varcheck
+    - nakedret
 
 linters-settings:
   staticcheck:
