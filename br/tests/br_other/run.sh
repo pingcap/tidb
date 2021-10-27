@@ -135,9 +135,7 @@ default_pd_values='{
   "max-merge-region-keys": 200000,
   "max-merge-region-size": 20,
   "leader-schedule-limit": 4,
-  "region-schedule-limit": 2048,
-  "max-snapshot-count":    3,
-  "max-pending-peer-count": 16
+  "region-schedule-limit": 2048
 }'
 
 for key in $(echo $default_pd_values | jq 'keys[]'); do
