@@ -5113,6 +5113,8 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t partition a columns c1,c2 with 1024 buckets", true, "ANALYZE TABLE `t` PARTITION `a` COLUMNS `c1`,`c2` WITH 1024 BUCKETS"},
 		{"analyze table t index a columns c", false, ""},
 		{"analyze table t index a predicate columns", false, ""},
+		{"analyze table t with 10 samplerate", true, "ANALYZE TABLE `t` WITH 10 SAMPLERATE"},
+		{"analyze table t with 0.1 samplerate", true, "ANALYZE TABLE `t` WITH 0.1 SAMPLERATE"},
 	}
 	s.RunTest(c, table)
 }
