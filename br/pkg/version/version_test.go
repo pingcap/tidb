@@ -190,6 +190,10 @@ func (s *checkSuite) TestNextMajorVersion(c *C) {
 	c.Assert(NextMajorVersion().String(), Equals, "6.0.0")
 	build.ReleaseVersion = "v5.0.0-master"
 	c.Assert(NextMajorVersion().String(), Equals, "6.0.0")
+
+	build.ReleaseVersion = "b7ed87d-dirty"
+	_ = NextMajorVersion()
+	//^ doesn't matter what is returned, just need to ensure it doesn't crash.
 }
 
 func (s *checkSuite) TestExtractTiDBVersion(c *C) {
