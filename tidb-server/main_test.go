@@ -69,4 +69,7 @@ func TestSetGlobalVars(t *testing.T) {
 	// variable.Version won't change when len(conf.ServerVersion) == 0
 	require.Equal(t, "test", variable.GetSysVar(variable.Version).Value)
 	require.Equal(t, variable.GetSysVar(variable.Version).Value, mysql.ServerVersion)
+
+	cfg := config.GetGlobalConfig()
+	require.Equal(t, cfg.Socket, variable.GetSysVar(variable.Socket).Value)
 }
