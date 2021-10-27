@@ -163,7 +163,7 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		return NewLocalStorage(backend.Local.Path)
 	case *backuppb.StorageBackend_Hdfs:
 		if backend.Hdfs == nil {
-			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "local config not found")
+			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "hdfs config not found")
 		}
 		return NewHDFSStorage(backend.Hdfs.Remote), nil
 	case *backuppb.StorageBackend_S3:
