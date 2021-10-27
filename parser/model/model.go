@@ -828,6 +828,17 @@ func (pi *PartitionInfo) GetNameByID(id int64) string {
 	return ""
 }
 
+// GetPlacementByID gets the partition placement by ID.
+func (pi *PartitionInfo) GetPlacementByID(id int64) (*PolicyRefInfo, *PlacementSettings) {
+	definitions := pi.Definitions
+	for i := range definitions {
+		if id == definitions[i].ID {
+			return definitions[i].PlacementPolicyRef, definitions[i].DirectPlacementOpts
+		}
+	}
+	return nil, nil
+}
+
 func (pi *PartitionInfo) GetStateByID(id int64) SchemaState {
 	for _, pstate := range pi.States {
 		if pstate.ID == id {
