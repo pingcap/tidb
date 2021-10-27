@@ -52,20 +52,128 @@ var supportedCollations = make([]*Collation, 0, len(supportedCollationNames))
 
 // All the supported charsets should be in the following table.
 var charsetInfos = map[string]*Charset{
-	CharsetUTF8:    {CharsetUTF8, CollationUTF8, make(map[string]*Collation), "UTF-8 Unicode", 3},
-	CharsetUTF8MB4: {CharsetUTF8MB4, CollationUTF8MB4, make(map[string]*Collation), "UTF-8 Unicode", 4},
-	CharsetASCII:   {CharsetASCII, CollationASCII, make(map[string]*Collation), "US ASCII", 1},
-	CharsetLatin1:  {CharsetLatin1, CollationLatin1, make(map[string]*Collation), "Latin1", 1},
-	CharsetBin:     {CharsetBin, CollationBin, make(map[string]*Collation), "binary", 1},
+	CharsetUTF8:     {CharsetUTF8, CollationUTF8, make(map[string]*Collation), "UTF-8 Unicode", 3},
+	CharsetUTF16:    {CharsetUTF16, CollationUTF16Default, make(map[string]*Collation), "UTF-16 Unicode", 4},
+	CharsetUTF32:    {CharsetUTF32, CollationUTF32Default, make(map[string]*Collation), "UTF-32 Unicode", 4},
+	CharsetUTF8MB3:  {CharsetUTF8MB3, CollationUTF8MB3Bin, make(map[string]*Collation), "UTF-8 Unicode", 3},
+	CharsetUTF8MB4:  {CharsetUTF8MB4, CollationUTF8MB4, make(map[string]*Collation), "UTF-8 Unicode", 4},
+	CharsetASCII:    {CharsetASCII, CollationASCII, make(map[string]*Collation), "US ASCII", 1},
+	CharsetLatin1:   {CharsetLatin1, CollationLatin1, make(map[string]*Collation), "cp1252 West European", 1},
+	CharsetLatin2:   {CharsetLatin2, CollationLatin2Default, make(map[string]*Collation), "ISO 8859-2 Central European", 1},
+	CharsetLatin5:   {CharsetLatin5, CollationLatin5Default, make(map[string]*Collation), "ISO 8859-9 Turkish", 1},
+	CharsetLatin7:   {CharsetLatin7, CollationLatin7Default, make(map[string]*Collation), "ISO 8859-13 Baltic", 1},
+	CharsetBin:      {CharsetBin, CollationBin, make(map[string]*Collation), "Binary pseudo charset", 1},
+	CharsetGBK:      {CharsetGBK, CollationGBKDefault, make(map[string]*Collation), "GBK Simplified Chinese", 2},
+	CharsetARMSCII8: {CharsetARMSCII8, CollationARMSCII8Default, make(map[string]*Collation), "ARMSCII-8 Armenian", 1},
+	CharsetBig5:     {CharsetBig5, CollationBig5Default, make(map[string]*Collation), "Big5 Traditional Chinese", 2},
+	CharsetCP1250:   {CharsetCP1250, CollationCP1250Default, make(map[string]*Collation), "Windows Central European", 1},
+	CharsetCP1251:   {CharsetCP1251, CollationCP1251Default, make(map[string]*Collation), "Windows Cyrillic", 1},
+	CharsetCP1256:   {CharsetCP1256, CollationCP1256Default, make(map[string]*Collation), "Windows Arabic", 1},
+	CharsetCP1257:   {CharsetCP1257, CollationCP1257Default, make(map[string]*Collation), "Windows Baltic", 1},
+	CharsetCP850:    {CharsetCP850, CollationCP850Default, make(map[string]*Collation), "DOS West European", 1},
+	CharsetCP852:    {CharsetCP852, CollationCP852Default, make(map[string]*Collation), "DOS Central European", 1},
+	CharsetCP866:    {CharsetCP866, CollationCP866Default, make(map[string]*Collation), "DOS Russian", 1},
+	CharsetCP932:    {CharsetCP932, CollationCP932Default, make(map[string]*Collation), "SJIS for Windows Japanese", 2},
+	CharsetDEC8:     {CharsetDEC8, CollationDEC8Default, make(map[string]*Collation), "DEC West European", 1},
+	CharsetEUCJPMS:  {CharsetEUCJPMS, CollationEUCJPMSDefault, make(map[string]*Collation), "UJIS for Windows Japanese", 3},
+	CharsetEUCKR:    {CharsetEUCKR, CollationEUCKRDefault, make(map[string]*Collation), "EUC-KR Korean", 2},
+	CharsetGB18030:  {CharsetGB18030, CollationGB18030Default, make(map[string]*Collation), "China National Standard GB18030", 4},
+	CharsetGB2312:   {CharsetGB2312, CollationGB2312Default, make(map[string]*Collation), "GB2312 Simplified Chinesegbk", 2},
+	CharsetGEOSTD8:  {CharsetGEOSTD8, CollationGEOSTD8Default, make(map[string]*Collation), "GEOSTD8 Georgian", 1},
+	CharsetGreek:    {CharsetGreek, CollationGreekDefault, make(map[string]*Collation), "ISO 8859-7 Greek", 1},
+	CharsetHebrew:   {CharsetHebrew, CollationHebrewDefault, make(map[string]*Collation), "ISO 8859-8 Hebrewhp8", 1},
+	CharsetHP8:      {CharsetHP8, CollationHP8Default, make(map[string]*Collation), "HP West European", 1},
+	CharsetKEYBCS2:  {CharsetKEYBCS2, CollationKEYBCS2Default, make(map[string]*Collation), "DOS Kamenicky Czech-Slovak", 1},
+	CharsetKOI8R:    {CharsetKOI8R, CollationKOI8RDefault, make(map[string]*Collation), "KOI8-R Relcom Russian", 1},
+	CharsetKOI8U:    {CharsetKOI8U, CollationKOI8UDefault, make(map[string]*Collation), "KOI8-U Ukrainian", 1},
+	CharsetMacCE:    {CharsetMacCE, CollationMacCEDefault, make(map[string]*Collation), "Mac Central European", 1},
+	CharsetMacRoman: {CharsetMacRoman, CollationMacRomanDefault, make(map[string]*Collation), "Mac West European", 1},
+	CharsetSJIS:     {CharsetSJIS, CollationSJISDefault, make(map[string]*Collation), "Shift-JIS Japanese", 2},
+	CharsetSWE7:     {CharsetSWE7, CollationSWE7Default, make(map[string]*Collation), "7bit Swedish", 1},
+	CharsetTIS620:   {CharsetTIS620, CollationTIS620Default, make(map[string]*Collation), "TIS620 Thaiucs2", 1},
+	CharsetUCS2:     {CharsetUCS2, CollationUCS2Default, make(map[string]*Collation), "UCS-2 Unicode", 2},
+	CharsetUJIS:     {CharsetUJIS, CollationUJISDefault, make(map[string]*Collation), "EUC-JP Japanese", 3},
+	CharsetUTF16LE:  {CharsetUTF16LE, CollationUTF16LEDefault, make(map[string]*Collation), "UTF-16LE Unicode", 4},
 }
 
 // All the names supported collations should be in the following table.
 var supportedCollationNames = map[string]struct{}{
-	CollationUTF8:    {},
-	CollationUTF8MB4: {},
-	CollationASCII:   {},
-	CollationLatin1:  {},
-	CollationBin:     {},
+	CollationUTF8:            {},
+	CollationUTF16Bin:        {},
+	CollationUTF32Bin:        {},
+	CollationUTF8MB3Bin:      {},
+	CollationUTF8MB4:         {},
+	CollationASCII:           {},
+	CollationLatin1:          {},
+	CollationBin:             {},
+	CollationARMSCII8Bin:     {},
+	CollationBig5Bin:         {},
+	CollationCP1250Bin:       {},
+	CollationCP1251Bin:       {},
+	CollationCP1256Bin:       {},
+	CollationCP1257Bin:       {},
+	CollationCP850Bin:        {},
+	CollationCP852Bin:        {},
+	CollationCP866Bin:        {},
+	CollationCP932Bin:        {},
+	CollationDEC8Bin:         {},
+	CollationEUCJPMSBin:      {},
+	CollationEUCKRBin:        {},
+	CollationGB18030Bin:      {},
+	CollationGB2312Bin:       {},
+	CollationGEOSTD8Bin:      {},
+	CollationGBKBin:          {},
+	CollationSWE7Bin:         {},
+	CollationGreekBin:        {},
+	CollationHebrewBin:       {},
+	CollationHP8Bin:          {},
+	CollationKEYBCS2Bin:      {},
+	CollationKOI8RBin:        {},
+	CollationKOI8UBin:        {},
+	CollationLatin5Bin:       {},
+	CollationLatin7Bin:       {},
+	CollationMacCEBin:        {},
+	CollationMacRomanBin:     {},
+	CollationSJISBin:         {},
+	CollationTIS620Bin:       {},
+	CollationUCS2Bin:         {},
+	CollationUJISBin:         {},
+	CollationUTF16Default:    {},
+	CollationUTF32Default:    {},
+	CollationLatin2Default:   {},
+	CollationLatin5Default:   {},
+	CollationLatin7Default:   {},
+	CollationGBKDefault:      {},
+	CollationARMSCII8Default: {},
+	CollationBig5Default:     {},
+	CollationCP1250Default:   {},
+	CollationCP1251Default:   {},
+	CollationCP1256Default:   {},
+	CollationCP1257Default:   {},
+	CollationCP850Default:    {},
+	CollationCP852Default:    {},
+	CollationCP866Default:    {},
+	CollationCP932Default:    {},
+	CollationDEC8Default:     {},
+	CollationEUCJPMSDefault:  {},
+	CollationEUCKRDefault:    {},
+	CollationGB18030Default:  {},
+	CollationGB2312Default:   {},
+	CollationGEOSTD8Default:  {},
+	CollationMacCEDefault:    {},
+	CollationSJISDefault:     {},
+	CollationSWE7Default:     {},
+	CollationTIS620Default:   {},
+	CollationUCS2Default:     {},
+	CollationUJISDefault:     {},
+	CollationUTF16LEDefault:  {},
+	CollationGreekDefault:    {},
+	CollationHebrewDefault:   {},
+	CollationHP8Default:      {},
+	CollationKEYBCS2Default:  {},
+	CollationKOI8RDefault:    {},
+	CollationKOI8UDefault:    {},
+	CollationMacRomanDefault: {},
 }
 
 // GetSupportedCharsets gets descriptions for all charsets supported so far.
@@ -110,7 +218,12 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 // GetDefaultCollationLegacy is compatible with the charset support in old version parser.
 func GetDefaultCollationLegacy(charset string) (string, error) {
 	switch strings.ToLower(charset) {
-	case CharsetUTF8, CharsetUTF8MB4, CharsetASCII, CharsetLatin1, CharsetBin:
+	case CharsetUTF8, CharsetUTF16, CharsetUTF32, CharsetUTF8MB3, CharsetUTF8MB4, CharsetASCII, CharsetLatin1, CharsetBin,
+		CollationGBKBin, CollationARMSCII8Bin, CollationBig5Bin, CollationCP1250Bin, CollationCP1251Bin, CollationCP1256Bin, CollationCP1257Bin,
+		CollationCP850Bin, CollationCP852Bin, CollationCP866Bin, CollationCP932Bin, CollationDEC8Bin, CollationEUCJPMSBin, CollationEUCKRBin,
+		CollationGB18030Bin, CollationGB2312Bin, CollationGEOSTD8Bin, CollationGreekBin, CollationHebrewBin, CollationHP8Bin, CollationKEYBCS2Bin,
+		CollationKOI8RBin, CollationKOI8UBin, CollationLatin5Bin, CollationLatin7Bin, CollationMacCEBin, CollationMacRomanBin, CollationSJISBin,
+		CollationSWE7Bin, CollationTIS620Bin, CollationUCS2Bin, CollationUJISBin, CollationUTF16LEBin:
 		return GetDefaultCollation(charset)
 	default:
 		return "", errors.Errorf("Unknown charset %s", charset)
@@ -178,11 +291,16 @@ const (
 	// CharsetBin is used for marking binary charset.
 	CharsetBin = "binary"
 	// CollationBin is the default collation for CharsetBin.
-	CollationBin = "binary"
+	CollationBin  = "binary"
+	CharsetBinary = "binary"
 	// CharsetUTF8 is the default charset for string types.
 	CharsetUTF8 = "utf8"
 	// CollationUTF8 is the default collation for CharsetUTF8.
 	CollationUTF8 = "utf8_bin"
+	// CharsetUTF8MB3 represents 3 bytes utf8, which works the same way as utf8 in Go.
+	CharsetUTF8MB3 = "utf8mb3"
+	// CollationUTF8MB3Bin is the default collation for CharsetUTF8MB3.
+	CollationUTF8MB3Bin = "utf8mb3_bin"
 	// CharsetUTF8MB4 represents 4 bytes utf8, which works the same way as utf8 in Go.
 	CharsetUTF8MB4 = "utf8mb4"
 	// CollationUTF8MB4 is the default collation for CharsetUTF8MB4.
@@ -194,47 +312,116 @@ const (
 	// CharsetLatin1 is a single byte charset.
 	CharsetLatin1 = "latin1"
 	// CollationLatin1 is the default collation for CharsetLatin1.
-	CollationLatin1 = "latin1_bin"
+	CollationLatin1     = "latin1_bin"
+	CharsetGBK          = "gbk"
+	CollationGBKBin     = "gbk_bin"
+	CollationGBKDefault = "gbk_chinese_ci"
 
-	CollationGBKBin = "gbk_bin"
-
-	CharsetARMSCII8 = "armscii8"
-	CharsetBig5     = "big5"
-	CharsetBinary   = "binary"
-	CharsetCP1250   = "cp1250"
-	CharsetCP1251   = "cp1251"
-	CharsetCP1256   = "cp1256"
-	CharsetCP1257   = "cp1257"
-	CharsetCP850    = "cp850"
-	CharsetCP852    = "cp852"
-	CharsetCP866    = "cp866"
-	CharsetCP932    = "cp932"
-	CharsetDEC8     = "dec8"
-	CharsetEUCJPMS  = "eucjpms"
-	CharsetEUCKR    = "euckr"
-	CharsetGB18030  = "gb18030"
-	CharsetGB2312   = "gb2312"
-	CharsetGBK      = "gbk"
-	CharsetGEOSTD8  = "geostd8"
-	CharsetGreek    = "greek"
-	CharsetHebrew   = "hebrew"
-	CharsetHP8      = "hp8"
-	CharsetKEYBCS2  = "keybcs2"
-	CharsetKOI8R    = "koi8r"
-	CharsetKOI8U    = "koi8u"
-	CharsetLatin2   = "latin2"
-	CharsetLatin5   = "latin5"
-	CharsetLatin7   = "latin7"
-	CharsetMacCE    = "macce"
-	CharsetMacRoman = "macroman"
-	CharsetSJIS     = "sjis"
-	CharsetSWE7     = "swe7"
-	CharsetTIS620   = "tis620"
-	CharsetUCS2     = "ucs2"
-	CharsetUJIS     = "ujis"
-	CharsetUTF16    = "utf16"
-	CharsetUTF16LE  = "utf16le"
-	CharsetUTF32    = "utf32"
+	CharsetARMSCII8          = "armscii8"
+	CollationARMSCII8Bin     = "armscii8_bin"
+	CollationARMSCII8Default = "armscii8_general_ci"
+	CharsetBig5              = "big5"
+	CollationBig5Bin         = "big5_bin"
+	CollationBig5Default     = "big5_chinese_ci"
+	CharsetCP1250            = "cp1250"
+	CollationCP1250Bin       = "cp1250_bin"
+	CollationCP1250Default   = "cp1250_general_ci"
+	CharsetCP1251            = "cp1251"
+	CollationCP1251Bin       = "cp1251_bin"
+	CollationCP1251Default   = "cp1251_general_ci"
+	CharsetCP1256            = "cp1256"
+	CollationCP1256Bin       = "cp1256_bin"
+	CollationCP1256Default   = "cp1256_general_ci"
+	CharsetCP1257            = "cp1257"
+	CollationCP1257Bin       = "cp1257_bin"
+	CollationCP1257Default   = "cp1257_general_ci"
+	CharsetCP850             = "cp850"
+	CollationCP850Bin        = "cp850_bin"
+	CollationCP850Default    = "cp850_general_ci"
+	CharsetCP852             = "cp852"
+	CollationCP852Bin        = "cp852_bin"
+	CollationCP852Default    = "cp852_general_ci"
+	CharsetCP866             = "cp866"
+	CollationCP866Bin        = "cp866_bin"
+	CollationCP866Default    = "cp866_general_ci"
+	CharsetCP932             = "cp932"
+	CollationCP932Bin        = "cp932_bin"
+	CollationCP932Default    = "cp932_japanese_ci"
+	CharsetDEC8              = "dec8"
+	CollationDEC8Bin         = "dec8_bin"
+	CollationDEC8Default     = "dec8_swedish_ci"
+	CharsetEUCJPMS           = "eucjpms"
+	CollationEUCJPMSBin      = "eucjpms_bin"
+	CollationEUCJPMSDefault  = "eucjpms_japanese_ci"
+	CharsetEUCKR             = "euckr"
+	CollationEUCKRBin        = "euckr_bin"
+	CollationEUCKRDefault    = "euckr_korean_ci"
+	CharsetGB18030           = "gb18030"
+	CollationGB18030Bin      = "gb18030_bin"
+	CollationGB18030Default  = "gb18030_chinese_ci"
+	CharsetGB2312            = "gb2312"
+	CollationGB2312Bin       = "gb2312_bin"
+	CollationGB2312Default   = "gb2312_chinese_ci"
+	CharsetGEOSTD8           = "geostd8"
+	CollationGEOSTD8Bin      = "geostd8_bin"
+	CollationGEOSTD8Default  = "geostd8_general_ci"
+	CharsetGreek             = "greek"
+	CollationGreekBin        = "greek_bin"
+	CollationGreekDefault    = "greek_general_ci"
+	CharsetHebrew            = "hebrew"
+	CollationHebrewBin       = "hebrew_bin"
+	CollationHebrewDefault   = "hebrew_general_ci"
+	CharsetHP8               = "hp8"
+	CollationHP8Bin          = "hp8_bin"
+	CollationHP8Default      = "hp8_english_ci"
+	CharsetKEYBCS2           = "keybcs2"
+	CollationKEYBCS2Bin      = "keybcs2_bin"
+	CollationKEYBCS2Default  = "keybcs2_general_ci"
+	CharsetKOI8R             = "koi8r"
+	CollationKOI8RBin        = "koi8r_bin"
+	CollationKOI8RDefault    = "koi8r_general_ci"
+	CharsetKOI8U             = "koi8u"
+	CollationKOI8UBin        = "koi8u_bin"
+	CollationKOI8UDefault    = "koi8u_general_ci"
+	CharsetLatin2            = "latin2"
+	CollationLatin2Bin       = "latin2_bin"
+	CollationLatin2Default   = "latin2_general_ci"
+	CharsetLatin5            = "latin5"
+	CollationLatin5Bin       = "latin5_bin"
+	CollationLatin5Default   = "latin5_turkish_ci"
+	CharsetLatin7            = "latin7"
+	CollationLatin7Bin       = "latin7_bin"
+	CollationLatin7Default   = "latin7_general_ci"
+	CharsetMacCE             = "macce"
+	CollationMacCEBin        = "macce_bin"
+	CollationMacCEDefault    = "macce_general_ci"
+	CharsetMacRoman          = "macroman"
+	CollationMacRomanBin     = "macroman_bin"
+	CollationMacRomanDefault = "macroman_general_ci"
+	CharsetSJIS              = "sjis"
+	CollationSJISBin         = "sjis_bin"
+	CollationSJISDefault     = "sjis_japanese_ci"
+	CharsetSWE7              = "swe7"
+	CollationSWE7Bin         = "swe7_bin"
+	CollationSWE7Default     = "swe7_swedish_ci"
+	CharsetTIS620            = "tis620"
+	CollationTIS620Bin       = "tis620_bin"
+	CollationTIS620Default   = "tis620_thai_ci"
+	CharsetUCS2              = "ucs2"
+	CollationUCS2Bin         = "ucs2_bin"
+	CollationUCS2Default     = "ucs2_general_ci"
+	CharsetUJIS              = "ujis"
+	CollationUJISBin         = "ujis_bin"
+	CollationUJISDefault     = "ujis_japanese_ci"
+	CharsetUTF16             = "utf16"
+	CollationUTF16Bin        = "utf16_bin"
+	CollationUTF16Default    = "utf16_general_ci"
+	CharsetUTF16LE           = "utf16le"
+	CollationUTF16LEBin      = "utf16le_bin"
+	CollationUTF16LEDefault  = "utf16le_general_ci"
+	CharsetUTF32             = "utf32"
+	CollationUTF32Bin        = "utf32_bin"
+	CollationUTF32Default    = "utf32_general_ci"
 )
 
 var collations = []*Collation{
@@ -457,7 +644,10 @@ var collations = []*Collation{
 	{245, "utf8mb4", "utf8mb4_croatian_ci", false},
 	{246, "utf8mb4", "utf8mb4_unicode_520_ci", false},
 	{247, "utf8mb4", "utf8mb4_vietnamese_ci", false},
+	{248, "gb18030", "gb18030_chinese_ci", true},
+	{249, "gb18030", "gb18030_bin", false},
 	{255, "utf8mb4", "utf8mb4_0900_ai_ci", false},
+	{2047, "utf8mb3", "utf8mb3_bin", true},
 	{2048, "utf8mb4", "utf8mb4_zh_pinyin_tidb_as_cs", false},
 }
 
