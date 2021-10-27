@@ -1486,6 +1486,11 @@ error = '''
 invalid as of timestamp: %s
 '''
 
+["planner:8242"]
+error = '''
+'%s' is unsupported on cache tables.
+'''
+
 ["privilege:1141"]
 error = '''
 There is no such grant defined for user '%-.48s' on host '%-.255s'
