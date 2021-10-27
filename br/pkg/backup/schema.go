@@ -31,7 +31,7 @@ const (
 	DefaultSchemaConcurrency = 64
 )
 
-type scheamInfo struct {
+type schemaInfo struct {
 	tableInfo  *model.TableInfo
 	dbInfo     *model.DBInfo
 	crc64xor   uint64
@@ -43,12 +43,12 @@ type scheamInfo struct {
 // Schemas is task for backuping schemas.
 type Schemas struct {
 	// name -> schema
-	schemas map[string]*scheamInfo
+	schemas map[string]*schemaInfo
 }
 
 func newBackupSchemas() *Schemas {
 	return &Schemas{
-		schemas: make(map[string]*scheamInfo),
+		schemas: make(map[string]*schemaInfo),
 	}
 }
 
@@ -57,7 +57,7 @@ func (ss *Schemas) addSchema(
 ) {
 	name := fmt.Sprintf("%s.%s",
 		utils.EncloseName(dbInfo.Name.L), utils.EncloseName(tableInfo.Name.L))
-	ss.schemas[name] = &scheamInfo{
+	ss.schemas[name] = &schemaInfo{
 		tableInfo: tableInfo,
 		dbInfo:    dbInfo,
 	}
@@ -141,7 +141,7 @@ func (ss *Schemas) Len() int {
 	return len(ss.schemas)
 }
 
-func (s *scheamInfo) calculateChecksum(
+func (s *schemaInfo) calculateChecksum(
 	ctx context.Context,
 	client kv.Client,
 	backupTS uint64,
@@ -167,7 +167,7 @@ func (s *scheamInfo) calculateChecksum(
 	return nil
 }
 
-func (s *scheamInfo) dumpStatsToJSON(statsHandle *handle.Handle) error {
+func (s *schemaInfo) dumpStatsToJSON(statsHandle *handle.Handle) error {
 	jsonTable, err := statsHandle.DumpStatsToJSON(
 		s.dbInfo.Name.String(), s.tableInfo, nil)
 	if err != nil {
@@ -178,7 +178,7 @@ func (s *scheamInfo) dumpStatsToJSON(statsHandle *handle.Handle) error {
 	return nil
 }
 
-func (s *scheamInfo) encodeToSchema() (*backuppb.Schema, error) {
+func (s *schemaInfo) encodeToSchema() (*backuppb.Schema, error) {
 	dbBytes, err := json.Marshal(s.dbInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
