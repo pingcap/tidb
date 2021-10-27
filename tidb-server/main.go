@@ -110,6 +110,9 @@ const (
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
 	nmAffinityCPU                = "affinity-cpus"
+
+	nmInitializeSecure   = "initialize-secure"
+	nmInitializeInsecure = "initialize-insecure"
 )
 
 var (
@@ -152,6 +155,10 @@ var (
 	// PROXY Protocol
 	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
 	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
+
+	// Security
+	initializeSecure   = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
+	initializeInsecure = flagBoolean(nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
 )
 
 func main() {
@@ -504,6 +511,28 @@ func overrideConfig(cfg *config.Config) {
 	}
 	if actualFlags[nmProxyProtocolHeaderTimeout] {
 		cfg.ProxyProtocol.HeaderTimeout = *proxyProtocolHeaderTimeout
+	}
+
+	// Sanity check: can't specify both options
+	if actualFlags[nmInitializeSecure] && actualFlags[nmInitializeInsecure] {
+		err = fmt.Errorf("the options --initialize-insecure and --initialize-secure are mutually exclusive")
+		terror.MustNil(err)
+	}
+	// The option --initialize-secure=true ensures that a secure bootstrap is used.
+	if actualFlags[nmInitializeSecure] {
+		cfg.Security.SecureBootstrap = *initializeSecure
+	}
+	// The option --initialize-insecure=true/false was used.
+	// Store the inverted value of this to the secure bootstrap cfg item
+	if actualFlags[nmInitializeInsecure] {
+		cfg.Security.SecureBootstrap = !*initializeInsecure
+	}
+	// Secure bootstrap initializes with Socket authentication
+	// which is not supported on windows. Only the insecure bootstrap
+	// method is supported.
+	if runtime.GOOS == "windows" && cfg.Security.SecureBootstrap {
+		err = fmt.Errorf("the option --initialize-secure is not supported on Windows")
+		terror.MustNil(err)
 	}
 }
 
