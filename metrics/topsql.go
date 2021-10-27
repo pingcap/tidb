@@ -18,6 +18,12 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // Top SQL metrics.
 var (
+	TopSQLProfileCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "tidb",
+		Subsystem: "topsql",
+		Name:      "profile_total",
+		Help:      "Counter of profiling",
+	})
 	TopSQLIgnoredCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",

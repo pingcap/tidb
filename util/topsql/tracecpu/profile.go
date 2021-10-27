@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pingcap/tidb/metrics"
 	"io"
 	"net/http"
 	"runtime/pprof"
@@ -118,6 +119,7 @@ func (sp *sqlCPUProfiler) startCPUProfileWorker() {
 }
 
 func (sp *sqlCPUProfiler) doCPUProfile() {
+	metrics.TopSQLProfileCounter.Inc()
 	intervalSecond := variable.TopSQLVariable.PrecisionSeconds.Load()
 	task := sp.newProfileTask()
 	if err := pprof.StartCPUProfile(task.buf); err != nil {
