@@ -1813,7 +1813,7 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 		for _, colName := range as.ColumnNames {
 			colInfo := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
 			if colInfo == nil {
-				return nil, errors.Errorf("There is no column %s in table %s", colName.Name.O, tblInfo.Name.O)
+				return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.Name.O, tblInfo.Name.O)
 			}
 			columnIDs[colInfo.ID] = struct{}{}
 		}

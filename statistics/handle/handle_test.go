@@ -27,8 +27,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -3237,7 +3239,8 @@ func (s *testStatsSuite) TestAnalyzeColumnsError(c *C) {
 
 	// invalid column
 	err = tk.ExecToErr("analyze table t columns c")
-	c.Assert(err.Error(), Equals, "There is no column c in table t")
+	terr := errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.ErrAnalyzeMissColumn))
 }
 
 func (s *testStatsSuite) TestAnalyzeColumnsWithPartitionTable(c *C) {
