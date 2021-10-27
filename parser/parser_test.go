@@ -3430,6 +3430,36 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"alter placement policy x primary_region='cn', leader_constraints='ww', leader_constraints='yy'", true, "ALTER PLACEMENT POLICY `x` PRIMARY_REGION = 'cn' LEADER_CONSTRAINTS = 'ww' LEADER_CONSTRAINTS = 'yy'"},
 		{"alter placement policy if exists x regions = 'us', follower_constraints='yy'", true, "ALTER PLACEMENT POLICY IF EXISTS `x` REGIONS = 'us' FOLLOWER_CONSTRAINTS = 'yy'"},
 		{"alter placement policy x placement policy y", false, ""},
+
+		// for table stats options
+		// 1. create table with options
+		{"CREATE TABLE t (a int) STATS_BUCKETS=1", true, "CREATE TABLE `t` (`a` INT) STATS_BUCKETS = 1"},
+		{"CREATE TABLE t (a int) STATS_BUCKETS='abc'", false, ""},
+		{"CREATE TABLE t (a int) STATS_BUCKETS=", false, ""},
+		{"CREATE TABLE t (a int) STATS_TOPN=1", true, "CREATE TABLE `t` (`a` INT) STATS_TOPN = 1"},
+		{"CREATE TABLE t (a int) STATS_TOPN='abc'", false, ""},
+		{"CREATE TABLE t (a int) STATS_AUTO_RECALC=1", true, "CREATE TABLE `t` (`a` INT) STATS_AUTO_RECALC = 1"},
+		{"CREATE TABLE t (a int) STATS_AUTO_RECALC='abc'", false, ""},
+		{"CREATE TABLE t(a int) STATS_SAMPLE_RATE=0.1", true, "CREATE TABLE `t` (`a` INT) STATS_SAMPLE_RATE = 0.1"},
+		{"CREATE TABLE t (a int) STATS_SAMPLE_RATE='abc'", false, ""},
+		{"CREATE TABLE t (a int) STATS_COL_CHOICE='all'", true, "CREATE TABLE `t` (`a` INT) STATS_COL_CHOICE = 'all'"},
+		{"CREATE TABLE t (a int) STATS_COL_CHOICE='list'", true, "CREATE TABLE `t` (`a` INT) STATS_COL_CHOICE = 'list'"},
+		{"CREATE TABLE t (a int) STATS_COL_CHOICE=1", false, ""},
+		{"CREATE TABLE t (a int, b int) STATS_COL_LIST='a,b'", true, "CREATE TABLE `t` (`a` INT,`b` INT) STATS_COL_LIST = 'a,b'"},
+		{"CREATE TABLE t (a int, b int) STATS_COL_LIST=1", false, ""},
+		{"CREATE TABLE t (a int) STATS_BUCKETS=1,STATS_TOPN=1", true, "CREATE TABLE `t` (`a` INT) STATS_BUCKETS = 1 STATS_TOPN = 1"},
+		// 2. create partition table with options
+		{"CREATE TABLE t (a int) STATS_BUCKETS=1,STATS_TOPN=1 PARTITION BY RANGE (a) (PARTITION p1 VALUES LESS THAN (200))", true, "CREATE TABLE `t` (`a` INT) STATS_BUCKETS = 1 STATS_TOPN = 1 PARTITION BY RANGE (`a`) (PARTITION `p1` VALUES LESS THAN (200))"},
+		// 3. alter table with options
+		{"ALTER TABLE t STATS_OPTIONS='str'", true, "ALTER TABLE `t` STATS_OPTIONS='str'"},
+		{"ALTER TABLE t STATS_OPTIONS='str1,str2'", true, "ALTER TABLE `t` STATS_OPTIONS='str1,str2'"},
+		{"ALTER TABLE t STATS_OPTIONS=\"str1,str2\"", true, "ALTER TABLE `t` STATS_OPTIONS='str1,str2'"},
+		{"ALTER TABLE t STATS_OPTIONS 'str1,str2'", true, "ALTER TABLE `t` STATS_OPTIONS='str1,str2'"},
+		{"ALTER TABLE t STATS_OPTIONS \"str1,str2\"", true, "ALTER TABLE `t` STATS_OPTIONS='str1,str2'"},
+		{"ALTER TABLE t STATS_OPTIONS=DEFAULT", true, "ALTER TABLE `t` STATS_OPTIONS=DEFAULT"},
+		{"ALTER TABLE t STATS_OPTIONS=default", true, "ALTER TABLE `t` STATS_OPTIONS=DEFAULT"},
+		{"ALTER TABLE t STATS_OPTIONS=DeFaUlT", true, "ALTER TABLE `t` STATS_OPTIONS=DEFAULT"},
+		{"ALTER TABLE t STATS_OPTIONS", false, ""},
 	}
 	s.RunTest(c, table)
 }
