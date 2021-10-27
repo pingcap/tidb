@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	osuser "os/user"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -1700,10 +1701,20 @@ func doDDLWorks(s Session) {
 // TODO: sanitize.
 func doDMLWorks(s Session) {
 	mustExecute(s, "BEGIN")
-
-	// Insert a default user with empty password.
-	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
+	if config.GetGlobalConfig().Security.SecureBootstrap {
+		// If secure bootstrap is enabled, we create a root@localhost account which can login with auth_socket.
+		// i.e. mysql -S /tmp/tidb.sock -uroot
+		// The auth_socket plugin will validate that the user matches $USER.
+		u, err := osuser.Current()
+		if err != nil {
+			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
+		}
+		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
+		("localhost", "root", %?, "auth_socket", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`, u.Username)
+	} else {
+		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
 		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	}
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.GetSysVars()))

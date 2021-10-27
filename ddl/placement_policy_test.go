@@ -57,16 +57,16 @@ func (s *testDBSuite6) TestPlacementPolicy(c *C) {
 	tk.MustExec("create placement policy x " +
 		"LEARNERS=1 " +
 		"LEARNER_CONSTRAINTS=\"[+region=cn-west-1]\" " +
-		"VOTERS=3 " +
-		"VOTER_CONSTRAINTS=\"[+disk=ssd]\"")
+		"FOLLOWERS=3 " +
+		"FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\"")
 
 	checkFunc := func(policyInfo *model.PolicyInfo) {
 		c.Assert(policyInfo.ID != 0, Equals, true)
 		c.Assert(policyInfo.Name.L, Equals, "x")
-		c.Assert(policyInfo.Followers, Equals, uint64(0))
-		c.Assert(policyInfo.FollowerConstraints, Equals, "")
-		c.Assert(policyInfo.Voters, Equals, uint64(3))
-		c.Assert(policyInfo.VoterConstraints, Equals, "[+disk=ssd]")
+		c.Assert(policyInfo.Followers, Equals, uint64(3))
+		c.Assert(policyInfo.FollowerConstraints, Equals, "[+disk=ssd]")
+		c.Assert(policyInfo.Voters, Equals, uint64(0))
+		c.Assert(policyInfo.VoterConstraints, Equals, "")
 		c.Assert(policyInfo.Learners, Equals, uint64(1))
 		c.Assert(policyInfo.LearnerConstraints, Equals, "[+region=cn-west-1]")
 		c.Assert(policyInfo.State, Equals, model.StatePublic)
@@ -154,7 +154,7 @@ func (s *testDBSuite6) TestPlacementValidation(c *C) {
 		},
 		{
 			name: "constraints may be incompatible with itself",
-			settings: "LEARNERS=1 " +
+			settings: "FOLLOWERS=3 LEARNERS=1 " +
 				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-2]\"",
 			errmsg: "invalid label constraints format: should be [constraint1, ...] (error conflicting label constraints: '+zone=cn-west-2' and '+zone=cn-west-1'), {constraint1: cnt1, ...} (error yaml: unmarshal errors:\n" +
 				"  line 1: cannot unmarshal !!seq into map[string]int), or any yaml compatible representation: invalid LearnerConstraints",
@@ -194,6 +194,87 @@ func (s *testDBSuite6) TestPlacementValidation(c *C) {
 		}
 	}
 	tk.MustExec("drop placement policy x")
+}
+
+func (s *testDBSuite6) TestSkipPlacementValidation(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("drop placement policy if exists y")
+	tk.MustExec("drop table if exists t, t_range_p")
+
+	tk.MustExec("create placement policy `y` followers=2;")
+	tk.MustExec("alter database test placement policy='y'")
+	tk.MustQuery(`show create database test`).Check(testutil.RowsWithSep("|",
+		"test CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`y` */",
+	))
+
+	tk.MustQuery(`select @@PLACEMENT_CHECKS;`).Check(testkit.Rows("1"))
+	tk.MustGetErrCode("create table t(a int) PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
+
+	tk.MustExec("SET PLACEMENT_CHECKS = 0;")
+	tk.MustQuery(`select @@PLACEMENT_CHECKS;`).Check(testkit.Rows("0"))
+
+	// Test for `Create`
+	// Test `CREATE DATABASE`: Skip the check, and create database with default placement option.
+	tk.MustExec("create database db_skip_validation PLACEMENT POLICY=\"x\"")
+	tk.MustQuery(`show create database db_skip_validation`).Check(testutil.RowsWithSep("|",
+		"db_skip_validation CREATE DATABASE `db_skip_validation` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
+	// Test `CREATE TABLE`: Skip the check, and inherit from the database placement policy when create table
+	tk.MustExec("create table t(a int) PLACEMENT POLICY=\"x\"")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */"))
+	// Test `CREATE PARTITION`: Skip the check, and inherit from the table placement policy when create partition
+	tk.MustExec("create table t_range_p(id int) placement policy y partition by range(id) (" +
+		"PARTITION p0 VALUES LESS THAN (100)," +
+		"PARTITION p1 VALUES LESS THAN (1000) placement policy x)",
+	)
+	tk.MustQuery("show create table t_range_p").Check(testkit.Rows("t_range_p CREATE TABLE `t_range_p` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */\n" +
+		"PARTITION BY RANGE ( `id` ) (\n" +
+		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
+		"  PARTITION `p1` VALUES LESS THAN (1000)\n)",
+	))
+
+	// Test for `ALTER`
+	// Test `ALTER DATABASE`: Skip the check, keep the original opts.
+	tk.MustExec("alter database db_skip_validation PLACEMENT POLICY=\"x\"")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	tk.MustQuery(`show create database db_skip_validation`).Check(testutil.RowsWithSep("|",
+		"db_skip_validation CREATE DATABASE `db_skip_validation` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
+	// Test `ALTER TABLE`: Skip the check, keep the original opts.
+	tk.MustExec("alter table t PLACEMENT POLICY=\"x\"")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */"))
+	// Test `ALTER PARTITION`: Skip the check, keep the original opts.
+	tk.MustExec("alter table t_range_p PARTITION p1 placement policy y;")
+	tk.MustExec("alter table t_range_p PARTITION p0 placement policy x;")
+	tk.MustQuery("show create table t_range_p").Check(testkit.Rows("t_range_p CREATE TABLE `t_range_p` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */\n" +
+		"PARTITION BY RANGE ( `id` ) (\n" +
+		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
+		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`y` */\n)",
+	))
+	tk.MustExec("alter table t_range_p PARTITION p1 placement policy x;")
+	tk.MustQuery("show create table t_range_p").Check(testkit.Rows("t_range_p CREATE TABLE `t_range_p` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`y` */\n" +
+		"PARTITION BY RANGE ( `id` ) (\n" +
+		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
+		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`y` */\n)",
+	))
+
+	tk.MustExec("SET PLACEMENT_CHECKS = 1;")
+	tk.MustExec("drop table if exists t, t_range_p")
+	tk.MustExec("alter database test placement policy='default'")
+	tk.MustExec("drop database db_skip_validation;")
+	tk.MustExec("drop placement policy if exists y;")
 }
 
 func (s *testDBSuite6) TestResetSchemaPlacement(c *C) {
@@ -874,7 +955,7 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 
 	// error for invalid placement opt
 	err = tk.ExecToErr("alter database db2 primary_region='r2' regions='r2' leader_constraints='[+region=bj]'")
-	c.Assert(err.Error(), Equals, "invalid placement option: should be PRIMARY_REGION=.. REGIONS=.. FOLLOWERS=.. SCHEDULE=.., mixed other constraints into options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
+	c.Assert(err.Error(), Equals, "invalid placement option: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
 
 	// failed alter has no effect
 	tk.MustQuery("show create database db2").Check(testkit.Rows(
@@ -956,7 +1037,7 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 
 	// error for invalid placement opt
 	err = tk.ExecToErr("alter table tp primary_region='r2' regions='r2' leader_constraints='[+region=bj]'")
-	c.Assert(err.Error(), Equals, "invalid placement option: should be PRIMARY_REGION=.. REGIONS=.. FOLLOWERS=.. SCHEDULE=.., mixed other constraints into options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
+	c.Assert(err.Error(), Equals, "invalid placement option: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
 
 	// failed alter has no effect
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
@@ -1067,7 +1148,7 @@ func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
 
 	// error for invalid placement opt
 	err = tk.ExecToErr("alter table tp partition p1 primary_region='r2' regions='r2' leader_constraints='[+region=bj]'")
-	c.Assert(err.Error(), Equals, "invalid placement option: should be PRIMARY_REGION=.. REGIONS=.. FOLLOWERS=.. SCHEDULE=.., mixed other constraints into options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
+	c.Assert(err.Error(), Equals, "invalid placement option: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
 
 	// error invalid partition name
 	err = tk.ExecToErr("alter table tp partition p2 primary_region='r2' regions='r2'")
@@ -1142,7 +1223,7 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 
 	// error for invalid placement opt
 	err = tk.ExecToErr("alter table tp add partition (partition p5 values less than (10000000) primary_region='r2' regions='r2' leader_constraints='[+region=bj]')")
-	c.Assert(err.Error(), Equals, "invalid placement option: should be PRIMARY_REGION=.. REGIONS=.. FOLLOWERS=.. SCHEDULE=.., mixed other constraints into options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
+	c.Assert(err.Error(), Equals, "invalid placement option: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options PRIMARY_REGION=\"r2\" REGIONS=\"r2\" LEADER_CONSTRAINTS=\"[+region=bj]\"")
 
 	// failed alter has no effect
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +

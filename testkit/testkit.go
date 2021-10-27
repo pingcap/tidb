@@ -39,13 +39,13 @@ var testKitIDGenerator atomic.Uint64
 type TestKit struct {
 	require *require.Assertions
 	assert  *assert.Assertions
-	t       *testing.T
+	t       testing.TB
 	store   kv.Storage
 	session session.Session
 }
 
 // NewTestKit returns a new *TestKit.
-func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
+func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 	return &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
@@ -183,7 +183,7 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 	return err
 }
 
-func newSession(t *testing.T, store kv.Storage) session.Session {
+func newSession(t testing.TB, store kv.Storage) session.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())

@@ -54,8 +54,8 @@ var vecBuiltinOtherCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinOtherFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinOtherCases)
+func TestVectorizedBuiltinOtherFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinOtherCases)
 }
 
 func BenchmarkVectorizedBuiltinOtherFunc(b *testing.B) {
