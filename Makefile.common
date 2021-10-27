@@ -90,7 +90,7 @@ endif
 
 BR_PKG := github.com/pingcap/tidb/br
 BR_PACKAGES       := go list ./...| grep "github.com\/pingcap\/tidb\/br"
-BR_PACKAGE_DIRECTORIES := $(PACKAGE_LIST_BR_TESTS) | sed 's|github.com/pingcap/$(PROJECT)/||'
+BR_PACKAGE_DIRECTORIES := $(BR_PACKAGES) | sed 's|github.com/pingcap/$(PROJECT)/||'
 LIGHTNING_BIN     := bin/tidb-lightning
 LIGHTNING_CTL_BIN := bin/tidb-lightning-ctl
 BR_BIN            := bin/br
