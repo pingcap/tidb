@@ -149,12 +149,12 @@ func (g *datetimeJSONGener) gen() interface{} {
 	return json.CreateBinary(d.String())
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinCastEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinCastCases)
+func TestVectorizedBuiltinCastEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinCastCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinCastFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinCastCases)
+func TestVectorizedBuiltinCastFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinCastCases)
 }
 
 func (s *testEvaluatorSuite) TestVectorizedCastRealAsTime(c *C) {
