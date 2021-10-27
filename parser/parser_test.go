@@ -3461,8 +3461,7 @@ func TestHintError(t *testing.T) {
 	_, _, err = p.Parse("select c1, c2 from /*+ tidb_unknow(T1,t2) */ t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err) // Hints are ignored after the "FROM" keyword!
 	_, _, err = p.Parse("select1 /*+ TIDB_INLJ(t1, T2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
-	require.Error(t, err)
-	require.Equal(t, "line 1 column 7 near \"select1 /*+ TIDB_INLJ(t1, T2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1\" ", err.Error())
+	require.EqualError(t, err, "line 1 column 7 near \"select1 /*+ TIDB_INLJ(t1, T2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1\" ")
 	_, _, err = p.Parse("select /*+ TIDB_INLJ(t1, T2) */ c1, c2 fromt t1, t2 where t1.c1 = t2.c1", "", "")
 	require.Error(t, err)
 	require.Equal(t, "line 1 column 47 near \"t1, t2 where t1.c1 = t2.c1\" ", err.Error())
