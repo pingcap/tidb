@@ -2158,9 +2158,21 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       make([]interface{}, 0, 2),
 	}
+	duplication := make(map[string]bool)
 	args := make([]*model.TableInfo, 0, len(infos))
-	idx := make([]int, 0, len(infos))
-	for i, info := range infos {
+	var err error
+	for _, info := range infos {
+		if _, ok := duplication[info.Name.L]; ok {
+			err = infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
+			if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+				ctx.GetSessionVars().StmtCtx.AppendNote(err)
+				err = nil
+			}
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, tryRetainID)
 		if err != nil {
 			return errors.Trace(err)
@@ -2177,9 +2189,6 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			jobs.SchemaName = job.SchemaName
 		}
 
-		// store index to table info
-		idx = append(idx, i)
-
 		// append table job args
 		if len(job.Args) != 1 {
 			return errors.Trace(fmt.Errorf("except only one argument"))
@@ -2189,13 +2198,14 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			return errors.Trace(fmt.Errorf("except table info"))
 		}
 		args = append(args, info)
+		duplication[info.Name.L] = true
 	}
 	if len(args) == 0 {
 		return nil
 	}
 	jobs.Args = append(jobs.Args, args)
 
-	err := d.doDDLJob(ctx, jobs)
+	err = d.doDDLJob(ctx, jobs)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
 		if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
@@ -2205,7 +2215,7 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		return errors.Trace(d.callHookOnChanged(err))
 	}
 
-	for _, j := range idx {
+	for j := range infos {
 		if err = d.createTableWithInfoPost(ctx, infos[j], jobs.SchemaID); err != nil {
 			return errors.Trace(d.callHookOnChanged(err))
 		}
