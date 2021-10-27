@@ -93,16 +93,14 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		TLS:              dsn.TLS,
 	}
 
-	if dsn.Vars != nil {
-		for k, v := range dsn.Vars {
-			param.Vars[k] = v
-		}
-	}
 
+	log.L().Info("Before connect DB")
 	db, err := param.Connect()
 	if err != nil {
+		log.L().Info("After connect Error")
 		return nil, errors.Trace(err)
 	}
+	log.L().Info("After connect DB")
 
 	vars := map[string]string{
 		"tidb_build_stats_concurrency":       strconv.Itoa(dsn.BuildStatsConcurrency),
@@ -119,18 +117,27 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		"autocommit": "1",
 	}
 
+	if dsn.Vars != nil {
+		for k, v := range dsn.Vars {
+			vars[k] = v
+		}
+	}
 	for k, v := range vars {
 		q := fmt.Sprintf("SET SESSION %s = %s;", k, v)
+		log.L().Info("Set session", zap.String("query", q))
 		if _, err1 := db.ExecContext(ctx, q); err1 != nil {
 			log.L().Warn("set session variable failed, will skip this query", zap.String("query", q),
 				zap.Error(err1))
 			delete(vars, k)
 		}
+		log.L().Info("Set session End")
 	}
 	_ = db.Close()
+	log.L().Info("Close connections")
 
 	param.Vars = vars
 	db, err = param.Connect()
+	log.L().Info("connect again")
 	return db, errors.Trace(err)
 }
 
