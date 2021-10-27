@@ -1715,14 +1715,14 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	return
 }
 
-// BuildHandleColsForAnalyze is exported for test.
-func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo, colsInfo []*model.ColumnInfo) HandleCols {
+// BuildHandleColsForAnalyze returns HandleCols for ANALYZE.
+func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) HandleCols {
 	var handleCols HandleCols
 	switch {
 	case tblInfo.PKIsHandle:
 		pkCol := tblInfo.GetPkColInfo()
 		var index int
-		if colsInfo == nil || len(tblInfo.Columns) == len(colsInfo) {
+		if allColumns {
 			// If all the columns need to be analyzed, we just set index to pkCol.Offset.
 			index = pkCol.Offset
 		} else {
@@ -1741,7 +1741,7 @@ func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo,
 		for i := 0; i < pkColLen; i++ {
 			colInfo := tblInfo.Columns[pkIdx.Columns[i].Offset]
 			var index int
-			if colsInfo == nil || len(tblInfo.Columns) == len(colsInfo) {
+			if allColumns {
 				// If all the columns need to be analyzed, we just set index to colInfo.Offset.
 				index = colInfo.Offset
 			} else {
@@ -1754,10 +1754,14 @@ func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo,
 				Index:   index,
 			}
 		}
+		// We don't modify IndexColumn.Offset for CommonHandleCols.idxInfo according to colsInfo. There are two reasons.
+		// The first reason is that we use Column.Index of CommonHandleCols.columns, rather than IndexColumn.Offset, to get
+		// column value from row samples when calling (*CommonHandleCols).BuildHandleByDatums in (*AnalyzeColumnsExec).buildSamplingStats.
+		// The second reason is that in (cb *CommonHandleCols).BuildHandleByDatums, tablecodec.TruncateIndexValues(cb.tblInfo, cb.idxInfo, datumBuf)
+		// is called, which asks that IndexColumn.Offset of cb.idxInfo must be according to cb,tblInfo.
+		// TODO: find a better way to find handle columns in ANALYZE rather than use Column.Index
 		handleCols = &CommonHandleCols{
 			tblInfo: tblInfo,
-			// We don't modify IndexColumn.Offset for idxInfo since we use Column.Index of columns to fetch column stats in (*AnalyzeColumnsExec).buildSamplingStats
-			// instead of IndexColumn.Offset. However, the way is error-prone and we need a better way.
 			idxInfo: pkIdx,
 			columns: columns,
 			sc:      ctx.GetSessionVars().StmtCtx,
@@ -1804,8 +1808,8 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 }
 
 // getAnalyzeColumnsInfo returns the columns whose stats need to be collected.
-// 1. For `ANALYZE TABLE t PREDICATE COLUMNS`, it returns union of the predicate columns and the index columns. TODO
-// 2. For `ANALYZE TABLE t COLUMNS c1, c2, ..., cn`, it returns union of the specified columns(c1, c2, ..., cn) and the index columns.
+// 1. For `ANALYZE TABLE t PREDICATE COLUMNS`, it returns union of the predicate columns and the columns in index/primary key/extended stats.
+// 2. For `ANALYZE TABLE t COLUMNS c1, c2, ..., cn`, it returns union of the specified columns(c1, c2, ..., cn) and the columns in index/primary key/extended stats.
 // 3. Otherwise it returns all the columns.
 func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
 	tblInfo := tbl.TableInfo
@@ -1908,13 +1912,19 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 	return -1
 }
 
-func getModifiedAnalyzeIndexesInfo(tblInfo *model.TableInfo, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
+// getModifiedIndexesInfoForAnalyze returns indexesInfo for ANALYZE.
+// 1. If allColumns is true, we just return public indexes in tblInfo.Indices.
+// 2. If allColumns is false, colsInfo indicate the columns whose stats need to be collected. colsInfo is a subset of tbl.Columns. For each public index
+// in tblInfo.Indices, index.Columns[i].Offset is set according to tblInfo.Columns. Since we decode row samples according to colsInfo rather than tbl.Columns
+// in the execution phase of ANALYZE, we need to modify index.Columns[i].Offset according to colInfos.
+// TODO: find a better way to find indexed columns in ANALYZE rather than use IndexColumn.Offset
+func getModifiedIndexesInfoForAnalyze(tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
 	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	for _, originIdx := range tblInfo.Indices {
 		if originIdx.State != model.StatePublic {
 			continue
 		}
-		if len(tblInfo.Columns) == len(colsInfo) {
+		if allColumns {
 			// If all the columns need to be analyzed, we don't need to modify IndexColumn.Offset.
 			idxsInfo = append(idxsInfo, originIdx)
 			continue
@@ -1957,8 +1967,9 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		if err != nil {
 			return nil, err
 		}
-		indexes := getAnalyzeIndexesInfo(tbl.TableInfo, colsInfo)
-		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, colsInfo)
+		allColumns := len(tbl.TableInfo.Columns) == len(colsInfo)
+		indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, colsInfo)
+		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, colsInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,
 			ColsInfo:    colsInfo,
@@ -2040,7 +2051,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				})
 			}
 		}
-		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, nil)
+		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, true, nil)
 		if len(colInfo) > 0 || handleCols != nil {
 			for i, id := range physicalIDs {
 				if id == tbl.TableInfo.ID {
@@ -2091,7 +2102,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	}
 	for _, idxName := range as.IndexNames {
 		if isPrimaryIndex(idxName) {
-			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, nil)
+			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, true, nil)
 			// Fast analyze use analyze column to solve int handle.
 			if handleCols != nil && handleCols.IsInt() && b.ctx.GetSessionVars().EnableFastAnalyze {
 				for i, id := range physicalIDs {
@@ -2172,7 +2183,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 			}
 		}
 	}
-	handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, nil)
+	handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, true, nil)
 	if handleCols != nil {
 		for i, id := range physicalIDs {
 			if id == tblInfo.ID {
