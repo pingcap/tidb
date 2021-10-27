@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func (s *testEvaluatorSuite) TestCastXXX(c *C) {
+func (s *testEvaluatorSuite) TestCastFunctions(c *C) {
 	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
 
 	// Test `cast as char[(N)]` and `cast as binary[(N)]`.

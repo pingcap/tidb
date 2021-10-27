@@ -16,6 +16,7 @@ package logutil
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"runtime/trace"
@@ -141,6 +142,29 @@ func initGRPCLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
 	}
 
 	return l, prop, nil
+}
+
+// ReplaceLogger replace global logger instance with given log config.
+func ReplaceLogger(cfg *LogConfig) error {
+	gl, props, err := log.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.FatalLevel))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.ReplaceGlobals(gl, props)
+
+	cfgJSON, err := json.Marshal(&cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	log.S().Infof("replaced global logger with config: %s", string(cfgJSON))
+
+	return nil
 }
 
 // SetLevel sets the zap logger's level.

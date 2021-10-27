@@ -818,6 +818,106 @@ func (s *testEvaluatorSuite) TestFloat32ColVec(c *C) {
 	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
 }
 
+func (s *testVectorizeSuite2) TestVecEvalBool(c *C) {
+	ctx := mock.NewContext()
+	eTypes := []types.EvalType{types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	for numCols := 1; numCols <= 5; numCols++ {
+		for round := 0; round < 16; round++ {
+			exprs, input := genVecEvalBool(numCols, nil, eTypes)
+			selected, nulls, err := VecEvalBool(ctx, exprs, input, nil, nil)
+			c.Assert(err, IsNil)
+			it := chunk.NewIterator4Chunk(input)
+			i := 0
+			for row := it.Begin(); row != it.End(); row = it.Next() {
+				ok, null, err := EvalBool(ctx, exprs, row)
+				c.Assert(err, IsNil)
+				c.Assert(null, Equals, nulls[i])
+				c.Assert(ok, Equals, selected[i])
+				i++
+			}
+		}
+	}
+}
+
+func (s *testVectorizeSuite2) TestRowBasedFilterAndVectorizedFilter(c *C) {
+	ctx := mock.NewContext()
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	for numCols := 1; numCols <= 5; numCols++ {
+		for round := 0; round < 16; round++ {
+			exprs, input := genVecEvalBool(numCols, nil, eTypes)
+			it := chunk.NewIterator4Chunk(input)
+			isNull := make([]bool, it.Len())
+			selected, nulls, err := rowBasedFilter(ctx, exprs, it, nil, isNull)
+			c.Assert(err, IsNil)
+			selected2, nulls2, err2 := vectorizedFilter(ctx, exprs, it, nil, isNull)
+			c.Assert(err2, IsNil)
+			length := it.Len()
+			for i := 0; i < length; i++ {
+				c.Assert(nulls2[i], Equals, nulls[i])
+				c.Assert(selected2[i], Equals, selected[i])
+			}
+		}
+	}
+}
+
+func (s *testVectorizeSuite2) TestVectorizedFilterConsiderNull(c *C) {
+	ctx := mock.NewContext()
+	dafaultEnableVectorizedExpressionVar := ctx.GetSessionVars().EnableVectorizedExpression
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	for numCols := 1; numCols <= 5; numCols++ {
+		for round := 0; round < 16; round++ {
+			exprs, input := genVecEvalBool(numCols, nil, eTypes)
+			it := chunk.NewIterator4Chunk(input)
+			isNull := make([]bool, it.Len())
+			ctx.GetSessionVars().EnableVectorizedExpression = false
+			selected, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
+			c.Assert(err, IsNil)
+			ctx.GetSessionVars().EnableVectorizedExpression = true
+			selected2, nulls2, err2 := VectorizedFilterConsiderNull(ctx, exprs, it, nil, isNull)
+			c.Assert(err2, IsNil)
+			length := it.Len()
+			for i := 0; i < length; i++ {
+				c.Assert(nulls2[i], Equals, nulls[i])
+				c.Assert(selected2[i], Equals, selected[i])
+			}
+
+			// add test which sel is not nil
+			randomSel := generateRandomSel()
+			input.SetSel(randomSel)
+			it2 := chunk.NewIterator4Chunk(input)
+			isNull = isNull[:0]
+			ctx.GetSessionVars().EnableVectorizedExpression = false
+			selected3, nulls, err := VectorizedFilterConsiderNull(ctx, exprs, it2, nil, isNull)
+			c.Assert(err, IsNil)
+			ctx.GetSessionVars().EnableVectorizedExpression = true
+			selected4, nulls2, err2 := VectorizedFilterConsiderNull(ctx, exprs, it2, nil, isNull)
+			c.Assert(err2, IsNil)
+			for i := 0; i < length; i++ {
+				c.Assert(nulls2[i], Equals, nulls[i])
+				c.Assert(selected4[i], Equals, selected3[i])
+			}
+
+			unselected := make([]bool, length)
+			// unselected[i] == false means that the i-th row is selected
+			for i := 0; i < length; i++ {
+				unselected[i] = true
+			}
+			for _, idx := range randomSel {
+				unselected[idx] = false
+			}
+			for i := range selected2 {
+				if selected2[i] && unselected[i] {
+					selected2[i] = false
+				}
+			}
+			for i := 0; i < length; i++ {
+				c.Assert(selected2[i], Equals, selected4[i])
+			}
+		}
+	}
+	ctx.GetSessionVars().EnableVectorizedExpression = dafaultEnableVectorizedExpressionVar
+}
+
 func BenchmarkFloat32ColRow(b *testing.B) {
 	col, chk, _ := genFloat32Col()
 	ctx := mock.NewContext()
