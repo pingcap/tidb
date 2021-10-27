@@ -1274,8 +1274,8 @@ func (s *testPrepareSerialSuite) TestInvisibleIndex4PlanCache(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1176]Key 'idx_c' doesn't exist in table 't'")
 }
 
-// TODO: need to check whether the CTE can not be cached
 func (s *testPrepareSerialSuite) TestCTE4PlanCache(c *C) {
+	// CTE can not be cached, because part of it will be treated as a subquery.
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	orgEnable := core.PreparedPlanCacheEnabled()
