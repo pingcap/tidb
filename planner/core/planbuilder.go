@@ -1908,7 +1908,7 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 	return -1
 }
 
-func getAnalyzeIndexesInfo(tblInfo *model.TableInfo, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
+func getModifiedAnalyzeIndexesInfo(tblInfo *model.TableInfo, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
 	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	for _, originIdx := range tblInfo.Indices {
 		if originIdx.State != model.StatePublic {
