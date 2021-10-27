@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -1329,90 +1328,6 @@ func TestServerInfoResolveLoopBackAddr(t *testing.T) {
 		require.Equal(t, "192.168.130.22:4000", n.Address)
 		require.Equal(t, "192.168.130.22:10080", n.StatusAddr)
 	}
-}
-
-func TestPlacementPolicy(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	tk := newTestKitWithRoot(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table test_placement(id int primary key) partition by hash(id) partitions 2")
-
-	is := dom.InfoSchema()
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_placement"))
-	require.NoError(t, err)
-	partDefs := tb.Meta().GetPartitionInfo().Definitions
-
-	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
-
-	bundleID := "pd"
-	is.SetBundle(&placement.Bundle{
-		ID: bundleID,
-		Rules: []*placement.Rule{
-			{
-				GroupID: bundleID,
-				ID:      "default",
-				Role:    "voter",
-				Count:   3,
-			},
-		},
-	})
-	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
-
-	bundleID = fmt.Sprintf("%s%d", placement.BundleIDPrefix, partDefs[0].ID)
-	bundle := &placement.Bundle{
-		ID:       bundleID,
-		Index:    3,
-		Override: true,
-		Rules: []*placement.Rule{
-			{
-				GroupID: bundleID,
-				ID:      "0",
-				Role:    "voter",
-				Count:   3,
-				Constraints: []placement.Constraint{
-					{
-						Key:    "zone",
-						Op:     "in",
-						Values: []string{"bj"},
-					},
-				},
-			},
-		},
-	}
-	is.SetBundle(bundle)
-	expected := fmt.Sprintf(`%s 3 0 test test_placement p0 <nil> voter 3 "+zone=bj"`, bundleID)
-	tk.MustQuery(`select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name,
-		role, replicas, constraints from information_schema.placement_policy`).Check(testkit.Rows(expected))
-
-	rule1 := bundle.Rules[0].Clone()
-	rule1.ID = "1"
-	bundle.Rules = append(bundle.Rules, rule1)
-	tk.MustQuery("select rule_id, schema_name, table_name, partition_name from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
-		"0 test test_placement p0", "1 test test_placement p0"))
-
-	bundleID = fmt.Sprintf("%s%d", placement.BundleIDPrefix, partDefs[1].ID)
-	bundle1 := bundle.Clone()
-	bundle1.ID = bundleID
-	bundle1.Rules[0].GroupID = bundleID
-	bundle1.Rules[1].GroupID = bundleID
-	is.SetBundle(bundle1)
-	tk.MustQuery("select rule_id, schema_name, table_name, partition_name from information_schema.placement_policy order by partition_name, rule_id").Check(testkit.Rows(
-		"0 test test_placement p0", "1 test test_placement p0", "0 test test_placement p1", "1 test test_placement p1"))
-
-	// do not report error for invalid ObjectID
-	// check pingcap/tidb/issues/22950
-	bundle1.ID = placement.GroupID(1)
-	tk.MustQuery("select rule_id from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
-		"0", "1"))
-
-	// test the failpoint for testing
-	fpName := "github.com/pingcap/tidb/executor/outputInvalidPlacementRules"
-	require.NoError(t, failpoint.Enable(fpName, "return(true)"))
-	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
-	tk.MustQuery("select rule_id from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
-		"0", "0", "1", "1"))
 }
 
 func TestInfoSchemaClientErrors(t *testing.T) {
