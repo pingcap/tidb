@@ -31,6 +31,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -158,9 +159,17 @@ func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
+	cryptTp := b.args[0].GetType()
+	if encodedStr, err := charset.NewEncoding(cryptTp.Charset).EncodeString(cryptStr); err == nil {
+		cryptStr = encodedStr
+	}
 	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
+	}
+	keyTp := b.args[1].GetType()
+	if encodedStr, err := charset.NewEncoding(keyTp.Charset).EncodeString(keyStr); err == nil {
+		keyStr = encodedStr
 	}
 	if !b.ivRequired && len(b.args) == 3 {
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
@@ -201,15 +210,27 @@ func (b *builtinAesDecryptIVSig) evalString(row chunk.Row) (string, bool, error)
 	if isNull || err != nil {
 		return "", true, err
 	}
+	cryptTp := b.args[0].GetType()
+	if encodedStr, err := charset.NewEncoding(cryptTp.Charset).EncodeString(cryptStr); err == nil {
+		cryptStr = encodedStr
+	}
 
 	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
+	keyTp := b.args[1].GetType()
+	if encodedStr, err := charset.NewEncoding(keyTp.Charset).EncodeString(keyStr); err == nil {
+		keyStr = encodedStr
+	}
 
 	iv, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
+	}
+	ivTp := b.args[2].GetType()
+	if encodedStr, err := charset.NewEncoding(ivTp.Charset).EncodeString(iv); err == nil {
+		iv = encodedStr
 	}
 	if len(iv) < aes.BlockSize {
 		return "", true, errIncorrectArgs.GenWithStack("The initialization vector supplied to aes_decrypt is too short. Must be at least %d bytes long", aes.BlockSize)

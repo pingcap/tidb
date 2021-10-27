@@ -162,6 +162,47 @@ func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 	c.Assert(err, IsNil)
 	s.testNullInput(c, ast.AesDecrypt)
 	s.testAmbiguousInput(c, ast.AesDecrypt)
+
+	// Test GBK String
+	gbkStr, _ := charset.NewEncoding("gbk").EncodeString("你好")
+	gbkTests := []struct {
+		mode   string
+		chs    string
+		origin interface{}
+		params []interface{}
+		crypt  string
+	}{
+		// test for ecb
+		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"123"}, "CEBD80EEC6423BEAFA1BB30FD7625CBC"},
+		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"123"}, "6AFA9D7BA2C1AED1603E804F75BB0127"},
+		{"aes-128-ecb", "utf8mb4", "123", []interface{}{"你好"}, "E03F6D9C1C86B82F5620EE0AA9BD2F6A"},
+		{"aes-128-ecb", "gbk", "123", []interface{}{gbkStr}, "31A2D26529F0E6A38D406379ABD26FA5"},
+		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"你好"}, "3E2D8211DAE17143F22C2C5969A35263"},
+		{"aes-128-ecb", "gbk", gbkStr, []interface{}{gbkStr}, "84982910338160D037615D283AD413DE"},
+		// test for cbc
+		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"123", "1234567890123456"}, "B95509A516ACED59C3DF4EC41C538D83"},
+		{"aes-128-cbc", "gbk", gbkStr, []interface{}{"123", "1234567890123456"}, "D4322D091B5DDE0DEB35B1749DA2483C"},
+		{"aes-128-cbc", "utf8mb4", "123", []interface{}{"你好", "1234567890123456"}, "E19E86A9E78E523267AFF36261AD117D"},
+		{"aes-128-cbc", "gbk", "123", []interface{}{gbkStr, "1234567890123456"}, "5A2F8F2C1841CC4E1D1640F1EA2A1A23"},
+		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"你好", "1234567890123456"}, "B73637C73302C909EA63274C07883E71"},
+		{"aes-128-cbc", "gbk", gbkStr, []interface{}{gbkStr, "1234567890123456"}, "61E13E9B00F2E757F4E925D3268227A0"},
+	}
+
+	for _, tt := range gbkTests {
+		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
+		c.Assert(err, IsNil)
+		err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
+		c.Assert(err, IsNil)
+		args := []types.Datum{fromHex(tt.crypt)}
+		for _, param := range tt.params {
+			args = append(args, types.NewDatum(param))
+		}
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		str, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(str, DeepEquals, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin, collate.DefaultLen))
+	}
 }
 
 func (s *testEvaluatorSuite) testNullInput(c *C, fnName string) {

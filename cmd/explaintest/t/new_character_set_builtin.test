@@ -29,3 +29,8 @@ set @@tidb_enable_vectorized_expression = true;
 select to_base64(a), to_base64(b), to_base64(c) from t;
 set @@tidb_enable_vectorized_expression = false;
 
+-- test for builtin function aes_decrypt()
+select convert(aes_decrypt(0xC54279F381B0710E145E94106F03C94C, '123') using utf8mb4) as a, convert(aes_decrypt(0x7A747EC6F1906276D036B1F3CE27BAAB, '123') using gbk) as b, convert(aes_decrypt(0xA0E5E01289017B8A3691CCFBDE81A59ED4A9D5BF50A298D41287E395CDDCAD56, '123') using binary) as c;
+set @@tidb_enable_vectorized_expression = true;
+select convert(aes_decrypt(0xC54279F381B0710E145E94106F03C94C, '123') using utf8mb4) as a, convert(aes_decrypt(0x7A747EC6F1906276D036B1F3CE27BAAB, '123') using gbk) as b, convert(aes_decrypt(0xA0E5E01289017B8A3691CCFBDE81A59ED4A9D5BF50A298D41287E395CDDCAD56, '123') using binary) as c;
+set @@tidb_enable_vectorized_expression = false;
