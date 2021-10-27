@@ -713,6 +713,9 @@ type SessionVars struct {
 	// EnableAlterPlacement indicates whether a user can alter table partition placement rules.
 	EnableAlterPlacement bool
 
+	// EnablePlacementChecks indicates whether a user can check validation of placement.
+	EnablePlacementChecks bool
+
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -1189,6 +1192,7 @@ func NewSessionVars() *SessionVars {
 		TMPTableSize:                DefTMPTableSize,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
+		EnablePlacementChecks:       DefEnablePlacementCheck,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
