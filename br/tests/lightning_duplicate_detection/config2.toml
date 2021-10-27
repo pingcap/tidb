@@ -4,6 +4,7 @@ task-info-schema-name = 'lightning_task_info'
 [tikv-importer]
 backend = "local"
 duplicate-detection = true
+duplicate-resolution = 'unsafe-noop'
 
 [checkpoint]
 enable = true

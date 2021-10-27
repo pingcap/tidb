@@ -121,6 +121,9 @@ const (
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
+	// tidb_general_log is used to log every query in the server in info level.
+	TiDBLogFileMaxDays = "tidb_log_file_max_days"
+
 	// tidb_pprof_sql_cpu is used to add label sql label to pprof result.
 	TiDBPProfSQLCPU = "tidb_pprof_sql_cpu"
 
@@ -584,6 +587,11 @@ const (
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// TiDBEnableMPPBalanceWithContinuousRegion indicates whether MPP balance logic will take account of region's continuity in TiFlash.
+	TiDBEnableMPPBalanceWithContinuousRegion = "tidb_enable_mpp_balance_with_continuous_region"
+	// TiDBEnableMPPBalanceWithContinuousRegionCount indicates the continuous region count that balance logic assigns to a TiFlash instance each time.
+	TiDBEnableMPPBalanceWithContinuousRegionCount = "tidb_enable_mpp_balance_with_continuous_region_count"
 )
 
 // TiDB vars that have only global scope
@@ -603,159 +611,169 @@ const (
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 )
 
+// TiDB intentional limits
+// Can be raised in future.
+
+const (
+	// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
+	// for any type of configuration item that has concurrent workers.
+	MaxConfigurableConcurrency = 256
+)
+
 // Default TiDB system variable values.
 const (
-	DefHostname                           = "localhost"
-	DefIndexLookupConcurrency             = ConcurrencyUnset
-	DefIndexLookupJoinConcurrency         = ConcurrencyUnset
-	DefIndexSerialScanConcurrency         = 1
-	DefIndexJoinBatchSize                 = 25000
-	DefIndexLookupSize                    = 20000
-	DefDistSQLScanConcurrency             = 15
-	DefBuildStatsConcurrency              = 4
-	DefAutoAnalyzeRatio                   = 0.5
-	DefAutoAnalyzeStartTime               = "00:00 +0000"
-	DefAutoAnalyzeEndTime                 = "23:59 +0000"
-	DefAutoIncrementIncrement             = 1
-	DefAutoIncrementOffset                = 1
-	DefChecksumTableConcurrency           = 4
-	DefSkipUTF8Check                      = false
-	DefSkipASCIICheck                     = false
-	DefOptAggPushDown                     = false
-	DefOptBCJ                             = false
-	DefOptCartesianBCJ                    = 1
-	DefOptMPPOuterJoinFixedBuildSide      = false
-	DefOptWriteRowID                      = false
-	DefOptEnableCorrelationAdjustment     = true
-	DefOptLimitPushDownThreshold          = 100
-	DefOptCorrelationThreshold            = 0.9
-	DefOptCorrelationExpFactor            = 1
-	DefOptCPUFactor                       = 3.0
-	DefOptCopCPUFactor                    = 3.0
-	DefOptTiFlashConcurrencyFactor        = 24.0
-	DefOptNetworkFactor                   = 1.0
-	DefOptScanFactor                      = 1.5
-	DefOptDescScanFactor                  = 3.0
-	DefOptSeekFactor                      = 20.0
-	DefOptMemoryFactor                    = 0.001
-	DefOptDiskFactor                      = 1.5
-	DefOptConcurrencyFactor               = 3.0
-	DefOptInSubqToJoinAndAgg              = true
-	DefOptPreferRangeScan                 = false
-	DefBatchInsert                        = false
-	DefBatchDelete                        = false
-	DefBatchCommit                        = false
-	DefCurretTS                           = 0
-	DefInitChunkSize                      = 32
-	DefMaxChunkSize                       = 1024
-	DefDMLBatchSize                       = 0
-	DefMaxPreparedStmtCount               = -1
-	DefWaitTimeout                        = 0
-	DefTiDBMemQuotaApplyCache             = 32 << 20 // 32MB.
-	DefTiDBMemQuotaHashJoin               = 32 << 30 // 32GB.
-	DefTiDBMemQuotaMergeJoin              = 32 << 30 // 32GB.
-	DefTiDBMemQuotaSort                   = 32 << 30 // 32GB.
-	DefTiDBMemQuotaTopn                   = 32 << 30 // 32GB.
-	DefTiDBMemQuotaIndexLookupReader      = 32 << 30 // 32GB.
-	DefTiDBMemQuotaIndexLookupJoin        = 32 << 30 // 32GB.
-	DefTiDBMemQuotaDistSQL                = 32 << 30 // 32GB.
-	DefTiDBGeneralLog                     = false
-	DefTiDBPProfSQLCPU                    = 0
-	DefTiDBRetryLimit                     = 10
-	DefTiDBDisableTxnAutoRetry            = true
-	DefTiDBConstraintCheckInPlace         = false
-	DefTiDBHashJoinConcurrency            = ConcurrencyUnset
-	DefTiDBProjectionConcurrency          = ConcurrencyUnset
-	DefBroadcastJoinThresholdSize         = 100 * 1024 * 1024
-	DefBroadcastJoinThresholdCount        = 10 * 1024
-	DefTiDBOptimizerSelectivityLevel      = 0
-	DefTiDBAllowBatchCop                  = 1
-	DefTiDBAllowMPPExecution              = true
-	DefTiDBHashExchangeWithNewCollation   = true
-	DefTiDBEnforceMPPExecution            = false
-	DefTiDBMPPStoreFailTTL                = "60s"
-	DefTiDBTxnMode                        = ""
-	DefTiDBRowFormatV1                    = 1
-	DefTiDBRowFormatV2                    = 2
-	DefTiDBDDLReorgWorkerCount            = 4
-	DefTiDBDDLReorgBatchSize              = 256
-	DefTiDBDDLErrorCountLimit             = 512
-	DefTiDBMaxDeltaSchemaCount            = 1024
-	DefTiDBChangeMultiSchema              = false
-	DefTiDBPointGetCache                  = false
-	DefTiDBEnableAlterPlacement           = false
-	DefTiDBEnableAutoIncrementInGenerated = false
-	DefTiDBHashAggPartialConcurrency      = ConcurrencyUnset
-	DefTiDBHashAggFinalConcurrency        = ConcurrencyUnset
-	DefTiDBWindowConcurrency              = ConcurrencyUnset
-	DefTiDBMergeJoinConcurrency           = 1 // disable optimization by default
-	DefTiDBStreamAggConcurrency           = 1
-	DefTiDBForcePriority                  = mysql.NoPriority
-	DefEnableWindowFunction               = true
-	DefEnablePipelinedWindowFunction      = true
-	DefEnableStrictDoubleTypeCheck        = true
-	DefEnableVectorizedExpression         = true
-	DefTiDBOptJoinReorderThreshold        = 0
-	DefTiDBDDLSlowOprThreshold            = 300
-	DefTiDBUseFastAnalyze                 = false
-	DefTiDBSkipIsolationLevelCheck        = false
-	DefTiDBExpensiveQueryTimeThreshold    = 60 // 60s
-	DefTiDBScatterRegion                  = false
-	DefTiDBWaitSplitRegionFinish          = true
-	DefWaitSplitRegionTimeout             = 300 // 300s
-	DefTiDBEnableNoopFuncs                = Off
-	DefTiDBAllowRemoveAutoInc             = false
-	DefTiDBUsePlanBaselines               = true
-	DefTiDBEvolvePlanBaselines            = false
-	DefTiDBEvolvePlanTaskMaxTime          = 600 // 600s
-	DefTiDBEvolvePlanTaskStartTime        = "00:00 +0000"
-	DefTiDBEvolvePlanTaskEndTime          = "23:59 +0000"
-	DefInnodbLockWaitTimeout              = 50 // 50s
-	DefTiDBStoreLimit                     = 0
-	DefTiDBMetricSchemaStep               = 60 // 60s
-	DefTiDBMetricSchemaRangeDuration      = 60 // 60s
-	DefTiDBFoundInPlanCache               = false
-	DefTiDBFoundInBinding                 = false
-	DefTiDBEnableCollectExecutionInfo     = true
-	DefTiDBAllowAutoRandExplicitInsert    = false
-	DefTiDBEnableClusteredIndex           = ClusteredIndexDefModeIntOnly
-	DefTiDBRedactLog                      = false
-	DefTiDBRestrictedReadOnly             = false
-	DefTiDBShardAllocateStep              = math.MaxInt64
-	DefTiDBEnableTelemetry                = true
-	DefTiDBEnableParallelApply            = false
-	DefTiDBEnableAmendPessimisticTxn      = false
-	DefTiDBPartitionPruneMode             = "static"
-	DefTiDBEnableRateLimitAction          = true
-	DefTiDBEnableAsyncCommit              = false
-	DefTiDBEnable1PC                      = false
-	DefTiDBGuaranteeLinearizability       = true
-	DefTiDBAnalyzeVersion                 = 2
-	DefTiDBEnableIndexMergeJoin           = false
-	DefTiDBTrackAggregateMemoryUsage      = true
-	DefTiDBEnableExchangePartition        = false
-	DefCTEMaxRecursionDepth               = 1000
-	DefTiDBTopSQLEnable                   = false
-	DefTiDBTopSQLPrecisionSeconds         = 1
-	DefTiDBTopSQLMaxStatementCount        = 200
-	DefTiDBTopSQLMaxCollect               = 10000
-	DefTiDBTopSQLReportIntervalSeconds    = 60
-	DefTiDBEnableGlobalTemporaryTable     = true
-	DefTMPTableSize                       = 16777216
-	DefTiDBEnableLocalTxn                 = false
-	DefTiDBEnableOrderedResultMode        = false
+	DefHostname                                  = "localhost"
+	DefIndexLookupConcurrency                    = ConcurrencyUnset
+	DefIndexLookupJoinConcurrency                = ConcurrencyUnset
+	DefIndexSerialScanConcurrency                = 1
+	DefIndexJoinBatchSize                        = 25000
+	DefIndexLookupSize                           = 20000
+	DefDistSQLScanConcurrency                    = 15
+	DefBuildStatsConcurrency                     = 4
+	DefAutoAnalyzeRatio                          = 0.5
+	DefAutoAnalyzeStartTime                      = "00:00 +0000"
+	DefAutoAnalyzeEndTime                        = "23:59 +0000"
+	DefAutoIncrementIncrement                    = 1
+	DefAutoIncrementOffset                       = 1
+	DefChecksumTableConcurrency                  = 4
+	DefSkipUTF8Check                             = false
+	DefSkipASCIICheck                            = false
+	DefOptAggPushDown                            = false
+	DefOptBCJ                                    = false
+	DefOptCartesianBCJ                           = 1
+	DefOptMPPOuterJoinFixedBuildSide             = false
+	DefOptWriteRowID                             = false
+	DefOptEnableCorrelationAdjustment            = true
+	DefOptLimitPushDownThreshold                 = 100
+	DefOptCorrelationThreshold                   = 0.9
+	DefOptCorrelationExpFactor                   = 1
+	DefOptCPUFactor                              = 3.0
+	DefOptCopCPUFactor                           = 3.0
+	DefOptTiFlashConcurrencyFactor               = 24.0
+	DefOptNetworkFactor                          = 1.0
+	DefOptScanFactor                             = 1.5
+	DefOptDescScanFactor                         = 3.0
+	DefOptSeekFactor                             = 20.0
+	DefOptMemoryFactor                           = 0.001
+	DefOptDiskFactor                             = 1.5
+	DefOptConcurrencyFactor                      = 3.0
+	DefOptInSubqToJoinAndAgg                     = true
+	DefOptPreferRangeScan                        = false
+	DefBatchInsert                               = false
+	DefBatchDelete                               = false
+	DefBatchCommit                               = false
+	DefCurretTS                                  = 0
+	DefInitChunkSize                             = 32
+	DefMaxChunkSize                              = 1024
+	DefDMLBatchSize                              = 0
+	DefMaxPreparedStmtCount                      = -1
+	DefWaitTimeout                               = 0
+	DefTiDBMemQuotaApplyCache                    = 32 << 20 // 32MB.
+	DefTiDBMemQuotaHashJoin                      = 32 << 30 // 32GB.
+	DefTiDBMemQuotaMergeJoin                     = 32 << 30 // 32GB.
+	DefTiDBMemQuotaSort                          = 32 << 30 // 32GB.
+	DefTiDBMemQuotaTopn                          = 32 << 30 // 32GB.
+	DefTiDBMemQuotaIndexLookupReader             = 32 << 30 // 32GB.
+	DefTiDBMemQuotaIndexLookupJoin               = 32 << 30 // 32GB.
+	DefTiDBMemQuotaDistSQL                       = 32 << 30 // 32GB.
+	DefTiDBGeneralLog                            = false
+	DefTiDBPProfSQLCPU                           = 0
+	DefTiDBRetryLimit                            = 10
+	DefTiDBDisableTxnAutoRetry                   = true
+	DefTiDBConstraintCheckInPlace                = false
+	DefTiDBHashJoinConcurrency                   = ConcurrencyUnset
+	DefTiDBProjectionConcurrency                 = ConcurrencyUnset
+	DefBroadcastJoinThresholdSize                = 100 * 1024 * 1024
+	DefBroadcastJoinThresholdCount               = 10 * 1024
+	DefTiDBOptimizerSelectivityLevel             = 0
+	DefTiDBAllowBatchCop                         = 1
+	DefTiDBAllowMPPExecution                     = true
+	DefTiDBHashExchangeWithNewCollation          = true
+	DefTiDBEnforceMPPExecution                   = false
+	DefTiDBMPPStoreFailTTL                       = "60s"
+	DefTiDBTxnMode                               = ""
+	DefTiDBRowFormatV1                           = 1
+	DefTiDBRowFormatV2                           = 2
+	DefTiDBDDLReorgWorkerCount                   = 4
+	DefTiDBDDLReorgBatchSize                     = 256
+	DefTiDBDDLErrorCountLimit                    = 512
+	DefTiDBMaxDeltaSchemaCount                   = 1024
+	DefTiDBChangeMultiSchema                     = false
+	DefTiDBPointGetCache                         = false
+	DefTiDBEnableAlterPlacement                  = false
+	DefTiDBEnableAutoIncrementInGenerated        = false
+	DefTiDBHashAggPartialConcurrency             = ConcurrencyUnset
+	DefTiDBHashAggFinalConcurrency               = ConcurrencyUnset
+	DefTiDBWindowConcurrency                     = ConcurrencyUnset
+	DefTiDBMergeJoinConcurrency                  = 1 // disable optimization by default
+	DefTiDBStreamAggConcurrency                  = 1
+	DefTiDBForcePriority                         = mysql.NoPriority
+	DefEnableWindowFunction                      = true
+	DefEnablePipelinedWindowFunction             = true
+	DefEnableStrictDoubleTypeCheck               = true
+	DefEnableVectorizedExpression                = true
+	DefTiDBOptJoinReorderThreshold               = 0
+	DefTiDBDDLSlowOprThreshold                   = 300
+	DefTiDBUseFastAnalyze                        = false
+	DefTiDBSkipIsolationLevelCheck               = false
+	DefTiDBExpensiveQueryTimeThreshold           = 60 // 60s
+	DefTiDBScatterRegion                         = false
+	DefTiDBWaitSplitRegionFinish                 = true
+	DefWaitSplitRegionTimeout                    = 300 // 300s
+	DefTiDBEnableNoopFuncs                       = Off
+	DefTiDBAllowRemoveAutoInc                    = false
+	DefTiDBUsePlanBaselines                      = true
+	DefTiDBEvolvePlanBaselines                   = false
+	DefTiDBEvolvePlanTaskMaxTime                 = 600 // 600s
+	DefTiDBEvolvePlanTaskStartTime               = "00:00 +0000"
+	DefTiDBEvolvePlanTaskEndTime                 = "23:59 +0000"
+	DefInnodbLockWaitTimeout                     = 50 // 50s
+	DefTiDBStoreLimit                            = 0
+	DefTiDBMetricSchemaStep                      = 60 // 60s
+	DefTiDBMetricSchemaRangeDuration             = 60 // 60s
+	DefTiDBFoundInPlanCache                      = false
+	DefTiDBFoundInBinding                        = false
+	DefTiDBEnableCollectExecutionInfo            = true
+	DefTiDBAllowAutoRandExplicitInsert           = false
+	DefTiDBEnableClusteredIndex                  = ClusteredIndexDefModeIntOnly
+	DefTiDBRedactLog                             = false
+	DefTiDBRestrictedReadOnly                    = false
+	DefTiDBShardAllocateStep                     = math.MaxInt64
+	DefTiDBEnableTelemetry                       = true
+	DefTiDBEnableParallelApply                   = false
+	DefTiDBEnableAmendPessimisticTxn             = false
+	DefTiDBPartitionPruneMode                    = "static"
+	DefTiDBEnableRateLimitAction                 = true
+	DefTiDBEnableAsyncCommit                     = false
+	DefTiDBEnable1PC                             = false
+	DefTiDBGuaranteeLinearizability              = true
+	DefTiDBAnalyzeVersion                        = 2
+	DefTiDBEnableIndexMergeJoin                  = false
+	DefTiDBTrackAggregateMemoryUsage             = true
+	DefTiDBEnableExchangePartition               = false
+	DefCTEMaxRecursionDepth                      = 1000
+	DefTiDBTopSQLEnable                          = false
+	DefTiDBTopSQLPrecisionSeconds                = 1
+	DefTiDBTopSQLMaxStatementCount               = 200
+	DefTiDBTopSQLMaxCollect                      = 10000
+	DefTiDBTopSQLReportIntervalSeconds           = 60
+	DefTMPTableSize                              = 16777216
+	DefTiDBEnableLocalTxn                        = false
+	DefTiDBEnableOrderedResultMode               = false
+	DefEnableMPPBalanceWithContinuousRegion      = true
+	DefEnableMPPBalanceWithContinuousRegionCount = 20
 )
 
 // Process global variables.
 var (
-	ProcessGeneralLog            = atomic.NewBool(false)
-	EnablePProfSQLCPU            = atomic.NewBool(false)
-	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
-	maxDDLReorgWorkerCount int32 = 128
-	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
-	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
-	ddlReorgRowFormat      int64 = DefTiDBRowFormatV2
-	maxDeltaSchemaCount    int64 = DefTiDBMaxDeltaSchemaCount
+	ProcessGeneralLog           = atomic.NewBool(false)
+	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	EnablePProfSQLCPU           = atomic.NewBool(false)
+	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
+	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
+	ddlErrorCountlimit    int64 = DefTiDBDDLErrorCountLimit
+	ddlReorgRowFormat     int64 = DefTiDBRowFormatV2
+	maxDeltaSchemaCount   int64 = DefTiDBMaxDeltaSchemaCount
 	// Export for testing.
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
