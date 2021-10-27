@@ -3463,8 +3463,7 @@ func TestHintError(t *testing.T) {
 	_, _, err = p.Parse("select1 /*+ TIDB_INLJ(t1, T2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.EqualError(t, err, "line 1 column 7 near \"select1 /*+ TIDB_INLJ(t1, T2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1\" ")
 	_, _, err = p.Parse("select /*+ TIDB_INLJ(t1, T2) */ c1, c2 fromt t1, t2 where t1.c1 = t2.c1", "", "")
-	require.Error(t, err)
-	require.Equal(t, "line 1 column 47 near \"t1, t2 where t1.c1 = t2.c1\" ", err.Error())
+	require.EqualError(t, err, "line 1 column 47 near \"t1, t2 where t1.c1 = t2.c1\" ")
 	_, _, err = p.Parse("SELECT 1 FROM DUAL WHERE 1 IN (SELECT /*+ DEBUG_HINT3 */ 1)", "", "")
 	require.NoError(t, err)
 	stmt, _, err = p.Parse("insert into t select /*+ memory_quota(1 MB) */ * from t;", "", "")
@@ -5115,8 +5114,7 @@ func TestDDLStatements(t *testing.T) {
 
 	createTableStr = `CREATE TABLE t (c_double double(10))`
 	_, _, err = p.Parse(createTableStr, "", "")
-	require.Error(t, err)
-	require.Equal(t, "[parser:1149]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use", err.Error())
+	require.EqualError(t, err, "[parser:1149]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use")
 	p.SetStrictDoubleTypeCheck(false)
 	_, _, err = p.Parse(createTableStr, "", "")
 	require.NoError(t, err)
@@ -6477,14 +6475,11 @@ func TestCharsetIntroducer(t *testing.T) {
 	defer charset.RemoveCharset("gbk")
 	// `_gbk` is treated as a character set.
 	_, _, err = p.Parse("select _gbk 'a';", "", "")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:1115]Unsupported character introducer: 'gbk'", err.Error())
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 	_, _, err = p.Parse("select _gbk 0x1234;", "", "")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:1115]Unsupported character introducer: 'gbk'", err.Error())
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 	_, _, err = p.Parse("select _gbk 0b101001;", "", "")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:1115]Unsupported character introducer: 'gbk'", err.Error())
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 }
 
 func TestGBKEncoding(t *testing.T) {
