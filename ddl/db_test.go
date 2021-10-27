@@ -7665,7 +7665,6 @@ func (s *testDBSuite2) TestCreateTables(c *C) {
 	err := d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError, false)
 	c.Check(err, IsNil)
 
-
 	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
 	job := tk.MustQuery("admin show ddl jobs").Rows()[0]
 	c.Assert(job[1], Equals, "test")
