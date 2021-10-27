@@ -33,7 +33,6 @@ import (
 // RowSampleCollector implements the needed interface for a row-based sample collector.
 type RowSampleCollector interface {
 	MergeCollector(collector RowSampleCollector)
-	ToProto() *tipb.RowSampleCollector
 	sampleRow(row []types.Datum, rng *rand.Rand)
 	Base() *baseCollector
 }
@@ -235,6 +234,22 @@ func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols [
 	return nil
 }
 
+// ToProto converts the collector to pb struct.
+func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
+	pbFMSketches := make([]*tipb.FMSketch, 0, len(s.FMSketches))
+	for _, sketch := range s.FMSketches {
+		pbFMSketches = append(pbFMSketches, FMSketchToProto(sketch))
+	}
+	collector := &tipb.RowSampleCollector{
+		Samples:    RowSamplesToProto(s.Samples),
+		NullCounts: s.NullCount,
+		Count:      s.Count,
+		FmSketch:   pbFMSketches,
+		TotalSize:  s.TotalSizes,
+	}
+	return collector
+}
+
 func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
@@ -297,22 +312,6 @@ func (s *ReservoirRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 		}
 		heap.Fix(&s.Samples, 0)
 	}
-}
-
-// ToProto converts the collector to proto struct.
-func (s *ReservoirRowSampleCollector) ToProto() *tipb.RowSampleCollector {
-	pbFMSketches := make([]*tipb.FMSketch, 0, len(s.FMSketches))
-	for _, sketch := range s.FMSketches {
-		pbFMSketches = append(pbFMSketches, FMSketchToProto(sketch))
-	}
-	collector := &tipb.RowSampleCollector{
-		Samples:    RowSamplesToProto(s.Samples),
-		NullCounts: s.NullCount,
-		Count:      s.Count,
-		FmSketch:   pbFMSketches,
-		TotalSize:  s.TotalSizes,
-	}
-	return collector
 }
 
 // MergeCollector merges the collectors to a final one.
@@ -406,22 +405,6 @@ func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleColle
 		s.TotalSizes[i] += subCollector.Base().TotalSizes[i]
 	}
 	s.baseCollector.Samples = append(s.baseCollector.Samples, subCollector.Base().Samples...)
-}
-
-// ToProto converts the collector to proto struct.
-func (s *BernoulliRowSampleCollector) ToProto() *tipb.RowSampleCollector {
-	pbFMSketches := make([]*tipb.FMSketch, 0, len(s.FMSketches))
-	for _, sketch := range s.FMSketches {
-		pbFMSketches = append(pbFMSketches, FMSketchToProto(sketch))
-	}
-	collector := &tipb.RowSampleCollector{
-		Samples:    RowSamplesToProto(s.Samples),
-		NullCounts: s.NullCount,
-		Count:      s.Count,
-		FmSketch:   pbFMSketches,
-		TotalSize:  s.TotalSizes,
-	}
-	return collector
 }
 
 // Base implements the interface RowSampleCollector.

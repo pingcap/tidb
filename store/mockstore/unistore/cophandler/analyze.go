@@ -439,7 +439,7 @@ func handleAnalyzeFullSamplingReq(
 		return nil, err
 	}
 	colResp := &tipb.AnalyzeColumnsResp{}
-	colResp.RowCollector = collector.ToProto()
+	colResp.RowCollector = collector.Base().ToProto()
 	data, err := colResp.Marshal()
 	if err != nil {
 		return nil, err
