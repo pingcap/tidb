@@ -2813,7 +2813,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	ts := v.GetTableScan()
-	if err = b.validCanReadTemporaryTable(ts.Table); err != nil {
+	if err = b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		return nil, err
 	}
 
@@ -2929,7 +2929,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	ts := v.GetTableScan()
-	if err = b.validCanReadTemporaryTable(ts.Table); err != nil {
+	if err = b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil
 	}
@@ -3152,7 +3152,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) Executor {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	if err := b.validCanReadTemporaryTable(is.Table); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
 		return nil
 	}
@@ -3311,7 +3311,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	if err := b.validCanReadTemporaryTable(is.Table); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
 		return nil
 	}
@@ -3426,7 +3426,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) Executor {
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-	if err := b.validCanReadTemporaryTable(ts.Table); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil
 	}
@@ -4231,7 +4231,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
-	if err := b.validCanReadTemporaryTable(plan.TblInfo); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
 		b.err = err
 		return nil
 	}
@@ -4517,16 +4517,23 @@ func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) E
 	}
 }
 
-func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error {
-	if tbl.TempTableType == model.TempTableNone {
+func (b *executorBuilder) validCanReadTemporaryOrCacheTable(tbl *model.TableInfo) error {
+	if tbl.TempTableType == model.TempTableNone && tbl.TableCacheStatusType == model.TableCacheStatusDisable {
 		return nil
 	}
-
 	// Some tools like dumpling use history read to dump all table's records and will be fail if we return an error.
 	// So we do not check SnapshotTS here
 
 	sessionVars := b.ctx.GetSessionVars()
-
+	// Temporary table can't switch into cache table. so the following code will not cause confusion
+	if tbl.TableCacheStatusType != model.TableCacheStatusDisable {
+		if sessionVars.SnapshotTS != 0 {
+			return errors.New("can not read cache table when 'tidb_snapshot' is set")
+		}
+		if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
+			return errors.New("can not stale read cache table")
+		}
+	}
 	if tbl.TempTableType == model.TempTableLocal && sessionVars.SnapshotTS != 0 {
 		return errors.New("can not read local temporary table when 'tidb_snapshot' is set")
 	}
