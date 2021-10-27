@@ -192,6 +192,7 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 	return CoercibilityImplicit
 }
 
+// retTp is the type that the function's args should cast to, only use for string args, return nil means no need to do cast.
 func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (ec *ExprCollation, retTp *types.FieldType, err error) {
 	switch funcName {
 	case ast.Concat, ast.ConcatWS, ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote, ast.Coalesce:
