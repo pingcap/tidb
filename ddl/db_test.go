@@ -5881,6 +5881,45 @@ func (s *testDBSuite2) TestTableLocksLostCommit(c *C) {
 	tk.MustExec("unlock tables")
 }
 
+// test alter table cache
+func (s *testDBSuite2) TestAlterTableCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk2.MustExec("use test")
+	/* Test of cache table */
+	tk.MustExec("create table t1 ( n int auto_increment primary key)")
+	tk.MustGetErrCode("alter table t1 ca", errno.ErrParse)
+	tk.MustGetErrCode("alter table t2 cache", errno.ErrNoSuchTable)
+	tk.MustExec("alter table t1 cache")
+	checkTableCache(c, tk.Se, "test", "t1")
+	tk.MustExec("drop table if exists t1")
+	/*Test can't skip schema checker*/
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("CREATE TABLE t1 (a int)")
+	tk.MustExec("CREATE TABLE t2 (a int)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 set a=1;")
+	tk2.MustExec("alter table t1 cache;")
+	_, err := tk.Exec("commit")
+	c.Assert(terror.ErrorEqual(domain.ErrInfoSchemaChanged, err), IsTrue)
+	/* Test can skip schema checker */
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 set a=2;")
+	tk2.MustExec("alter table t2 cache")
+	tk.MustExec("commit")
+	// Test if a table is not exists
+	tk.MustExec("drop table if exists t")
+	tk.MustGetErrCode("alter table t cache", errno.ErrNoSuchTable)
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("alter table t cache")
+	// Multiple alter cache is okay
+	tk.MustExec("alter table t cache")
+	tk.MustExec("alter table t cache")
+
+}
+
 // test write local lock
 func (s *testDBSuite2) TestWriteLocal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -6414,7 +6453,13 @@ func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp m
 		c.Assert(tb.Meta().Lock, IsNil)
 	}
 }
-
+func checkTableCache(c *C, se session.Session, dbName, tableName string) {
+	tb := testGetTableByName(c, se, dbName, tableName)
+	dom := domain.GetDomain(se)
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	c.Assert(tb.Meta().TableCacheStatusType, Equals, model.TableCacheStatusEnable)
+}
 func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
