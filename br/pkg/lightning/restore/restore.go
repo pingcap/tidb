@@ -1809,7 +1809,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		if !taskExist && rc.taskMgr != nil {
 			rc.taskMgr.CleanupTask(ctx)
 		}
-		return errors.Errorf("tidb-lightning check failed." +
+		return errors.Errorf("tidb-lightning check failed."+
 			" Please fix the failed check(s):\n %s", rc.checkTemplate.FailedMsg())
 	}
 	return nil
