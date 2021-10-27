@@ -141,6 +141,29 @@ func TestASCII(t *testing.T) {
 	}
 	_, err := funcs[ast.Length].getFunction(ctx, []Expression{NewZero()})
 	require.NoError(t, err)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result int64
+	}{
+		{"abc", "gbk", 97},
+		{"你好", "gbk", 196},
+		{"你好", "", 228},
+		{"世界", "gbk", 202},
+		{"世界", "", 228},
+	}
+
+	for _, c := range tbl {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		require.NoError(t, err)
+		f, err := newFunctionForTest(ctx, ast.ASCII, primitiveValsToConstants([]interface{}{c.input})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		require.NoError(t, err)
+    require.Equal(t, c.result, d.GetInt64())
+	}
 }
 
 func TestConcat(t *testing.T) {
