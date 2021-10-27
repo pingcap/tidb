@@ -264,12 +264,18 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
-	latestIndexes, changed, err := getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
-	if err != nil {
-		return
+	var latestIndexes map[int64]*model.IndexInfo
+	var changed bool
+	var err error
+	// we should check index valid while forUpdateRead, see detail in https://github.com/pingcap/tidb/pull/22152
+	if ds.isForUpdateRead {
+		latestIndexes, changed, err = getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
+		if err != nil {
+			return
+		}
 	}
 	for _, index := range ds.table.Meta().Indices {
-		if changed {
+		if ds.isForUpdateRead && changed {
 			latestIndex, ok := latestIndexes[index.ID]
 			if !ok || latestIndex.State != model.StatePublic {
 				continue
