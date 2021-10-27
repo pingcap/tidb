@@ -171,11 +171,11 @@ func TestAESDecrypt(t *testing.T) {
 		}
 		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin, collate.DefaultLen), str)
 	}
-  err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
+	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
 	testNullInput(t, ctx, ast.AesDecrypt)
 	testAmbiguousInput(t, ctx, ast.AesDecrypt)
-  
+
 	// Test GBK String
 	gbkStr, _ := charset.NewEncoding("gbk").EncodeString("你好")
 	gbkTests := []struct {
