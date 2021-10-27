@@ -74,7 +74,7 @@ func TestCompareString(t *testing.T) {
 	chk.Column(1).AppendString("a  ")
 	for i := 0; i < 4; i++ {
 		v, isNull, err := CompareStringWithCollationInfo(ctx, col1, col2, chk.GetRow(0), chk.GetRow(0), "utf8_general_ci")
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.False(t, isNull)
 		require.Equal(t, int64(0), v)
 	}
