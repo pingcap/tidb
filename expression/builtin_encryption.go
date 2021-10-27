@@ -159,16 +159,14 @@ func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
-	cryptTp := b.args[0].GetType()
-	if encodedStr, err := charset.NewEncoding(cryptTp.Charset).EncodeString(cryptStr); err == nil {
+	if encodedStr, err := charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(cryptStr); err == nil {
 		cryptStr = encodedStr
 	}
 	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	keyTp := b.args[1].GetType()
-	if encodedStr, err := charset.NewEncoding(keyTp.Charset).EncodeString(keyStr); err == nil {
+	if encodedStr, err := charset.NewEncoding(b.args[1].GetType().Charset).EncodeString(keyStr); err == nil {
 		keyStr = encodedStr
 	}
 	if !b.ivRequired && len(b.args) == 3 {
@@ -210,8 +208,7 @@ func (b *builtinAesDecryptIVSig) evalString(row chunk.Row) (string, bool, error)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	cryptTp := b.args[0].GetType()
-	if encodedStr, err := charset.NewEncoding(cryptTp.Charset).EncodeString(cryptStr); err == nil {
+	if encodedStr, err := charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(cryptStr); err == nil {
 		cryptStr = encodedStr
 	}
 
@@ -219,8 +216,7 @@ func (b *builtinAesDecryptIVSig) evalString(row chunk.Row) (string, bool, error)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	keyTp := b.args[1].GetType()
-	if encodedStr, err := charset.NewEncoding(keyTp.Charset).EncodeString(keyStr); err == nil {
+	if encodedStr, err := charset.NewEncoding(b.args[1].GetType().Charset).EncodeString(keyStr); err == nil {
 		keyStr = encodedStr
 	}
 
@@ -228,8 +224,7 @@ func (b *builtinAesDecryptIVSig) evalString(row chunk.Row) (string, bool, error)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	ivTp := b.args[2].GetType()
-	if encodedStr, err := charset.NewEncoding(ivTp.Charset).EncodeString(iv); err == nil {
+	if encodedStr, err := charset.NewEncoding(b.args[2].GetType().Charset).EncodeString(iv); err == nil {
 		iv = encodedStr
 	}
 	if len(iv) < aes.BlockSize {
