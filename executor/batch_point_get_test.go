@@ -17,12 +17,12 @@ package executor_test
 import (
 	"fmt"
 	"sync"
-	"time"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 func TestBatchPointGetExec(t *testing.T) {
@@ -78,7 +78,7 @@ func TestBatchPointGetExec(t *testing.T) {
 func TestBatchPointGetInTxn(t *testing.T) {
 	t.Parallel()
 
-    store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -110,8 +110,8 @@ func TestBatchPointGetInTxn(t *testing.T) {
 func TestBatchPointGetCache(t *testing.T) {
 	t.Parallel()
 
-    store, clean := testkit.CreateMockStore(t)
-    defer clean()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -126,7 +126,7 @@ func TestBatchPointGetCache(t *testing.T) {
 func TestIssue18843(t *testing.T) {
 	t.Parallel()
 
-    store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -322,8 +322,8 @@ func TestBatchPointGetLockExistKey(t *testing.T) {
 func TestBatchPointGetIssue25167(t *testing.T) {
 	t.Parallel()
 
-    store, clean := testkit.CreateMockStore(t)
-    defer clean()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -337,4 +337,3 @@ func TestBatchPointGetIssue25167(t *testing.T) {
 	tk.MustExec("insert into t values (1)")
 	tk.MustQuery("select * from t as of timestamp @a where a in (1,2,3)").Check(testkit.Rows())
 }
-
