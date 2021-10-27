@@ -2218,9 +2218,11 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		baseModifyCnt:           modifyCount,
 	}
 	sampleRate := new(float64)
-	*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
-	if *sampleRate < 0 {
-		*sampleRate = b.getAdjustedSampleRate(b.ctx, task.TableID.GetStatisticsID(), task.TblInfo)
+	if opts[ast.AnalyzeOptNumSamples] == 0 {
+		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
+		if *sampleRate < 0 {
+			*sampleRate = b.getAdjustedSampleRate(b.ctx, task.TableID.GetStatisticsID(), task.TblInfo)
+		}
 	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
