@@ -423,6 +423,8 @@ func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 		return err
 	}
 	result.ReserveString(n)
+
+	var dBytes []byte
 	digest := md5.New() // #nosec G401
 	enc := charset.NewEncoding(b.args[0].GetType().Charset)
 	for i := 0; i < n; i++ {
@@ -431,7 +433,7 @@ func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		cryptBytes := buf.GetBytes(i)
-		dBytes, err := enc.Encode(nil, cryptBytes)
+		dBytes, err := enc.Encode(dBytes, cryptBytes)
 		if err == nil {
 			_, err = digest.Write(dBytes)
 		} else {
