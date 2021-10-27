@@ -970,7 +970,9 @@ func (s *tiflashTestSuite) TestIssue29154(c *C) {
 	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 	c.Assert(err, IsNil)
 	time.Sleep(2 * time.Second)
-	tk.MustExec("insert into t values (' x ')")
-	tk.MustQuery("select * from t where trim('x' from a)")
-	tk.MustQuery("select * from t where trim(trailing 'x' from a)")
+	tk.MustExec("set session tidb_isolation_read_engines=\"tiflash\";")
+	tk.MustQuery("explain select * from t where trim('x' from a)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Scalar function 'trim'(signature: Trim2Args, return type: var_string(5)) can not be pushed to storage layer"))
+	tk.MustQuery("explain select * from t where trim(trailing 'x' from a)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Scalar function 'trim'(signature: Trim3Args, return type: var_string(20)) can not be pushed to storage layer"))
 }
