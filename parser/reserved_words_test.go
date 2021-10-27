@@ -81,9 +81,11 @@ func TestCompareReservedWordsWithMySQL(t *testing.T) {
 		if _, ok := windowFuncTokenMap[kw]; !ok {
 			// for some reason the query does parse even then the keyword is reserved in TiDB.
 			_, _, err = p.Parse(query, "", "")
+			requires.Error(t, err)
 			requires.Regexp(t, errRegexp, err.Error())
 		}
 		_, err = db.Exec(query)
+		requires.Error(t, err)
 		requires.Regexp(t, errRegexp, err.Error(), "MySQL suggests that '%s' should *not* be reserved!", kw)
 	}
 
