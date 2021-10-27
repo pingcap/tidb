@@ -162,7 +162,7 @@ func TestASCII(t *testing.T) {
 		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
 		require.NoError(t, err)
-    require.Equal(t, c.result, d.GetInt64())
+		require.Equal(t, c.result, d.GetInt64())
 	}
 }
 
