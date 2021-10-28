@@ -10,14 +10,14 @@ This proposal proposes a new execution framework for the aggregate functions, to
 
 ## Background
 
-In release-2.0, the framework of aggregate functions is located in the “expression/aggregation” package. In this framework, all the aggregate functions implement the `Aggregation` interface. It uses the `AggEvaluateContext` to store partial result for all the aggregate functions with all kind of possible argument types. The `DistinctChecker` in the `AggEvaluateContext` uses a `[]byte` as the key of `map`, which is used to de-duplicate the values in the same group. During the execution, the `Update` interface is called to update the partial result for every input record. It enumerates every possible state during the execution of every aggregate function, which introduces a lot of CPU branch predictions.
+In release-2.0, the framework of aggregate functions is located in the “expression/aggregation” package. In this framework, all the aggregate functions implement the `Aggregation` interface. It uses the `AggEvaluateContext` to store partial result for all the aggregate functions with all kinds of possible argument types. The `DistinctChecker` in the `AggEvaluateContext` uses a `[]byte` as the key of `map`, which is used to de-duplicate the values in the same group. During the execution, the `Update` interface is called to update the partial result for every input record. It enumerates every possible state during the execution of every aggregate function, which introduces a lot of CPU branch predictions.
 
 It’s easy to implement a new aggregate function under this framework. But it has some disadvantages as well:
 
 - `Update` is called for every input record. The per record function call could bring a huge overhead, especially when the execution involves tens of thousands of input records.
 - `Update` is called for every possible aggregate state, which also introduces a lot of CPU branch predictions. For example, function `AVG` behaves different when the state is `Partial1` and `Final`, it has to make a `switch` statement to handle all the possible states.
 - `GetResult` returns a `types.Datum` as the final result of a group. Currently, TiDB uses `Chunk` to store the records during the query execution. The returned `Datum` has to be converted to `Chunk` outside the aggregate framework, which introduces a lot of data conversions and object allocations.
-- `AggEvaluateContext` is used to store every possible partial result and maps, which consumes more memory than what is actually needed. For example, the `COUNT` only need a `int64` field to store the row count it concerns.
+- `AggEvaluateContext` is used to store every possible partial results and maps, which consumes more memory than what is actually needed. For example, the `COUNT` only need a `int64` field to store the row count it concerns.
 - `distinctChecker` is used to de-duplicate values, and uses `[]byte` as key. The encoding and decoding operations on the input values also bring a lot of CPU overhead, which can be avoided by directly using the input value as the key of that `map`.
 
 ## Proposal
