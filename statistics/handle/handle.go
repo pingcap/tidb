@@ -1144,7 +1144,8 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64, needDumpFMS bool) (err error) {
+// TODO: refactor to reduce the number of parameters
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64, needDumpFMS bool, updateAnalyzeTime bool) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -1238,7 +1239,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 			return err
 		}
 	}
-	if isAnalyzed == 1 && isIndex == 0 {
+	if updateAnalyzeTime && isIndex == 0 {
 		if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {
 			return err
 		}

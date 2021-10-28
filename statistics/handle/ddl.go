@@ -114,7 +114,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 	for i := 0; i < newColGlobalStats.Num; i++ {
 		hg, cms, topN, fms := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i], newColGlobalStats.Fms[i]
 		// fms for global stats doesn't need to dump to kv.
-		err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, 0, hg, cms, topN, fms, 2, 1, false)
+		err = h.SaveStatsToStorage(tableID, newColGlobalStats.Count, 0, hg, cms, topN, fms, 2, 1, false, false)
 		if err != nil {
 			return err
 		}
@@ -144,7 +144,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		for i := 0; i < newIndexGlobalStats.Num; i++ {
 			hg, cms, topN, fms := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i], newIndexGlobalStats.Fms[i]
 			// fms for global stats doesn't need to dump to kv.
-			err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, 1, hg, cms, topN, fms, 2, 1, false)
+			err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, 1, hg, cms, topN, fms, 2, 1, false, false)
 			if err != nil {
 				return err
 			}

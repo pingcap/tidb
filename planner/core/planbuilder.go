@@ -1834,6 +1834,9 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 		}
 		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 		for _, idx := range tblInfo.Indices {
+			if idx.State != model.StatePublic {
+				continue
+			}
 			for _, idxCol := range idx.Columns {
 				colInfo := tblInfo.Columns[idxCol.Offset]
 				if _, ok := columnIDs[colInfo.ID]; !ok {
@@ -1950,6 +1953,13 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	if as.Incremental {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
+	colsInfo, err := b.getAnalyzeColumnsInfo(as, tbl)
+	if err != nil {
+		return nil, err
+	}
+	allColumns := len(tbl.TableInfo.Columns) == len(colsInfo)
+	indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, colsInfo)
+	handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, colsInfo)
 	for i, id := range physicalIDs {
 		if id == tbl.TableInfo.ID {
 			id = -1
@@ -1962,13 +1972,6 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			Incremental:   false,
 			StatsVersion:  version,
 		}
-		colsInfo, err := b.getAnalyzeColumnsInfo(as, tbl)
-		if err != nil {
-			return nil, err
-		}
-		allColumns := len(tbl.TableInfo.Columns) == len(colsInfo)
-		indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, colsInfo)
-		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, colsInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,
 			ColsInfo:    colsInfo,
