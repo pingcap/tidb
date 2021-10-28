@@ -55,7 +55,7 @@ func BenchmarkDecodeRowKey(b *testing.B) {
 	}
 }
 
-func BenchmarkDaily(b *testing.B) {
+func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkEncodeRowKeyWithHandle,
 		BenchmarkEncodeEndKey,

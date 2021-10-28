@@ -67,7 +67,7 @@ func interestingGoroutines() (gs []string) {
 		"tikv.(*RegionCache).asyncCheckAndResolveLoop",
 		"github.com/pingcap/badger",
 		"github.com/ngaut/unistore/tikv.(*MVCCStore).runUpdateSafePointLoop",
-		"github.com/tikv/client-go/v2/tikv.(*ttlManager).keepAlive", // See https://github.com/tikv/client-go/issues/174
+		"github.com/tikv/client-go/v2/txnkv/transaction.keepAlive", // See https://github.com/tikv/client-go/issues/174
 	}
 	shouldIgnore := func(stack string) bool {
 		if stack == "" {

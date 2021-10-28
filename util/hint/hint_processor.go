@@ -253,7 +253,9 @@ func BindHint(stmt ast.StmtNode, hintsSet *HintsSet) ast.StmtNode {
 
 // ParseHintsSet parses a SQL string, then collects and normalizes the HintsSet.
 func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*HintsSet, ast.StmtNode, []error, error) {
-	stmtNodes, warns, err := p.Parse(sql, charset, collation)
+	stmtNodes, warns, err := p.ParseSQL(sql,
+		parser.CharsetConnection(charset),
+		parser.CollationConnection(collation))
 	if err != nil {
 		return nil, nil, nil, err
 	}
