@@ -805,6 +805,7 @@ func (rc *Client) GoValidateChecksum(
 			if err := eg.Wait(); err != nil {
 				errCh <- err
 			}
+			close(loadStatCh)
 			wg.Done()
 		}()
 		for {
