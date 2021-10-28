@@ -681,8 +681,7 @@ func (be *tidbBackend) LocalWriter(
 }
 
 type Writer struct {
-	be       *tidbBackend
-	errorMgr *errormanager.ErrorManager
+	be *tidbBackend
 }
 
 func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
