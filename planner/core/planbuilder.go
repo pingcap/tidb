@@ -2067,8 +2067,8 @@ var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:       500,
 	ast.AnalyzeOptCMSketchWidth: 2048,
 	ast.AnalyzeOptCMSketchDepth: 5,
-	ast.AnalyzeOptNumSamples:    100000,
-	ast.AnalyzeOptSampleRate:    math.Float64bits(0),
+	ast.AnalyzeOptNumSamples:    0,
+	ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
 }
 
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
@@ -4194,6 +4194,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 
 func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
 	p := &PlanReplayerSingle{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))
+	p.SetSchema(schema.col2Schema())
+	p.names = schema.names
 	return p
 }
 
