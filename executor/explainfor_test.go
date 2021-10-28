@@ -1424,3 +1424,46 @@ func (s *testPrepareSerialSuite) TestListPartition4PlanCache(c *C) {
 	// The list partition plan can not be cached.
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
+
+func (s *testSerialSuite) TestMoreSessions4PlanCache(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("prepare stmt from 'select * from t;';")
+
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk2.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk2.MustExec("use test;")
+	err = tk2.ExecToErr("execute stmt;")
+	c.Assert(err.Error(), Equals, "[planner:8111]Prepared statement not found")
+	tk2.MustExec("prepare stmt from 'select * from t;';")
+	tk2.MustQuery("execute stmt").Check(testkit.Rows())
+	tk2.MustQuery("execute stmt").Check(testkit.Rows())
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
