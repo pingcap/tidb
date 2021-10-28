@@ -4527,11 +4527,8 @@ func (b *executorBuilder) validCanReadTemporaryOrCacheTable(tbl *model.TableInfo
 	sessionVars := b.ctx.GetSessionVars()
 	// Temporary table can't switch into cache table. so the following code will not cause confusion
 	if tbl.TableCacheStatusType != model.TableCacheStatusDisable {
-		if sessionVars.SnapshotTS != 0 {
-			return errors.New("can not read cache table when 'tidb_snapshot' is set")
-		}
 		if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
-			return errors.New("can not stale read cache table")
+			return errors.Trace(errors.New("can not stale read cache table"))
 		}
 	}
 	if tbl.TempTableType == model.TempTableLocal && sessionVars.SnapshotTS != 0 {

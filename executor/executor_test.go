@@ -240,6 +240,7 @@ func (s *testSuiteP1) TestPessimisticSelectForUpdate(c *C) {
 	tk.MustQuery("select a from t where id=1").Check(testkit.Rows("2"))
 }
 
+
 func (s *testSuite) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -997,6 +998,7 @@ func (s *testSuiteP1) TestSelectOrderBy(c *C) {
 	r = tk.MustQuery("select id from select_order_test order by id desc limit 1 ")
 	r.Check(testkit.Rows("2"))
 
+
 	r = tk.MustQuery("select id from select_order_test order by id + 1 desc limit 1 ")
 	r.Check(testkit.Rows("2"))
 
@@ -1123,6 +1125,7 @@ func (s *testSuiteP1) TestSelectErrorRow(c *C) {
 
 	err = tk.ExecToErr("select (select 1, 1) from test;")
 	c.Assert(err, NotNil)
+
 
 	err = tk.ExecToErr("select * from test group by (select 1, 1);")
 	c.Assert(err, NotNil)
@@ -1388,6 +1391,7 @@ func (s *testSuiteP2) TestUnion(c *C) {
 	r = tk.MustQuery("SELECT 'a' UNION SELECT CONCAT('a', -4)")
 	r.Sort().Check(testkit.Rows("a", "a-4"))
 
+
 	// test race
 	tk.MustQuery("SELECT @x:=0 UNION ALL SELECT @x:=0 UNION ALL SELECT @x")
 
@@ -1524,6 +1528,7 @@ func (s *testSuiteP2) TestUnion(c *C) {
 	tk.MustExec("create table t(a bit(20), b float, c double, d int)")
 	tk.MustExec("insert into t values(10, 10, 10, 10), (1, -1, 2, -2), (2, -2, 1, 1), (2, 1.1, 2.1, 10.1)")
 	tk.MustQuery("select a from t union select 10 order by a").Check(testkit.Rows("1", "2", "10"))
+
 }
 
 func (s *testSuite2) TestUnionLimit(c *C) {
@@ -8972,6 +8977,108 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 		tk.MustQuery(query.sql).Check(testkit.Rows())
 	}
 }
+func (s *testStaleTxnSuite) TestInvalidReadCacheTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists cache_tmp1")
+	tk.MustExec("create table cache_tmp1 " +
+		"(id int not null primary key, code int not null, value int default null, unique key code(code))")
+	tk.MustExec("alter table cache_tmp1 cache")
+	tk.MustExec("drop table if exists cache_tmp2")
+	tk.MustExec("create table cache_tmp2 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+	tk.MustExec("alter table cache_tmp2 cache")
+	tk.MustExec("drop table if exists cache_tmp3 , cache_tmp4, cache_tmp5")
+	tk.MustExec("create table cache_tmp3 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+	tk.MustExec("create table cache_tmp4 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+	tk.MustExec("create table cache_tmp5 (id int primary key);")
+	// sleep 1us to make test stale
+	time.Sleep(time.Microsecond)
+
+	queries := []struct {
+		sql string
+	}{
+		{
+			sql: "select * from cache_tmp1 where id=1",
+		},
+		{
+			sql: "select * from cache_tmp1 where code=1",
+		},
+		{
+			sql: "select * from cache_tmp1 where id in (1, 2, 3)",
+		},
+		{
+			sql: "select * from cache_tmp1 where code in (1, 2, 3)",
+		},
+		{
+			sql: "select * from cache_tmp1 where id > 1",
+		},
+		{
+			sql: "select /*+use_index(cache_tmp1, code)*/ * from cache_tmp1 where code > 1",
+		},
+		{
+			sql: "select /*+use_index(cache_tmp1, code)*/ code from cache_tmp1 where code > 1",
+		},
+	}
+
+	addStaleReadToSQL := func(sql string) string {
+		idx := strings.Index(sql, " where ")
+		if idx < 0 {
+			return ""
+		}
+		return sql[0:idx] + " as of timestamp NOW(6)" + sql[idx:]
+	}
+	for _, query := range queries {
+		sql := addStaleReadToSQL(query.sql)
+		if sql != "" {
+			tk.MustGetErrMsg(sql, "can not stale read cache table")
+		}
+	}
+
+	tk.MustExec("start transaction read only as of timestamp NOW(6)")
+	for _, query := range queries {
+		tk.MustGetErrMsg(query.sql, "can not stale read cache table")
+	}
+	tk.MustExec("commit")
+
+	for _, query := range queries {
+		tk.MustExec(query.sql)
+	}
+
+	// Test normal table when cache table exits.
+	tk.MustExec("insert into cache_tmp5 values(1);")
+	tk.MustExec("set @a=now(6);")
+	time.Sleep(time.Microsecond)
+	tk.MustExec("drop table cache_tmp5")
+	tk.MustExec("create table cache_tmp5 (id int primary key);")
+	tk.MustQuery("select * from cache_tmp5 as of timestamp(@a) where id=1;").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from cache_tmp4 as of timestamp(@a), cache_tmp3 as of timestamp(@a) where cache_tmp3.id=1;")
+	tk.MustGetErrMsg("select * from cache_tmp4 as of timestamp(@a), cache_tmp2 as of timestamp(@a) where cache_tmp2.id=1;", "can not stale read cache table")
+	tk.MustExec("set transaction read only as of timestamp NOW(6)")
+	tk.MustExec("start transaction")
+	for _, query := range queries {
+		tk.MustGetErrMsg(query.sql, "can not stale read cache table")
+	}
+	tk.MustExec("commit")
+
+	for _, query := range queries {
+		tk.MustExec(query.sql)
+	}
+
+	tk.MustExec("set @@tidb_snapshot=NOW(6)")
+	for _, query := range queries {
+		// enable historical read cache table
+		tk.MustExec(query.sql)
+
+	}
+}
 
 func (s *testSuite) TestTableSampleTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -9152,105 +9259,4 @@ func (s *testSuiteP1) TestIssue28935(c *C) {
 	tk.MustQuery(`select trim(leading from " a "), trim(both from " a "), trim(trailing from " a ")`).Check(testkit.Rows("a  a  a"))
 	tk.MustQuery(`select trim(leading null from " a "), trim(both null from " a "), trim(trailing null from " a ")`).Check(testkit.Rows("<nil> <nil> <nil>"))
 	tk.MustQuery(`select trim(null from " a ")`).Check(testkit.Rows("<nil>"))
-}
-func (s *testStaleTxnSuite) TestInvalidReadCacheTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
-	safePointName := "tikv_gc_safe_point"
-	safePointValue := "20160102-15:04:05 -0700"
-	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
-	ON DUPLICATE KEY
-	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-	tk.MustExec(updateSafePoint)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists cache_tmp1")
-	tk.MustExec("create table cache_tmp1 " +
-		"(id int not null primary key, code int not null, value int default null, unique key code(code))")
-	tk.MustExec("alter table cache_tmp1 cache")
-	tk.MustExec("drop table if exists cache_tmp2")
-	tk.MustExec("create table cache_tmp2 (id int not null primary key, code int not null, value int default null, unique key code(code));")
-	tk.MustExec("alter table cache_tmp2 cache")
-	tk.MustExec("drop table if exists cache_tmp3 , cache_tmp4, cache_tmp5")
-	tk.MustExec("create table cache_tmp3 (id int not null primary key, code int not null, value int default null, unique key code(code));")
-	tk.MustExec("create table cache_tmp4 (id int not null primary key, code int not null, value int default null, unique key code(code));")
-	tk.MustExec("create table cache_tmp5 (id int primary key);")
-	// sleep 1us to make test stale
-	time.Sleep(time.Microsecond)
-
-	queries := []struct {
-		sql string
-	}{
-		{
-			sql: "select * from cache_tmp1 where id=1",
-		},
-		{
-			sql: "select * from cache_tmp1 where code=1",
-		},
-		{
-			sql: "select * from cache_tmp1 where id in (1, 2, 3)",
-		},
-		{
-			sql: "select * from cache_tmp1 where code in (1, 2, 3)",
-		},
-		{
-			sql: "select * from cache_tmp1 where id > 1",
-		},
-		{
-			sql: "select /*+use_index(cache_tmp1, code)*/ * from cache_tmp1 where code > 1",
-		},
-		{
-			sql: "select /*+use_index(cache_tmp1, code)*/ code from cache_tmp1 where code > 1",
-		},
-	}
-
-	addStaleReadToSQL := func(sql string) string {
-		idx := strings.Index(sql, " where ")
-		if idx < 0 {
-			return ""
-		}
-		return sql[0:idx] + " as of timestamp NOW(6)" + sql[idx:]
-	}
-	for _, query := range queries {
-		sql := addStaleReadToSQL(query.sql)
-		if sql != "" {
-			tk.MustGetErrMsg(sql, "can not stale read cache table")
-		}
-	}
-
-	tk.MustExec("start transaction read only as of timestamp NOW(6)")
-	for _, query := range queries {
-		tk.MustGetErrMsg(query.sql, "can not stale read cache table")
-	}
-	tk.MustExec("commit")
-
-	for _, query := range queries {
-		tk.MustExec(query.sql)
-	}
-
-	// Test normal table when cache table exits.
-	tk.MustExec("insert into cache_tmp5 values(1);")
-	tk.MustExec("set @a=now(6);")
-	time.Sleep(time.Microsecond)
-	tk.MustExec("drop table cache_tmp5")
-	tk.MustExec("create table cache_tmp5 (id int primary key);")
-	tk.MustQuery("select * from cache_tmp5 as of timestamp(@a) where id=1;").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from cache_tmp4 as of timestamp(@a), cache_tmp3 as of timestamp(@a) where cache_tmp3.id=1;")
-	tk.MustGetErrMsg("select * from cache_tmp4 as of timestamp(@a), cache_tmp2 as of timestamp(@a) where cache_tmp2.id=1;", "can not stale read cache table")
-	tk.MustExec("set transaction read only as of timestamp NOW(6)")
-	tk.MustExec("start transaction")
-	for _, query := range queries {
-		tk.MustGetErrMsg(query.sql, "can not stale read cache table")
-	}
-	tk.MustExec("commit")
-
-	for _, query := range queries {
-		tk.MustExec(query.sql)
-	}
-
-	tk.MustExec("set @@tidb_snapshot=NOW(6)")
-	for _, query := range queries {
-		// forbidden historical read cache table
-		tk.MustGetErrMsg(query.sql, "can not read cache table when 'tidb_snapshot' is set")
-	}
 }
