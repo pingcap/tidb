@@ -39,7 +39,7 @@ func TestBaseBuiltin(t *testing.T) {
 	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
 	require.NoError(t, err)
 	_, _, err = bf.evalInt(chunk.Row{})
-	require.NotNil(t, err)
+	require.Error(t, err)
 	_, _, err = bf.evalReal(chunk.Row{})
 	require.NotNil(t, err)
 	_, _, err = bf.evalString(chunk.Row{})
