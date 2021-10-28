@@ -219,7 +219,7 @@ func TestPopRowFirstArg(t *testing.T) {
 	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
 	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
 	require.Nil(t, err)
-	require.Equal(t, 2, len(fun2.(*ScalarFunction).GetArgs()))
+	require.Len(t, fun2.(*ScalarFunction).GetArgs(), 2)
 }
 
 func TestGetStrIntFromConstant(t *testing.T) {
