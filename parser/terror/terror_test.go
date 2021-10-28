@@ -89,6 +89,7 @@ func call() error {
 }
 
 func TestErrorEqual(t *testing.T) {
+	t.Parallel()
 	e1 := errors.New("test error")
 	require.NotNil(t, e1)
 
