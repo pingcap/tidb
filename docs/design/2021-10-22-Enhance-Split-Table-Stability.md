@@ -21,7 +21,9 @@ Currently, the split table(regions) in tidb is constructed by following 2 steps:
 
 But this will let the time cost for the whole splitting table become unstable and rather time-consuming.
 
-This proposal aims to split and scatter regions in pd directly
+More importantly, there exists different ways of tidb and other tools to split and scatter region which make it hard to be managed. Let pd to handle the whole work will make it easy to manage.
+
+So, This proposal aims to let pd handle  split and scatter region work directly
 
 ## Motivation or Background
 
@@ -29,43 +31,21 @@ Split table region : split a region into multi regions by split-keys
 
 Scatter table regions: regions are still in the original stores after split. Scatter is to load balance regions and evenly distribute regions to other stores
 
-However, before this proposal, TIDB and some tools were inconsistent when calling PD API -- split and scatter regions.
-
 Our purpose is to add a new  PD API -- SplitAndScatterRegions(), so that TIDB and other tools can easily call this API uniformly
 
 ## Detailed Design
 
-### kvproto: pdpb.proto
+As you can see from above, the goal is to add an API in PD and change upstream like TIDB and other tools to use this API.
 
-add a new interface SplitAndScatterRegions in pdpb.proto
+This can be achieved through the following steps
 
-```
-rpc SplitAndScatterRegions(SplitAndScatterRegionsRequest) returns (SplitAndScatterRegionsResponse) {}
-```
+1. Add an API -- SplitAndScatterRegions() in PD
 
-### PD: Grpc_Service, client.go
+2. As for the implementation of this API, We can directly use SplitRegions() and ScatterRegions() provided in PD.
 
-Implement SplitAndScatterRegions in grpc_service and client
+3. Call this API when TIDB or other tools need to  Split and Scatter regions.
 
-grpc_service can directly call the original implementation splitRegions and scatterregions to achieve simultaneous split and scatter
-
-client can
-
-### TIDB
-
-1.add new interface SplitAndScatterRegions in kv/kv.go/SplittableStore
-
-```
-SplitAndScatterRegions(ctx context.Context, splitKeys [][]byte, tableID *int64) (regionID []uint64, err error)
-```
-
-this interface will be implement by client-go
-
-2.use new api SplitAndScatterRegions in executor/split.go
-
-### client-go
-
-Implement SplitAndScatterRegions in tikv/split_regions.go
+4. Wait scatter done if needed
 
 
 
@@ -89,26 +69,3 @@ I will record the time spent in these cases
 ## Follow-up work
 
 Enhance split region statement
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
