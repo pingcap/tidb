@@ -281,6 +281,10 @@ func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
 	return chunk.NewChunkWithCapacity(fields, 1)
 }
 
+func (e *analyzeColumnsExec) NewChunkFromAllocator(_ chunk.Allocator) *chunk.Chunk {
+	return e.NewChunk()
+}
+
 // Close implements the sqlexec.RecordSet Close interface.
 func (e *analyzeColumnsExec) Close() error {
 	return nil

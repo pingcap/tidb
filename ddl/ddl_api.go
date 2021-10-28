@@ -212,6 +212,10 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
+	if tb.Meta().TempTableType != model.TempTableNone {
+		return errors.Trace(ErrOptOnTemporaryTable.GenWithStackByArgs("placement"))
+	}
+
 	placementPolicyRef, directPlacementOpts, err = checkAndNormalizePlacement(ctx, placementPolicyRef, directPlacementOpts, tb.Meta().PlacementPolicyRef, tb.Meta().DirectPlacementOpts)
 	if err != nil {
 		return err
@@ -1918,7 +1922,7 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 
-	if tbInfo.PlacementPolicyRef == nil && tbInfo.DirectPlacementOpts == nil {
+	if tbInfo.TempTableType == model.TempTableNone && tbInfo.PlacementPolicyRef == nil && tbInfo.DirectPlacementOpts == nil {
 		// Set the defaults from Schema. Note: they are mutual exclusive!
 		if placementPolicyRef != nil {
 			tbInfo.PlacementPolicyRef = placementPolicyRef
