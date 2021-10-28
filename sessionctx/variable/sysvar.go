@@ -1820,7 +1820,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableStableResultMode = TiDBOptOn(val)
 		return nil
 	}},
-
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePseudoForOutdatedStats, Value: BoolToOnOff(DefTiDBEnablePseudoForOutdatedStats), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePseudoForOutdatedStats = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMPPBalanceWithContinuousRegion, Type: TypeBool, Value: BoolToOnOff(DefEnableMPPBalanceWithContinuousRegion), SetSession: func(s *SessionVars, val string) error {
 		s.EnableMPPBalanceWithContinuousRegion = TiDBOptOn(val)
 		return nil
