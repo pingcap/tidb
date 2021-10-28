@@ -588,6 +588,9 @@ const (
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
 
+	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
+	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
+
 	// TiDBEnableMPPBalanceWithContinuousRegion indicates whether MPP balance logic will take account of region's continuity in TiFlash.
 	TiDBEnableMPPBalanceWithContinuousRegion = "tidb_enable_mpp_balance_with_continuous_region"
 	// TiDBEnableMPPBalanceWithContinuousRegionCount indicates the continuous region count that balance logic assigns to a TiFlash instance each time.
@@ -760,6 +763,7 @@ const (
 	DefTMPTableSize                              = 16777216
 	DefTiDBEnableLocalTxn                        = false
 	DefTiDBEnableOrderedResultMode               = false
+	DefTiDBEnablePseudoForOutdatedStats          = true
 	DefEnableMPPBalanceWithContinuousRegion      = true
 	DefEnableMPPBalanceWithContinuousRegionCount = 20
 	DefEnablePlacementCheck                      = true
