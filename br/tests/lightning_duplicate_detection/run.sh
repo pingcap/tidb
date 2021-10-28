@@ -67,7 +67,6 @@ verify_detected_rows() {
   set -x
   if [ "$equal" = "0" ]; then
     echo "verify detected rows of ${table} fail, expect: ${expect_rows[*]}, actual: ${actual_rows[*]}"
-    sleep 3600
     exit 1
   fi
 }
