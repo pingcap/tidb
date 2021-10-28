@@ -37,7 +37,7 @@ func TestBaseBuiltin(t *testing.T) {
 	t.Parallel()
 	ctx := mock.NewContext()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	_, _, err = bf.evalInt(chunk.Row{})
 	require.NotNil(t, err)
 	_, _, err = bf.evalReal(chunk.Row{})
