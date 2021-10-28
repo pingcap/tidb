@@ -8,6 +8,7 @@ header:
     - '.gitignore'
     - '.gitattributes'
     - '.golangci.yml'
+    - '.golangci_br.yml'
     - 'LICENSES/'
     - '**/*.md'
     - '**/*.json'
@@ -26,4 +27,5 @@ header:
     - 'LICENSE'
     - '.github/'
     - 'parser/'
+    - 'dumpling/'
   comment: on-failure

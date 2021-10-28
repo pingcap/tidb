@@ -179,6 +179,7 @@ func TestInitialHandshake(t *testing.T) {
 
 	var outBuffer bytes.Buffer
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(store)
@@ -487,6 +488,7 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(store)
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
