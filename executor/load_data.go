@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -658,7 +659,7 @@ func (e *LoadDataInfo) SetMessage() {
 	numDeletes := 0
 	numSkipped := numRecords - stmtCtx.CopiedRows()
 	numWarnings := stmtCtx.WarningCount()
-	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
+	msg := fmt.Sprintf(errno.MySQLErrName[errno.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
 	e.ctx.GetSessionVars().StmtCtx.SetMessage(msg)
 }
 

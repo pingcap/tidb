@@ -21,10 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -268,7 +268,7 @@ func (e *ReplaceExec) setMessage() {
 	if e.SelectExec != nil || numRecords > 1 {
 		numWarnings := stmtCtx.WarningCount()
 		numDuplicates := stmtCtx.AffectedRows() - numRecords
-		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
+		msg := fmt.Sprintf(errno.MySQLErrName[errno.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
 		stmtCtx.SetMessage(msg)
 	}
 }

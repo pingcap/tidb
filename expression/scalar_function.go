@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -36,7 +37,7 @@ import (
 
 // error definitions.
 var (
-	ErrNoDB = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
+	ErrNoDB = dbterror.ClassOptimizer.NewStd(errno.ErrNoDB)
 )
 
 // ScalarFunction is the function that returns a value.

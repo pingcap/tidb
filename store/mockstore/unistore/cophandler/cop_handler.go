@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
@@ -372,7 +372,7 @@ func toPBError(err error) *tipb.Error {
 		tmp := terror.ToSQLError(y)
 		perr.Code = int32(tmp.Code)
 		perr.Msg = tmp.Message
-	case *mysql.SQLError:
+	case *errno.SQLError:
 		perr.Code = int32(y.Code)
 		perr.Msg = y.Message
 	default:

@@ -431,7 +431,7 @@ func parseOldHandshakeResponseHeader(ctx context.Context, packet *handshakeRespo
 	logutil.Logger(ctx).Debug("try to parse hanshake response as Protocol::HandshakeResponse320", zap.ByteString("packetData", data))
 	if len(data) < 2+3 {
 		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
-		return 0, mysql.ErrMalformPacket
+		return 0, errno.ErrMalformPacket
 	}
 	offset := 0
 	// capability
@@ -456,7 +456,7 @@ func parseOldHandshakeResponseBody(ctx context.Context, packet *handshakeRespons
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data), zap.Stack("stack"))
-			err = mysql.ErrMalformPacket
+			err = errno.ErrMalformPacket
 		}
 	}()
 	// user name
@@ -485,7 +485,7 @@ func parseHandshakeResponseHeader(ctx context.Context, packet *handshakeResponse
 	// http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::SSLRequest
 	if len(data) < 4+4+1+23 {
 		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
-		return 0, mysql.ErrMalformPacket
+		return 0, errno.ErrMalformPacket
 	}
 
 	offset := 0
@@ -510,7 +510,7 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data))
-			err = mysql.ErrMalformPacket
+			err = errno.ErrMalformPacket
 		}
 	}()
 	// user name
@@ -620,7 +620,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 
 	if len(data) < 2 {
 		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
-		return mysql.ErrMalformPacket
+		return errno.ErrMalformPacket
 	}
 
 	capability := uint32(binary.LittleEndian.Uint16(data[:2]))
@@ -1310,7 +1310,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return cc.handleResetConnection(ctx)
 	// ComEnd
 	default:
-		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, cmd)
+		return errno.NewErrf(errno.ErrUnknown, "command %d not supported now", nil, cmd)
 	}
 }
 
@@ -1398,7 +1398,7 @@ func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows,
 
 func (cc *clientConn) writeError(ctx context.Context, e error) error {
 	var (
-		m  *mysql.SQLError
+		m  *errno.SQLError
 		te *terror.Error
 		ok bool
 	)
@@ -1411,7 +1411,7 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 		case *terror.Error:
 			m = terror.ToSQLError(y)
 		default:
-			m = mysql.NewErrf(mysql.ErrUnknown, "%s", nil, e.Error())
+			m = errno.NewErrf(errno.ErrUnknown, "%s", nil, e.Error())
 		}
 	}
 
@@ -2234,12 +2234,12 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	user, data := parseNullTermString(data)
 	cc.user = string(hack.String(user))
 	if len(data) < 1 {
-		return mysql.ErrMalformPacket
+		return errno.ErrMalformPacket
 	}
 	passLen := int(data[0])
 	data = data[1:]
 	if passLen > len(data) {
-		return mysql.ErrMalformPacket
+		return errno.ErrMalformPacket
 	}
 	pass := data[:passLen]
 	data = data[passLen:]

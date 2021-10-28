@@ -18,7 +18,6 @@ import (
 	"fmt"
 
 	mysql "github.com/pingcap/tidb/errno"
-	parser_mysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
@@ -31,25 +30,25 @@ var (
 	errInvalidDDLJob         = dbterror.ClassDDL.NewStd(mysql.ErrInvalidDDLJob)
 	errCancelledDDLJob       = dbterror.ClassDDL.NewStd(mysql.ErrCancelledDDLJob)
 	errFileNotFound          = dbterror.ClassDDL.NewStd(mysql.ErrFileNotFound)
-	errRunMultiSchemaChanges = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change"), nil))
+	errRunMultiSchemaChanges = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change"), nil))
 	errWaitReorgTimeout      = dbterror.ClassDDL.NewStdErr(mysql.ErrLockWaitTimeout, mysql.MySQLErrName[mysql.ErrWaitReorgTimeout])
 	errInvalidStoreVer       = dbterror.ClassDDL.NewStd(mysql.ErrInvalidStoreVersion)
 	// ErrRepairTableFail is used to repair tableInfo in repair mode.
 	ErrRepairTableFail = dbterror.ClassDDL.NewStd(mysql.ErrRepairTable)
 
 	// We don't support dropping column with index covered now.
-	errCantDropColWithIndex                   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop column with index"), nil))
-	errUnsupportedAddColumn                   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add column"), nil))
-	errUnsupportedModifyColumn                = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modify column: %s"), nil))
-	errUnsupportedModifyCharset               = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modify %s"), nil))
-	errUnsupportedModifyCollation             = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modifying collation from %s to %s"), nil))
-	errUnsupportedPKHandle                    = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop integer primary key"), nil))
-	errUnsupportedCharset                     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "charset %s and collate %s"), nil))
-	errUnsupportedShardRowIDBits              = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "shard_row_id_bits for table with primary key as row id"), nil))
-	errUnsupportedAlterTableWithValidation    = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER TABLE WITH VALIDATION is currently unsupported", nil))
-	errUnsupportedAlterTableWithoutValidation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER TABLE WITHOUT VALIDATION is currently unsupported", nil))
-	errUnsupportedAlterTableOption            = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("This type of ALTER TABLE is currently unsupported", nil))
-	errUnsupportedAlterReplicaForSysTable     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table replica for tables in system database is currently unsupported", nil))
+	errCantDropColWithIndex                   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop column with index"), nil))
+	errUnsupportedAddColumn                   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add column"), nil))
+	errUnsupportedModifyColumn                = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modify column: %s"), nil))
+	errUnsupportedModifyCharset               = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modify %s"), nil))
+	errUnsupportedModifyCollation             = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modifying collation from %s to %s"), nil))
+	errUnsupportedPKHandle                    = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop integer primary key"), nil))
+	errUnsupportedCharset                     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "charset %s and collate %s"), nil))
+	errUnsupportedShardRowIDBits              = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "shard_row_id_bits for table with primary key as row id"), nil))
+	errUnsupportedAlterTableWithValidation    = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message("ALTER TABLE WITH VALIDATION is currently unsupported", nil))
+	errUnsupportedAlterTableWithoutValidation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message("ALTER TABLE WITHOUT VALIDATION is currently unsupported", nil))
+	errUnsupportedAlterTableOption            = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message("This type of ALTER TABLE is currently unsupported", nil))
+	errUnsupportedAlterReplicaForSysTable     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message("ALTER table replica for tables in system database is currently unsupported", nil))
 	errBlobKeyWithoutLength                   = dbterror.ClassDDL.NewStd(mysql.ErrBlobKeyWithoutLength)
 	errKeyPart0                               = dbterror.ClassDDL.NewStd(mysql.ErrKeyPart0)
 	errIncorrectPrefixKey                     = dbterror.ClassDDL.NewStd(mysql.ErrWrongSubKey)
@@ -89,28 +88,28 @@ var (
 	// ErrExpressionIndexCanNotRefer forbids to refer expression index to auto-increment column.
 	ErrExpressionIndexCanNotRefer = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexRefAutoIncrement)
 	// ErrUnsupportedAddPartition returns for does not support add partitions.
-	ErrUnsupportedAddPartition = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add partitions"), nil))
+	ErrUnsupportedAddPartition = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add partitions"), nil))
 	// ErrUnsupportedCoalescePartition returns for does not support coalesce partitions.
-	ErrUnsupportedCoalescePartition   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "coalesce partitions"), nil))
-	errUnsupportedReorganizePartition = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "reorganize partition"), nil))
-	errUnsupportedCheckPartition      = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "check partition"), nil))
-	errUnsupportedOptimizePartition   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "optimize partition"), nil))
-	errUnsupportedRebuildPartition    = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "rebuild partition"), nil))
-	errUnsupportedRemovePartition     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "remove partitioning"), nil))
-	errUnsupportedRepairPartition     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "repair partition"), nil))
+	ErrUnsupportedCoalescePartition   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "coalesce partitions"), nil))
+	errUnsupportedReorganizePartition = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "reorganize partition"), nil))
+	errUnsupportedCheckPartition      = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "check partition"), nil))
+	errUnsupportedOptimizePartition   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "optimize partition"), nil))
+	errUnsupportedRebuildPartition    = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "rebuild partition"), nil))
+	errUnsupportedRemovePartition     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "remove partitioning"), nil))
+	errUnsupportedRepairPartition     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "repair partition"), nil))
 	// ErrGeneratedColumnFunctionIsNotAllowed returns for unsupported functions for generated columns.
 	ErrGeneratedColumnFunctionIsNotAllowed = dbterror.ClassDDL.NewStd(mysql.ErrGeneratedColumnFunctionIsNotAllowed)
 	// ErrGeneratedColumnRowValueIsNotAllowed returns for generated columns referring to row values.
 	ErrGeneratedColumnRowValueIsNotAllowed = dbterror.ClassDDL.NewStd(mysql.ErrGeneratedColumnRowValueIsNotAllowed)
 	// ErrUnsupportedPartitionByRangeColumns returns for does unsupported partition by range columns.
-	ErrUnsupportedPartitionByRangeColumns = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "partition by range columns"), nil))
+	ErrUnsupportedPartitionByRangeColumns = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "partition by range columns"), nil))
 	// ErrFunctionalIndexFunctionIsNotAllowed returns for unsupported functions for functional index.
 	ErrFunctionalIndexFunctionIsNotAllowed = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexFunctionIsNotAllowed)
 	// ErrFunctionalIndexRowValueIsNotAllowed returns for functional index referring to row values.
 	ErrFunctionalIndexRowValueIsNotAllowed = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexRowValueIsNotAllowed)
-	errUnsupportedCreatePartition          = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "partition type, treat as normal table"), nil))
-	errTablePartitionDisabled              = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Partitions are ignored because Table Partition is disabled, please set 'tidb_enable_table_partition' if you need to need to enable it", nil))
-	errUnsupportedIndexType                = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "index type"), nil))
+	errUnsupportedCreatePartition          = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "partition type, treat as normal table"), nil))
+	errTablePartitionDisabled              = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message("Partitions are ignored because Table Partition is disabled, please set 'tidb_enable_table_partition' if you need to need to enable it", nil))
+	errUnsupportedIndexType                = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "index type"), nil))
 	errWindowInvalidWindowFuncUse          = dbterror.ClassDDL.NewStd(mysql.ErrWindowInvalidWindowFuncUse)
 
 	// ErrDupKeyName returns for duplicated key name.
@@ -118,10 +117,10 @@ var (
 	// ErrFkDupName returns for duplicated FK name.
 	ErrFkDupName = dbterror.ClassDDL.NewStd(mysql.ErrFkDupName)
 	// ErrInvalidDDLState returns for invalid ddl model object state.
-	ErrInvalidDDLState = dbterror.ClassDDL.NewStdErr(mysql.ErrInvalidDDLState, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState].Raw), nil))
+	ErrInvalidDDLState = dbterror.ClassDDL.NewStdErr(mysql.ErrInvalidDDLState, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState].Raw), nil))
 	// ErrUnsupportedModifyPrimaryKey returns an error when add or drop the primary key.
 	// It's exported for testing.
-	ErrUnsupportedModifyPrimaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "%s primary key"), nil))
+	ErrUnsupportedModifyPrimaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "%s primary key"), nil))
 	// ErrPKIndexCantBeInvisible return an error when primary key is invisible index
 	ErrPKIndexCantBeInvisible = dbterror.ClassDDL.NewStd(mysql.ErrPKIndexCantBeInvisible)
 
@@ -156,7 +155,7 @@ var (
 	// ErrCollationCharsetMismatch returns when collation not match the charset.
 	ErrCollationCharsetMismatch = dbterror.ClassDDL.NewStd(mysql.ErrCollationCharsetMismatch)
 	// ErrConflictingDeclarations return conflict declarations.
-	ErrConflictingDeclarations = dbterror.ClassDDL.NewStdErr(mysql.ErrConflictingDeclarations, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrConflictingDeclarations].Raw, "CHARACTER SET ", "%s", "CHARACTER SET ", "%s"), nil))
+	ErrConflictingDeclarations = dbterror.ClassDDL.NewStdErr(mysql.ErrConflictingDeclarations, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrConflictingDeclarations].Raw, "CHARACTER SET ", "%s", "CHARACTER SET ", "%s"), nil))
 	// ErrPrimaryCantHaveNull returns All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, use UNIQUE instead
 	ErrPrimaryCantHaveNull = dbterror.ClassDDL.NewStd(mysql.ErrPrimaryCantHaveNull)
 	// ErrErrorOnRename returns error for wrong database name in alter table rename
@@ -245,7 +244,7 @@ var (
 	ErrPartitionExchangeForeignKey = dbterror.ClassDDL.NewStd(mysql.ErrPartitionExchangeForeignKey)
 	// ErrCheckNoSuchTable is returned when exchanged normal table is view or sequence.
 	ErrCheckNoSuchTable         = dbterror.ClassDDL.NewStd(mysql.ErrCheckNoSuchTable)
-	errUnsupportedPartitionType = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "partition type of table %s when exchanging partition"), nil))
+	errUnsupportedPartitionType = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "partition type of table %s when exchanging partition"), nil))
 	// ErrPartitionExchangeDifferentOption is returned when attribute does not match between partition table and normal table.
 	ErrPartitionExchangeDifferentOption = dbterror.ClassDDL.NewStd(mysql.ErrPartitionExchangeDifferentOption)
 	// ErrTableOptionUnionUnsupported is returned when create/alter table with union option.
@@ -281,7 +280,7 @@ var (
 	// ErrUnknownEngine is returned when the table engine is unknown.
 	ErrUnknownEngine = dbterror.ClassDDL.NewStd(mysql.ErrUnknownStorageEngine)
 
-	errExchangePartitionDisabled = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it", nil))
+	errExchangePartitionDisabled = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message("Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it", nil))
 
 	// ErrPartitionNoTemporary returns when partition at temporary mode
 	ErrPartitionNoTemporary = dbterror.ClassDDL.NewStd(mysql.ErrPartitionNoTemporary)
@@ -289,11 +288,11 @@ var (
 	// ErrOptOnTemporaryTable returns when exec unsupported opt at temporary mode
 	ErrOptOnTemporaryTable = dbterror.ClassDDL.NewStd(mysql.ErrOptOnTemporaryTable)
 
-	errUnsupportedOnCommitPreserve      = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support ON COMMIT PRESERVE ROWS for now", nil))
-	errUnsupportedClusteredSecondaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil))
+	errUnsupportedOnCommitPreserve      = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message("TiDB doesn't support ON COMMIT PRESERVE ROWS for now", nil))
+	errUnsupportedClusteredSecondaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil))
 
 	// ErrUnsupportedLocalTempTableDDL returns when ddl operation unsupported for local temporary table
-	ErrUnsupportedLocalTempTableDDL = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support %s for local temporary table", nil))
+	ErrUnsupportedLocalTempTableDDL = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, mysql.Message("TiDB doesn't support %s for local temporary table", nil))
 	// ErrInvalidAttributesSpec is returned when meeting invalid attributes.
 	ErrInvalidAttributesSpec = dbterror.ClassDDL.NewStd(mysql.ErrInvalidAttributesSpec)
 	// errFunctionalIndexOnJSONOrGeometryFunction returns when creating expression index and the type of the expression is JSON.

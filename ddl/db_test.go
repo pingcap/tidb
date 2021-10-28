@@ -2638,7 +2638,7 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	_, err = tk.Exec("alter table t4 change c1 a1 int not null;")
 	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a1' at row 1")
 	sql = "alter table t4 change c2 a bigint not null;"
-	tk.MustGetErrCode(sql, mysql.WarnDataTruncated)
+	tk.MustGetErrCode(sql, errno.WarnDataTruncated)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
 	tk.MustExec(sql)
 	// Rename to an existing column.
@@ -2649,13 +2649,13 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	s.mustExec(tk, c, "drop table if exists t5")
 	s.mustExec(tk, c, "create table t5 (k char(10) primary key, v int)")
 	sql = "alter table t5 change column k k tinytext;"
-	tk.MustGetErrCode(sql, mysql.ErrBlobKeyWithoutLength)
+	tk.MustGetErrCode(sql, errno.ErrBlobKeyWithoutLength)
 	tk.MustExec("drop table t5")
 
 	s.mustExec(tk, c, "drop table if exists t5")
 	s.mustExec(tk, c, "create table t5 (k char(10), v int, INDEX(k))")
 	sql = "alter table t5 change column k k tinytext;"
-	tk.MustGetErrCode(sql, mysql.ErrBlobKeyWithoutLength)
+	tk.MustGetErrCode(sql, errno.ErrBlobKeyWithoutLength)
 	tk.MustExec("drop table t5")
 
 	tk.MustExec("drop table t3")
@@ -3311,13 +3311,13 @@ func (s *testDBSuite2) TestDuplicateForeignKey(c *C) {
 	// Foreign table.
 	tk.MustExec("create table t(id int key)")
 	// Create target table with duplicate fk.
-	tk.MustGetErrCode("create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`), CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`))", mysql.ErrFkDupName)
-	tk.MustGetErrCode("create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`), CONSTRAINT `fk_aaA` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`))", mysql.ErrFkDupName)
+	tk.MustGetErrCode("create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`), CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`))", errno.ErrFkDupName)
+	tk.MustGetErrCode("create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`), CONSTRAINT `fk_aaA` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`))", errno.ErrFkDupName)
 
 	tk.MustExec("create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`))")
 	// Alter target table with duplicate fk.
-	tk.MustGetErrCode("alter table t1 add CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`)", mysql.ErrFkDupName)
-	tk.MustGetErrCode("alter table t1 add CONSTRAINT `fk_aAa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`)", mysql.ErrFkDupName)
+	tk.MustGetErrCode("alter table t1 add CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`)", errno.ErrFkDupName)
+	tk.MustGetErrCode("alter table t1 add CONSTRAINT `fk_aAa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`)", errno.ErrFkDupName)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 }
@@ -3334,14 +3334,14 @@ func (s *testDBSuite2) TestTemporaryTableForeignKey(c *C) {
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("create table t2 (a int, b int);")
 	failSQL := "alter table t1_tmp add foreign key (c) REFERENCES t2(a);"
-	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
+	tk.MustGetErrCode(failSQL, errno.ErrCannotAddForeign)
 	failSQL = "alter table t2_tmp add foreign key (c) REFERENCES t2(a);"
 	tk.MustGetErrCode(failSQL, errno.ErrUnsupportedDDLOperation)
 	// Test drop column with foreign key.
 	failSQL = "create global temporary table t3 (c int,d int,foreign key (d) references t1 (b)) on commit delete rows;"
-	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
+	tk.MustGetErrCode(failSQL, errno.ErrCannotAddForeign)
 	failSQL = "create temporary table t4(c int,d int,foreign key (d) references t1 (b));"
-	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
+	tk.MustGetErrCode(failSQL, errno.ErrCannotAddForeign)
 	tk.MustExec("drop table if exists t1,t2,t3, t4,t1_tmp,t2_tmp;")
 }
 
@@ -4175,7 +4175,7 @@ func (s *testDBSuite3) TestColumnModifyingDefinition(c *C) {
 	tk.MustExec("insert into test2(c2) values (null);")
 	_, err = tk.Exec("alter table test2 change c2 a int not null")
 	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
-	tk.MustGetErrCode("alter table test2 change c1 a1 bigint not null;", mysql.WarnDataTruncated)
+	tk.MustGetErrCode("alter table test2 change c1 a1 bigint not null;", errno.WarnDataTruncated)
 }
 
 func (s *testDBSuite4) TestCheckTooBigFieldLength(c *C) {

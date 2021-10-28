@@ -15,10 +15,10 @@ package ast
 
 import (
 	"github.com/pingcap/errors"
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/parser/tidb"
 	"github.com/pingcap/tidb/parser/types"

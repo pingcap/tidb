@@ -469,10 +469,10 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 
 	varList := []string{"character_set_server", "character_set_client", "character_set_filesystem", "character_set_database"}
 	for _, v := range varList {
-		tk.MustGetErrCode(fmt.Sprintf("SET @@global.%s = @global_start_value;", v), mysql.ErrWrongValueForVar)
-		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = @global_start_value;", v), mysql.ErrWrongValueForVar)
-		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = NULL;", v), mysql.ErrWrongValueForVar)
-		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = \"\";", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@global.%s = @global_start_value;", v), errno.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = @global_start_value;", v), errno.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = NULL;", v), errno.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = \"\";", v), errno.ErrWrongValueForVar)
 		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = \"somecharset\";", v), "Unknown charset somecharset")
 		// we do not support set character_set_xxx or collation_xxx to a collation id.
 		tk.MustGetErrMsg(fmt.Sprintf("SET @@global.%s = 46;", v), "Unknown charset 46")

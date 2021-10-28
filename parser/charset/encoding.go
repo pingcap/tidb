@@ -22,7 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/terror"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/transform"
@@ -30,7 +30,7 @@ import (
 
 const encodingLegacy = "utf-8" // utf-8 encoding is compatible with old default behavior.
 
-var errInvalidCharacterString = terror.ClassParser.NewStd(mysql.ErrInvalidCharacterString)
+var errInvalidCharacterString = terror.ClassParser.NewStd(errno.ErrInvalidCharacterString)
 
 type EncodingLabel string
 

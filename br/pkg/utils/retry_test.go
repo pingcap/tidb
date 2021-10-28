@@ -9,7 +9,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/errno"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -29,14 +29,14 @@ func (s *utilSuite) TestIsRetryableError(c *C) {
 
 	// MySQL Errors
 	c.Assert(IsRetryableError(&mysql.MySQLError{}), IsFalse)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrUnknown}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrLockDeadlock}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrPDServerTimeout}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerTimeout}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerBusy}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrResolveLockTimeout}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrRegionUnavailable}), IsTrue)
-	c.Assert(IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrWriteConflictInTiDB}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: errno.ErrUnknown}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: errno.ErrLockDeadlock}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: errno.ErrPDServerTimeout}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: errno.ErrTiKVServerTimeout}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: errno.ErrTiKVServerBusy}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: errno.ErrResolveLockTimeout}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: errno.ErrRegionUnavailable}), IsTrue)
+	c.Assert(IsRetryableError(&mysql.MySQLError{Number: errno.ErrWriteConflictInTiDB}), IsTrue)
 
 	// gRPC Errors
 	c.Assert(IsRetryableError(status.Error(codes.Canceled, "")), IsFalse)

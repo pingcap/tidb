@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -571,7 +572,7 @@ func TestError(t *testing.T) {
 	}
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		require.NotEqual(t, code, mysql.ErrUnknown)
+		require.NotEqual(t, code, errno.ErrUnknown)
 		require.Equal(t, code, uint16(err.Code()))
 	}
 }

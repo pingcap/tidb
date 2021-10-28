@@ -15,32 +15,31 @@
 package variable
 
 import (
-	mysql "github.com/pingcap/tidb/errno"
-	pmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // Error instances.
 var (
-	errWarnDeprecatedSyntax        = dbterror.ClassVariable.NewStd(mysql.ErrWarnDeprecatedSyntax)
-	ErrSnapshotTooOld              = dbterror.ClassVariable.NewStd(mysql.ErrSnapshotTooOld)
-	ErrUnsupportedValueForVar      = dbterror.ClassVariable.NewStd(mysql.ErrUnsupportedValueForVar)
-	ErrUnknownSystemVar            = dbterror.ClassVariable.NewStd(mysql.ErrUnknownSystemVariable)
-	ErrIncorrectScope              = dbterror.ClassVariable.NewStd(mysql.ErrIncorrectGlobalLocalVar)
-	ErrUnknownTimeZone             = dbterror.ClassVariable.NewStd(mysql.ErrUnknownTimeZone)
-	ErrReadOnly                    = dbterror.ClassVariable.NewStd(mysql.ErrVariableIsReadonly)
-	ErrWrongValueForVar            = dbterror.ClassVariable.NewStd(mysql.ErrWrongValueForVar)
-	ErrWrongTypeForVar             = dbterror.ClassVariable.NewStd(mysql.ErrWrongTypeForVar)
-	ErrTruncatedWrongValue         = dbterror.ClassVariable.NewStd(mysql.ErrTruncatedWrongValue)
-	ErrMaxPreparedStmtCountReached = dbterror.ClassVariable.NewStd(mysql.ErrMaxPreparedStmtCountReached)
-	ErrUnsupportedIsolationLevel   = dbterror.ClassVariable.NewStd(mysql.ErrUnsupportedIsolationLevel)
-	errUnknownSystemVariable       = dbterror.ClassVariable.NewStd(mysql.ErrUnknownSystemVariable)
-	errGlobalVariable              = dbterror.ClassVariable.NewStd(mysql.ErrGlobalVariable)
-	errLocalVariable               = dbterror.ClassVariable.NewStd(mysql.ErrLocalVariable)
-	errValueNotSupportedWhen       = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("%s = OFF is not supported when %s = ON", nil))
+	errWarnDeprecatedSyntax        = dbterror.ClassVariable.NewStd(errno.ErrWarnDeprecatedSyntax)
+	ErrSnapshotTooOld              = dbterror.ClassVariable.NewStd(errno.ErrSnapshotTooOld)
+	ErrUnsupportedValueForVar      = dbterror.ClassVariable.NewStd(errno.ErrUnsupportedValueForVar)
+	ErrUnknownSystemVar            = dbterror.ClassVariable.NewStd(errno.ErrUnknownSystemVariable)
+	ErrIncorrectScope              = dbterror.ClassVariable.NewStd(errno.ErrIncorrectGlobalLocalVar)
+	ErrUnknownTimeZone             = dbterror.ClassVariable.NewStd(errno.ErrUnknownTimeZone)
+	ErrReadOnly                    = dbterror.ClassVariable.NewStd(errno.ErrVariableIsReadonly)
+	ErrWrongValueForVar            = dbterror.ClassVariable.NewStd(errno.ErrWrongValueForVar)
+	ErrWrongTypeForVar             = dbterror.ClassVariable.NewStd(errno.ErrWrongTypeForVar)
+	ErrTruncatedWrongValue         = dbterror.ClassVariable.NewStd(errno.ErrTruncatedWrongValue)
+	ErrMaxPreparedStmtCountReached = dbterror.ClassVariable.NewStd(errno.ErrMaxPreparedStmtCountReached)
+	ErrUnsupportedIsolationLevel   = dbterror.ClassVariable.NewStd(errno.ErrUnsupportedIsolationLevel)
+	errUnknownSystemVariable       = dbterror.ClassVariable.NewStd(errno.ErrUnknownSystemVariable)
+	errGlobalVariable              = dbterror.ClassVariable.NewStd(errno.ErrGlobalVariable)
+	errLocalVariable               = dbterror.ClassVariable.NewStd(errno.ErrLocalVariable)
+	errValueNotSupportedWhen       = dbterror.ClassVariable.NewStdErr(errno.ErrNotSupportedYet, errno.Message("%s = OFF is not supported when %s = ON", nil))
 	// ErrFunctionsNoopImpl is an error to say the behavior is protected by the tidb_enable_noop_functions sysvar.
 	// This is copied from expression.ErrFunctionsNoopImpl to prevent circular dependencies.
 	// It needs to be public for tests.
-	ErrFunctionsNoopImpl         = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
-	ErrVariableNoLongerSupported = dbterror.ClassVariable.NewStd(mysql.ErrVariableNoLongerSupported)
+	ErrFunctionsNoopImpl         = dbterror.ClassVariable.NewStdErr(errno.ErrNotSupportedYet, errno.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
+	ErrVariableNoLongerSupported = dbterror.ClassVariable.NewStd(errno.ErrVariableNoLongerSupported)
 )

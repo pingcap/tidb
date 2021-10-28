@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -95,17 +94,17 @@ const (
 
 var (
 	// ErrDBExists is the error for db exists.
-	ErrDBExists = dbterror.ClassMeta.NewStd(mysql.ErrDBCreateExists)
+	ErrDBExists = dbterror.ClassMeta.NewStd(errno.ErrDBCreateExists)
 	// ErrDBNotExists is the error for db not exists.
-	ErrDBNotExists = dbterror.ClassMeta.NewStd(mysql.ErrBadDB)
+	ErrDBNotExists = dbterror.ClassMeta.NewStd(errno.ErrBadDB)
 	// ErrPolicyExists is the error for policy exists.
 	ErrPolicyExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyExists)
 	// ErrPolicyNotExists is the error for policy not exists.
 	ErrPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyNotExists)
 	// ErrTableExists is the error for table exists.
-	ErrTableExists = dbterror.ClassMeta.NewStd(mysql.ErrTableExists)
+	ErrTableExists = dbterror.ClassMeta.NewStd(errno.ErrTableExists)
 	// ErrTableNotExists is the error for table not exists.
-	ErrTableNotExists = dbterror.ClassMeta.NewStd(mysql.ErrNoSuchTable)
+	ErrTableNotExists = dbterror.ClassMeta.NewStd(errno.ErrNoSuchTable)
 	// ErrDDLReorgElementNotExist is the error for reorg element not exists.
 	ErrDDLReorgElementNotExist = dbterror.ClassMeta.NewStd(errno.ErrDDLReorgElementNotExist)
 )

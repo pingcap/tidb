@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -155,9 +156,9 @@ func (p *packetIO) writePacket(data []byte) error {
 		data[3] = p.sequence
 
 		if n, err := p.bufWriter.Write(data[:4+mysql.MaxPayloadLen]); err != nil {
-			return errors.Trace(mysql.ErrBadConn)
+			return errors.Trace(errno.ErrBadConn)
 		} else if n != (4 + mysql.MaxPayloadLen) {
-			return errors.Trace(mysql.ErrBadConn)
+			return errors.Trace(errno.ErrBadConn)
 		} else {
 			p.sequence++
 			length -= mysql.MaxPayloadLen
@@ -172,9 +173,9 @@ func (p *packetIO) writePacket(data []byte) error {
 
 	if n, err := p.bufWriter.Write(data); err != nil {
 		terror.Log(errors.Trace(err))
-		return errors.Trace(mysql.ErrBadConn)
+		return errors.Trace(errno.ErrBadConn)
 	} else if n != len(data) {
-		return errors.Trace(mysql.ErrBadConn)
+		return errors.Trace(errno.ErrBadConn)
 	} else {
 		p.sequence++
 		return nil

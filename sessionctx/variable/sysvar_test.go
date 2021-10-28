@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/stretchr/testify/require"
@@ -88,7 +89,7 @@ func TestError(t *testing.T) {
 		ErrUnsupportedIsolationLevel,
 	}
 	for _, err := range kvErrs {
-		require.True(t, terror.ToSQLError(err).Code != mysql.ErrUnknown)
+		require.True(t, terror.ToSQLError(err).Code != errno.ErrUnknown)
 	}
 }
 

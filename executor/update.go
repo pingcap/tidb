@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"runtime/trace"
 
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -441,7 +441,7 @@ func (e *UpdateExec) setMessage() {
 	numMatched := e.matched
 	numChanged := stmtCtx.UpdatedRows()
 	numWarnings := stmtCtx.WarningCount()
-	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUpdateInfo].Raw, numMatched, numChanged, numWarnings)
+	msg := fmt.Sprintf(errno.MySQLErrName[errno.ErrUpdateInfo].Raw, numMatched, numChanged, numWarnings)
 	stmtCtx.SetMessage(msg)
 }
 

@@ -17,7 +17,7 @@ package server
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -170,7 +170,7 @@ func TestParseExecArgs(t *testing.T) {
 				[]byte{7, 0},
 				[]byte{10},
 			},
-			mysql.ErrMalformPacket,
+			errno.ErrMalformPacket,
 			nil,
 		},
 		{
@@ -181,7 +181,7 @@ func TestParseExecArgs(t *testing.T) {
 				[]byte{11, 0},
 				[]byte{10},
 			},
-			mysql.ErrMalformPacket,
+			errno.ErrMalformPacket,
 			nil,
 		},
 		{
@@ -192,7 +192,7 @@ func TestParseExecArgs(t *testing.T) {
 				[]byte{11, 0},
 				[]byte{8, 2},
 			},
-			mysql.ErrMalformPacket,
+			errno.ErrMalformPacket,
 			nil,
 		},
 	}
@@ -213,9 +213,9 @@ func TestParseStmtFetchCmd(t *testing.T) {
 		{[]byte{3, 0, 0, 0, 50, 0, 0, 0}, 3, 50, nil},
 		{[]byte{5, 0, 0, 0, 232, 3, 0, 0}, 5, 1000, nil},
 		{[]byte{5, 0, 0, 0, 0, 8, 0, 0}, 5, maxFetchSize, nil},
-		{[]byte{5, 0, 0}, 0, 0, mysql.ErrMalformPacket},
-		{[]byte{1, 0, 0, 0, 3, 2, 0, 0, 3, 5, 6}, 0, 0, mysql.ErrMalformPacket},
-		{[]byte{}, 0, 0, mysql.ErrMalformPacket},
+		{[]byte{5, 0, 0}, 0, 0, errno.ErrMalformPacket},
+		{[]byte{1, 0, 0, 0, 3, 2, 0, 0, 3, 5, 6}, 0, 0, errno.ErrMalformPacket},
+		{[]byte{}, 0, 0, errno.ErrMalformPacket},
 	}
 
 	for _, tc := range tests {

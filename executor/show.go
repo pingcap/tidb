@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -1598,7 +1599,7 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 			sqlErr := terror.ToSQLError(x)
 			e.appendRow([]interface{}{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
-			e.appendRow([]interface{}{w.Level, int64(mysql.ErrUnknown), warn.Error()})
+			e.appendRow([]interface{}{w.Level, int64(errno.ErrUnknown), warn.Error()})
 		}
 	}
 	return nil

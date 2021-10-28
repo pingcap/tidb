@@ -18,17 +18,18 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 )
 
 var (
-	ErrWarnOptimizerHintUnsupportedHint = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintUnsupportedHint)
-	ErrWarnOptimizerHintInvalidToken    = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintInvalidToken)
-	ErrWarnMemoryQuotaOverflow          = terror.ClassParser.NewStd(mysql.ErrWarnMemoryQuotaOverflow)
-	ErrWarnOptimizerHintParseError      = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintParseError)
-	ErrWarnOptimizerHintInvalidInteger  = terror.ClassParser.NewStd(mysql.ErrWarnOptimizerHintInvalidInteger)
+	ErrWarnOptimizerHintUnsupportedHint = terror.ClassParser.NewStd(errno.ErrWarnOptimizerHintUnsupportedHint)
+	ErrWarnOptimizerHintInvalidToken    = terror.ClassParser.NewStd(errno.ErrWarnOptimizerHintInvalidToken)
+	ErrWarnMemoryQuotaOverflow          = terror.ClassParser.NewStd(errno.ErrWarnMemoryQuotaOverflow)
+	ErrWarnOptimizerHintParseError      = terror.ClassParser.NewStd(errno.ErrWarnOptimizerHintParseError)
+	ErrWarnOptimizerHintInvalidInteger  = terror.ClassParser.NewStd(errno.ErrWarnOptimizerHintInvalidInteger)
 )
 
 // hintScanner implements the yyhintLexer interface

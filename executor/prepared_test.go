@@ -23,9 +23,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	txninfo "github.com/pingcap/tidb/session/txninfo"
@@ -61,9 +61,9 @@ func (s *testSuite1) TestUnsupportedStmtForPrepare(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`prepare stmt0 from "create table t0(a int primary key)"`)
-	tk.MustGetErrCode(`prepare stmt1 from "execute stmt0"`, mysql.ErrUnsupportedPs)
-	tk.MustGetErrCode(`prepare stmt2 from "deallocate prepare stmt0"`, mysql.ErrUnsupportedPs)
-	tk.MustGetErrCode(`prepare stmt4 from "prepare stmt3 from 'create table t1(a int, b int)'"`, mysql.ErrUnsupportedPs)
+	tk.MustGetErrCode(`prepare stmt1 from "execute stmt0"`, errno.ErrUnsupportedPs)
+	tk.MustGetErrCode(`prepare stmt2 from "deallocate prepare stmt0"`, errno.ErrUnsupportedPs)
+	tk.MustGetErrCode(`prepare stmt4 from "prepare stmt3 from 'create table t1(a int, b int)'"`, errno.ErrUnsupportedPs)
 }
 
 func (s *testSuite1) TestIgnorePlanCache(c *C) {

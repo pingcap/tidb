@@ -205,6 +205,8 @@ const (
 	ErrNewAbortingConnection                                 = 1184
 	ErrDumpNotImplemented                                    = 1185
 	ErrIndexRebuild                                          = 1187
+	ErrMasterNetRead                                         = 1189
+	ErrMasterNetWrite                                        = 1190
 	ErrFtMatchingKeyNotFound                                 = 1191
 	ErrLockOrActiveTransaction                               = 1192
 	ErrUnknownSystemVariable                                 = 1193
@@ -227,6 +229,7 @@ const (
 	ErrCannotAddForeign                                      = 1215
 	ErrNoReferencedRow                                       = 1216
 	ErrRowIsReferenced                                       = 1217
+	ErrConnectToMaster                                       = 1218
 	ErrErrorWhenExecutingCommand                             = 1220
 	ErrWrongUsage                                            = 1221
 	ErrWrongNumberOfColumnsInSelect                          = 1222

@@ -16,7 +16,6 @@ package expression
 
 import (
 	mysql "github.com/pingcap/tidb/errno"
-	pmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -30,7 +29,7 @@ var (
 	ErrRegexp                      = dbterror.ClassExpression.NewStd(mysql.ErrRegexp)
 	ErrOperandColumns              = dbterror.ClassExpression.NewStd(mysql.ErrOperandColumns)
 	ErrCutValueGroupConcat         = dbterror.ClassExpression.NewStd(mysql.ErrCutValueGroupConcat)
-	ErrFunctionsNoopImpl           = dbterror.ClassExpression.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
+	ErrFunctionsNoopImpl           = dbterror.ClassExpression.NewStdErr(mysql.ErrNotSupportedYet, mysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
 	ErrInvalidArgumentForLogarithm = dbterror.ClassExpression.NewStd(mysql.ErrInvalidArgumentForLogarithm)
 	ErrIncorrectType               = dbterror.ClassExpression.NewStd(mysql.ErrIncorrectType)
 	ErrInvalidTableSample          = dbterror.ClassExpression.NewStd(mysql.ErrInvalidTableSample)
@@ -41,7 +40,7 @@ var (
 	errZlibZBuf                      = dbterror.ClassExpression.NewStd(mysql.ErrZlibZBuf)
 	errIncorrectArgs                 = dbterror.ClassExpression.NewStd(mysql.ErrWrongArguments)
 	errUnknownCharacterSet           = dbterror.ClassExpression.NewStd(mysql.ErrUnknownCharacterSet)
-	errDefaultValue                  = dbterror.ClassExpression.NewStdErr(mysql.ErrInvalidDefault, pmysql.Message("invalid default value", nil))
+	errDefaultValue                  = dbterror.ClassExpression.NewStdErr(mysql.ErrInvalidDefault, mysql.Message("invalid default value", nil))
 	errDeprecatedSyntaxNoReplacement = dbterror.ClassExpression.NewStd(mysql.ErrWarnDeprecatedSyntaxNoReplacement)
 	errWarnAllowedPacketOverflowed   = dbterror.ClassExpression.NewStd(mysql.ErrWarnAllowedPacketOverflowed)
 	errWarnOptionIgnored             = dbterror.ClassExpression.NewStd(mysql.WarnOptionIgnored)
@@ -55,7 +54,7 @@ var (
 	// Sequence usage privilege check.
 	errSequenceAccessDenied      = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)
 	errUnsupportedJSONComparison = dbterror.ClassExpression.NewStdErr(mysql.ErrNotSupportedYet,
-		pmysql.Message("comparison of JSON in the LEAST and GREATEST operators", nil))
+		mysql.Message("comparison of JSON in the LEAST and GREATEST operators", nil))
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.

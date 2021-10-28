@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	mysql "github.com/pingcap/tidb/errno"
-	pmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
@@ -33,7 +32,7 @@ var (
 	// When using TiKV as the storage node, the error is returned ONLY when lock not found (txnLockNotFound) in Commit,
 	// subject to change it in the future.
 	ErrTxnRetryable = dbterror.ClassKV.NewStdErr(mysql.ErrTxnRetryable,
-		pmysql.Message(mysql.MySQLErrName[mysql.ErrTxnRetryable].Raw+TxnRetryableMark, []int{0}))
+		mysql.Message(mysql.MySQLErrName[mysql.ErrTxnRetryable].Raw+TxnRetryableMark, []int{0}))
 	// ErrCannotSetNilValue is the error when sets an empty value.
 	ErrCannotSetNilValue = dbterror.ClassKV.NewStd(mysql.ErrCannotSetNilValue)
 	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
@@ -48,10 +47,10 @@ var (
 	ErrNotImplemented = dbterror.ClassKV.NewStd(mysql.ErrNotImplemented)
 	// ErrWriteConflict is the error when the commit meets an write conflict error.
 	ErrWriteConflict = dbterror.ClassKV.NewStdErr(mysql.ErrWriteConflict,
-		pmysql.Message(mysql.MySQLErrName[mysql.ErrWriteConflict].Raw+" "+TxnRetryableMark, []int{3}))
+		mysql.Message(mysql.MySQLErrName[mysql.ErrWriteConflict].Raw+" "+TxnRetryableMark, []int{3}))
 	// ErrWriteConflictInTiDB is the error when the commit meets an write conflict error when local latch is enabled.
 	ErrWriteConflictInTiDB = dbterror.ClassKV.NewStdErr(mysql.ErrWriteConflictInTiDB,
-		pmysql.Message(mysql.MySQLErrName[mysql.ErrWriteConflictInTiDB].Raw+" "+TxnRetryableMark, nil))
+		mysql.Message(mysql.MySQLErrName[mysql.ErrWriteConflictInTiDB].Raw+" "+TxnRetryableMark, nil))
 	// ErrLockExpire is the error when the lock is expired.
 	ErrLockExpire = dbterror.ClassTiKV.NewStd(mysql.ErrLockExpire)
 )
