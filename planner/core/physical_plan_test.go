@@ -17,6 +17,7 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"math"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner"
@@ -108,6 +110,121 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			output[i].Best = core.ToString(p)
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestAnalyzeBuildSucc(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	sctx := se.(sessionctx.Context)
+	_, err = se.Execute(context.Background(), "create table t(a int)")
+	c.Assert(err, IsNil)
+	tests := []struct {
+		sql      string
+		succ     bool
+		statsVer int
+	}{
+		{
+			sql:      "analyze table t with 0.1 samplerate",
+			succ:     true,
+			statsVer: 2,
+		},
+		{
+			sql:      "analyze table t with 0.1 samplerate",
+			succ:     false,
+			statsVer: 1,
+		},
+		{
+			sql:      "analyze table t with 10 samplerate",
+			succ:     false,
+			statsVer: 2,
+		},
+		{
+			sql:      "analyze table t with 0.1 samplerate, 100000 samples",
+			succ:     false,
+			statsVer: 2,
+		},
+		{
+			sql:      "analyze table t with 0.1 samplerate, 100000 samples",
+			succ:     false,
+			statsVer: 1,
+		},
+	}
+	for i, tt := range tests {
+		comment := Commentf("The %v-th test failed", i)
+		_, err := se.Execute(context.Background(), fmt.Sprintf("set @@tidb_analyze_version=%v", tt.statsVer))
+		c.Assert(err, IsNil)
+
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		if tt.succ {
+			c.Assert(err, IsNil, comment)
+		} else if err != nil {
+			continue
+		}
+		err = core.Preprocess(se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.is}))
+		c.Assert(err, IsNil)
+		_, _, err = planner.Optimize(context.Background(), sctx, stmt, s.is)
+		if tt.succ {
+			c.Assert(err, IsNil, comment)
+		} else {
+			c.Assert(err, NotNil, comment)
+		}
+	}
+}
+
+func (s *testPlanSuite) TestAnalyzeSetRate(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	sctx := se.(sessionctx.Context)
+	_, err = se.Execute(context.Background(), "create table t(a int)")
+	c.Assert(err, IsNil)
+	tests := []struct {
+		sql  string
+		rate float64
+	}{
+		{
+			sql:  "analyze table t",
+			rate: -1,
+		},
+		{
+			sql:  "analyze table t with 0.1 samplerate",
+			rate: 0.1,
+		},
+		{
+			sql:  "analyze table t with 10000 samples",
+			rate: -1,
+		},
+	}
+	for i, tt := range tests {
+		comment := Commentf("The %v-th test failed", i)
+		c.Assert(err, IsNil)
+
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		err = core.Preprocess(se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.is}))
+		c.Assert(err, IsNil)
+		p, _, err := planner.Optimize(context.Background(), sctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		ana := p.(*core.Analyze)
+		c.Assert(math.Float64frombits(ana.Opts[ast.AnalyzeOptSampleRate]), Equals, tt.rate)
 	}
 }
 
@@ -1861,6 +1978,35 @@ func (s *testPlanSuite) TestSelectionPartialPushDown(c *C) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int as (a+1) virtual)")
 	tk.MustExec("create table t2(a int, b int as (a+1) virtual, c int, key idx_a(a))")
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
+		})
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testPlanSuite) TestIssue28316(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL  string
+			Plan []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
 
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
