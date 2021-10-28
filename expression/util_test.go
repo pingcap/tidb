@@ -40,17 +40,17 @@ func TestBaseBuiltin(t *testing.T) {
 	_, _, err = bf.evalInt(chunk.Row{})
 	require.Error(t, err)
 	_, _, err = bf.evalReal(chunk.Row{})
-	require.NoError(t, err)
+	require.Error(t, err)
 	_, _, err = bf.evalString(chunk.Row{})
-	require.NoError(t, err)
+	require.Error(t, err)
 	_, _, err = bf.evalDecimal(chunk.Row{})
-	require.NoError(t, err)
+	require.Error(t, err)
 	_, _, err = bf.evalTime(chunk.Row{})
-	require.NoError(t, err)
+	require.Error(t, err)
 	_, _, err = bf.evalDuration(chunk.Row{})
-	require.NoError(t, err)
+	require.Error(t, err)
 	_, _, err = bf.evalJSON(chunk.Row{})
-	require.NoError(t, err)
+	require.Error(t, err)
 }
 
 func TestClone(t *testing.T) {
