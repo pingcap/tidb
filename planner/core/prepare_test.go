@@ -1242,14 +1242,12 @@ func (s *testPlanSerialSuite) TestIssue28867(c *C) {
 	tk.MustExec(`set @a=1`)
 	tk.MustExec(`execute stmt using @a`)
 	tk.MustExec(`execute stmt using @a`)
-	// the index range [a, b] depends on parameters, so it cannot use plan-cache
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec(`prepare stmt from 'select /*+ INL_JOIN(t1,t2) */ * from t1, t2 where t1.a=t2.a and t1.c=?'`)
 	tk.MustExec(`set @a=1`)
 	tk.MustExec(`execute stmt using @a`)
 	tk.MustExec(`execute stmt using @a`)
-	// the index range [a] doesn't depend on parameters, so it can use plan-cache
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 

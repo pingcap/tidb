@@ -284,7 +284,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 		require.NoError(t, err)
 		joinNode.OtherConditions = others
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
-		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys)
+		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys, false)
 		require.NoError(t, err)
 		require.Equal(t, tt.accesses, fmt.Sprintf("%v", helper.chosenAccess))
 		require.Equal(t, tt.ranges, fmt.Sprintf("%v", helper.chosenRanges), "test case: ", i)
