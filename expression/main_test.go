@@ -16,11 +16,14 @@ package expression
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/testkit/testmain"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
@@ -47,4 +50,14 @@ func TestMain(m *testing.M) {
 	}
 
 	goleak.VerifyTestMain(m, opts...)
+}
+
+func createContext(t *testing.T) *mock.Context {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
+	sc := ctx.GetSessionVars().StmtCtx
+	sc.TruncateAsWarning = true
+	require.NoError(t, ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864"))
+	ctx.GetSessionVars().PlanColumnID = 0
+	return ctx
 }

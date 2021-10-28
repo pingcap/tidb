@@ -12,22 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// +build !codes
-
-package trequire
+package parser_test
 
 import (
+	"runtime"
+	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/parser"
 	"github.com/stretchr/testify/require"
 )
 
-// DatumEqual verifies that the actual value is equal to the expected value.
-func DatumEqual(t *testing.T, expected, actual types.Datum, msgAndArgs ...interface{}) {
-	sc := new(stmtctx.StatementContext)
-	res, err := actual.CompareDatum(sc, &expected)
-	require.NoError(t, err, msgAndArgs)
-	require.Zero(t, res, msgAndArgs)
+func TestInsertStatementMemoryAllocation(t *testing.T) {
+	sql := "insert t values (1)" + strings.Repeat(",(1)", 1000)
+	var oldStats, newStats runtime.MemStats
+	runtime.ReadMemStats(&oldStats)
+	_, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	runtime.ReadMemStats(&newStats)
+	require.Less(t, int(newStats.TotalAlloc-oldStats.TotalAlloc), 1024*500)
 }
