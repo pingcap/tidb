@@ -141,7 +141,7 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	rowContainer.ActionSpill().(*chunk.SpillDiskAction).WaitForTest()
 	require.Equal(t, spill, rowContainer.alreadySpilledSafeForTest())
 	require.Equal(t, spill, rowContainer.GetMemTracker().BytesConsumed() == 0)
-	require.Equal(t, spill, rowContainer.GetMemTracker().BytesConsumed() > 0)
+	require.Equal(t, !spill, rowContainer.GetMemTracker().BytesConsumed() > 0)
 	if rowContainer.alreadySpilledSafeForTest() {
 		require.NotNil(t, rowContainer.GetDiskTracker())
 		require.True(t, rowContainer.GetDiskTracker().BytesConsumed() > 0)
