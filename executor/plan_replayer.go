@@ -210,7 +210,7 @@ func (e *PlanReplayerSingleExec) dumpSingle(path string) (string, error) {
 		return "", err
 	}
 
-	return filepath.Join(path, fileName), nil
+	return fileName, nil
 }
 
 func dumpConfig(zw *zip.Writer) error {
