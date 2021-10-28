@@ -421,7 +421,7 @@ func (e *LoadDataInfo) isInQuoter(bs []byte) bool {
 
 // indexOfTerminator return index of terminator, if not, return -1.
 // normally, the field terminator and line terminator is short, so we just use brute force algorithm.
-func (e *LoadDataInfo) indexOfTerminator(bs []byte, isInQuoter bool) int {
+func (e *LoadDataInfo) indexOfTerminator(bs []byte, inQuoter bool) int {
 	fieldTerm := []byte(e.FieldsInfo.Terminated)
 	fieldTermLen := len(fieldTerm)
 	lineTerm := []byte(e.LinesInfo.Terminated)
@@ -459,13 +459,10 @@ func (e *LoadDataInfo) indexOfTerminator(bs []byte, isInQuoter bool) int {
 		}
 	}
 	atFieldStart := true
-	inQuoter := false
 loop:
 	for i := 0; i < len(bs); i++ {
 		if atFieldStart && bs[i] == e.FieldsInfo.Enclosed {
-			if !isInQuoter {
-				inQuoter = true
-			}
+			inQuoter = !inQuoter
 			atFieldStart = false
 			continue
 		}
