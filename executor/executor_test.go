@@ -8737,9 +8737,9 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 		ignore   bool
 	}{
 		{sql: "insert into t values(1,1),(2,2),(3,3)", tagLabel: tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown},
-		{sql: "select * from t use index (idx) where a=1", tagLabel: tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow},
-		{sql: "select * from t use index (idx) where a in (1,2,3)", tagLabel: tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow},
-		{sql: "select * from t use index (idx) where a>1", tagLabel: tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow},
+		{sql: "select * from t use index (idx) where a=1", tagLabel: tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex},
+		{sql: "select * from t use index (idx) where a in (1,2,3)", tagLabel: tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex},
+		{sql: "select * from t use index (idx) where a>1", tagLabel: tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex},
 		{sql: "select * from t where b>1", tagLabel: tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow},
 		{sql: "begin pessimistic", tagLabel: tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown, ignore: true},
 		{sql: "insert into t values(4,4)", tagLabel: tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown},
