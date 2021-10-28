@@ -1042,7 +1042,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 		ast.JSONLength,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
-		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format:
+		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format,
+		ast.LTrim, ast.RTrim:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_InDuration,
 			tipb.ScalarFuncSig_CoalesceDuration,
