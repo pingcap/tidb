@@ -423,7 +423,7 @@ func handleAnalyzeFullSamplingReq(
 	}
 	colReq := analyzeReq.ColReq
 	/* #nosec G404 */
-	builder := &statistics.ReservoirRowSampleBuilder{
+	builder := &statistics.RowSampleBuilder{
 		Sc:              sc,
 		RecordSet:       e,
 		ColsFieldType:   fts,
@@ -431,6 +431,7 @@ func handleAnalyzeFullSamplingReq(
 		ColGroups:       colGroups,
 		MaxSampleSize:   int(colReq.SampleSize),
 		MaxFMSketchSize: int(colReq.SketchSize),
+		SampleRate:      colReq.GetSampleRate(),
 		Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	collector, err := builder.Collect()
@@ -438,7 +439,7 @@ func handleAnalyzeFullSamplingReq(
 		return nil, err
 	}
 	colResp := &tipb.AnalyzeColumnsResp{}
-	colResp.RowCollector = collector.ToProto()
+	colResp.RowCollector = collector.Base().ToProto()
 	data, err := colResp.Marshal()
 	if err != nil {
 		return nil, err
@@ -507,6 +508,10 @@ func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
 		fields = append(fields, &field.Column.FieldType)
 	}
 	return chunk.NewChunkWithCapacity(fields, 1024)
+}
+
+func (e *analyzeColumnsExec) NewChunkFromAllocator(_ chunk.Allocator) *chunk.Chunk {
+	return e.NewChunk()
 }
 
 // Close implements the sqlexec.RecordSet Close interface.

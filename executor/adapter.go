@@ -162,6 +162,12 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	return nil
 }
 
+// NewChunkFromAllocator create a chunk base on top-level executor's newFirstChunk().
+func (a *recordSet) NewChunkFromAllocator(alloc chunk.Allocator) *chunk.Chunk {
+	base := a.executor.base()
+	return alloc.Alloc(base.retFieldTypes, base.initCap, base.maxChunkSize)
+}
+
 // NewChunk create a chunk base on top-level executor's newFirstChunk().
 func (a *recordSet) NewChunk() *chunk.Chunk {
 	return newFirstChunk(a.executor)
@@ -509,6 +515,11 @@ func (c *chunkRowRecordSet) NewChunk() *chunk.Chunk {
 	return newFirstChunk(c.e)
 }
 
+func (c *chunkRowRecordSet) NewChunkFromAllocator(alloc chunk.Allocator) *chunk.Chunk {
+	base := c.e.base()
+	return alloc.Alloc(base.retFieldTypes, base.initCap, base.maxChunkSize)
+}
+
 func (c *chunkRowRecordSet) Close() error {
 	c.execStmt.CloseRecordSet(c.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, nil)
 	return nil
@@ -625,6 +636,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
 		seVars := sctx.GetSessionVars()
+		keys = filterLockTableKeys(seVars.StmtCtx, keys)
 		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
 		var lockKeyStats *util.LockKeysDetails
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)

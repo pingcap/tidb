@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -162,8 +163,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildLoadStats(v)
 	case *plannercore.IndexAdvise:
 		return b.buildIndexAdvise(v)
-	case *plannercore.PlanRecreatorSingle:
-		return b.buildPlanRecreatorSingle(v)
+	case *plannercore.PlanReplayerSingle:
+		return b.buildPlanReplayerSingle(v)
 	case *plannercore.PhysicalLimit:
 		return b.buildLimit(v)
 	case *plannercore.Prepare:
@@ -729,6 +730,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		Tp:           v.Tp,
 		DBName:       model.NewCIStr(v.DBName),
 		Table:        v.Table,
+		Partition:    v.Partition,
 		Column:       v.Column,
 		IndexName:    v.IndexName,
 		Flag:         v.Flag,
@@ -904,10 +906,13 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 	return e
 }
 
-func (b *executorBuilder) buildPlanRecreatorSingle(v *plannercore.PlanRecreatorSingle) Executor {
-	e := &PlanRecreatorSingleExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		info:         &PlanRecreatorSingleInfo{v.ExecStmt, v.Analyze, v.Load, v.File, b.ctx},
+func (b *executorBuilder) buildPlanReplayerSingle(v *plannercore.PlanReplayerSingle) Executor {
+	e := &PlanReplayerSingleExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		ExecStmt:     v.ExecStmt,
+		Analyze:      v.Analyze,
+		Load:         v.Load,
+		File:         v.File,
 	}
 	return e
 }
@@ -1593,11 +1598,11 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableTiKVStoreStatus),
 			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted),
-			strings.ToLower(infoschema.TablePlacementPolicy),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
-			strings.ToLower(infoschema.TableRegionLabel):
+			strings.ToLower(infoschema.TableRegionLabel),
+			strings.ToLower(infoschema.TablePlacementRules):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -2215,9 +2220,17 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		baseCount:               count,
 		baseModifyCnt:           modifyCount,
 	}
+	sampleRate := new(float64)
+	if opts[ast.AnalyzeOptNumSamples] == 0 {
+		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
+		if *sampleRate < 0 {
+			*sampleRate = b.getAdjustedSampleRate(b.ctx, task.TableID.GetStatisticsID(), task.TblInfo)
+		}
+	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
+		SampleRate:   sampleRate,
 		SketchSize:   maxSketchSize,
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle),
 		ColumnGroups: colGroups,
@@ -2230,6 +2243,29 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+}
+
+func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int64, tblInfo *model.TableInfo) float64 {
+	statsHandle := domain.GetDomain(sctx).StatsHandle()
+	defaultRate := 0.001
+	if statsHandle == nil {
+		return defaultRate
+	}
+	var statsTbl *statistics.Table
+	if tid == tblInfo.ID {
+		statsTbl = statsHandle.GetTableStats(tblInfo)
+	} else {
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, tid)
+	}
+	if statsTbl == nil {
+		return defaultRate
+	}
+	// If the count in stats_meta is still 0, the table is not large, we scan all rows.
+	if statsTbl.Count == 0 {
+		return 1
+	}
+	// We are expected to scan about 100000 rows or so.
+	return math.Min(1, 110000/float64(statsTbl.Count))
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {

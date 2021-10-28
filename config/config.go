@@ -184,6 +184,12 @@ type Config struct {
 	// 1. there is a network partition problem between TiDB and PD leader.
 	// 2. there is a network partition problem between TiDB and TiKV leader.
 	EnableForwarding bool `toml:"enable-forwarding" json:"enable-forwarding"`
+	// MaxBallastObjectSize set the max size of the ballast object, the unit is byte.
+	// The default value is the smallest of the following two values: 2GB or
+	// one quarter of the total physical memory in the current system.
+	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
+	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
+	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -368,9 +374,10 @@ type Security struct {
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
 	// Allow automatic TLS certificate generation
-	AutoTLS       bool   `toml:"auto-tls" json:"auto-tls"`
-	MinTLSVersion string `toml:"tls-version" json:"tls-version"`
-	RSAKeySize    int    `toml:"rsa-key-size" json:"rsa-key-size"`
+	AutoTLS         bool   `toml:"auto-tls" json:"auto-tls"`
+	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
+	RSAKeySize      int    `toml:"rsa-key-size" json:"rsa-key-size"`
+	SecureBootstrap bool   `toml:"secure-bootstrap" json:"secure-bootstrap"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -429,6 +436,7 @@ type Performance struct {
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
 	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease   string  `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                  int     `toml:"gogc" json:"gogc"`
 	EnforceMPP            bool    `toml:"enforce-mpp" json:"enforce-mpp"`
 }
@@ -564,6 +572,7 @@ var defaultConf = Config{
 	Host:                         DefHost,
 	AdvertiseAddress:             "",
 	Port:                         DefPort,
+	Socket:                       "/tmp/tidb.sock",
 	Cors:                         "",
 	Store:                        "unistore",
 	Path:                         "/tmp/tidb",
@@ -641,6 +650,7 @@ var defaultConf = Config{
 		IndexUsageSyncLease: "0s",
 		GOGC:                100,
 		EnforceMPP:          false,
+		PlanReplayerGCLease: "10m",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

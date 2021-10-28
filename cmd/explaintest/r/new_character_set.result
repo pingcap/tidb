@@ -40,3 +40,19 @@ select * from t;
 a	b	c
 一	一	一
 set @@character_set_results = 'utf8mb4';
+drop table if exists t;
+create table t (a varchar(255) charset utf8mb4);
+set @@character_set_client = 'gbk';
+insert into t values ('中文');
+set @@character_set_client = 'utf8mb4';
+insert into t values ('中文');
+set @@character_set_client = 'gbk';
+prepare p1 from "insert into t values ('中文');";
+execute p1;
+
+select a, hex(a) from t;
+a	hex(a)
+涓?枃	E6B6933FE69E83
+中文	E4B8ADE69687
+涓?枃	E6B6933FE69E83
+set @@character_set_client = 'utf8mb4';

@@ -479,6 +479,42 @@ func (s *testSuite7) TestUser(c *C) {
 	alterUserSQL = `alter user test3@'%' IDENTIFIED WITH 'mysql_native_password' AS '*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9';`
 	tk.MustExec(alterUserSQL)
 	tk.MustQuery(querySQL).Check(testkit.Rows("*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9"))
+
+	createUserSQL = `create user userA@LOCALHOST;`
+	tk.MustExec(createUserSQL)
+	querySQL = `select user,host from mysql.user where user = 'userA';`
+	tk.MustQuery(querySQL).Check(testkit.Rows("userA localhost"))
+
+	createUserSQL = `create user userB@DEMO.com;`
+	tk.MustExec(createUserSQL)
+	querySQL = `select user,host from mysql.user where user = 'userB';`
+	tk.MustQuery(querySQL).Check(testkit.Rows("userB demo.com"))
+
+	createUserSQL = `create user userC@localhost;`
+	tk.MustExec(createUserSQL)
+	renameUserSQL := `rename user 'userC'@'localhost' to 'userD'@'Demo.com';`
+	tk.MustExec(renameUserSQL)
+	querySQL = `select user,host from mysql.user where user = 'userD';`
+	tk.MustQuery(querySQL).Check(testkit.Rows("userD demo.com"))
+
+	tk.MustExec(`create user joan;`)
+	tk.MustExec(`create user sally;`)
+	tk.MustExec(`create role engineering;`)
+	tk.MustExec(`create role consultants;`)
+	tk.MustExec(`create role qa;`)
+	tk.MustExec(`grant engineering to joan;`)
+	tk.MustExec(`grant engineering to sally;`)
+	tk.MustExec(`grant engineering, consultants to joan, sally;`)
+	tk.MustExec(`grant qa to consultants;`)
+	tk.MustExec("CREATE ROLE `engineering`@`US`;")
+	tk.MustExec("create role `engineering`@`INDIA`;")
+	_, err = tk.Exec("grant `engineering`@`US` TO `engineering`@`INDIA`;")
+	c.Check(err, IsNil)
+
+	tk.MustQuery("select user,host from mysql.user where user='engineering' and host = 'india'").
+		Check(testkit.Rows("engineering india"))
+	tk.MustQuery("select user,host from mysql.user where user='engineering' and host = 'us'").
+		Check(testkit.Rows("engineering us"))
 }
 
 func (s *testSuite3) TestSetPwd(c *C) {
