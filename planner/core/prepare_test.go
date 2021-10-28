@@ -339,19 +339,33 @@ func (s *testPrepareSerialSuite) TestPrepareCacheChangeCharsetCollation(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t (a varchar(64)`)
+	tk.MustExec(`create table t (a varchar(64))`)
 	tk.MustExec(`set character_set_connection=utf8`)
 
-	tk.MustExec(`prepare s from select * from t where a=?`)
-	tk.MustExec(`set @x='abc'`)
+	tk.MustExec(`prepare s from 'select * from t where a=?'`)
+	tk.MustExec(`set @x='a'`)
 	tk.MustExec(`execute s using @x`)
+	tk.MustExec(`set @x='b'`)
 	tk.MustExec(`execute s using @x`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
-	tk.MustExec(`drop table if exists t_tinyint, t_unsigned, t_float, t_decimal, t_year`)
+	tk.MustExec(`set character_set_connection=latin1`)
+	tk.MustExec(`set @x='c'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // cannot reuse the previous plan since the charset is changed
+	tk.MustExec(`set @x='d'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`set collation_connection=binary`)
+	tk.MustExec(`set @x='e'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // cannot reuse the previous plan since the collation is changed
+	tk.MustExec(`set @x='f'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
