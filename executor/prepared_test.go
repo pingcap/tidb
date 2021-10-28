@@ -1044,6 +1044,37 @@ func (s *testSerialSuite) TestPreparePlanCache4DifferentSystemVars(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
+func (s *testSerialSuite) TestTemporaryTable4PlanCache(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists tmp2")
+	tk.MustExec("create temporary table tmp2 (a int, b int, key(a), key(b));")
+	tk.MustExec("prepare stmt from 'select * from tmp2;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table if exists tmp_t;")
+	tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
+	tk.MustExec("prepare stmt from 'select * from tmp_t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+}
+
 func (s *testSerialSuite) TestPreparePlanCache4Blacklist(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
