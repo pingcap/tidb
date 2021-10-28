@@ -5918,7 +5918,6 @@ func (s *testDBSuite2) TestAlterTableCache(c *C) {
 	tk.MustExec("alter table t cache")
 	tk.MustExec("alter table t cache")
 	// Test a temporary table
-	tk.MustExec("set @@tidb_enable_global_temporary_table=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create temporary table t (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("drop table if exists tmp1")

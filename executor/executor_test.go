@@ -1524,7 +1524,6 @@ func (s *testSuiteP2) TestUnion(c *C) {
 	tk.MustExec("create table t(a bit(20), b float, c double, d int)")
 	tk.MustExec("insert into t values(10, 10, 10, 10), (1, -1, 2, -2), (2, -2, 1, 1), (2, 1.1, 2.1, 10.1)")
 	tk.MustQuery("select a from t union select 10 order by a").Check(testkit.Rows("1", "2", "10"))
-
 }
 
 func (s *testSuite2) TestUnionLimit(c *C) {
@@ -8974,6 +8973,7 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	}
 }
 func (s *testStaleTxnSuite) TestInvalidReadCacheTable(c *C) {
+
 	tk := testkit.NewTestKit(c, s.store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
