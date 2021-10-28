@@ -71,7 +71,7 @@ func TestColumn(t *testing.T) {
 	decimalCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeNewDecimal)},
 		Data: &decimalDatum}
 	decVal, isNull, err := decimalCorCol.EvalDecimal(ctx, chunk.Row{})
-	require.Equal(t, 0, decVal.Compare(types.NewDecFromStringForTest("1.2")))
+	require.Zero(t, decVal.Compare(types.NewDecFromStringForTest("1.2")))
 	require.False(t, isNull)
 	require.NoError(t, err)
 
@@ -86,7 +86,7 @@ func TestColumn(t *testing.T) {
 	durationCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeDuration)},
 		Data: &durationDatum}
 	durationVal, isNull, err := durationCorCol.EvalDuration(ctx, chunk.Row{})
-	require.Equal(t, 0, durationVal.Compare(duration))
+	require.Zero(t, durationVal.Compare(duration))
 	require.False(t, isNull)
 	require.NoError(t, err)
 
@@ -94,7 +94,7 @@ func TestColumn(t *testing.T) {
 	timeCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeDatetime)},
 		Data: &timeDatum}
 	timeVal, isNull, err := timeCorCol.EvalTime(ctx, chunk.Row{})
-	require.Equal(t, 0, timeVal.Compare(tm))
+	require.Zero(t, timeVal.Compare(tm))
 	require.False(t, isNull)
 	require.NoError(t, err)
 }
