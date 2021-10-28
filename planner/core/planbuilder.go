@@ -1813,17 +1813,16 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 // 3. Otherwise it returns all the columns.
 func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
 	tblInfo := tbl.TableInfo
-	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
-	if as.HistogramOperation == ast.HistogramOperationNop && len(as.ColumnNames) > 0 {
-		for _, colName := range as.ColumnNames {
-			colInfo := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
-			if colInfo == nil {
-				return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.Name.O, tblInfo.Name.O)
-			}
-			columnIDs[colInfo.ID] = struct{}{}
-		}
-	} else {
+	if len(as.ColumnNames) == 0 {
 		return tblInfo.Columns, nil
+	}
+	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
+	for _, colName := range as.ColumnNames {
+		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
+		if colInfo == nil {
+			return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.Name.O, tblInfo.Name.O)
+		}
+		columnIDs[colInfo.ID] = struct{}{}
 	}
 	missingCols := make(map[int64]struct{}, len(tblInfo.Columns)-len(columnIDs))
 	if len(tblInfo.Indices) > 0 {
@@ -2021,8 +2020,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 			continue
 		}
-		// TODO: support analyze specified columns for version 1
-		if as.HistogramOperation == ast.HistogramOperationNop && len(as.ColumnNames) > 0 {
+		if len(as.ColumnNames) > 0 {
 			return nil, errors.Errorf("Only the analyze version 2 supports analyzing the specified columns")
 		}
 		for _, idx := range idxInfo {
