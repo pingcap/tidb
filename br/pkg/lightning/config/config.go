@@ -354,6 +354,69 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 	return errors.Errorf("invalid max-error '%v', should be an integer", v)
 }
 
+// DuplicateResolutionAlgorithm is the config type of how to resolve duplicates.
+type DuplicateResolutionAlgorithm int
+
+const (
+	// DupeResAlgUnsafeNoop does not perform resolution. This is unsafe as the
+	// table will be left in an inconsistent state.
+	DupeResAlgUnsafeNoop DuplicateResolutionAlgorithm = iota
+
+	// DupeResAlgDelete deletes all information related to the duplicated rows.
+	// Users need to analyze the lightning_task_info.conflict_error_v1 table to
+	// add back the correct rows.
+	DupeResAlgDelete
+
+	// DupeResAlgKeepAnyOne keeps a single row from the any transitive set of
+	// duplicated rows. The choice is arbitrary.
+	// This algorithm is not implemented yet.
+	DupeResAlgKeepAnyOne
+)
+
+func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v interface{}) error {
+	if val, ok := v.(string); ok {
+		return dra.FromStringValue(val)
+	}
+	return errors.Errorf("invalid duplicate-resolution '%v', please choose valid option between ['unsafe-noop', 'delete']", v)
+}
+
+func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
+	return []byte(dra.String()), nil
+}
+
+func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
+	switch strings.ToLower(s) {
+	case "unsafe-noop":
+		*dra = DupeResAlgUnsafeNoop
+	case "delete":
+		*dra = DupeResAlgDelete
+	default:
+		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['unsafe-noop', 'delete']", s)
+	}
+	return nil
+}
+
+func (dra *DuplicateResolutionAlgorithm) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + dra.String() + `"`), nil
+}
+
+func (dra *DuplicateResolutionAlgorithm) UnmarshalJSON(data []byte) error {
+	return dra.FromStringValue(strings.Trim(string(data), `"`))
+}
+
+func (dra DuplicateResolutionAlgorithm) String() string {
+	switch dra {
+	case DupeResAlgUnsafeNoop:
+		return "unsafe-noop"
+	case DupeResAlgDelete:
+		return "delete"
+	case DupeResAlgKeepAnyOne:
+		return "keep-any-one"
+	default:
+		panic(fmt.Sprintf("invalid duplicate-resolution type '%d'", dra))
+	}
+}
+
 // PostRestore has some options which will be executed after kv restored.
 type PostRestore struct {
 	Checksum          PostOpLevel `toml:"checksum" json:"checksum"`
@@ -458,6 +521,8 @@ type TikvImporter struct {
 	DiskQuota          ByteSize `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency   int      `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateDetection bool     `toml:"duplicate-detection" json:"duplicate-detection"`
+
+	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -575,12 +640,13 @@ func NewConfig() *Config {
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
-			Backend:         "",
-			OnDuplicate:     ReplaceOnDup,
-			MaxKVPairs:      4096,
-			SendKVPairs:     32768,
-			RegionSplitSize: 0,
-			DiskQuota:       ByteSize(math.MaxInt64),
+			Backend:             "",
+			OnDuplicate:         ReplaceOnDup,
+			MaxKVPairs:          4096,
+			SendKVPairs:         32768,
+			RegionSplitSize:     0,
+			DiskQuota:           ByteSize(math.MaxInt64),
+			DuplicateResolution: DupeResAlgDelete,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
