@@ -21,6 +21,11 @@ error = '''
 backup no leader
 '''
 
+["BR:Common:ErrEnvNotSpecified"]
+error = '''
+environment variable not found
+'''
+
 ["BR:Common:ErrFailedToConnect"]
 error = '''
 failed to make gRPC channels
@@ -44,6 +49,11 @@ undefined restore databases or tables
 ["BR:Common:ErrUnknown"]
 error = '''
 internal error
+'''
+
+["BR:Common:ErrUnsupportedOperation"]
+error = '''
+the operation is not supported
 '''
 
 ["BR:Common:ErrVersionMismatch"]

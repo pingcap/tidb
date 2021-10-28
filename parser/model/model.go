@@ -341,6 +341,9 @@ type TableInfo struct {
 	TableCacheStatusType `json:"cache_table_status"`
 	PlacementPolicyRef   *PolicyRefInfo     `json:"policy_ref_info"`
 	DirectPlacementOpts  *PlacementSettings `json:"placement_settings"`
+
+	// StatsOptions is used when do analyze/auto-analyze for each table
+	StatsOptions *StatsOptions `json:"stats_options"`
 }
 type TableCacheStatusType int
 
@@ -1229,4 +1232,81 @@ func (p *PlacementSettings) String() string {
 	}
 
 	return sb.String()
+}
+
+type StatsOptions struct {
+	*StatsWindowSettings
+	AutoRecalc   bool         `json:"auto_recalc"`
+	ColumnChoice ColumnChoice `json:"column_choice"`
+	ColumnList   []CIStr      `json:"column_list"`
+	SampleNum    uint64       `json:"sample_num"`
+	SampleRate   float64      `json:"sample_rate"`
+	Buckets      uint64       `json:"buckets"`
+	TopN         uint64       `json:"topn"`
+	Concurrency  uint         `json:"concurrency"`
+}
+
+func NewStatsOptions() *StatsOptions {
+	return &StatsOptions{
+		AutoRecalc:   true,
+		ColumnChoice: AllColumns,
+		ColumnList:   []CIStr{},
+		SampleNum:    uint64(0),
+		SampleRate:   0.0,
+		Buckets:      uint64(0),
+		TopN:         uint64(0),
+		Concurrency:  uint(0),
+	}
+}
+
+type ColumnChoice byte
+
+const (
+	AllColumns ColumnChoice = iota
+	PredicateColumns
+	ColumnList
+)
+
+func (s ColumnChoice) String() string {
+	switch s {
+	case AllColumns:
+		return "AllColumns"
+	case PredicateColumns:
+		return "PredicateColumns"
+	case ColumnList:
+		return "ColumnList"
+	default:
+		return ""
+	}
+}
+
+type StatsWindowSettings struct {
+	WindowStart    time.Time        `json:"window_start"`
+	WindowEnd      time.Time        `json:"window_end"`
+	RepeatType     WindowRepeatType `json:"repeat_type"`
+	RepeatInterval uint             `json:"repeat_interval"`
+}
+
+type WindowRepeatType byte
+
+const (
+	Never WindowRepeatType = iota
+	Day
+	Week
+	Month
+)
+
+func (s WindowRepeatType) String() string {
+	switch s {
+	case Never:
+		return "Never"
+	case Day:
+		return "Day"
+	case Week:
+		return "Week"
+	case Month:
+		return "Month"
+	default:
+		return ""
+	}
 }
