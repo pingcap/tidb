@@ -115,7 +115,6 @@ var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testPointGetSuite{})
-var _ = Suite(&testBatchPointGetSuite{})
 var _ = SerialSuites(&testRecoverTable{})
 var _ = SerialSuites(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
@@ -164,6 +163,22 @@ type baseTestSuite struct {
 	domain  *domain.Domain
 	*parser.Parser
 	ctx *mock.Context // nolint:structcheck
+}
+
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
+	store, err := mockstore.NewMockStore()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	session.SetSchemaLease(0)
+	session.DisableStats4Test()
+
+	dom, err := session.BootstrapSession(store)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, dom, errors.Trace(err)
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
