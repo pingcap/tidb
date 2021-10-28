@@ -908,8 +908,11 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 
 func (b *executorBuilder) buildPlanReplayerSingle(v *plannercore.PlanReplayerSingle) Executor {
 	e := &PlanReplayerSingleExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		info:         &PlanReplayerSingleInfo{v.ExecStmt, v.Analyze, v.Load, v.File, b.ctx},
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		ExecStmt:     v.ExecStmt,
+		Analyze:      v.Analyze,
+		Load:         v.Load,
+		File:         v.File,
 	}
 	return e
 }
