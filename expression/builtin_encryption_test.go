@@ -17,17 +17,19 @@ package expression
 import (
 	"encoding/hex"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/stretchr/testify/require"
 )
 
 var cryptTests = []struct {
@@ -49,35 +51,40 @@ var cryptTests = []struct {
 	{nil, "数据库passwd12345667", nil},
 }
 
-func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
+func TestSQLDecode(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
 	fc := funcs[ast.Decode]
 	for _, tt := range cryptTests {
 		str := types.NewDatum(tt.origin)
 		password := types.NewDatum(tt.password)
 
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, password}))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, password}))
+		require.NoError(t, err)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
+		require.NoError(t, err)
+		require.Equal(t, types.NewDatum(tt.crypt), toHex(crypt))
 	}
-	s.testNullInput(c, ast.Decode)
+	testNullInput(t, ctx, ast.Decode)
 }
 
-func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
+func TestSQLEncode(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
 	fc := funcs[ast.Encode]
 	for _, test := range cryptTests {
 		password := types.NewDatum(test.password)
 		cryptStr := fromHex(test.crypt)
 
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{cryptStr, password}))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{cryptStr, password}))
+		require.NoError(t, err)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
 
-		c.Assert(err, IsNil)
-		c.Assert(str, DeepEquals, types.NewDatum(test.origin))
+		require.NoError(t, err)
+		require.Equal(t, types.NewDatum(test.origin), str)
 	}
-	s.testNullInput(c, ast.Encode)
+	testNullInput(t, ctx, ast.Encode)
 }
 
 var aesTests = []struct {
@@ -118,93 +125,99 @@ var aesTests = []struct {
 	{"aes-256-cfb", "pingcap", []interface{}{"1234567890123456", "12345678901234561234567890123456"}, "2E70FCAC0C0834"},
 }
 
-func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
+func TestAESEncrypt(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
 	fc := funcs[ast.AesEncrypt]
 	for _, tt := range aesTests {
-		err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
-		c.Assert(err, IsNil)
+		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
+		require.NoError(t, err)
 		args := []types.Datum{types.NewDatum(tt.origin)}
 		for _, param := range tt.params {
 			args = append(args, types.NewDatum(param))
 		}
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
+		require.NoError(t, err)
+		require.Equal(t, types.NewDatum(tt.crypt), toHex(crypt))
 	}
-	err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
-	c.Assert(err, IsNil)
-	s.testNullInput(c, ast.AesEncrypt)
-	s.testAmbiguousInput(c, ast.AesEncrypt)
+	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
+	require.NoError(t, err)
+	testNullInput(t, ctx, ast.AesEncrypt)
+	testAmbiguousInput(t, ctx, ast.AesEncrypt)
 }
 
-func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
+func TestAESDecrypt(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
 	fc := funcs[ast.AesDecrypt]
 	for _, tt := range aesTests {
-		err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
-		c.Assert(err, IsNil)
+		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
+		require.NoError(t, err)
 		args := []types.Datum{fromHex(tt.crypt)}
 		for _, param := range tt.params {
 			args = append(args, types.NewDatum(param))
 		}
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if tt.origin == nil {
-			c.Assert(str.IsNull(), IsTrue)
+			require.True(t, str.IsNull())
 			continue
 		}
-		c.Assert(str, DeepEquals, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin, collate.DefaultLen))
+		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin, collate.DefaultLen), str)
 	}
-	err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
-	c.Assert(err, IsNil)
-	s.testNullInput(c, ast.AesDecrypt)
-	s.testAmbiguousInput(c, ast.AesDecrypt)
+	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
+	require.NoError(t, err)
+	testNullInput(t, ctx, ast.AesDecrypt)
+	testAmbiguousInput(t, ctx, ast.AesDecrypt)
 }
 
-func (s *testEvaluatorSuite) testNullInput(c *C, fnName string) {
-	err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
-	c.Assert(err, IsNil)
+func testNullInput(t *testing.T, ctx sessionctx.Context, fnName string) {
+	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
+	require.NoError(t, err)
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	var argNull types.Datum
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, argNull}))
-	c.Assert(err, IsNil)
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, argNull}))
+	require.NoError(t, err)
 	crypt, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(crypt.IsNull(), IsTrue)
+	require.NoError(t, err)
+	require.True(t, crypt.IsNull())
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull, arg}))
-	c.Assert(err, IsNil)
+	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull, arg}))
+	require.NoError(t, err)
 	crypt, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(crypt.IsNull(), IsTrue)
+	require.NoError(t, err)
+	require.True(t, crypt.IsNull())
 }
 
-func (s *testEvaluatorSuite) testAmbiguousInput(c *C, fnName string) {
+func testAmbiguousInput(t *testing.T, ctx sessionctx.Context, fnName string) {
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	// test for modes that require init_vector
-	err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, ("aes-128-cbc"))
-	c.Assert(err, IsNil)
-	_, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg}))
-	c.Assert(err, NotNil)
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg, types.NewStringDatum("iv < 16 bytes")}))
-	c.Assert(err, IsNil)
+	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-cbc")
+	require.NoError(t, err)
+	_, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg}))
+	require.Error(t, err)
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg, types.NewStringDatum("iv < 16 bytes")}))
+	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// test for modes that do not require init_vector
-	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
-	c.Assert(err, IsNil)
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg, arg}))
-	c.Assert(err, IsNil)
+	err = variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
+	require.NoError(t, err)
+	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg, arg}))
+	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), GreaterEqual, 1)
+	require.NoError(t, err)
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+	require.GreaterOrEqual(t, len(warnings), 1)
 }
 
 func toHex(d types.Datum) (h types.Datum) {
@@ -239,23 +252,26 @@ var sha1Tests = []struct {
 	{123.45, "22f8b438ad7e89300b51d88684f3f0b9fa1d7a32"},
 }
 
-func (s *testEvaluatorSuite) TestSha1Hash(c *C) {
+func TestSha1Hash(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
 	fc := funcs[ast.SHA]
 	for _, tt := range sha1Tests {
 		in := types.NewDatum(tt.origin)
-		f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{in}))
+		f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{in}))
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		res, err := crypt.ToString()
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, tt.crypt)
+		require.NoError(t, err)
+		require.Equal(t, tt.crypt, res)
 	}
 	// test NULL input for sha
 	var argNull types.Datum
-	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	crypt, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(crypt.IsNull(), IsTrue)
+	require.NoError(t, err)
+	require.True(t, crypt.IsNull())
 }
 
 var sha2Tests = []struct {
@@ -279,26 +295,32 @@ var sha2Tests = []struct {
 	{"pingcap", 123, nil, false},
 }
 
-func (s *testEvaluatorSuite) TestSha2Hash(c *C) {
+func TestSha2Hash(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
 	fc := funcs[ast.SHA2]
 	for _, tt := range sha2Tests {
 		str := types.NewDatum(tt.origin)
 		hashLength := types.NewDatum(tt.hashLength)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, hashLength}))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, hashLength}))
+		require.NoError(t, err)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if tt.validCase {
 			res, err := crypt.ToString()
-			c.Assert(err, IsNil)
-			c.Assert(res, Equals, tt.crypt)
+			require.NoError(t, err)
+			require.Equal(t, tt.crypt, res)
 		} else {
-			c.Assert(crypt.IsNull(), IsTrue)
+			require.True(t, crypt.IsNull())
 		}
 	}
 }
 
-func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
+func TestMD5Hash(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
 	cases := []struct {
 		args     interface{}
 		expected string
@@ -314,52 +336,55 @@ func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
 		{123.123, "46ddc40585caa8abc07c460b3485781e", false, false},
 		{nil, "", true, false},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.MD5, s.primitiveValsToConstants([]interface{}{t.args})...)
-		c.Assert(err, IsNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.MD5, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
-		if t.getErr {
-			c.Assert(err, NotNil)
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetString(), Equals, t.expected)
+				require.Equal(t, c.expected, d.GetString())
 			}
 		}
 	}
-	_, err := funcs[ast.MD5].getFunction(s.ctx, []Expression{NewZero()})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.MD5].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
 
 }
 
-func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
+func TestRandomBytes(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
 	fc := funcs[ast.RandomBytes]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(32)}))
-	c.Assert(err, IsNil)
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(32)}))
+	require.NoError(t, err)
 	out, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(len(out.GetBytes()), Equals, 32)
+	require.NoError(t, err)
+	require.Equal(t, 32, len(out.GetBytes()))
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(1025)}))
-	c.Assert(err, IsNil)
+	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(1025)}))
+	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, NotNil)
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(-32)}))
-	c.Assert(err, IsNil)
+	require.Error(t, err)
+	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(-32)}))
+	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, NotNil)
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(0)}))
-	c.Assert(err, IsNil)
+	require.Error(t, err)
+	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(0)}))
+	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(nil)}))
-	c.Assert(err, IsNil)
+	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(nil)}))
+	require.NoError(t, err)
 	out, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(len(out.GetBytes()), Equals, 0)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(out.GetBytes()))
 }
 
 func decodeHex(str string) []byte {
@@ -370,7 +395,9 @@ func decodeHex(str string) []byte {
 	return ret
 }
 
-func (s *testEvaluatorSuite) TestCompress(c *C) {
+func TestCompress(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
 	tests := []struct {
 		in     interface{}
 		expect interface{}
@@ -383,19 +410,21 @@ func (s *testEvaluatorSuite) TestCompress(c *C) {
 	fc := funcs[ast.Compress]
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
-		c.Assert(err, IsNil, Commentf("%v", test))
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		require.NoErrorf(t, err, "%v", test)
 		out, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil, Commentf("%v", test))
+		require.NoErrorf(t, err, "%v", test)
 		if test.expect == nil {
-			c.Assert(out.IsNull(), IsTrue, Commentf("%v", test))
+			require.Truef(t, out.IsNull(), "%v", test)
 			continue
 		}
-		c.Assert(out, DeepEquals, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin, collate.DefaultLen), Commentf("%v", test))
+		require.Equalf(t, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin, collate.DefaultLen), out, "%v", test)
 	}
 }
 
-func (s *testEvaluatorSuite) TestUncompress(c *C) {
+func TestUncompress(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
 	tests := []struct {
 		in     interface{}
 		expect interface{}
@@ -417,19 +446,21 @@ func (s *testEvaluatorSuite) TestUncompress(c *C) {
 	fc := funcs[ast.Uncompress]
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
-		c.Assert(err, IsNil, Commentf("%v", test))
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		require.NoErrorf(t, err, "%v", test)
 		out, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil, Commentf("%v", test))
+		require.NoErrorf(t, err, "%v", test)
 		if test.expect == nil {
-			c.Assert(out.IsNull(), IsTrue, Commentf("%v", test))
+			require.Truef(t, out.IsNull(), "%v", test)
 			continue
 		}
-		c.Assert(out, DeepEquals, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin, collate.DefaultLen), Commentf("%v", test))
+		require.Equalf(t, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin, collate.DefaultLen), out, "%v", test)
 	}
 }
 
-func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
+func TestUncompressLength(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
 	tests := []struct {
 		in     interface{}
 		expect interface{}
@@ -450,15 +481,17 @@ func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
 	fc := funcs[ast.UncompressedLength]
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
-		c.Assert(err, IsNil, Commentf("%v", test))
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		require.NoErrorf(t, err, "%v", test)
 		out, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil, Commentf("%v", test))
-		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
+		require.NoErrorf(t, err, "%v", test)
+		require.Equalf(t, types.NewDatum(test.expect), out, "%v", test)
 	}
 }
 
-func (s *testEvaluatorSuite) TestPassword(c *C) {
+func TestPassword(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
 		expected string
@@ -474,31 +507,31 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 		{types.NewDecFromFloatForTest(123.123), "*B15B84262DB34BFB2C817A45A55C405DC7C52BB1", false, false, true},
 	}
 
-	warnCount := len(s.ctx.GetSessionVars().StmtCtx.GetWarnings())
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.PasswordFunc, s.primitiveValsToConstants([]interface{}{t.args})...)
-		c.Assert(err, IsNil)
+	warnCount := len(ctx.GetSessionVars().StmtCtx.GetWarnings())
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.PasswordFunc, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
-		c.Assert(err, IsNil)
-		if t.isNil {
-			c.Assert(d.Kind(), Equals, types.KindNull)
+		require.NoError(t, err)
+		if c.isNil {
+			require.Equal(t, types.KindNull, d.Kind())
 		} else {
-			c.Assert(d.GetString(), Equals, t.expected)
+			require.Equal(t, c.expected, d.GetString())
 		}
 
-		warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-		if t.getWarn {
-			c.Assert(len(warnings), Equals, warnCount+1)
+		warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+		if c.getWarn {
+			require.Equal(t, warnCount+1, len(warnings))
 
 			lastWarn := warnings[len(warnings)-1]
-			c.Assert(terror.ErrorEqual(errDeprecatedSyntaxNoReplacement, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+			require.Truef(t, terror.ErrorEqual(errDeprecatedSyntaxNoReplacement, lastWarn.Err), "err %v", lastWarn.Err)
 
 			warnCount = len(warnings)
 		} else {
-			c.Assert(len(warnings), Equals, warnCount)
+			require.Equal(t, warnCount, len(warnings))
 		}
 	}
 
-	_, err := funcs[ast.PasswordFunc].getFunction(s.ctx, []Expression{NewZero()})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.PasswordFunc].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
 }
