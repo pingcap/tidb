@@ -40,17 +40,17 @@ func TestBaseBuiltin(t *testing.T) {
 	_, _, err = bf.evalInt(chunk.Row{})
 	require.Error(t, err)
 	_, _, err = bf.evalReal(chunk.Row{})
-	require.NotNil(t, err)
+	require.NoError(t, err)
 	_, _, err = bf.evalString(chunk.Row{})
-	require.NotNil(t, err)
+	require.NoError(t, err)
 	_, _, err = bf.evalDecimal(chunk.Row{})
-	require.NotNil(t, err)
+	require.NoError(t, err)
 	_, _, err = bf.evalTime(chunk.Row{})
-	require.NotNil(t, err)
+	require.NoError(t, err)
 	_, _, err = bf.evalDuration(chunk.Row{})
-	require.NotNil(t, err)
+	require.NoError(t, err)
 	_, _, err = bf.evalJSON(chunk.Row{})
-	require.NotNil(t, err)
+	require.NoError(t, err)
 }
 
 func TestClone(t *testing.T) {
@@ -204,7 +204,7 @@ func TestSetExprColumnInOperand(t *testing.T) {
 	require.True(t, setExprColumnInOperand(col).(*Column).InOperand)
 
 	f, err := funcs[ast.Abs].getFunction(mock.NewContext(), []Expression{col})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	fun := &ScalarFunction{Function: f}
 	setExprColumnInOperand(fun)
 	require.True(t, f.getArgs()[0].(*Column).InOperand)
@@ -214,10 +214,10 @@ func TestPopRowFirstArg(t *testing.T) {
 	t.Parallel()
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
 	f, err := funcs[ast.RowFunc].getFunction(mock.NewContext(), []Expression{c1, c2, c3})
-	require.Nil(t, err)
+	require.NoError(t, err)
 	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
 	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Len(t, fun2.(*ScalarFunction).GetArgs(), 2)
 }
 
@@ -225,11 +225,11 @@ func TestGetStrIntFromConstant(t *testing.T) {
 	t.Parallel()
 	col := &Column{}
 	_, _, err := GetStringFromConstant(mock.NewContext(), col)
-	require.NotNil(t, err)
+	require.Error(t, err)
 
 	con := &Constant{RetType: &types.FieldType{Tp: mysql.TypeNull}}
 	_, isNull, err := GetStringFromConstant(mock.NewContext(), con)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.True(t, isNull)
 
 	con = &Constant{RetType: newIntFieldType(), Value: types.NewIntDatum(1)}
@@ -261,16 +261,16 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 	plus2 := newFunction(ast.Plus, plus, NewOne())
 	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err := SubstituteCorCol2Constant(plus2)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.True(t, ret.Equal(ctx, ans1))
 	col1 := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err = SubstituteCorCol2Constant(col1)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	ans2 := col1
 	require.True(t, ret.Equal(ctx, ans2))
 	plus3 := newFunction(ast.Plus, plus2, col1)
 	ret, err = SubstituteCorCol2Constant(plus3)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	ans3 := newFunction(ast.Plus, ans1, col1)
 	require.True(t, ret.Equal(ctx, ans3))
 }
@@ -369,16 +369,16 @@ func TestHashGroupKey(t *testing.T) {
 		}
 		var err error
 		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		bufs, err = codec.HashGroupKey(sc, 1024, colBuf, bufs, ft)
-		require.Nil(t, err)
+		require.NoError(t, err)
 
 		var buf []byte
 		for j := 0; j < input.NumRows(); j++ {
 			d, err := colExpr.Eval(input.GetRow(j))
-			require.Nil(t, err)
+			require.NoError(t, err)
 			buf, err = codec.EncodeValue(sc, buf[:0], d)
-			require.Nil(t, err)
+			require.NoError(t, err)
 			require.Equal(t, string(bufs[j]), string(buf))
 		}
 	}
@@ -455,23 +455,23 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 	}
 
 	err := r.RetrieveLocal(context.Background(), nil)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, expectedLocalResult, r.SQLDigestsMap)
 	clearResult()
 
 	err = r.RetrieveGlobal(context.Background(), nil)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, expectedGlobalResult, r.SQLDigestsMap)
 	clearResult()
 
 	r.fetchAllLimit = 1
 	err = r.RetrieveLocal(context.Background(), nil)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, expectedLocalResult, r.SQLDigestsMap)
 	clearResult()
 
 	err = r.RetrieveGlobal(context.Background(), nil)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, expectedGlobalResult, r.SQLDigestsMap)
 }
 
