@@ -232,6 +232,8 @@ func TestGrantColumnScope(t *testing.T) {
 }
 
 func TestIssue2456(t *testing.T) {
+	t.Parallel()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -244,6 +246,8 @@ func TestIssue2456(t *testing.T) {
 }
 
 func TestNoAutoCreateUser(t *testing.T) {
+	t.Parallel()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -251,11 +255,13 @@ func TestNoAutoCreateUser(t *testing.T) {
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 	tk.MustExec(`SET sql_mode='NO_AUTO_CREATE_USER'`)
 	_, err := tk.Exec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
-	require.NotNil(t, err)
+	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, executor.ErrCantCreateUserWithGrant))
 }
 
 func TestCreateUserWhenGrant(t *testing.T) {
+	t.Parallel()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -291,7 +297,7 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 	))
 	tk.MustExec(`grant update, select, insert, delete on *.* to r1, r2, r3;`)
 	_, err = tk.Exec(`revoke all on *.* from r1, r2, r4, r3;`)
-	require.NotNil(t, err)
+	require.Error(t, err)
 	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.user where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
 		"Y Y Y Y",
 		"Y Y Y Y",
@@ -303,7 +309,7 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows())
 	tk.MustExec(`grant update, select, insert, delete on test.* to r1, r2, r3;`)
 	_, err = tk.Exec(`revoke all on *.* from r1, r2, r4, r3;`)
-	require.NotNil(t, err)
+	require.Error(t, err)
 	tk.MustQuery(`select Update_priv, Select_priv, Insert_priv, Delete_priv from mysql.db where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
 		"Y Y Y Y",
 		"Y Y Y Y",
@@ -315,7 +321,7 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 	tk.MustQuery(`select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows())
 	tk.MustExec(`grant update, select, insert, delete on test.testatomic to r1, r2, r3;`)
 	_, err = tk.Exec(`revoke all on *.* from r1, r2, r4, r3;`)
-	require.NotNil(t, err)
+	require.Error(t, err)
 	tk.MustQuery(`select Table_priv from mysql.tables_priv where user in ('r1', 'r2', 'r3', 'r4') and host = "%";`).Check(testkit.Rows(
 		"Select,Insert,Update,Delete",
 		"Select,Insert,Update,Delete",
@@ -328,6 +334,8 @@ func TestGrantPrivilegeAtomic(t *testing.T) {
 }
 
 func TestIssue2654(t *testing.T) {
+	t.Parallel()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -356,6 +364,8 @@ func TestGrantUnderANSIQuotes(t *testing.T) {
 }
 
 func TestMaintainRequire(t *testing.T) {
+	t.Parallel()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -407,15 +417,15 @@ func TestMaintainRequire(t *testing.T) {
 
 	// check issuer/subject/cipher value
 	_, err := tk.Exec(`CREATE USER 'u4'@'%' require issuer 'CN=TiDB,OU=PingCAP'`)
-	require.NotNil(t, err)
+	require.Error(t, err)
 	_, err = tk.Exec(`CREATE USER 'u5'@'%' require subject '/CN=TiDB\OU=PingCAP'`)
-	require.NotNil(t, err)
+	require.Error(t, err)
 	_, err = tk.Exec(`CREATE USER 'u6'@'%' require subject '/CN=TiDB\NC=PingCAP'`)
-	require.NotNil(t, err)
+	require.Error(t, err)
 	_, err = tk.Exec(`CREATE USER 'u7'@'%' require cipher 'AES128-GCM-SHA1'`)
-	require.NotNil(t, err)
+	require.Error(t, err)
 	_, err = tk.Exec(`CREATE USER 'u8'@'%' require subject '/CN'`)
-	require.NotNil(t, err)
+	require.Error(t, err)
 	_, err = tk.Exec(`CREATE USER 'u9'@'%' require cipher 'TLS_AES_256_GCM_SHA384' cipher 'RC4-SHA'`)
 	require.EqualError(t, err, "Duplicate require CIPHER clause")
 	_, err = tk.Exec(`CREATE USER 'u9'@'%' require issuer 'CN=TiDB,OU=PingCAP' issuer 'CN=TiDB,OU=PingCAP2'`)
@@ -423,12 +433,14 @@ func TestMaintainRequire(t *testing.T) {
 	_, err = tk.Exec(`CREATE USER 'u9'@'%' require subject '/CN=TiDB\OU=PingCAP' subject '/CN=TiDB\OU=PingCAP2'`)
 	require.EqualError(t, err, "Duplicate require SUBJECT clause")
 	_, err = tk.Exec(`CREATE USER 'u9'@'%' require ssl ssl`)
-	require.NotNil(t, err)
+	require.Error(t, err)
 	_, err = tk.Exec(`CREATE USER 'u9'@'%' require x509 x509`)
-	require.NotNil(t, err)
+	require.Error(t, err)
 }
 
 func TestMaintainAuthString(t *testing.T) {
+	t.Parallel()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -465,6 +477,8 @@ func TestGrantOnNonExistTable(t *testing.T) {
 }
 
 func TestIssue22721(t *testing.T) {
+	t.Parallel()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -479,6 +493,8 @@ func TestIssue22721(t *testing.T) {
 }
 
 func TestPerformanceSchemaPrivGrant(t *testing.T) {
+	t.Parallel()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -490,11 +506,11 @@ func TestPerformanceSchemaPrivGrant(t *testing.T) {
 	}()
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
 	err := tk.ExecToErr("grant all on performance_schema.* to issue27867;")
-	require.NotNil(t, err)
+	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
 	// Check case insensitivity
 	err = tk.ExecToErr("grant all on PERFormanCE_scHemA.* to issue27867;")
-	require.NotNil(t, err)
+	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'PERFormanCE_scHemA'")
 	// Check other database privileges
 	tk.MustExec("grant select on performance_schema.* to issue27867;")
@@ -504,25 +520,25 @@ func TestPerformanceSchemaPrivGrant(t *testing.T) {
 	tk.MustExec("grant drop on performance_schema.* to issue27867;")
 	tk.MustExec("grant lock tables on performance_schema.* to issue27867;")
 	err = tk.ExecToErr("grant create on performance_schema.* to issue27867;")
-	require.NotNil(t, err)
+	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
 	err = tk.ExecToErr("grant references on performance_schema.* to issue27867;")
-	require.NotNil(t, err)
+	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
 	err = tk.ExecToErr("grant alter on PERFormAnCE_scHemA.* to issue27867;")
-	require.NotNil(t, err)
+	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'PERFormAnCE_scHemA'")
 	err = tk.ExecToErr("grant execute on performance_schema.* to issue27867;")
-	require.NotNil(t, err)
+	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
 	err = tk.ExecToErr("grant index on PERFormanCE_scHemA.* to issue27867;")
-	require.NotNil(t, err)
+	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'PERFormanCE_scHemA'")
 	err = tk.ExecToErr("grant create view on performance_schema.* to issue27867;")
-	require.NotNil(t, err)
+	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
 	err = tk.ExecToErr("grant show view on performance_schema.* to issue27867;")
-	require.NotNil(t, err)
+	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
 }
 
