@@ -658,7 +658,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 		return "", true, errors.New("Wrong number of Recordset")
 	}
 	defer terror.Call(rs.Close)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	if err != nil || req.NumRows() == 0 {
 		return "", true, errors.Trace(err)
@@ -842,7 +842,7 @@ func upgradeToVer12(s Session, ver int64) {
 	terror.MustNil(err)
 	sqls := make([]string, 0, 1)
 	defer terror.Call(rs.Close)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	err = rs.Next(ctx, req)
 	for err == nil && req.NumRows() != 0 {
@@ -1303,7 +1303,7 @@ func upgradeToVer55(s Session, ver int64) {
 	rs, err := s.ExecuteInternal(ctx, selectSQL)
 	terror.MustNil(err)
 	defer terror.Call(rs.Close)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	err = rs.Next(ctx, req)
 	for err == nil && req.NumRows() != 0 {
@@ -1414,7 +1414,7 @@ func upgradeToVer67(s Session, ver int64) {
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
 	}
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	p := parser.New()
 	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)

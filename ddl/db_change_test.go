@@ -147,7 +147,7 @@ func (s *serialTestStateChangeSuite) TestShowCreateTable(c *C) {
 					return
 				}
 			}
-			req := result.NewChunk()
+			req := result.NewChunk(nil)
 			checkErr = result.Next(context.Background(), req)
 			if checkErr != nil {
 				return

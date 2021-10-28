@@ -193,7 +193,7 @@ func (g GlueCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint,
 		}
 		r := rs[0]
 		defer r.Close()
-		req := r.NewChunk()
+		req := r.NewChunk(nil)
 		err = r.Next(ctx, req)
 		if err != nil {
 			return err
@@ -242,7 +242,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 			return errors.Trace(err)
 		}
 		r := rs[0]
-		req := r.NewChunk()
+		req := r.NewChunk(nil)
 		it := chunk.NewIterator4Chunk(req)
 		for {
 			err = r.Next(ctx, req)
@@ -272,7 +272,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 			return errors.Trace(err)
 		}
 		r = rs[0]
-		req = r.NewChunk()
+		req = r.NewChunk(nil)
 		it = chunk.NewIterator4Chunk(req)
 		for {
 			err = r.Next(ctx, req)
@@ -323,7 +323,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 		}
 		r = rs[0]
 		defer r.Close()
-		req = r.NewChunk()
+		req = r.NewChunk(nil)
 		err = r.Next(ctx, req)
 		if err != nil {
 			return err
@@ -708,7 +708,7 @@ func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName
 			return errors.Trace(err)
 		}
 		r := rs[0]
-		req := r.NewChunk()
+		req := r.NewChunk(nil)
 		it := chunk.NewIterator4Chunk(req)
 		for {
 			err = r.Next(ctx, req)
@@ -787,7 +787,7 @@ func drainFirstRecordSet(ctx context.Context, rss []sqlexec.RecordSet) ([]chunk.
 	}
 	rs := rss[0]
 	var rows []chunk.Row
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {

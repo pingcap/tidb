@@ -96,7 +96,7 @@ func TestEarlyClose(t *testing.T) {
 		rss, err := tk.Session().Execute(ctx, "select * from earlyclose order by id")
 		require.NoError(t, err)
 		rs := rss[0]
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		require.NoError(t, rs.Next(ctx, req))
 		require.NoError(t, rs.Close())
 	}
@@ -109,7 +109,7 @@ func TestEarlyClose(t *testing.T) {
 	rss, err := tk.Session().Execute(ctx, "select * from earlyclose")
 	require.NoError(t, err)
 	rs := rss[0]
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	require.Error(t, err)
 	require.NoError(t, rs.Close())
@@ -665,7 +665,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	require.NoError(t, err)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(context.Background(), req)
 	require.NoError(t, err)
 	require.NoError(t, err)
@@ -720,7 +720,7 @@ func TestParallelHashAggClose(t *testing.T) {
 	rss, err := tk.Session().Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	require.NoError(t, err)
 	rs := rss[0]
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	require.EqualError(t, err, "HashAggExec.parallelExec error")
 }
@@ -743,7 +743,7 @@ func TestUnparallelHashAggClose(t *testing.T) {
 	rss, err := tk.Session().Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	require.NoError(t, err)
 	rs := rss[0]
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	require.EqualError(t, err, "HashAggExec.unparallelExec error")
 }

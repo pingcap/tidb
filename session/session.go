@@ -1042,9 +1042,9 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, allo
 	var rows []chunk.Row
 	var req *chunk.Chunk
 	if alloc == nil {
-		req = rs.NewChunk()
+		req = rs.NewChunk(nil)
 	} else {
-		req = rs.NewChunkFromAllocator(alloc)
+		req = rs.NewChunk(alloc)
 	}
 	for {
 		err := rs.Next(ctx, req)

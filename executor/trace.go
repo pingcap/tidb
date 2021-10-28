@@ -163,7 +163,7 @@ func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
 }
 
 func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) {
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	var rowCount int
 	for {
 		err := rs.Next(ctx, req)

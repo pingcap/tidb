@@ -55,7 +55,7 @@ func TestFailBusyServerCop(t *testing.T) {
 			}()
 		}
 		require.NoError(t, err)
-		req := rs[0].NewChunk()
+		req := rs[0].NewChunk(nil)
 		err = rs[0].Next(context.Background(), req)
 		require.NoError(t, err)
 		require.NotEqual(t, 0, req.NumRows())
@@ -108,7 +108,7 @@ func TestCoprocessorStreamRecvTimeout(t *testing.T) {
 			res, err := tk.Session().Execute(ctx, "select * from cop_stream_timeout")
 			require.NoError(t, err)
 
-			req := res[0].NewChunk()
+			req := res[0].NewChunk(nil)
 			for i := 0; ; i++ {
 				err := res[0].Next(ctx, req)
 				require.NoError(t, err)
