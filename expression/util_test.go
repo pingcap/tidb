@@ -157,7 +157,7 @@ func TestClone(t *testing.T) {
 	}
 	for _, f := range builtinFuncs {
 		cf := f.Clone()
-		require.True(t, reflect.TypeOf(f) == reflect.TypeOf(cf))
+		require.IsType(t, f, cf)
 	}
 }
 
