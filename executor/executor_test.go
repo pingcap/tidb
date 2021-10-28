@@ -240,7 +240,6 @@ func (s *testSuiteP1) TestPessimisticSelectForUpdate(c *C) {
 	tk.MustQuery("select a from t where id=1").Check(testkit.Rows("2"))
 }
 
-
 func (s *testSuite) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -998,7 +997,6 @@ func (s *testSuiteP1) TestSelectOrderBy(c *C) {
 	r = tk.MustQuery("select id from select_order_test order by id desc limit 1 ")
 	r.Check(testkit.Rows("2"))
 
-
 	r = tk.MustQuery("select id from select_order_test order by id + 1 desc limit 1 ")
 	r.Check(testkit.Rows("2"))
 
@@ -1125,7 +1123,6 @@ func (s *testSuiteP1) TestSelectErrorRow(c *C) {
 
 	err = tk.ExecToErr("select (select 1, 1) from test;")
 	c.Assert(err, NotNil)
-
 
 	err = tk.ExecToErr("select * from test group by (select 1, 1);")
 	c.Assert(err, NotNil)
@@ -1390,7 +1387,6 @@ func (s *testSuiteP2) TestUnion(c *C) {
 	// #issue3771
 	r = tk.MustQuery("SELECT 'a' UNION SELECT CONCAT('a', -4)")
 	r.Sort().Check(testkit.Rows("a", "a-4"))
-
 
 	// test race
 	tk.MustQuery("SELECT @x:=0 UNION ALL SELECT @x:=0 UNION ALL SELECT @x")
