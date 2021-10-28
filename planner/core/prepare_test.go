@@ -210,13 +210,13 @@ func randValue(tk *testkit.TestKit, tbl, col, dtype, rtype string) string {
 	case "float":
 		switch rtype {
 		case "valid":
-			return fmt.Sprintf("%v%vE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
+			return fmt.Sprintf("%v%.4fE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
 		case "out-of-range":
-			return fmt.Sprintf("%v%vE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(100)+38)
+			return fmt.Sprintf("%v%.4fE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(100)+38)
 		case "invalid":
 			return "'invalid-float'"
 		case "str":
-			return fmt.Sprintf("'%v%vE%v'", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
+			return fmt.Sprintf("'%v%.4fE%v'", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
 		}
 	case "decimal": // (10,2)
 		switch rtype {

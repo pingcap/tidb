@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -2216,9 +2217,17 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		baseCount:               count,
 		baseModifyCnt:           modifyCount,
 	}
+	sampleRate := new(float64)
+	if opts[ast.AnalyzeOptNumSamples] == 0 {
+		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
+		if *sampleRate < 0 {
+			*sampleRate = b.getAdjustedSampleRate(b.ctx, task.TableID.GetStatisticsID(), task.TblInfo)
+		}
+	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
+		SampleRate:   sampleRate,
 		SketchSize:   maxSketchSize,
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle),
 		ColumnGroups: colGroups,
@@ -2231,6 +2240,29 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+}
+
+func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int64, tblInfo *model.TableInfo) float64 {
+	statsHandle := domain.GetDomain(sctx).StatsHandle()
+	defaultRate := 0.001
+	if statsHandle == nil {
+		return defaultRate
+	}
+	var statsTbl *statistics.Table
+	if tid == tblInfo.ID {
+		statsTbl = statsHandle.GetTableStats(tblInfo)
+	} else {
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, tid)
+	}
+	if statsTbl == nil {
+		return defaultRate
+	}
+	// If the count in stats_meta is still 0, the table is not large, we scan all rows.
+	if statsTbl.Count == 0 {
+		return 1
+	}
+	// We are expected to scan about 100000 rows or so.
+	return math.Min(1, 110000/float64(statsTbl.Count))
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {

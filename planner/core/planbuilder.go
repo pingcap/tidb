@@ -2065,8 +2065,8 @@ var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:       500,
 	ast.AnalyzeOptCMSketchWidth: 2048,
 	ast.AnalyzeOptCMSketchDepth: 5,
-	ast.AnalyzeOptNumSamples:    100000,
-	ast.AnalyzeOptSampleRate:    math.Float64bits(0),
+	ast.AnalyzeOptNumSamples:    0,
+	ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
 }
 
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int, statsOptions *model.StatsOptions) (map[ast.AnalyzeOptionType]uint64, error) {
