@@ -116,7 +116,6 @@ var builtinStringVecTestTpl = template.Must(template.New("").Parse(`
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
@@ -129,12 +128,12 @@ var vecGeneratedBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinStringEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecGeneratedBuiltinStringCases)
+func TestVectorizedGeneratedBuiltinStringEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecGeneratedBuiltinStringCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinStringFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecGeneratedBuiltinStringCases)
+func TestVectorizedGeneratedBuiltinStringFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecGeneratedBuiltinStringCases)
 }
 
 func BenchmarkVectorizedGeneratedBuiltinStringEvalOneVec(b *testing.B) {

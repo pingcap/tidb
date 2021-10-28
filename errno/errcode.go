@@ -1008,6 +1008,7 @@ const (
 	ErrDataInConsistentExtraIndex          = 8133
 	ErrDataInConsistentMisMatchIndex       = 8134
 	ErrAsOf                                = 8135
+	ErrVariableNoLongerSupported           = 8136
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1052,7 +1053,7 @@ const (
 	ErrPlacementPolicyNotExists           = 8239
 	ErrPlacementPolicyWithDirectOption    = 8240
 	ErrPlacementPolicyInUse               = 8241
-
+	ErrOptOnCacheTable                    = 8242
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002
