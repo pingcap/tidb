@@ -342,9 +342,9 @@ func TestMD5Hash(t *testing.T) {
 		{nil, "", "", true, false},
 	}
 	for _, c := range cases {
-		err := s.ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.charset)
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.charset)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.MD5, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.MD5, primitiveValsToConstants([]interface{}{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
