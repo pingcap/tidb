@@ -8972,8 +8972,8 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 		tk.MustQuery(query.sql).Check(testkit.Rows())
 	}
 }
-func (s *testStaleTxnSuite) TestInvalidReadCacheTable(c *C) {
 
+func (s *testStaleTxnSuite) TestInvalidReadCacheTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"

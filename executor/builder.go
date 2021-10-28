@@ -4516,21 +4516,39 @@ func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) E
 		chkIdx:       0,
 	}
 }
-
 func (b *executorBuilder) validCanReadTemporaryOrCacheTable(tbl *model.TableInfo) error {
-	if tbl.TempTableType == model.TempTableNone && tbl.TableCacheStatusType == model.TableCacheStatusDisable {
+	err := b.validCanReadTemporaryTable(tbl)
+	if err != nil {
+		return err
+	}
+	return b.validCanReadCacheTable(tbl)
+}
+
+func (b *executorBuilder) validCanReadCacheTable(tbl *model.TableInfo) error {
+	if tbl.TableCacheStatusType == model.TableCacheStatusDisable {
 		return nil
 	}
+
+	sessionVars := b.ctx.GetSessionVars()
+
+	// Temporary table can't switch into cache table. so the following code will not cause confusion
+	if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
+		return errors.Trace(errors.New("can not stale read cache table"))
+	}
+
+	return nil
+}
+
+func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error {
+	if tbl.TempTableType == model.TempTableNone {
+		return nil
+	}
+
 	// Some tools like dumpling use history read to dump all table's records and will be fail if we return an error.
 	// So we do not check SnapshotTS here
 
 	sessionVars := b.ctx.GetSessionVars()
-	// Temporary table can't switch into cache table. so the following code will not cause confusion
-	if tbl.TableCacheStatusType != model.TableCacheStatusDisable {
-		if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
-			return errors.Trace(errors.New("can not stale read cache table"))
-		}
-	}
+
 	if tbl.TempTableType == model.TempTableLocal && sessionVars.SnapshotTS != 0 {
 		return errors.New("can not read local temporary table when 'tidb_snapshot' is set")
 	}
