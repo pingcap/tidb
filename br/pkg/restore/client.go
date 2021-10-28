@@ -836,7 +836,6 @@ func (rc *Client) GoValidateChecksum(
 	go func() {
 		wg.Wait()
 		log.Info("all checksum ended")
-		outCh <- struct{}{}
 		close(outCh)
 	}()
 	return outCh
