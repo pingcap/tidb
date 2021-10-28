@@ -1099,11 +1099,9 @@ func (s *testSerialSuite) TestPreparePlanCache4Blacklist(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[0][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[0][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[1][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
 
 	res = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE a < 2 and a > 2;")
 	c.Assert(len(res.Rows()), Equals, 3)
@@ -1120,11 +1118,9 @@ func (s *testSerialSuite) TestPreparePlanCache4Blacklist(c *C) {
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	// The expressions can still be pushed down to tikv.
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[0][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[0][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[1][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
 
 	res = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE a < 2 and a > 2;")
 	c.Assert(len(res.Rows()), Equals, 4)

@@ -904,7 +904,7 @@ func (s *testPrepareSerialSuite) TestIndexMerge4PlanCache(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexMerge.*")
 
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 ddcdsaf 3"))
 	// TODO: should use plan cache here
@@ -914,7 +914,7 @@ func (s *testPrepareSerialSuite) TestIndexMerge4PlanCache(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexMerge.*")
 
 	// rewrite the origin indexMerge test
 	tk.MustExec("drop table if exists t;")
@@ -1141,6 +1141,7 @@ func (s *testPrepareSerialSuite) TestSelectView4PlanCache(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists view_t;")
 	tk.MustExec("create table view_t (a int,b int)")
 	tk.MustExec("insert into view_t values(1,2)")
 	tk.MustExec("create definer='root'@'localhost' view view1 as select * from view_t")
@@ -1230,6 +1231,7 @@ func (s *testPrepareSerialSuite) TestSelectView4PlanCache(c *C) {
 	defer func() {
 		tk.MustExec("set @@tidb_enable_window_function = 0")
 	}()
+	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values (1,1),(1,2),(2,1),(2,2)")
 	tk.MustExec("create definer='root'@'localhost' view v as select a, first_value(a) over(rows between 1 preceding and 1 following), last_value(a) over(rows between 1 preceding and 1 following) from t")
