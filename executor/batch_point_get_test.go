@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,54 +17,21 @@ package executor_test
 import (
 	"fmt"
 	"sync"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-type testBatchPointGetSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
-}
+func TestBatchPointGetExec(t *testing.T) {
+	t.Parallel()
 
-func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockStore()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-
-	dom, err := session.BootstrapSession(store)
-	if err != nil {
-		return nil, nil, err
-	}
-	return store, dom, errors.Trace(err)
-}
-
-func (s *testBatchPointGetSuite) SetUpSuite(c *C) {
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	s.store = store
-	s.dom = dom
-}
-
-func (s *testBatchPointGetSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-}
-
-func (s *testBatchPointGetSuite) TestBatchPointGetExec(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key auto_increment not null, b int, c int, unique key idx_abc(a, b, c))")
@@ -108,8 +75,13 @@ func (s *testBatchPointGetSuite) TestBatchPointGetExec(c *C) {
 	))
 }
 
-func (s *testBatchPointGetSuite) TestBatchPointGetInTxn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestBatchPointGetInTxn(t *testing.T) {
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key auto_increment, name varchar(30))")
@@ -135,8 +107,13 @@ func (s *testBatchPointGetSuite) TestBatchPointGetInTxn(c *C) {
 	tk.MustExec("rollback")
 }
 
-func (s *testBatchPointGetSuite) TestBatchPointGetCache(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestBatchPointGetCache(t *testing.T) {
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table customers (id int primary key, token varchar(255) unique)")
 	tk.MustExec("INSERT INTO test.customers (id, token) VALUES (28, '07j')")
@@ -146,8 +123,13 @@ func (s *testBatchPointGetSuite) TestBatchPointGetCache(c *C) {
 	tk.MustQuery("SELECT id, token FROM test.customers WHERE id IN (28, 29);").Check(testkit.Rows("28 07j", "29 03j"))
 }
 
-func (s *testBatchPointGetSuite) TestIssue18843(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue18843(t *testing.T) {
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t18843 ( id bigint(10) primary key, f varchar(191) default null, unique key `idx_f` (`f`))")
 	tk.MustExec("insert into t18843 values (1, '')")
@@ -158,8 +140,13 @@ func (s *testBatchPointGetSuite) TestIssue18843(c *C) {
 	tk.MustQuery("select * from t18843 where f is null").Check(testkit.Rows("2 <nil>"))
 }
 
-func (s *testBatchPointGetSuite) TestIssue24562(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue24562(t *testing.T) {
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ttt")
 	tk.MustExec("create table ttt(a enum(\"a\",\"b\",\"c\",\"d\"), primary key(a));")
@@ -168,8 +155,13 @@ func (s *testBatchPointGetSuite) TestIssue24562(c *C) {
 	tk.MustQuery("select * from ttt where ttt.a in (1,\"b\")").Check(testkit.Rows("a"))
 }
 
-func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestBatchPointGetUnsignedHandleWithSort(t *testing.T) {
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2 (id bigint(20) unsigned, primary key(id))")
@@ -180,17 +172,21 @@ func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
 	tk.MustQuery("select id from t2 where id in (8738875760185212610, 1, 9814441339970117597) order by id desc").Check(testkit.Rows("9814441339970117597", "8738875760185212610", "1"))
 }
 
-func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
+func TestBatchPointGetLockExistKey(t *testing.T) {
+	t.Parallel()
+
 	var wg sync.WaitGroup
 	errCh := make(chan error)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	testLock := func(rc bool, key string, tableName string) {
 		doneCh := make(chan struct{}, 1)
-		tk1, tk2 := testkit.NewTestKit(c, s.store), testkit.NewTestKit(c, s.store)
+		tk1, tk2 := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
 
 		errCh <- tk1.ExecToErr("use test")
 		errCh <- tk2.ExecToErr("use test")
-		tk1.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+		tk1.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 		errCh <- tk1.ExecToErr(fmt.Sprintf("drop table if exists %s", tableName))
 		errCh <- tk1.ExecToErr(fmt.Sprintf("create table %s(id int, v int, k int, %s key0(id, v))", tableName, key))
@@ -304,7 +300,7 @@ func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
 	}
 
 	// should works for common handle in clustered index
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id varchar(40) primary key)")
@@ -319,36 +315,17 @@ func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
 		close(errCh)
 	}()
 	for err := range errCh {
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 }
 
-func (s *testBatchPointGetSuite) TestPointGetForTemporaryTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create global temporary table t1 (id int primary key, val int) on commit delete rows")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t1 values (1,1)")
-	tk.MustQuery("explain format = 'brief' select * from t1 where id in (1, 2, 3)").
-		Check(testkit.Rows("Batch_Point_Get 3.00 root table:t1 handle:[1 2 3], keep order:false, desc:false"))
+func TestBatchPointGetIssue25167(t *testing.T) {
+	t.Parallel()
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", "return(true)"), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"), IsNil)
-	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-	// Batch point get.
-	tk.MustQuery("select * from t1 where id in (1, 2, 3)").Check(testkit.Rows("1 1"))
-	tk.MustQuery("select * from t1 where id in (2, 3)").Check(testkit.Rows())
-
-	// Point get.
-	tk.MustQuery("select * from t1 where id = 1").Check(testkit.Rows("1 1"))
-	tk.MustQuery("select * from t1 where id = 2").Check(testkit.Rows())
-}
-
-func (s *testBatchPointGetSuite) TestBatchPointGetIssue25167(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key)")

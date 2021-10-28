@@ -11,19 +11,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package auth
+package charset
 
 import (
 	"testing"
-
-	. "github.com/pingcap/check"
 )
 
-var _ = Suite(&testAuthSuite{})
+func TestValidCustomCharset(t *testing.T) {
+	AddCharset(&Charset{"custom", "custom_collation", make(map[string]*Collation), "Custom", 4})
+	defer RemoveCharset("custom")
+	AddCollation(&Collation{99999, "custom", "custom_collation", true})
 
-type testAuthSuite struct {
-}
-
-func TestT(t *testing.T) {
-	TestingT(t)
+	tests := []struct {
+		cs   string
+		co   string
+		succ bool
+	}{
+		{"custom", "custom_collation", true},
+		{"utf8", "utf8_invalid_ci", false},
+	}
+	for _, tt := range tests {
+		testValidCharset(t, tt.cs, tt.co, tt.succ)
+	}
 }

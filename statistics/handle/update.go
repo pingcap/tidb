@@ -1235,7 +1235,10 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	if !ok {
 		return nil
 	}
-	tablePseudo := t.Pseudo || t.IsOutdated()
+	tablePseudo := t.Pseudo
+	if h.mu.ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() {
+		tablePseudo = t.Pseudo || t.IsOutdated()
+	}
 	if !tablePseudo {
 		return nil
 	}
