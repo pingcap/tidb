@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,17 +25,19 @@ import (
 )
 
 func TestIndexAdvise(t *testing.T) {
+	t.Parallel()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 
 	_, err := tk.Exec("index advise infile '/tmp/nonexistence.sql'")
-	require.Equal(t, "Index Advise: don't support load file without local field", err.Error())
+	require.EqualError(t, err, "Index Advise: don't support load file without local field")
 	_, err = tk.Exec("index advise local infile ''")
-	require.Equal(t, "Index Advise: infile path is empty", err.Error())
+	require.EqualError(t, err, "Index Advise: infile path is empty")
 	_, err = tk.Exec("index advise local infile '/tmp/nonexistence.sql' lines terminated by ''")
-	require.Equal(t, "Index Advise: don't support advise index for SQL terminated by nil", err.Error())
+	require.EqualError(t, err, "Index Advise: don't support advise index for SQL terminated by nil")
 
 	path := "/tmp/index_advise.sql"
 	fp, err := os.Create(path)
