@@ -1395,3 +1395,32 @@ func (s *testPrepareSerialSuite) TestValidity4PlanCache(c *C) {
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
+
+func (s *testPrepareSerialSuite) TestListPartition4PlanCache(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("set @@session.tidb_enable_list_partition=1;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int) PARTITION BY LIST (a) ( PARTITION p0 VALUES IN (1, 2, 3), PARTITION p1 VALUES IN (4, 5, 6));")
+
+	tk.MustExec("set @@tidb_partition_prune_mode='static';")
+	tk.MustExec("prepare stmt from 'select * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	// The list partition plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
