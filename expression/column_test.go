@@ -154,21 +154,21 @@ func TestIndexInfo2Cols(t *testing.T) {
 	cols := []*Column{col0}
 	colInfos := []*model.ColumnInfo{colInfo0}
 	resCols, lengths := IndexInfo2PrefixCols(colInfos, cols, indexInfo)
-	require.Equal(t, 1, len(resCols))
-	require.Equal(t, 1, len(lengths))
+	require.Len(t, resCols, 1)
+	require.Len(t, lengths, 1)
 	require.True(t, resCols[0].Equal(nil, col0))
 
 	cols = []*Column{col1}
 	colInfos = []*model.ColumnInfo{colInfo1}
 	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
-	require.Equal(t, 0, len(resCols))
-	require.Equal(t, 0, len(lengths))
+	require.Len(t, resCols, 0)
+	require.Len(t, lengths, 0)
 
 	cols = []*Column{col0, col1}
 	colInfos = []*model.ColumnInfo{colInfo0, colInfo1}
 	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
-	require.Equal(t, 2, len(resCols))
-	require.Equal(t, 2, len(lengths))
+	require.Len(t, resCols, 2)
+	require.Len(t, lengths, 2)
 	require.True(t, resCols[0].Equal(nil, col0))
 	require.True(t, resCols[1].Equal(nil, col1))
 }
