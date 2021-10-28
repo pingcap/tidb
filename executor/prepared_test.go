@@ -969,8 +969,8 @@ func (s *testSerialSuite) TestPreparePlanCache4DifferentSystemVars(c *C) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 5)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexMerge.*")
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
 
 	tk.MustExec("set @@tidb_enable_index_merge = 0;")
 	tk.MustExec("execute stmt;")
@@ -978,8 +978,8 @@ func (s *testSerialSuite) TestPreparePlanCache4DifferentSystemVars(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(len(res.Rows()), Equals, 5)
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexMerge.*")
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
 	tk.MustExec("execute stmt;")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
@@ -1009,6 +1009,36 @@ func (s *testSerialSuite) TestPreparePlanCache4DifferentSystemVars(c *C) {
 	executionInfo := fmt.Sprintf("%v", res.Rows()[1][4])
 	// Do not use the parallel apply.
 	c.Assert(strings.Contains(executionInfo, "Concurrency") == false, Equals, true)
+	tk.MustExec("execute stmt;")
+	// The subquery plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	// test for apply cache
+	tk.MustExec("set @@tidb_enable_collect_execution_info=1;")
+	tk.MustExec("set tidb_mem_quota_apply_cache=33554432")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (null, null)")
+
+	tk.MustExec("prepare stmt from 'select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);';")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(res.Rows()[1][0], Matches, ".*Apply.*")
+	c.Assert(res.Rows()[1][5], Matches, ".*cache:ON.*")
+
+	tk.MustExec("set tidb_mem_quota_apply_cache=0")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(res.Rows()[1][0], Matches, ".*Apply.*")
+	executionInfo = fmt.Sprintf("%v", res.Rows()[1][5])
+	// Do not use the apply cache.
+	c.Assert(strings.Contains(executionInfo, "cache:OFF") == true, Equals, true)
 	tk.MustExec("execute stmt;")
 	// The subquery plan can not be cached.
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
@@ -1069,11 +1099,9 @@ func (s *testSerialSuite) TestPreparePlanCache4Blacklist(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[0][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[0][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[1][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
 
 	res = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE a < 2 and a > 2;")
 	c.Assert(len(res.Rows()), Equals, 3)
@@ -1090,11 +1118,9 @@ func (s *testSerialSuite) TestPreparePlanCache4Blacklist(c *C) {
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 	// The expressions can still be pushed down to tikv.
-	c.Assert(len(res.Rows()), Equals, 4)
-	c.Assert(res.Rows()[0][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[0][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
-	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
-	c.Assert(res.Rows()[2][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[1][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
 
 	res = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE a < 2 and a > 2;")
 	c.Assert(len(res.Rows()), Equals, 4)
