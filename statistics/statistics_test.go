@@ -86,6 +86,10 @@ func (r *recordSet) Next(_ context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+func (r *recordSet) NewChunkFromAllocator(chunk.Allocator) *chunk.Chunk {
+	return r.NewChunk()
+}
+
 func (r *recordSet) NewChunk() *chunk.Chunk {
 	fields := make([]*types.FieldType, 0, len(r.fields))
 	for _, field := range r.fields {
