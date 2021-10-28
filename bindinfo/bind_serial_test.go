@@ -555,7 +555,7 @@ func TestHintsSetID(t *testing.T) {
 
 	utilCleanBindingEnv(tk, dom)
 	err := tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
-	require.True(t, terror.ErrorEqual(err, parser.ErrWarnOptimizerHintParseError))
+	require.True(t, terror.ErrorEqual(err, parser.ErrParse))
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
