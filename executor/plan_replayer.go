@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"bytes"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -46,8 +47,6 @@ type PlanReplayerSingleExec struct {
 	baseExecutor
 	ExecStmt ast.StmtNode
 	Analyze  bool
-	Load     bool
-	File     string
 
 	endFlag bool
 }
@@ -473,4 +472,48 @@ func getRows(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 		}
 	}
 	return rows, nil
+}
+
+type PlanReplayerLoadExec struct {
+	baseExecutor
+	info *PlanReplayerLoadInfo
+}
+
+type PlanReplayerLoadInfo struct {
+	Path string
+	Ctx sessionctx.Context
+}
+
+type planReplayerLoadKeyType int
+
+func (k planReplayerLoadKeyType) String() string {
+	return "plan_replayer_load_var"
+}
+
+const PlanReplayerLoadVarKey planReplayerLoadKeyType = 0
+
+func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.maxChunkSize)
+	if len(e.info.Path) == 0 {
+		return errors.New("plan replayer: file path is empty")
+	}
+	val := e.ctx.Value(PlanReplayerLoadVarKey)
+	if val != nil {
+		e.ctx.SetValue(PlanReplayerLoadVarKey, nil)
+		return errors.New("plan replayer: previous plan replayer load option isn't closed normally")
+	}
+	e.ctx.SetValue(PlanReplayerLoadVarKey, e.info)
+	return nil
+}
+
+func (e *PlanReplayerLoadInfo) Update(data []byte) error{
+	b := bytes.NewReader(data)
+	z, err := zip.NewReader(b, int64(len(data)))
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	for _, zipFile := range z.File {
+		fmt.Println("[plan replayer load]", zipFile.Name)
+	}
+	return nil
 }
