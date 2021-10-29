@@ -1715,16 +1715,24 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	return
 }
 
-// BuildHandleColsForAnalyze is exported for test.
-func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo) HandleCols {
+// BuildHandleColsForAnalyze returns HandleCols for ANALYZE.
+func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) HandleCols {
 	var handleCols HandleCols
 	switch {
 	case tblInfo.PKIsHandle:
 		pkCol := tblInfo.GetPkColInfo()
+		var index int
+		if allColumns {
+			// If all the columns need to be analyzed, we just set index to pkCol.Offset.
+			index = pkCol.Offset
+		} else {
+			// If only a part of the columns need to be analyzed, we need to set index according to colsInfo.
+			index = getColOffsetForAnalyze(colsInfo, pkCol.ID)
+		}
 		handleCols = &IntHandleCols{col: &expression.Column{
 			ID:      pkCol.ID,
 			RetType: &pkCol.FieldType,
-			Index:   pkCol.Offset,
+			Index:   index,
 		}}
 	case tblInfo.IsCommonHandle:
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
@@ -1732,12 +1740,26 @@ func BuildHandleColsForAnalyze(ctx sessionctx.Context, tblInfo *model.TableInfo)
 		columns := make([]*expression.Column, pkColLen)
 		for i := 0; i < pkColLen; i++ {
 			colInfo := tblInfo.Columns[pkIdx.Columns[i].Offset]
+			var index int
+			if allColumns {
+				// If all the columns need to be analyzed, we just set index to colInfo.Offset.
+				index = colInfo.Offset
+			} else {
+				// If only a part of the columns need to be analyzed, we need to set index according to colsInfo.
+				index = getColOffsetForAnalyze(colsInfo, colInfo.ID)
+			}
 			columns[i] = &expression.Column{
 				ID:      colInfo.ID,
 				RetType: &colInfo.FieldType,
-				Index:   colInfo.Offset,
+				Index:   index,
 			}
 		}
+		// We don't modify IndexColumn.Offset for CommonHandleCols.idxInfo according to colsInfo. There are two reasons.
+		// The first reason is that we use Column.Index of CommonHandleCols.columns, rather than IndexColumn.Offset, to get
+		// column value from row samples when calling (*CommonHandleCols).BuildHandleByDatums in (*AnalyzeColumnsExec).buildSamplingStats.
+		// The second reason is that in (cb *CommonHandleCols).BuildHandleByDatums, tablecodec.TruncateIndexValues(cb.tblInfo, cb.idxInfo, datumBuf)
+		// is called, which asks that IndexColumn.Offset of cb.idxInfo must be according to cb,tblInfo.
+		// TODO: find a better way to find handle columns in ANALYZE rather than use Column.Index
 		handleCols = &CommonHandleCols{
 			tblInfo: tblInfo,
 			idxInfo: pkIdx,
@@ -1785,6 +1807,141 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 	return ids, names, nil
 }
 
+// getAnalyzeColumnsInfo returns the columns whose stats need to be collected.
+// 1. For `ANALYZE TABLE t PREDICATE COLUMNS`, it returns union of the predicate columns and the columns in index/primary key/extended stats.
+// 2. For `ANALYZE TABLE t COLUMNS c1, c2, ..., cn`, it returns union of the specified columns(c1, c2, ..., cn) and the columns in index/primary key/extended stats.
+// 3. Otherwise it returns all the columns.
+func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
+	tblInfo := tbl.TableInfo
+	if len(as.ColumnNames) == 0 {
+		return tblInfo.Columns, nil
+	}
+	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
+	for _, colName := range as.ColumnNames {
+		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
+		if colInfo == nil {
+			return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.Name.O, tblInfo.Name.O)
+		}
+		columnIDs[colInfo.ID] = struct{}{}
+	}
+	missingCols := make(map[int64]struct{}, len(tblInfo.Columns)-len(columnIDs))
+	if len(tblInfo.Indices) > 0 {
+		// add indexed columns
+		// Some indexed columns are generated columns so we also need to add the columns that make up those generated columns.
+		columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx, tbl.Schema, tbl.Name, tblInfo.Columns, tblInfo)
+		if err != nil {
+			return nil, err
+		}
+		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
+		for _, idx := range tblInfo.Indices {
+			if idx.State != model.StatePublic {
+				continue
+			}
+			for _, idxCol := range idx.Columns {
+				colInfo := tblInfo.Columns[idxCol.Offset]
+				if _, ok := columnIDs[colInfo.ID]; !ok {
+					columnIDs[colInfo.ID] = struct{}{}
+					missingCols[colInfo.ID] = struct{}{}
+				}
+				if expr := columns[idxCol.Offset].VirtualExpr; expr != nil {
+					virtualExprs = append(virtualExprs, expr)
+				}
+			}
+		}
+		relatedCols := make([]*expression.Column, 0, len(tblInfo.Columns))
+		for len(virtualExprs) > 0 {
+			relatedCols = expression.ExtractColumnsFromExpressions(relatedCols, virtualExprs, nil)
+			virtualExprs = virtualExprs[:0]
+			for _, col := range relatedCols {
+				if _, ok := columnIDs[col.ID]; !ok {
+					columnIDs[col.ID] = struct{}{}
+					missingCols[col.ID] = struct{}{}
+				}
+				if col.VirtualExpr != nil {
+					virtualExprs = append(virtualExprs, col.VirtualExpr)
+				}
+			}
+			relatedCols = relatedCols[:0]
+		}
+	}
+	if tblInfo.PKIsHandle {
+		pkCol := tblInfo.GetPkColInfo()
+		if _, ok := columnIDs[pkCol.ID]; !ok {
+			columnIDs[pkCol.ID] = struct{}{}
+			missingCols[pkCol.ID] = struct{}{}
+		}
+	}
+	if b.ctx.GetSessionVars().EnableExtendedStats {
+		// add the columns related to extended stats
+		// TODO: column_ids read from mysql.stats_extended in optimization phase may be different from that in execution phase((*Handle).BuildExtendedStats)
+		// if someone inserts data into mysql.stats_extended between the two time points, the new added extended stats may not be computed.
+		statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+		extendedStatsColIDs, err := statsHandle.CollectColumnsInExtendedStats(tblInfo.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, colID := range extendedStatsColIDs {
+			if _, ok := columnIDs[colID]; !ok {
+				columnIDs[colID] = struct{}{}
+				missingCols[colID] = struct{}{}
+			}
+		}
+	}
+	if len(missingCols) > 0 {
+		missingNames := make([]string, 0, len(missingCols))
+		for _, col := range tblInfo.Columns {
+			if _, ok := missingCols[col.ID]; ok {
+				missingNames = append(missingNames, col.Name.O)
+			}
+		}
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Columns %s are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.", strings.Join(missingNames, ",")))
+	}
+	columnsInfo := make([]*model.ColumnInfo, 0, len(columnIDs))
+	for _, col := range tblInfo.Columns {
+		if _, ok := columnIDs[col.ID]; ok {
+			columnsInfo = append(columnsInfo, col)
+		}
+	}
+	return columnsInfo, nil
+}
+
+func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
+	for i, col := range colsInfo {
+		if colID == col.ID {
+			return i
+		}
+	}
+	return -1
+}
+
+// getModifiedIndexesInfoForAnalyze returns indexesInfo for ANALYZE.
+// 1. If allColumns is true, we just return public indexes in tblInfo.Indices.
+// 2. If allColumns is false, colsInfo indicate the columns whose stats need to be collected. colsInfo is a subset of tbl.Columns. For each public index
+// in tblInfo.Indices, index.Columns[i].Offset is set according to tblInfo.Columns. Since we decode row samples according to colsInfo rather than tbl.Columns
+// in the execution phase of ANALYZE, we need to modify index.Columns[i].Offset according to colInfos.
+// TODO: find a better way to find indexed columns in ANALYZE rather than use IndexColumn.Offset
+func getModifiedIndexesInfoForAnalyze(tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
+	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+	for _, originIdx := range tblInfo.Indices {
+		if originIdx.State != model.StatePublic {
+			continue
+		}
+		if allColumns {
+			// If all the columns need to be analyzed, we don't need to modify IndexColumn.Offset.
+			idxsInfo = append(idxsInfo, originIdx)
+			continue
+		}
+		// If only a part of the columns need to be analyzed, we need to set IndexColumn.Offset according to colsInfo.
+		idx := originIdx.Clone()
+		for i, idxCol := range idx.Columns {
+			colID := tblInfo.Columns[idxCol.Offset].ID
+			idx.Columns[i].Offset = getColOffsetForAnalyze(colsInfo, colID)
+		}
+		idxsInfo = append(idxsInfo, idx)
+	}
+	return idxsInfo
+}
+
 func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	as *ast.AnalyzeTableStmt,
 	taskSlice []AnalyzeColumnsTask,
@@ -1792,17 +1949,17 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	names []string,
 	tbl *ast.TableName,
 	version int,
-) []AnalyzeColumnsTask {
-	idxInfos := make([]*model.IndexInfo, 0, len(tbl.TableInfo.Indices))
-	for _, idx := range tbl.TableInfo.Indices {
-		if idx.State != model.StatePublic {
-			continue
-		}
-		idxInfos = append(idxInfos, idx)
-	}
+) ([]AnalyzeColumnsTask, error) {
 	if as.Incremental {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
+	colsInfo, err := b.getAnalyzeColumnsInfo(as, tbl)
+	if err != nil {
+		return nil, err
+	}
+	allColumns := len(tbl.TableInfo.Columns) == len(colsInfo)
+	indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, colsInfo)
+	handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, colsInfo)
 	for i, id := range physicalIDs {
 		if id == tbl.TableInfo.ID {
 			id = -1
@@ -1816,11 +1973,11 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			StatsVersion:  version,
 		}
 		newTask := AnalyzeColumnsTask{
-			HandleCols:  BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo),
-			ColsInfo:    tbl.TableInfo.Columns,
+			HandleCols:  handleCols,
+			ColsInfo:    colsInfo,
 			AnalyzeInfo: info,
 			TblInfo:     tbl.TableInfo,
-			Indexes:     idxInfos,
+			Indexes:     indexes,
 		}
 		if newTask.HandleCols == nil {
 			extraCol := model.NewExtraHandleColInfo()
@@ -1830,7 +1987,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		taskSlice = append(taskSlice, newTask)
 	}
-	return taskSlice
+	return taskSlice, nil
 }
 
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
@@ -1860,8 +2017,14 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 		}
 		if version == statistics.Version2 {
-			p.ColTasks = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version)
+			p.ColTasks, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, names, tbl, version)
+			if err != nil {
+				return nil, err
+			}
 			continue
+		}
+		if len(as.ColumnNames) > 0 {
+			return nil, errors.Errorf("Only the analyze version 2 supports analyzing the specified columns")
 		}
 		for _, idx := range idxInfo {
 			// For prefix common handle. We don't use analyze mixed to handle it with columns. Because the full value
@@ -1889,7 +2052,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				})
 			}
 		}
-		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo)
+		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, true, nil)
 		if len(colInfo) > 0 || handleCols != nil {
 			for i, id := range physicalIDs {
 				if id == tbl.TableInfo.ID {
@@ -1940,7 +2103,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	}
 	for _, idxName := range as.IndexNames {
 		if isPrimaryIndex(idxName) {
-			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
+			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, true, nil)
 			// Fast analyze use analyze column to solve int handle.
 			if handleCols != nil && handleCols.IsInt() && b.ctx.GetSessionVars().EnableFastAnalyze {
 				for i, id := range physicalIDs {
@@ -2021,7 +2184,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 			}
 		}
 	}
-	handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
+	handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, true, nil)
 	if handleCols != nil {
 		for i, id := range physicalIDs {
 			if id == tblInfo.ID {
