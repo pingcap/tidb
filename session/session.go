@@ -2788,10 +2788,7 @@ func (s *session) preparePDClient() error {
 		return err
 	}
 	tsoFollowerProxyOption := s.GetSessionVars().GetTSOFollowerProxyOption()
-	if err := pdClient.UpdateOption(pd.EnableTSOFollowerProxy, tsoFollowerProxyOption); err != nil {
-		return err
-	}
-	return nil
+	return pdClient.UpdateOption(pd.EnableTSOFollowerProxy, tsoFollowerProxyOption)
 }
 
 // PrepareTSFuture uses to try to get ts future.
