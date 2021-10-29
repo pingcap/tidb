@@ -95,6 +95,23 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestEliminateProjectionUnderUnion(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+	ca := "Select a from t3 join ( (select 127 as IDD from t3) union all (select 1 as IDD from t3) ) u on t3.b = u.IDD;"
+	comment := Commentf("for %s", ca)
+	stmt, err := s.ParseOneStmt(ca, "", "")
+	c.Assert(err, IsNil, comment)
+	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
+	schemaNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.Flag & mysql.NotNullFlag
+	exprNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).Exprs[0].GetType().Flag & mysql.NotNullFlag
+	c.Assert(schemaNullFlag, Equals, exprNullFlag)
+}
+
 func (s *testPlanSuite) TestJoinPredicatePushDown(c *C) {
 	defer testleak.AfterTest(c)()
 	var (
