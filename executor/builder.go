@@ -2293,7 +2293,6 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 		// So we increase the number to 150000 to reduce this error rate.
 		return math.Min(1, 150000/approxiCount)
 	}
-	logutil.BgLogger().Warn("calc rate", zap.Float64("tbl count", float64(statsTbl.Count)))
 	// We are expected to scan about 100000 rows or so.
 	// Since there's tiny error rate around the count from the stats meta, we use
 	return math.Min(1, 110000/float64(statsTbl.Count))
