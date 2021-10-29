@@ -16,6 +16,7 @@ package executor
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -25,7 +26,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"bytes"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -41,6 +42,9 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
+
+var _ Executor = &PlanReplayerSingleExec{}
+var _ Executor = &PlanReplayerLoadExec{}
 
 // PlanReplayerSingleExec represents a plan replayer executor.
 type PlanReplayerSingleExec struct {
@@ -411,9 +415,10 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 	if err != nil {
 		return errors.AddStack(err)
 	}
-	for _, row := range sRows {
-		fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
+	if len(sRows) != 2 {
+		return errors.New(fmt.Sprintf("plan replayer: get create table %v.%v failed", pair.DBName, pair.TableName))
 	}
+	fmt.Fprintf(fw, "%s", sRows[1])
 	if len(recordSets) > 0 {
 		if err := recordSets[0].Close(); err != nil {
 			return err
@@ -506,14 +511,82 @@ func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error
 	return nil
 }
 
+func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
+	for _, zipFile := range z.File {
+		if strings.Compare(zipFile.Name, "variables.toml") == 0 {
+			varMap := make(map[string]string)
+			v, err := zipFile.Open()
+			if err != nil {
+				return errors.AddStack(err)
+			}
+			defer v.Close()
+			_, err = toml.DecodeReader(v, &varMap)
+			if err != nil {
+				return errors.AddStack(err)
+			}
+			vars := ctx.GetSessionVars()
+			for name, value := range varMap {
+				sysVar := variable.GetSysVar(name)
+				if sysVar == nil {
+					return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+				}
+				sVal, err := sysVar.Validate(vars, value, variable.ScopeSession)
+				if err != nil {
+					logutil.BgLogger().Debug(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
+					continue
+				}
+				err = vars.SetSystemVar(name, sVal)
+			}
+		}
+	}
+	return nil
+}
+
+func createSchemaAndTables(ctx sessionctx.Context, schema string, f *zip.File) error {
+	if len(schema) == 0 {
+		return errors.New("plan replayer: empty schema name")
+	}
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("create database `%s`", schema))
+	fmt.Println("[err]", err)
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("use `%s`", schema))
+	if err != nil {
+		return err
+	}
+	r, err := f.Open()
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	defer r.Close()
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(r)
+	fmt.Println("[buf]", buf.String())
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), buf.String())
+
+	return nil
+}
+
 func (e *PlanReplayerLoadInfo) Update(data []byte) error{
 	b := bytes.NewReader(data)
 	z, err := zip.NewReader(b, int64(len(data)))
 	if err != nil {
 		return errors.AddStack(err)
 	}
+
+	// load variable
+	err = loadVariables(e.Ctx, z)
+	if err != nil {
+		return err
+	}
+
+	// build schema and table
 	for _, zipFile := range z.File {
-		fmt.Println("[plan replayer load]", zipFile.Name)
+		path := strings.Split(zipFile.Name, "/")
+		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 {
+			err = createSchemaAndTables(e.Ctx, strings.Split(path[1], ".")[0], zipFile)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

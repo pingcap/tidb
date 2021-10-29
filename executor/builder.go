@@ -909,7 +909,7 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executor {
 	if v.Load {
 		e := &PlanReplayerLoadExec{
-			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
 			info: &PlanReplayerLoadInfo{Path: v.File, Ctx: b.ctx},
 		}
 		return e
