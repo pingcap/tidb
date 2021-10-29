@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -49,12 +50,12 @@ func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, clien
 // PbConverter supplys methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
-	sc     *stmtctx.StatementContext
+	sv     *variable.SessionVars
 }
 
 // NewPBConverter creates a PbConverter.
-func NewPBConverter(client kv.Client, sc *stmtctx.StatementContext) PbConverter {
-	return PbConverter{client: client, sc: sc}
+func NewPBConverter(client kv.Client, sv *variable.SessionVars) PbConverter {
+	return PbConverter{client: client, sv: sv}
 }
 
 // ExprToPB converts Expression to TiPB.
@@ -209,8 +210,13 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
+
 	switch column.GetType().Tp {
 	case mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
+		pc.sv.RaiseWarningWhenMPPEnforced("MPP mode may be blocked because")
+
+			"Calculation of expr '" + column.String() + "' can not be pushed to TiFlash because it contains '" + types.TypeStr(column.GetType().Tp) + "' type"))
+
 		return nil
 	case mysql.TypeEnum:
 		if !IsPushDownEnabled("enum", kv.UnSpecified) {
