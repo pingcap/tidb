@@ -1972,13 +1972,6 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			Incremental:   false,
 			StatsVersion:  version,
 		}
-		colsInfo, err := b.getAnalyzeColumnsInfo(as, tbl)
-		if err != nil {
-			return nil, err
-		}
-		allColumns := len(tbl.TableInfo.Columns) == len(colsInfo)
-		indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, colsInfo)
-		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, colsInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,
 			ColsInfo:    colsInfo,
