@@ -17,6 +17,8 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"sort"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
@@ -27,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	"sort"
 )
 
 func (s *testDBSuite6) TestAlterTableAlterPartition(c *C) {
