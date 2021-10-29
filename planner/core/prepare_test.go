@@ -210,13 +210,13 @@ func randValue(tk *testkit.TestKit, tbl, col, dtype, rtype string) string {
 	case "float":
 		switch rtype {
 		case "valid":
-			return fmt.Sprintf("%v%vE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
+			return fmt.Sprintf("%v%.4fE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
 		case "out-of-range":
-			return fmt.Sprintf("%v%vE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(100)+38)
+			return fmt.Sprintf("%v%.4fE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(100)+38)
 		case "invalid":
 			return "'invalid-float'"
 		case "str":
-			return fmt.Sprintf("'%v%vE%v'", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
+			return fmt.Sprintf("'%v%.4fE%v'", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
 		}
 	case "decimal": // (10,2)
 		switch rtype {
@@ -319,6 +319,53 @@ func (s *testPrepareSerialSuite) TestPrepareCacheChangingParamType(c *C) {
 			}
 		}
 	}
+}
+
+func (s *testPrepareSerialSuite) TestPrepareCacheChangeCharsetCollation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a varchar(64))`)
+	tk.MustExec(`set character_set_connection=utf8`)
+
+	tk.MustExec(`prepare s from 'select * from t where a=?'`)
+	tk.MustExec(`set @x='a'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustExec(`set @x='b'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`set character_set_connection=latin1`)
+	tk.MustExec(`set @x='c'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // cannot reuse the previous plan since the charset is changed
+	tk.MustExec(`set @x='d'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`set collation_connection=binary`)
+	tk.MustExec(`set @x='e'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // cannot reuse the previous plan since the collation is changed
+	tk.MustExec(`set @x='f'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
