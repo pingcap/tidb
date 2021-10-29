@@ -1926,6 +1926,12 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
+	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'hdfs:///tmp/test';")
+	require.EqualError(t, err, "[planner:8132]Feature 'hdfs storage' is not supported when security enhanced mode is enabled")
+
+	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'HDFS:///tmp/test';")
+	require.EqualError(t, err, "[planner:8132]Feature 'hdfs storage' is not supported when security enhanced mode is enabled")
+
 }
 
 func TestRenameUser(t *testing.T) {
