@@ -1813,17 +1813,16 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 // 3. Otherwise it returns all the columns.
 func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
 	tblInfo := tbl.TableInfo
-	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
-	if as.HistogramOperation == ast.HistogramOperationNop && len(as.ColumnNames) > 0 {
-		for _, colName := range as.ColumnNames {
-			colInfo := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
-			if colInfo == nil {
-				return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.Name.O, tblInfo.Name.O)
-			}
-			columnIDs[colInfo.ID] = struct{}{}
-		}
-	} else {
+	if len(as.ColumnNames) == 0 {
 		return tblInfo.Columns, nil
+	}
+	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
+	for _, colName := range as.ColumnNames {
+		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
+		if colInfo == nil {
+			return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.Name.O, tblInfo.Name.O)
+		}
+		columnIDs[colInfo.ID] = struct{}{}
 	}
 	missingCols := make(map[int64]struct{}, len(tblInfo.Columns)-len(columnIDs))
 	if len(tblInfo.Indices) > 0 {
@@ -1835,6 +1834,9 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 		}
 		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 		for _, idx := range tblInfo.Indices {
+			if idx.State != model.StatePublic {
+				continue
+			}
 			for _, idxCol := range idx.Columns {
 				colInfo := tblInfo.Columns[idxCol.Offset]
 				if _, ok := columnIDs[colInfo.ID]; !ok {
@@ -1951,6 +1953,13 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	if as.Incremental {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
+	colsInfo, err := b.getAnalyzeColumnsInfo(as, tbl)
+	if err != nil {
+		return nil, err
+	}
+	allColumns := len(tbl.TableInfo.Columns) == len(colsInfo)
+	indexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, colsInfo)
+	handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, colsInfo)
 	for i, id := range physicalIDs {
 		if id == tbl.TableInfo.ID {
 			id = -1
@@ -2021,8 +2030,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			}
 			continue
 		}
-		// TODO: support analyze specified columns for version 1
-		if as.HistogramOperation == ast.HistogramOperationNop && len(as.ColumnNames) > 0 {
+		if len(as.ColumnNames) > 0 {
 			return nil, errors.Errorf("Only the analyze version 2 supports analyzing the specified columns")
 		}
 		for _, idx := range idxInfo {
@@ -2229,8 +2237,8 @@ var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:       500,
 	ast.AnalyzeOptCMSketchWidth: 2048,
 	ast.AnalyzeOptCMSketchDepth: 5,
-	ast.AnalyzeOptNumSamples:    100000,
-	ast.AnalyzeOptSampleRate:    math.Float64bits(0),
+	ast.AnalyzeOptNumSamples:    0,
+	ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
 }
 
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
@@ -4356,6 +4364,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 
 func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
 	p := &PlanReplayerSingle{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))
+	p.SetSchema(schema.col2Schema())
+	p.names = schema.names
 	return p
 }
 
