@@ -2058,14 +2058,23 @@ func (d *ddl) createTableWithInfoJob(
 		}
 	}
 
-	// FIXME: Implement `tryRetainID`
-	if err := d.assignTableID(tbInfo); err != nil {
-		return nil, errors.Trace(err)
+	_, exists := is.TableByID(tbInfo.ID)
+	if !tryRetainID || exists {
+		if err := d.assignTableID(tbInfo); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	if tbInfo.Partition != nil {
-		if err := d.assignPartitionIDs(tbInfo.Partition.Definitions); err != nil {
-			return nil, errors.Trace(err)
+		// NOTE: does not check if partition ID exists.
+		// it assumes that:
+		// 1. the final transaction will detect if there is a duplication
+		// 2. if table id is not duplicated, so do partition IDs
+		// since partition search is slow, it is avoided.
+		if !tryRetainID || exists {
+			if err := d.assignPartitionIDs(tbInfo.Partition.Definitions); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 
@@ -2153,15 +2162,18 @@ func (d *ddl) CreateTableWithInfo(
 func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	dbName model.CIStr,
 	infos []*model.TableInfo,
-	onExist OnExist,
-	tryRetainID bool) error {
+	onExist OnExist) error {
 	jobs := &model.Job{
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       make([]interface{}, 0, 2),
 	}
-	duplication := make(map[string]bool)
 	args := make([]*model.TableInfo, 0, len(infos))
+
 	var err error
+
+	// 1. counts how many IDs are there
+	// 2. if there is any duplicated table name
+	totalID := 0
+	duplication := make(map[string]struct{})
 	for _, info := range infos {
 		if _, ok := duplication[info.Name.L]; ok {
 			err = infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
@@ -2174,7 +2186,30 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			return errors.Trace(err)
 		}
 
-		job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, tryRetainID)
+		duplication[info.Name.L] = struct{}{}
+
+		totalID += 1
+		parts := info.GetPartitionInfo()
+		if parts != nil {
+			totalID += len(parts.Definitions)
+		}
+	}
+
+	genIDs, err := d.genGlobalIDs(totalID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, info := range infos {
+		info.ID, genIDs = genIDs[0], genIDs[1:]
+
+		if parts := info.GetPartitionInfo(); parts != nil {
+			for i := range parts.Definitions {
+				parts.Definitions[i].ID, genIDs = genIDs[0], genIDs[1:]
+			}
+		}
+
+		job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, true)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2199,7 +2234,6 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			return errors.Trace(fmt.Errorf("except table info"))
 		}
 		args = append(args, info)
-		duplication[info.Name.L] = true
 	}
 	if len(args) == 0 {
 		return nil

@@ -154,8 +154,7 @@ type DDL interface {
 	BatchCreateTableWithInfo(ctx sessionctx.Context,
 		schema model.CIStr,
 		info []*model.TableInfo,
-		onExist OnExist,
-		tryRetainID bool) error
+		onExist OnExist) error
 
 	// Start campaigns the owner and starts workers.
 	// ctxPool is used for the worker's delRangeManager and creates sessions.
