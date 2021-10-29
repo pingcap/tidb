@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
