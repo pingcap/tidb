@@ -392,8 +392,8 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		// we can't use GetBytes here because GetBytes return raw memory in strBuf,
 		// and the memory will be modified in AESDecryptWithCBC & AESDecryptWithOFB & AESDecryptWithCFB
 		str, err := cryptEnc.Encode(encodedBuf, []byte(strBuf.GetString(i)))
-		if err == nil {
-			str = encodedBuf
+		if err != nil {
+			return err
 		}
 		if isCBC {
 			plainText, err = encrypt.AESDecryptWithCBC(str, key, iv)
