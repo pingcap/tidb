@@ -394,9 +394,10 @@ func (b *Bundle) Reset(ruleIndex int, newIDs []int64) *Bundle {
 		// Involve all the table level objects.
 		startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
 		endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
-		for _, rule := range basicRules {
+		for j, rule := range basicRules {
 			clone := rule.Clone()
-			clone.ID = ruleID
+			// for the rules of one element id, distinguishing the rule ids to avoid the PD's overlap.
+			clone.ID = ruleID + "_" + strconv.FormatInt(int64(j), 10)
 			clone.GroupID = b.ID
 			clone.StartKeyHex = startKey
 			clone.EndKeyHex = endKey
