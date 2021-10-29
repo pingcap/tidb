@@ -24,13 +24,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -327,7 +327,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
 
-	handleCols := core.BuildHandleColsForAnalyze(tk.Se, tblInfo)
+	handleCols := core.BuildHandleColsForAnalyze(tk.Se, tblInfo, true, nil)
 	var colsInfo []*model.ColumnInfo
 	var indicesInfo []*model.IndexInfo
 	for _, col := range tblInfo.Columns {

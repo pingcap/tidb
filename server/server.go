@@ -1,3 +1,17 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // The MIT License (MIT)
 //
 // Copyright (c) 2014 wandoulabs
@@ -12,20 +26,6 @@
 //
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
-
-// Copyright 2015 PingCAP, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
 
 package server
 
@@ -49,13 +49,13 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -97,6 +97,7 @@ var (
 	errInvalidType             = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
 	errNotAllowedCommand       = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
 	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
+	errAccessDeniedNoPassword  = dbterror.ClassServer.NewStd(errno.ErrAccessDeniedNoPassword)
 	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
 	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
 	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
@@ -249,6 +250,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	if s.cfg.Socket != "" {
+
+		err := cleanupStaleSocket(s.cfg.Socket)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		if s.socket, err = net.Listen("unix", s.cfg.Socket); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -293,6 +300,30 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	variable.RegisterStatistics(s)
 
 	return s, nil
+}
+
+func cleanupStaleSocket(socket string) error {
+	sockStat, err := os.Stat(socket)
+	if err == nil {
+		if sockStat.Mode().Type() != os.ModeSocket {
+			return fmt.Errorf(
+				"the specified socket file %s is a %s instead of a socket file",
+				socket, sockStat.Mode().String())
+		}
+
+		_, err = net.Dial("unix", socket)
+		if err != nil {
+			logutil.BgLogger().Warn("Unix socket exists and is nonfunctional, removing it",
+				zap.String("socket", socket), zap.Error(err))
+			err = os.Remove(socket)
+			if err != nil {
+				return fmt.Errorf("failed to remove socket file %s", socket)
+			}
+		} else {
+			return fmt.Errorf("unix socket %s exists and is functional, not removing it", socket)
+		}
+	}
+	return nil
 }
 
 func setSSLVariable(ca, key, cert string) {
@@ -375,7 +406,20 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 
 		clientConn := s.newConn(conn)
 		if isUnixSocket {
+
+			uc, ok := conn.(*net.UnixConn)
+			if !ok {
+				logutil.BgLogger().Error("Expected UNIX socket, but got something else")
+				return
+			}
+
 			clientConn.isUnixSocket = true
+			clientConn.peerHost = "localhost"
+			clientConn.socketCredUID, err = linux.GetSockUID(*uc)
+			if err != nil {
+				logutil.BgLogger().Error("Failed to get UNIX socket peer credentials", zap.Error(err))
+				return
+			}
 		}
 
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
@@ -471,8 +515,8 @@ func (s *Server) onConn(conn *clientConn) {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
-		err = conn.Close()
 		terror.Log(errors.Trace(err))
+		terror.Log(errors.Trace(conn.Close()))
 		return
 	}
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +20,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -461,7 +462,7 @@ func (bc *Client) BackupRange(
 		zap.Uint32("concurrency", req.Concurrency))
 
 	var allStores []*metapb.Store
-	allStores, err = conn.GetAllTiKVStores(ctx, bc.mgr.GetPDClient(), conn.SkipTiFlash)
+	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), conn.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -940,7 +941,26 @@ backupLoop:
 	return nil
 }
 
+// gRPC communication cancelled with connection closing
+const (
+	gRPC_Cancel = "the client connection is closing"
+)
+
 // isRetryableError represents whether we should retry reset grpc connection.
 func isRetryableError(err error) bool {
-	return status.Code(err) == codes.Unavailable
+
+	if status.Code(err) == codes.Unavailable {
+		return true
+	}
+
+	// At least, there are two possible cancel() call,
+	// one from backup range, another from gRPC, here we retry when gRPC cancel with connection closing
+	if status.Code(err) == codes.Canceled {
+		if s, ok := status.FromError(err); ok {
+			if strings.Contains(s.Message(), gRPC_Cancel) {
+				return true
+			}
+		}
+	}
+	return false
 }

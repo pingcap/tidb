@@ -19,11 +19,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -109,7 +109,8 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 		Columns: columns,
 	}.Init(b.sctx, &property.StatsInfo{}, 0)
 	p.SetSchema(schema)
-	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
+	switch strings.ToUpper(p.Table.Name.O) {
+	case infoschema.ClusterTableSlowLog:
 		extractor := &SlowQueryExtractor{}
 		extractor.Desc = tblScan.Desc
 		if b.ranges != nil {
@@ -119,6 +120,8 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 			}
 		}
 		p.Extractor = extractor
+	case infoschema.ClusterTableStatementsSummary, infoschema.ClusterTableStatementsSummaryHistory:
+		p.Extractor = &StatementsSummaryExtractor{}
 	}
 	return p, nil
 }

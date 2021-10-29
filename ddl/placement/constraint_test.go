@@ -24,6 +24,13 @@ var _ = Suite(&testConstraintSuite{})
 
 type testConstraintSuite struct{}
 
+func (t *testConstraintSuite) TestNewFromYaml(c *C) {
+	_, err := NewConstraintsFromYaml([]byte("[]"))
+	c.Assert(err, IsNil)
+	_, err = NewConstraintsFromYaml([]byte("]"))
+	c.Assert(err, NotNil)
+}
+
 func (t *testConstraintSuite) TestNew(c *C) {
 	type TestCase struct {
 		name  string

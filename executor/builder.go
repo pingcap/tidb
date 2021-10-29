@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,9 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -39,6 +37,9 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
@@ -85,8 +87,8 @@ type executorBuilder struct {
 	hasLock          bool
 	Ti               *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
-	isStaleness bool
-	txnScope    string
+	isStaleness      bool
+	readReplicaScope string
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -97,14 +99,14 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, txnScope string) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *executorBuilder {
 	return &executorBuilder{
-		ctx:         ctx,
-		is:          is,
-		Ti:          ti,
-		snapshotTS:  snapshotTS,
-		isStaleness: isStaleness,
-		txnScope:    txnScope,
+		ctx:              ctx,
+		is:               is,
+		Ti:               ti,
+		snapshotTS:       snapshotTS,
+		isStaleness:      isStaleness,
+		readReplicaScope: replicaReadScope,
 	}
 }
 
@@ -161,8 +163,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildLoadStats(v)
 	case *plannercore.IndexAdvise:
 		return b.buildIndexAdvise(v)
-	case *plannercore.PlanRecreatorSingle:
-		return b.buildPlanRecreatorSingle(v)
+	case *plannercore.PlanReplayerSingle:
+		return b.buildPlanReplayerSingle(v)
 	case *plannercore.PhysicalLimit:
 		return b.buildLimit(v)
 	case *plannercore.Prepare:
@@ -696,7 +698,7 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 	b.snapshotTS = v.SnapshotTS
 	b.isStaleness = v.IsStaleness
-	b.txnScope = v.TxnScope
+	b.readReplicaScope = v.ReadReplicaScope
 	if b.snapshotTS != 0 {
 		b.is, b.err = domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
 	}
@@ -714,7 +716,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		vs := strings.Split(val.(string), "_")
 		assertTS, assertTxnScope := vs[0], vs[1]
 		if strconv.FormatUint(b.snapshotTS, 10) != assertTS ||
-			assertTxnScope != b.txnScope {
+			assertTxnScope != b.readReplicaScope {
 			panic("execute prepare statement have wrong staleness option")
 		}
 	})
@@ -728,6 +730,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		Tp:           v.Tp,
 		DBName:       model.NewCIStr(v.DBName),
 		Table:        v.Table,
+		Partition:    v.Partition,
 		Column:       v.Column,
 		IndexName:    v.IndexName,
 		Flag:         v.Flag,
@@ -903,10 +906,13 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 	return e
 }
 
-func (b *executorBuilder) buildPlanRecreatorSingle(v *plannercore.PlanRecreatorSingle) Executor {
-	e := &PlanRecreatorSingleExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		info:         &PlanRecreatorSingleInfo{v.ExecStmt, v.Analyze, v.Load, v.File, b.ctx},
+func (b *executorBuilder) buildPlanReplayerSingle(v *plannercore.PlanReplayerSingle) Executor {
+	e := &PlanReplayerSingleExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		ExecStmt:     v.ExecStmt,
+		Analyze:      v.Analyze,
+		Load:         v.Load,
+		File:         v.File,
 	}
 	return e
 }
@@ -950,6 +956,7 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmt:         v.Statement,
 		is:           b.is,
+		tempTableDDL: temptable.GetTemporaryTableDDL(b.ctx),
 	}
 	return e
 }
@@ -1591,11 +1598,11 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableTiKVStoreStatus),
 			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted),
-			strings.ToLower(infoschema.TablePlacementPolicy),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
-			strings.ToLower(infoschema.TableRegionLabel):
+			strings.ToLower(infoschema.TableRegionLabel),
+			strings.ToLower(infoschema.TablePlacementRules):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -1641,8 +1648,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &stmtSummaryTableRetriever{
-					table:   v.Table,
-					columns: v.Columns,
+					table:     v.Table,
+					columns:   v.Columns,
+					extractor: v.Extractor.(*plannercore.StatementsSummaryExtractor),
 				},
 			}
 		case strings.ToLower(infoschema.TableColumns):
@@ -2212,9 +2220,17 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		baseCount:               count,
 		baseModifyCnt:           modifyCount,
 	}
+	sampleRate := new(float64)
+	if opts[ast.AnalyzeOptNumSamples] == 0 {
+		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
+		if *sampleRate < 0 {
+			*sampleRate = b.getAdjustedSampleRate(b.ctx, task.TableID.GetStatisticsID(), task.TblInfo)
+		}
+	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
+		SampleRate:   sampleRate,
 		SketchSize:   maxSketchSize,
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle),
 		ColumnGroups: colGroups,
@@ -2227,6 +2243,29 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+}
+
+func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int64, tblInfo *model.TableInfo) float64 {
+	statsHandle := domain.GetDomain(sctx).StatsHandle()
+	defaultRate := 0.001
+	if statsHandle == nil {
+		return defaultRate
+	}
+	var statsTbl *statistics.Table
+	if tid == tblInfo.ID {
+		statsTbl = statsHandle.GetTableStats(tblInfo)
+	} else {
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, tid)
+	}
+	if statsTbl == nil {
+		return defaultRate
+	}
+	// If the count in stats_meta is still 0, the table is not large, we scan all rows.
+	if statsTbl.Count == 0 {
+		return 1
+	}
+	// We are expected to scan about 100000 rows or so.
+	return math.Min(1, 110000/float64(statsTbl.Count))
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
@@ -2606,6 +2645,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	for i, col := range v.OuterHashKeys {
 		outerTypes[col.Index] = outerTypes[col.Index].Clone()
 		outerTypes[col.Index].Collate = innerTypes[v.InnerHashKeys[i].Index].Collate
+		outerTypes[col.Index].Flag = col.RetType.Flag
 	}
 
 	var (
@@ -2823,22 +2863,22 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	e := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPB:          dagReq,
-		startTS:        startTS,
-		txnScope:       b.txnScope,
-		isStaleness:    b.isStaleness,
-		table:          tbl,
-		keepOrder:      ts.KeepOrder,
-		desc:           ts.Desc,
-		columns:        ts.Columns,
-		streaming:      streaming,
-		corColInFilter: b.corColInDistPlan(v.TablePlans),
-		corColInAccess: b.corColInAccess(v.TablePlans[0]),
-		plans:          v.TablePlans,
-		tablePlan:      v.GetTablePlan(),
-		storeType:      v.StoreType,
-		batchCop:       v.BatchCop,
+		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		dagPB:            dagReq,
+		startTS:          startTS,
+		readReplicaScope: b.readReplicaScope,
+		isStaleness:      b.isStaleness,
+		table:            tbl,
+		keepOrder:        ts.KeepOrder,
+		desc:             ts.Desc,
+		columns:          ts.Columns,
+		streaming:        streaming,
+		corColInFilter:   b.corColInDistPlan(v.TablePlans),
+		corColInAccess:   b.corColInAccess(v.TablePlans[0]),
+		plans:            v.TablePlans,
+		tablePlan:        v.GetTablePlan(),
+		storeType:        v.StoreType,
+		batchCop:         v.BatchCop,
 	}
 	if tbl.Meta().Partition != nil {
 		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
@@ -3100,24 +3140,24 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		return nil, err
 	}
 	e := &IndexReaderExecutor{
-		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPB:           dagReq,
-		startTS:         startTS,
-		txnScope:        b.txnScope,
-		isStaleness:     b.isStaleness,
-		physicalTableID: physicalTableID,
-		table:           tbl,
-		index:           is.Index,
-		keepOrder:       is.KeepOrder,
-		desc:            is.Desc,
-		columns:         is.Columns,
-		streaming:       streaming,
-		corColInFilter:  b.corColInDistPlan(v.IndexPlans),
-		corColInAccess:  b.corColInAccess(v.IndexPlans[0]),
-		idxCols:         is.IdxCols,
-		colLens:         is.IdxColLens,
-		plans:           v.IndexPlans,
-		outputColumns:   v.OutputColumns,
+		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		dagPB:            dagReq,
+		startTS:          startTS,
+		readReplicaScope: b.readReplicaScope,
+		isStaleness:      b.isStaleness,
+		physicalTableID:  physicalTableID,
+		table:            tbl,
+		index:            is.Index,
+		keepOrder:        is.KeepOrder,
+		desc:             is.Desc,
+		columns:          is.Columns,
+		streaming:        streaming,
+		corColInFilter:   b.corColInDistPlan(v.IndexPlans),
+		corColInAccess:   b.corColInAccess(v.IndexPlans[0]),
+		idxCols:          is.IdxCols,
+		colLens:          is.IdxColLens,
+		plans:            v.IndexPlans,
+		outputColumns:    v.OutputColumns,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -3721,7 +3761,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
-		SetTxnScope(e.txnScope).
+		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
@@ -4238,22 +4278,22 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	}
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
-		baseExecutor: newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
-		tblInfo:      plan.TblInfo,
-		idxInfo:      plan.IndexInfo,
-		rowDecoder:   decoder,
-		startTS:      startTS,
-		txnScope:     b.txnScope,
-		isStaleness:  b.isStaleness,
-		keepOrder:    plan.KeepOrder,
-		desc:         plan.Desc,
-		lock:         plan.Lock,
-		waitTime:     plan.LockWaitTime,
-		partExpr:     plan.PartitionExpr,
-		partPos:      plan.PartitionColPos,
-		singlePart:   plan.SinglePart,
-		partTblID:    plan.PartTblID,
-		columns:      plan.Columns,
+		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
+		tblInfo:          plan.TblInfo,
+		idxInfo:          plan.IndexInfo,
+		rowDecoder:       decoder,
+		startTS:          startTS,
+		readReplicaScope: b.readReplicaScope,
+		isStaleness:      b.isStaleness,
+		keepOrder:        plan.KeepOrder,
+		desc:             plan.Desc,
+		lock:             plan.Lock,
+		waitTime:         plan.LockWaitTime,
+		partExpr:         plan.PartitionExpr,
+		partPos:          plan.PartitionColPos,
+		singlePart:       plan.SinglePart,
+		partTblID:        plan.PartTblID,
+		columns:          plan.Columns,
 	}
 
 	if plan.TblInfo.TempTableType != model.TempTableNone {
@@ -4393,8 +4433,14 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 		startTS:      startTS,
 	}
 
-	if v.TableInfo.Meta().TempTableType != model.TempTableNone {
-		e.sampler = &emptySampler{}
+	tblInfo := v.TableInfo.Meta()
+	if tblInfo.TempTableType != model.TempTableNone {
+		if tblInfo.TempTableType == model.TempTableGlobal {
+			e.sampler = &emptySampler{}
+		} else {
+			b.err = errors.New("TABLESAMPLE clause can not be applied to local temporary tables")
+			return nil
+		}
 	} else if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
 		e.sampler = newTableRegionSampler(
 			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),

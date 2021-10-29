@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/shirou/gopsutil/mem"
 )
 

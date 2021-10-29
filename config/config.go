@@ -29,8 +29,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
@@ -139,6 +138,7 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	TopSQL              TopSQL      `toml:"top-sql" json:"top-sql"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
@@ -184,6 +184,12 @@ type Config struct {
 	// 1. there is a network partition problem between TiDB and PD leader.
 	// 2. there is a network partition problem between TiDB and TiKV leader.
 	EnableForwarding bool `toml:"enable-forwarding" json:"enable-forwarding"`
+	// MaxBallastObjectSize set the max size of the ballast object, the unit is byte.
+	// The default value is the smallest of the following two values: 2GB or
+	// one quarter of the total physical memory in the current system.
+	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
+	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
+	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -368,9 +374,10 @@ type Security struct {
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
 	// Allow automatic TLS certificate generation
-	AutoTLS       bool   `toml:"auto-tls" json:"auto-tls"`
-	MinTLSVersion string `toml:"tls-version" json:"tls-version"`
-	RSAKeySize    int    `toml:"rsa-key-size" json:"rsa-key-size"`
+	AutoTLS         bool   `toml:"auto-tls" json:"auto-tls"`
+	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
+	RSAKeySize      int    `toml:"rsa-key-size" json:"rsa-key-size"`
+	SecureBootstrap bool   `toml:"secure-bootstrap" json:"secure-bootstrap"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -429,6 +436,7 @@ type Performance struct {
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
 	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease   string  `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                  int     `toml:"gogc" json:"gogc"`
 	EnforceMPP            bool    `toml:"enforce-mpp" json:"enforce-mpp"`
 }
@@ -538,6 +546,12 @@ type StmtSummary struct {
 	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
+// TopSQL is the config for TopSQL.
+type TopSQL struct {
+	// The TopSQL's data receiver address.
+	ReceiverAddress string `toml:"receiver-address" json:"receiver-address"`
+}
+
 // IsolationRead is the config for isolation read.
 type IsolationRead struct {
 	// Engines filters tidb-server access paths by engine type.
@@ -558,6 +572,7 @@ var defaultConf = Config{
 	Host:                         DefHost,
 	AdvertiseAddress:             "",
 	Port:                         DefPort,
+	Socket:                       "/tmp/tidb.sock",
 	Cors:                         "",
 	Store:                        "unistore",
 	Path:                         "/tmp/tidb",
@@ -635,6 +650,7 @@ var defaultConf = Config{
 		IndexUsageSyncLease: "0s",
 		GOGC:                100,
 		EnforceMPP:          false,
+		PlanReplayerGCLease: "10m",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -811,9 +827,6 @@ func (c *Config) Load(confFile string) error {
 	if metaData.IsDefined("oom-action") {
 		IsOOMActionSetByUser = true
 	}
-	if len(c.ServerVersion) > 0 {
-		mysql.ServerVersion = c.ServerVersion
-	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
 	undecoded := metaData.Undecoded()
@@ -887,8 +900,8 @@ func (c *Config) Valid() error {
 		return err
 	}
 
-	if c.Performance.TxnTotalSizeLimit > 10<<30 {
-		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
+	if c.Performance.TxnTotalSizeLimit > 1<<40 {
+		return fmt.Errorf("txn-total-size-limit should be less than %d", 1<<40)
 	}
 
 	if c.Performance.MemoryUsageAlarmRatio > 1 || c.Performance.MemoryUsageAlarmRatio < 0 {

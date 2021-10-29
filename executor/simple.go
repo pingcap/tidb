@@ -24,10 +24,6 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
@@ -36,6 +32,10 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
@@ -322,7 +322,6 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 	if user.Hostname == "" {
 		user.Hostname = "%"
 	}
-
 	restrictedCtx, err := e.getSysSession()
 	if err != nil {
 		return err
@@ -388,8 +387,10 @@ func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaul
 		u, h := s.UserList[0].Username, s.UserList[0].Hostname
 		if u == sessionVars.User.Username && h == sessionVars.User.AuthHostname {
 			err = e.setDefaultRoleForCurrentUser(s)
-			domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-			return
+			if err != nil {
+				return err
+			}
+			return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 		}
 	}
 
@@ -411,8 +412,7 @@ func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaul
 	if err != nil {
 		return
 	}
-	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 func (e *SimpleExec) setRoleRegular(s *ast.SetRoleStmt) error {
@@ -573,9 +573,13 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// If `START TRANSACTION READ ONLY` is the first statement in TxnCtx, we should
 	// always create a new Txn instead of reusing it.
 	if s.ReadOnly {
-		enableNoopFuncs := e.ctx.GetSessionVars().EnableNoopFuncs
-		if !enableNoopFuncs && s.AsOf == nil {
-			return expression.ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+		noopFuncsMode := e.ctx.GetSessionVars().NoopFuncsMode
+		if s.AsOf == nil && noopFuncsMode != variable.OnInt {
+			err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+			if noopFuncsMode == variable.OffInt {
+				return err
+			}
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		if s.AsOf != nil {
 			// start transaction read only as of failed due to we set tx_read_ts before
@@ -694,8 +698,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 	if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "commit"); err != nil {
 		return err
 	}
-	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return nil
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
@@ -786,10 +789,11 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
 			authPlugin = spec.AuthOpt.AuthPlugin
 		}
+		hostName := strings.ToLower(spec.User.Hostname)
 		if s.IsCreateRole {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, authPlugin, "Y")
+			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, "Y")
 		} else {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, authPlugin)
+			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin)
 		}
 		users = append(users, spec.User)
 	}
@@ -834,8 +838,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "commit"); err != nil {
 		return errors.Trace(err)
 	}
-	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return err
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) error {
@@ -966,8 +969,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		}
 	}
-	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return nil
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt) error {
@@ -1027,8 +1029,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 	if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "commit"); err != nil {
 		return err
 	}
-	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return nil
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 // Should cover same internal mysql.* tables as DROP USER, so this function is very similar
@@ -1134,15 +1135,14 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 		}
 		return ErrCannotUser.GenWithStackByArgs("RENAME USER", failedUser)
 	}
-	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return nil
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, usernameColumn, hostColumn string, users *ast.UserToUser) error {
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET %n = %?, %n = %? WHERE %n = %? and %n = %?;`,
 		mysql.SystemDB, tableName,
-		usernameColumn, users.NewUser.Username, hostColumn, users.NewUser.Hostname,
+		usernameColumn, users.NewUser.Username, hostColumn, strings.ToLower(users.NewUser.Hostname),
 		usernameColumn, users.OldUser.Username, hostColumn, users.OldUser.Hostname)
 	_, err := sqlExecutor.ExecuteInternal(context.TODO(), sql.String())
 	return err
@@ -1297,13 +1297,12 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 		}
 		return ErrCannotUser.GenWithStackByArgs("DROP USER", strings.Join(failedUsers, ","))
 	}
-	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return nil
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 func userExists(ctx context.Context, sctx sessionctx.Context, name string, host string) (bool, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, host)
+	stmt, err := exec.ParseWithParams(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	if err != nil {
 		return false, err
 	}
@@ -1317,7 +1316,7 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 // use the same internal executor to read within the same transaction, otherwise same as userExists
 func userExistsInternal(sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, error) {
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, host)
+	sqlexec.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	recordSet, err := sqlExecutor.ExecuteInternal(context.TODO(), sql.String())
 	if err != nil {
 		return false, err
@@ -1346,7 +1345,7 @@ func (e *SimpleExec) userAuthPlugin(name string, host string) (string, error) {
 
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
 	var u, h string
-	if s.User == nil {
+	if s.User == nil || s.User.CurrentUser {
 		if e.ctx.GetSessionVars().User == nil {
 			return errors.New("Session error is empty")
 		}
@@ -1387,8 +1386,10 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return err
 	}
 	_, _, err = exec.ExecRestrictedStmt(ctx, stmt)
-	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return err
+	if err != nil {
+		return err
+	}
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error {
@@ -1478,7 +1479,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		return err
 	}
 
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, false)
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, false, nil)
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return err
@@ -1502,16 +1503,8 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		if config.GetGlobalConfig().Security.SkipGrantTable {
 			return nil
 		}
-
 		dom := domain.GetDomain(e.ctx)
-		sysSessionPool := dom.SysSessionPool()
-		ctx, err := sysSessionPool.Get()
-		if err != nil {
-			return err
-		}
-		defer sysSessionPool.Put(ctx)
-		err = dom.PrivilegeHandle().Update(ctx.(sessionctx.Context))
-		return err
+		return dom.NotifyUpdatePrivilege()
 	case ast.FlushTiDBPlugin:
 		dom := domain.GetDomain(e.ctx)
 		for _, pluginName := range s.Plugins {
