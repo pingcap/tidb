@@ -1042,7 +1042,16 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 		ast.JSONLength,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
-		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format:
+		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format,
+		ast.LTrim, ast.RTrim:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_InDuration,
+			tipb.ScalarFuncSig_CoalesceDuration,
+			tipb.ScalarFuncSig_IfNullDuration,
+			tipb.ScalarFuncSig_IfDuration,
+			tipb.ScalarFuncSig_CaseWhenDuration:
+			return false
+		}
 		return true
 	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength, ast.SubstringIndex:
 		switch function.Function.PbCode() {
@@ -1119,6 +1128,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return false
 		}
 	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase:
+		return true
+	case ast.Sysdate:
 		return true
 	}
 	return false
@@ -1237,11 +1248,6 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
 	if storeType == kv.TiFlash {
 		switch expr.GetType().Tp {
-		case mysql.TypeDuration:
-			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Duration type"))
-			}
-			return false
 		case mysql.TypeEnum:
 			if !canEnumPush {
 				if pc.sc.InExplainStmt {

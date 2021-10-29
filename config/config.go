@@ -374,9 +374,10 @@ type Security struct {
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
 	// Allow automatic TLS certificate generation
-	AutoTLS       bool   `toml:"auto-tls" json:"auto-tls"`
-	MinTLSVersion string `toml:"tls-version" json:"tls-version"`
-	RSAKeySize    int    `toml:"rsa-key-size" json:"rsa-key-size"`
+	AutoTLS         bool   `toml:"auto-tls" json:"auto-tls"`
+	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
+	RSAKeySize      int    `toml:"rsa-key-size" json:"rsa-key-size"`
+	SecureBootstrap bool   `toml:"secure-bootstrap" json:"secure-bootstrap"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -560,6 +561,8 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
+	// Whether enable creating expression index.
+	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable global kill.
 	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
 	// Whether enable charset feature.
@@ -731,21 +734,20 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":                 {},
-	"pessimistic-txn.enable":              {},
-	"log.file.log-rotate":                 {},
-	"log.log-slow-query":                  {},
-	"txn-local-latches":                   {},
-	"txn-local-latches.enabled":           {},
-	"txn-local-latches.capacity":          {},
-	"performance.max-memory":              {},
-	"max-txn-time-use":                    {},
-	"experimental.allow-auto-random":      {},
-	"enable-redact-log":                   {}, // use variable tidb_redact_log instead
-	"tikv-client.copr-cache.enable":       {},
-	"alter-primary-key":                   {}, // use NONCLUSTERED keyword instead
-	"enable-streaming":                    {},
-	"experimental.allow-expression-index": {},
+	"pessimistic-txn.ttl":            {},
+	"pessimistic-txn.enable":         {},
+	"log.file.log-rotate":            {},
+	"log.log-slow-query":             {},
+	"txn-local-latches":              {},
+	"txn-local-latches.enabled":      {},
+	"txn-local-latches.capacity":     {},
+	"performance.max-memory":         {},
+	"max-txn-time-use":               {},
+	"experimental.allow-auto-random": {},
+	"enable-redact-log":              {}, // use variable tidb_redact_log instead
+	"tikv-client.copr-cache.enable":  {},
+	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
+	"enable-streaming":               {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
