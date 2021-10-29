@@ -25,10 +25,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -111,6 +113,11 @@ const (
 
 	compactionLowerThreshold = 512 * units.MiB
 	compactionUpperThreshold = 32 * units.GiB
+)
+
+var (
+	minTiKVVersionForDuplicateResolution = *semver.New("5.3.0")
+	maxTiKVVersionForDuplicateResolution = version.NextMajorVersion()
 )
 
 // DeliverPauser is a shared pauser to pause progress to (*chunkRestore).encodeLoop
@@ -344,6 +351,17 @@ func NewRestoreControllerWithPauser(
 		// check overflow
 		if maxOpenFiles < 0 {
 			maxOpenFiles = math.MaxInt32
+		}
+
+		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+			if err := tikv.CheckTiKVVersion(ctx, tls, cfg.TiDB.PdAddr, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
+				if berrors.Is(err, berrors.ErrVersionMismatch) {
+					log.L().Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
+					cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
+				} else {
+					return nil, errors.Annotate(err, "check TiKV version for duplicate resolution failed")
+				}
+			}
 		}
 
 		backend, err = local.NewLocalBackend(ctx, tls, cfg, g, maxOpenFiles, errorMgr)
