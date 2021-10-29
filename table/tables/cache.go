@@ -1,4 +1,4 @@
-// Package tables Copyright 2021 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package tables
 
 import (
@@ -35,10 +36,7 @@ func (c *cachedTable) IsReadFromCache(ts uint64) bool {
 	// and read the data from the original table at the same time
 	// TODO : Use lease and ts judge whether it is readable.
 	// TODO : If the cache is not readable. MemBuffer become invalid.
-	if c.MemBuffer == nil {
-		return false
-	}
-	return true
+	return c.MemBuffer != nil
 }
 
 func (c *cachedTable) GetMemCache() kv.MemBuffer {
