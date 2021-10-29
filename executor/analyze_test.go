@@ -1132,3 +1132,16 @@ func (s *testSuite10) TestSnapshotAnalyze(c *C) {
 	c.Assert(s3Str, Equals, s2Str)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"), IsNil)
 }
+
+func (s *testSuite10) TestAdjustSampleRateNote(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index index_a(a))")
+	tk.MustExec("drop stats t")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 0.001000 for table test.t."))
+	tk.MustExec("insert into t values(1),(1),(1)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t."))
+}

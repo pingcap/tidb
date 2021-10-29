@@ -2226,6 +2226,22 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
 		if *sampleRate < 0 {
 			*sampleRate = b.getAdjustedSampleRate(b.ctx, task.TableID.GetStatisticsID(), task.TblInfo)
+			if task.PartitionName != "" {
+				sc.AppendNote(errors.Errorf(
+					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s.",
+					*sampleRate,
+					task.DBName,
+					task.TableName,
+					task.PartitionName,
+				))
+			} else {
+				sc.AppendNote(errors.Errorf(
+					"Analyze use auto adjusted sample rate %f for table %s.%s.",
+					*sampleRate,
+					task.DBName,
+					task.TableName,
+				))
+			}
 		}
 	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
@@ -2261,7 +2277,7 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 	}
 	approxiCount, hasPD := b.getApproximateTableCountFromPD(sctx, tid)
 	// If there's no stats meta and no pd, return the default rate.
-	if statsTbl == nil && !hasPD {
+	if statsTbl == nil || statsTbl.Pseudo && !hasPD {
 		return defaultRate
 	}
 	// If the count in stats_meta is still 0 and there's no information from pd side, we scan all rows.
@@ -2277,6 +2293,7 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 		// So we increase the number to 150000 to reduce this error rate.
 		return math.Min(1, 150000/approxiCount)
 	}
+	logutil.BgLogger().Warn("calc rate", zap.Float64("tbl count", float64(statsTbl.Count)))
 	// We are expected to scan about 100000 rows or so.
 	// Since there's tiny error rate around the count from the stats meta, we use
 	return math.Min(1, 110000/float64(statsTbl.Count))
