@@ -174,15 +174,14 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		variable.MaxTSOBatchWaitInterval.Store(val)
-		// Set it to the PD Client.
-		err = do.setPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Millisecond*time.Duration(val))
+		err = do.SetPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Millisecond*time.Duration(val))
 		if err != nil {
 			break
 		}
 	case variable.TiDBTSOEnableFollowerProxy:
 		val := variable.TiDBOptOn(sVal)
 		variable.EnableTSOFollowerProxy.Store(val)
-		err = do.setPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
+		err = do.SetPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
 		if err != nil {
 			break
 		}
@@ -247,7 +246,8 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 	}
 }
 
-func (do *Domain) setPDClientDynamicOption(option pd.DynamicOption, val interface{}) error {
+// SetPDClientDynamicOption is used to set the dynamic option into the PD client.
+func (do *Domain) SetPDClientDynamicOption(option pd.DynamicOption, val interface{}) error {
 	store, ok := do.store.(interface{ GetPDClient() pd.Client })
 	if !ok {
 		return nil

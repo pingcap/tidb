@@ -213,33 +213,20 @@ func (e *SetExecutor) checkPDClientDynamicOption(name, valStr string, sessionVar
 		if err != nil {
 			return err
 		}
-		// Set it to the PD Client.
-		err = e.setPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Millisecond*time.Duration(val))
+		err = domain.GetDomain(e.ctx).SetPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Millisecond*time.Duration(val))
 		if err != nil {
 			return err
 		}
 		logutil.BgLogger().Info("set pd client dynamic option", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	case variable.TiDBTSOEnableFollowerProxy:
 		val := variable.TiDBOptOn(valStr)
-		err = e.setPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
+		err = domain.GetDomain(e.ctx).SetPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
 		if err != nil {
 			return err
 		}
 		logutil.BgLogger().Info("set pd client dynamic option", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	}
 	return nil
-}
-
-func (e *SetExecutor) setPDClientDynamicOption(option pd.DynamicOption, val interface{}) error {
-	store, ok := e.ctx.GetStore().(interface{ GetPDClient() pd.Client })
-	if !ok {
-		return nil
-	}
-	pdClient := store.GetPDClient()
-	if pdClient == nil {
-		return nil
-	}
-	return pdClient.UpdateOption(option, val)
 }
 
 func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
