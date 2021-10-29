@@ -259,6 +259,7 @@ type testPrepareSerialSuite struct {
 }
 
 func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
+	c.Skip("unstable")
 	if israce.RaceEnabled {
 		c.Skip("skip race test")
 	}
@@ -287,10 +288,9 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	explainQuery := "explain for connection " + strconv.FormatUint(tk1.Se.ShowProcess().ID, 10)
 
 	explainResult := testkit.Rows(
-		"Selection_8 8000.00 root  eq(cast(test.t.a, double BINARY), 1)",
-		"└─TableReader_7 8000.00 root  data:Selection_6",
-		"  └─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a, double BINARY), 1)",
-		"    └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"TableReader_7 10.00 root  data:Selection_6",
+		"└─Selection_6 10.00 cop[tikv]  eq(test.t.a, 1)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	)
 
 	// Now the ProcessInfo held by mockSessionManager1 will not be updated in real time.
@@ -303,6 +303,9 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 		PS: []*util.ProcessInfo{tk1.Se.ShowProcess()},
 	})
 	tk2.MustQuery(explainQuery).Check(explainResult)
+	tk1.MustExec(executeQuery)
+	// The plan can not be cached because the string type parameter will be convert to int type for calculation.
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	// multiple test, '1000' is both effective and efficient.
 	repeats := 1000
@@ -904,7 +907,7 @@ func (s *testPrepareSerialSuite) TestIndexMerge4PlanCache(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexMerge.*")
+	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
 
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 ddcdsaf 3"))
 	// TODO: should use plan cache here
@@ -914,7 +917,7 @@ func (s *testPrepareSerialSuite) TestIndexMerge4PlanCache(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(res.Rows()[1][0], Matches, ".*IndexMerge.*")
+	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
 
 	// rewrite the origin indexMerge test
 	tk.MustExec("drop table if exists t;")
@@ -1466,4 +1469,14 @@ func (s *testSerialSuite) TestMoreSessions4PlanCache(c *C) {
 
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func (s *testSuite) TestIssue28792(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t12(a INT, b INT)")
+	tk.MustExec("CREATE TABLE t97(a INT, b INT UNIQUE NOT NULL);")
+	r1 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 on t12.b = t97.b;").Rows()
+	r2 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b;").Rows()
+	c.Assert(r1, DeepEquals, r2)
 }

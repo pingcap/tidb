@@ -16,9 +16,6 @@
 
 set -eux
 
-# skip unstable test for temporary
-exit 0
-
 check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
 LOG_FILE1="$TEST_DIR/lightning-duplicate-detection1.log"
@@ -52,7 +49,7 @@ verify_detected_rows() {
   done
   mapfile -t expect_rows < <(for row in "${expect_rows[@]}"; do echo "$row"; done | sort | uniq)
   mapfile -t actual_rows < <(run_sql "SELECT row_data FROM lightning_task_info.conflict_error_v1 WHERE table_name = \"\`dup_detect\`.\`${table}\`\"" |
-    grep "row_data:" | sed 's/^.*(//' | sed 's/).*$//' | sed 's/, */,/g' | sort | uniq)
+    grep "row_data:" | sed 's/^.*(//' | sed 's/).*$//' | sed 's/"//g' | sed 's/, */,/g' | sort | uniq)
   equal=0
   if [ "${#actual_rows[@]}" = "${#expect_rows[@]}" ]; then
     equal=1
@@ -66,7 +63,7 @@ verify_detected_rows() {
   fi
   set -x
   if [ "$equal" = "0" ]; then
-    echo "verify detected rows of ${table} fail, expect: ${expect_rows[@]}, actual: ${actual_rows[@]}"
+    echo "verify detected rows of ${table} fail, expect: ${expect_rows[*]}, actual: ${actual_rows[*]}"
     exit 1
   fi
 }
