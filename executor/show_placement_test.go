@@ -75,7 +75,7 @@ func (s *testSuite5) TestShowPlacement(c *C) {
 
 	tk.MustExec("CREATE TABLE t4 (id INT) placement policy pa1 PARTITION BY RANGE (id) (" +
 		"PARTITION p0 VALUES LESS THAN (100) placement policy pa2," +
-		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"," +
+		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\" FOLLOWERS=4," +
 		"PARTITION p2 VALUES LESS THAN (10000)" +
 		")")
 	defer tk.MustExec("drop table if exists t4")
@@ -94,7 +94,7 @@ func (s *testSuite5) TestShowPlacement(c *C) {
 		"TABLE test.t2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2",
 		"TABLE test.t4 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 		"TABLE test.t4 PARTITION p0 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\"",
-		"TABLE test.t4 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
+		"TABLE test.t4 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
 		"TABLE test.t4 PARTITION p2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 	))
 
@@ -147,7 +147,7 @@ func (s *testSuite5) TestShowPlacementPrivilege(c *C) {
 	tk.MustExec("create table t2 (id int) LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2")
 	defer tk.MustExec("drop table if exists t2")
 	tk.MustExec("CREATE TABLE t3 (id INT) PARTITION BY RANGE (id) (" +
-		"PARTITION p1 VALUES LESS THAN (100) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"" +
+		"PARTITION p1 VALUES LESS THAN (100) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\" FOLLOWERS=4" +
 		")")
 	defer tk.MustExec("drop table if exists t3")
 	tk.MustExec("create table db2.t1 (id int) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2")
@@ -177,7 +177,7 @@ func (s *testSuite5) TestShowPlacementPrivilege(c *C) {
 		"DATABASE db2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 		"TABLE db2.t1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=2",
 		"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
-		"TABLE test.t3 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
+		"TABLE test.t3 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
 	))
 }
 
@@ -246,7 +246,7 @@ func (s *testSuite5) TestShowPlacementForTableAndPartition(c *C) {
 	// table do not display partition placement
 	tk.MustExec("create table t4 (id int) LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 PARTITION BY RANGE (id) (" +
 		"PARTITION p0 VALUES LESS THAN (100), " +
-		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"," +
+		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\" FOLLOWERS=4," +
 		"PARTITION p2 VALUES LESS THAN (10000) PLACEMENT POLICY p1" +
 		")")
 	defer tk.MustExec("drop table if exists t4")
@@ -261,7 +261,7 @@ func (s *testSuite5) TestShowPlacementForTableAndPartition(c *C) {
 
 	// partition custom placement
 	tk.MustQuery("show placement for table t4 partition p1").Check(testkit.Rows(
-		"TABLE test.t4 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
+		"TABLE test.t4 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
 	))
 	tk.MustQuery("show placement for table t4 partition p2").Check(testkit.Rows(
 		"TABLE test.t4 PARTITION p2 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
@@ -386,7 +386,7 @@ func (s *testSuite5) TestShowPlacementForTableAndPartitionPrivilege(c *C) {
 
 	// prepare tables
 	tk.MustExec("create table t1 (id int) placement policy p1 PARTITION BY RANGE (id) (" +
-		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"" +
+		"PARTITION p1 VALUES LESS THAN (1000) LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\" FOLLOWERS=4" +
 		")")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t2 (id int) LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2")
@@ -438,7 +438,7 @@ func (s *testSuite5) TestShowPlacementForTableAndPartitionPrivilege(c *C) {
 		tk1.MustQuery("show placement").Check(testkit.Rows(
 			"POLICY p1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
 			"TABLE test.t1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"",
-			"TABLE test.t1 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
+			"TABLE test.t1 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
 		))
 
 		tk1.MustQuery("show placement for table test.t1").Check(testkit.Rows(
@@ -446,7 +446,7 @@ func (s *testSuite5) TestShowPlacementForTableAndPartitionPrivilege(c *C) {
 		))
 
 		tk1.MustQuery("show placement for table test.t1 partition p1").Check(testkit.Rows(
-			"TABLE test.t1 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
+			"TABLE test.t1 PARTITION p1 LEADER_CONSTRAINTS=\"[+region=bj]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=sh]\"",
 		))
 
 		err = tk1.ExecToErr("show placement for table test.t2")

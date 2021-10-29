@@ -121,6 +121,9 @@ const (
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
+	// tidb_general_log is used to log every query in the server in info level.
+	TiDBLogFileMaxDays = "tidb_log_file_max_days"
+
 	// tidb_pprof_sql_cpu is used to add label sql label to pprof result.
 	TiDBPProfSQLCPU = "tidb_pprof_sql_cpu"
 
@@ -585,6 +588,12 @@ const (
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
 
+	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
+	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
+
+	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
+	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
+
 	// TiDBEnableMPPBalanceWithContinuousRegion indicates whether MPP balance logic will take account of region's continuity in TiFlash.
 	TiDBEnableMPPBalanceWithContinuousRegion = "tidb_enable_mpp_balance_with_continuous_region"
 	// TiDBEnableMPPBalanceWithContinuousRegionCount indicates the continuous region count that balance logic assigns to a TiFlash instance each time.
@@ -606,6 +615,15 @@ const (
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
 	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
+)
+
+// TiDB intentional limits
+// Can be raised in future.
+
+const (
+	// MaxConfigurableConcurrency is the maximum number of "threads" (goroutines) that can be specified
+	// for any type of configuration item that has concurrent workers.
+	MaxConfigurableConcurrency = 256
 )
 
 // Default TiDB system variable values.
@@ -745,24 +763,25 @@ const (
 	DefTiDBTopSQLMaxStatementCount               = 200
 	DefTiDBTopSQLMaxCollect                      = 10000
 	DefTiDBTopSQLReportIntervalSeconds           = 60
-	DefTiDBEnableGlobalTemporaryTable            = true
-	DefTMPTableSize                              = 16777216
+	DefTiDBTmpTableMaxSize                       = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                        = false
 	DefTiDBEnableOrderedResultMode               = false
+	DefTiDBEnablePseudoForOutdatedStats          = true
 	DefEnableMPPBalanceWithContinuousRegion      = true
 	DefEnableMPPBalanceWithContinuousRegionCount = 20
+	DefEnablePlacementCheck                      = true
 )
 
 // Process global variables.
 var (
-	ProcessGeneralLog            = atomic.NewBool(false)
-	EnablePProfSQLCPU            = atomic.NewBool(false)
-	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
-	maxDDLReorgWorkerCount int32 = 128
-	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
-	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
-	ddlReorgRowFormat      int64 = DefTiDBRowFormatV2
-	maxDeltaSchemaCount    int64 = DefTiDBMaxDeltaSchemaCount
+	ProcessGeneralLog           = atomic.NewBool(false)
+	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	EnablePProfSQLCPU           = atomic.NewBool(false)
+	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
+	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
+	ddlErrorCountlimit    int64 = DefTiDBDDLErrorCountLimit
+	ddlReorgRowFormat     int64 = DefTiDBRowFormatV2
+	maxDeltaSchemaCount   int64 = DefTiDBMaxDeltaSchemaCount
 	// Export for testing.
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
