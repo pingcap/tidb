@@ -1475,7 +1475,9 @@ func onAlterCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		return ver, nil
 	}
-
+	if tbInfo.TempTableType != model.TempTableNone {
+		return ver, errors.Trace(ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache"))
+	}
 	switch tbInfo.TableCacheStatusType {
 	case model.TableCacheStatusDisable:
 		// disable -> switching
