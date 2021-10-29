@@ -507,7 +507,7 @@ func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error
 	val := e.ctx.Value(PlanReplayerLoadVarKey)
 	if val != nil {
 		e.ctx.SetValue(PlanReplayerLoadVarKey, nil)
-		return errors.New("plan replayer: previous plan replayer load option isn't closed normally")
+		return errors.New("plan replayer: previous plan replayer load option isn't closed normally, please try again.")
 	}
 	e.ctx.SetValue(PlanReplayerLoadVarKey, e.info)
 	return nil
