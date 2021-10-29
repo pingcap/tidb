@@ -31,12 +31,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
@@ -488,7 +488,7 @@ type PlanReplayerLoadExec struct {
 
 type PlanReplayerLoadInfo struct {
 	Path string
-	Ctx sessionctx.Context
+	Ctx  sessionctx.Context
 }
 
 type planReplayerLoadKeyType int
@@ -592,7 +592,7 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	return h.LoadStatsFromJSON(ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl)
 }
 
-func (e *PlanReplayerLoadInfo) Update(data []byte) error{
+func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	b := bytes.NewReader(data)
 	z, err := zip.NewReader(b, int64(len(data)))
 	if err != nil {

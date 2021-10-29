@@ -910,7 +910,7 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executo
 	if v.Load {
 		e := &PlanReplayerLoadExec{
 			baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-			info: &PlanReplayerLoadInfo{Path: v.File, Ctx: b.ctx},
+			info:         &PlanReplayerLoadInfo{Path: v.File, Ctx: b.ctx},
 		}
 		return e
 	}
