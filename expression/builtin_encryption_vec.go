@@ -348,8 +348,11 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 
 	isConst := b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx)
 	var (
-		key        []byte
-		encodedBuf []byte
+		key []byte
+		// key and str can share the buf as DeriveKeyMySQL returns new byte slice
+		// iv needs a spare buf as it works on the buf directly
+		encodedBuf   []byte
+		ivEncodedBuf []byte
 	)
 	if isConst {
 		keyBytes := keyBuf.GetBytes(0)
@@ -368,8 +371,8 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		}
 
 		iv := ivBuf.GetBytes(i)
-		if encodedBuf, err = ivEnc.Encode(encodedBuf, iv); err == nil {
-			iv = encodedBuf
+		if ivEncodedBuf, err = ivEnc.Encode(ivEncodedBuf, iv); err == nil {
+			iv = ivEncodedBuf
 		}
 		if len(iv) < aes.BlockSize {
 			return errIncorrectArgs.GenWithStack("The initialization vector supplied to aes_decrypt is too short. Must be at least %d bytes long", aes.BlockSize)
