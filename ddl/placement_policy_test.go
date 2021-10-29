@@ -851,7 +851,7 @@ func testGetPartitionDefinitionsByName(c *C, ctx sessionctx.Context, db string, 
 func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t, t0")
 	tk.MustExec("drop placement policy if exists x")
 
 	// test table inherit database's placement rules.
@@ -870,6 +870,17 @@ func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */"))
 	tk.MustExec("drop table if exists t")
+
+	// test create table like should not inherit database's placement rules.
+	tk.MustExec("create table t0 (a int) placement policy 'default'")
+	tk.MustQuery("show create table t0").Check(testkit.Rows("t0 CREATE TABLE `t0` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("create table t1 like t0")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table if exists t0, t")
 
 	// table will inherit db's placement rules, which is shared by all partition as default one.
 	tk.MustExec("create table t(a int) partition by range(a) (partition p0 values less than (100), partition p1 values less than (200))")
