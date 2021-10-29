@@ -5713,3 +5713,25 @@ func (s *testSessionSuite) TestFixSetTiDBSnapshotTS(c *C) {
 	tk.MustExec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER';")
 	tk.MustExec("use t123")
 }
+
+func (s *testSessionSuite) TestSetPDClientDynmaicOption(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 1;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 11;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
+	err := tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 0;")
+	c.Assert(err, NotNil)
+	tk.MustQuery("select @@tidb_tso_enable_follower_proxy;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_enable_follower_proxy = on;")
+	tk.MustQuery("select @@tidb_tso_enable_follower_proxy;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_tso_enable_follower_proxy = off;")
+	tk.MustQuery("select @@tidb_tso_enable_follower_proxy;").Check(testkit.Rows("0"))
+	err = tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 0;")
+	c.Assert(err, NotNil)
+}
