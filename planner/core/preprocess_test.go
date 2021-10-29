@@ -369,34 +369,7 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 	s.runSQL(c, "drop global temporary table test2.temp2, temp1", false, nil)
 }
 
-func (s *testValidatorSuite) TestPlacementEnable(c *C) {
-	ctx := context.Background()
-	execSQLList := []string{
-		"drop database if exists TestPlacementDB;",
-		"create database TestPlacementDB;",
-		"use TestPlacementDB;",
-		"drop placement policy if exists placement_x",
-		"create placement policy placement_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";",
-		"create table t1 (c int) PARTITION BY RANGE (c) ( PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11));",
-	}
-	for _, execSQL := range execSQLList {
-		_, err := s.se.Execute(ctx, execSQL)
-		c.Assert(err, IsNil)
-	}
-	s.runSQL(c, "create database TestPlacementDB2 FOLLOWERS=2;", false, nil)
-	s.runSQL(c, "alter database TestPlacementDB placement policy=placement_x", false, nil)
-	s.runSQL(c, "create table t (c int) FOLLOWERS=2;", false, nil)
-	s.runSQL(c, "alter table t voters=2;", false, nil)
-	s.runSQL(c, "create table m (c int) partition by range (c) (partition p1 values less than (200) followers=2);", false, nil)
-	s.runSQL(c, "alter table m partition p1 voters=2);", false, nil)
-	//	s.runSQL(c, "drop global temporary table temp1", false, core.ErrDropTableOnTemporaryTable)
-	_, err := s.se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
-
-	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES t2 (d)", false, nil)
-}
-
-func TestPlacementEnable(t *testing.T) {
+func TestPlacemenCheck(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
