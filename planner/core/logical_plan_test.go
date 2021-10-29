@@ -102,7 +102,7 @@ func (s *testPlanSuite) TestEliminateProjectionUnderUnion(c *C) {
 	c.Assert(err, IsNil, comment)
 	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 	c.Assert(err, IsNil)
-	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
+	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagJoinReOrder|flagPrunColumns|flagEliminateProjection, p.(LogicalPlan))
 	c.Assert(err, IsNil)
 	// after folding constants, the null flag should keep the same with the old one's (i.e., the schema's).
 	schemaNullFlag := p.(*LogicalProjection).children[0].(*LogicalJoin).children[1].Children()[1].(*LogicalProjection).schema.Columns[0].RetType.Flag & mysql.NotNullFlag
