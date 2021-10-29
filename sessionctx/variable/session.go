@@ -1032,16 +1032,6 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	}
 }
 
-// GetMaxTSOBatchWaitInterval gets the `MaxTSOBatchWaitInterval` value.
-func (s *SessionVars) GetMaxTSOBatchWaitInterval() int64 {
-	return MaxTSOBatchWaitInterval.Load()
-}
-
-// GetTSOFollowerProxyOption gets the `EnableTSOFollowerProxy` value.
-func (s *SessionVars) GetTSOFollowerProxyOption() bool {
-	return EnableTSOFollowerProxy.Load()
-}
-
 // PartitionPruneMode presents the prune mode used.
 type PartitionPruneMode string
 

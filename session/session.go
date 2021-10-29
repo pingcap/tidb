@@ -92,7 +92,6 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	tikvutil "github.com/tikv/client-go/v2/util"
-	pd "github.com/tikv/pd/client"
 )
 
 var (
@@ -1525,12 +1524,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	err := s.preparePDClient()
-	if err != nil {
-		return nil, err
-	}
+
 	s.PrepareTxnCtx(ctx)
-	err = s.loadCommonGlobalVariablesIfNeeded()
+	err := s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return nil, err
 	}
@@ -2775,24 +2771,6 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 			s.sessionVars.TxnCtx.IsPessimistic = true
 		}
 	}
-}
-
-// PreparePDClient sets PD client option before executing.
-func (s *session) preparePDClient() error {
-	store, ok := s.GetStore().(interface{ GetPDClient() pd.Client })
-	if !ok {
-		return nil
-	}
-	pdClient := store.GetPDClient()
-	if pdClient == nil {
-		return nil
-	}
-	maxTSOBatchWaitInterval := s.GetSessionVars().GetMaxTSOBatchWaitInterval()
-	if err := pdClient.UpdateOption(pd.MaxTSOBatchWaitInterval, time.Millisecond*time.Duration(maxTSOBatchWaitInterval)); err != nil {
-		return err
-	}
-	tsoFollowerProxyOption := s.GetSessionVars().GetTSOFollowerProxyOption()
-	return pdClient.UpdateOption(pd.EnableTSOFollowerProxy, tsoFollowerProxyOption)
 }
 
 // PrepareTSFuture uses to try to get ts future.

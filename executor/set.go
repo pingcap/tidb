@@ -16,7 +16,9 @@ package executor
 
 import (
 	"context"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -121,6 +124,28 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		if err != nil {
 			return err
 		}
+		// Some PD client dynamic options need to be set here.
+		switch name {
+		case variable.TiDBTSOClientBatchMaxWaitTime:
+			var val int64
+			val, err = strconv.ParseInt(valStr, 10, 64)
+			if err != nil {
+				return err
+			}
+			// Set it to the PD Client.
+			err = e.setPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Millisecond*time.Duration(val))
+			if err != nil {
+				return err
+			}
+			logutil.BgLogger().Info("set pd client dynamic option", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		case variable.TiDBTSOEnableFollowerProxy:
+			val := variable.TiDBOptOn(valStr)
+			err = e.setPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
+			if err != nil {
+				return err
+			}
+			logutil.BgLogger().Info("set pd client dynamic option", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		}
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
 			if auditPlugin.OnGlobalVariableEvent != nil {
@@ -194,6 +219,18 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	// autocommit, timezone, query cache
 	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	return nil
+}
+
+func (e *SetExecutor) setPDClientDynamicOption(option pd.DynamicOption, val interface{}) error {
+	store, ok := e.ctx.GetStore().(interface{ GetPDClient() pd.Client })
+	if !ok {
+		return nil
+	}
+	pdClient := store.GetPDClient()
+	if pdClient == nil {
+		return nil
+	}
+	return pdClient.UpdateOption(option, val)
 }
 
 func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
