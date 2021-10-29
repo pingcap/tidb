@@ -327,7 +327,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
 
-	handleCols := core.BuildHandleColsForAnalyze(tk.Se, tblInfo)
+	handleCols := core.BuildHandleColsForAnalyze(tk.Se, tblInfo, true, nil)
 	var colsInfo []*model.ColumnInfo
 	var indicesInfo []*model.IndexInfo
 	for _, col := range tblInfo.Columns {
