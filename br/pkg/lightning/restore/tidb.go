@@ -93,7 +93,6 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		TLS:              dsn.TLS,
 	}
 
-
 	log.L().Info("Before connect DB")
 	db, err := param.Connect()
 	if err != nil {
