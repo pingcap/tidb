@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -325,39 +326,12 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 	if err != nil {
 		return err
 	}
-	var cachedTable table.CachedTable
-	cacheInfo := ctx.GetSessionVars().StmtCtx.CacheTableInfo
-	if cacheInfo.IsReadCacheTable {
-		tbl, ok := domain.GetDomain(ctx).InfoSchema().TableByID(cacheInfo.TableID)
-		if !ok {
-			return nil
-		}
-		cachedTable = tbl.(table.CachedTable)
-	}
 
-	tempTableData := ctx.GetSessionVars().TemporaryTableData
 	for _, rg := range kvRanges {
 		iter := txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
-		if tempTableData != nil {
-			snapIter, err := tempTableData.Iter(rg.StartKey, rg.EndKey)
-			if err != nil {
-				return err
-			}
-
-			iter, err = transaction.NewUnionIter(iter, snapIter, false)
-			if err != nil {
-				return err
-			}
-		}
-		if cachedTable != nil {
-			cacheIter, err := cachedTable.GetMemCache().Iter(rg.StartKey, rg.EndKey)
-			if err != nil {
-				return err
-			}
-			iter, err = transaction.NewUnionIter(iter, cacheIter, false)
-			if err != nil {
-				return err
-			}
+		iter, err = getMemIter(ctx, iter, rg)
+		if err != nil {
+			return err
 		}
 		for ; iter.Valid(); err = iter.Next() {
 			if err != nil {
@@ -374,6 +348,41 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 		}
 	}
 	return nil
+}
+
+func getMemIter(ctx sessionctx.Context, iter kv.Iterator, rg kv.KeyRange) (kv.Iterator, error) {
+	var snapCacheIter kv.Iterator
+	tempTableData := ctx.GetSessionVars().TemporaryTableData
+	if tempTableData != nil {
+		snapIter, err := tempTableData.Iter(rg.StartKey, rg.EndKey)
+		if err != nil {
+			return nil, err
+		}
+		snapCacheIter = snapIter
+	}
+
+	cacheInfo := ctx.GetSessionVars().StmtCtx.CacheTableInfo
+	if cacheInfo.IsReadCacheTable {
+		tbl, ok := domain.GetDomain(ctx).InfoSchema().TableByID(cacheInfo.TableID)
+		if !ok {
+			return nil, errors.Trace(infoschema.ErrTableNotExists)
+		}
+		cacheIter, err := tbl.(table.CachedTable).GetMemCache().Iter(rg.StartKey, rg.EndKey)
+		if err != nil {
+			return nil, err
+		}
+		snapCacheIter = cacheIter
+	}
+
+	if snapCacheIter == nil {
+		return iter, nil
+	}
+
+	newIter, err := transaction.NewUnionIter(iter, snapCacheIter, false)
+	if err != nil {
+		return nil, err
+	}
+	return newIter, nil
 }
 
 func reverseDatumSlice(rows [][]types.Datum) {

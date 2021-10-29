@@ -4141,13 +4141,15 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		us.SetChildren(ds)
 		result = us
 	}
+	// If a table is a cache table, it is judged whether it satisfies the conditions of read cache.
 	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		cachedTable := tbl.(table.CachedTable)
 		txn, err := b.ctx.Txn(true)
 		if err != nil {
 			return nil, err
 		}
-		// Should use txn.startTs to check if we can read from cacheTable. about read lock and read condition feature. will add in the next pr.
+		// Use the txn of the transaction to determine whether the cache can be read.
+		// About read lock and read condition feature. will add in the next pr.
 		cond := cachedTable.IsReadFromCache(txn.StartTS())
 		b.ctx.GetSessionVars().StmtCtx.InitCacheTableInfo(cachedTable.Meta().ID, cond)
 		if cond {
@@ -4158,11 +4160,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			go func() {
 				err := cachedTable.UpdateLockForRead(b.ctx, txn.StartTS())
 				if err != nil {
-					log.Error("Update Lock Info Error")
+					log.Warn("Update Lock Info Error")
 				}
 			}()
 		}
 	}
+
 	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
 		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	}

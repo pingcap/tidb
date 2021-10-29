@@ -218,7 +218,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if (e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone) || e.ctx.GetSessionVars().StmtCtx.CacheTableInfo.IsReadCacheTable {
+	if (e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone) || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
 		// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 		req.Reset()
 		return nil

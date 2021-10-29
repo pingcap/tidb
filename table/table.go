@@ -246,19 +246,22 @@ var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table
 
+// CachedTable is a Table, and it has a UpdateLockForRead() method
+// UpdateLockForRead() according to the reasons for not meeting the read conditions, update the lock information,
+// And at the same time reload data from the original table.
 type CachedTable interface {
 	Table
 
-	// Load data from the original table to the cache
+	// LoadDataFromOriginalTable Load data from the original table to the cache
 	LoadDataFromOriginalTable(ctx sessionctx.Context) error
 
-	// Get membuffer use for cache table
+	// GetMemCache Get the MemBuffer used by the cache table
 	GetMemCache() kv.MemBuffer
 
-	// Check if the cache can be read
+	// IsReadFromCache Check if the cache table is readable
 	IsReadFromCache(ts uint64) bool
 
-	// If the read conditions of the cache are not met, the lock information needs to be updated. At the same time,
+	// UpdateLockForRead If the read conditions of the cache are not met, the lock information needs to be updated. At the same time,
 	// reload data from the original table
 	UpdateLockForRead(ctx sessionctx.Context, ts uint64) error
 }

@@ -90,7 +90,7 @@ type StatementContext struct {
 	IsStaleness                  bool
 	CacheTableInfo               struct {
 		IsReadCacheTable bool
-		TableID     int64
+		TableID          int64
 	}
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -326,6 +326,8 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHintSet = true
 	sc.planHint = hint
 }
+
+// InitCacheTableInfo initializes the sc.acheTableInfo.
 func (sc *StatementContext) InitCacheTableInfo(tblID int64, cond bool) {
 	sc.CacheTableInfo.TableID = tblID
 	sc.CacheTableInfo.IsReadCacheTable = cond

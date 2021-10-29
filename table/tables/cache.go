@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Package tables Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -31,8 +31,10 @@ type cachedTable struct {
 }
 
 func (c *cachedTable) IsReadFromCache(ts uint64) bool {
-	// If first read cache table. directly return false, the backend go coroutine will help us update the lock information
+	// If first read cache table. directly return false, the backend goroutine will help us update the lock information
 	// and read the data from the original table at the same time
+	// TODO : Use lease and ts judge whether it is readable.
+	// TODO : If the cache is not readable. MemBuffer become invalid.
 	if c.MemBuffer == nil {
 		return false
 	}
@@ -82,6 +84,7 @@ func (c *cachedTable) LoadDataFromOriginalTable(ctx sessionctx.Context) error {
 	}
 	return nil
 }
+
 func (c *cachedTable) UpdateLockForRead(ctx sessionctx.Context, ts uint64) error {
 	// Now only the data is re-load here, and the lock information is not updated. any read-lock information update will in the next pr.
 	err := c.LoadDataFromOriginalTable(ctx)
