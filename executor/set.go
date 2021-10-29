@@ -124,27 +124,10 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		if err != nil {
 			return err
 		}
-		// Some PD client dynamic options need to be set here.
-		switch name {
-		case variable.TiDBTSOClientBatchMaxWaitTime:
-			var val int64
-			val, err = strconv.ParseInt(valStr, 10, 64)
-			if err != nil {
-				return err
-			}
-			// Set it to the PD Client.
-			err = e.setPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Millisecond*time.Duration(val))
-			if err != nil {
-				return err
-			}
-			logutil.BgLogger().Info("set pd client dynamic option", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
-		case variable.TiDBTSOEnableFollowerProxy:
-			val := variable.TiDBOptOn(valStr)
-			err = e.setPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
-			if err != nil {
-				return err
-			}
-			logutil.BgLogger().Info("set pd client dynamic option", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		// Some PD client dynamic options need to be checked and set here.
+		err = e.checkPDClientDynamicOption(name, valStr, sessionVars)
+		if err != nil {
+			return err
 		}
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
@@ -218,6 +201,32 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	// Clients are often noisy in setting session variables such as
 	// autocommit, timezone, query cache
 	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+	return nil
+}
+
+func (e *SetExecutor) checkPDClientDynamicOption(name, valStr string, sessionVars *variable.SessionVars) error {
+	var err error
+	switch name {
+	case variable.TiDBTSOClientBatchMaxWaitTime:
+		var val int64
+		val, err = strconv.ParseInt(valStr, 10, 64)
+		if err != nil {
+			return err
+		}
+		// Set it to the PD Client.
+		err = e.setPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Millisecond*time.Duration(val))
+		if err != nil {
+			return err
+		}
+		logutil.BgLogger().Info("set pd client dynamic option", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+	case variable.TiDBTSOEnableFollowerProxy:
+		val := variable.TiDBOptOn(valStr)
+		err = e.setPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
+		if err != nil {
+			return err
+		}
+		logutil.BgLogger().Info("set pd client dynamic option", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+	}
 	return nil
 }
 
