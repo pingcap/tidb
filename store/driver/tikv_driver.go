@@ -264,7 +264,7 @@ func (s *tikvStore) StartGCWorker() error {
 		return nil
 	}
 
-	gcWorker, err := gcworker.NewGCWorker(s, s.pdClient)
+	gcWorker, err := gcworker.NewGCWorker(s, s.GetPDClient())
 	if err != nil {
 		return derr.ToTiDBErr(err)
 	}
