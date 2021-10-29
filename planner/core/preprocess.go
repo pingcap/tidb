@@ -670,12 +670,18 @@ func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) 
 	if isIncorrectName(stmt.Name) {
 		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
+	if p.err = checkPlacement(p.ctx.GetSessionVars().EnableAlterPlacement, stmt); p.err != nil {
+		return
+	}
 }
 
 func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
 	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
 		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+	}
+	if p.err = checkPlacement(p.ctx.GetSessionVars().EnableAlterPlacement, stmt); p.err != nil {
+		return
 	}
 }
 
@@ -707,6 +713,7 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 }
 
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
+	// check create table like
 	if stmt.ReferTable != nil {
 		schema := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
 		if stmt.ReferTable.Schema.String() != "" {
@@ -718,6 +725,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			p.err = err
 			return
 		}
+		// check temporary table
 		tableMetaInfo := tableInfo.Meta()
 		if tableMetaInfo.TempTableType != model.TempTableNone {
 			p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("create table like")
@@ -729,7 +737,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				p.err = err
 				return
 			}
-
 		}
 	}
 	if stmt.TemporaryKeyword != ast.TemporaryNone {
@@ -755,6 +762,11 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			}
 		}
 	}
+
+	if p.err = checkPlacement(p.ctx.GetSessionVars().EnableAlterPlacement, stmt); p.err != nil {
+		return
+	}
+
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
@@ -1047,6 +1059,9 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
+	if p.err = checkPlacement(p.ctx.GetSessionVars().EnableAlterPlacement, stmt); p.err != nil {
+		return
+	}
 	specs := stmt.Specs
 	for _, spec := range specs {
 		if spec.NewTable != nil {
@@ -1087,6 +1102,76 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			// Nothing to do now.
 		}
 	}
+}
+
+func checkPlacement(enableFlag bool, stmt ast.Node) error {
+	if !enableFlag {
+		switch s := stmt.(type) {
+		case *ast.CreateTableStmt, *ast.AlterTableStmt:
+			var tbOptions []*ast.TableOption
+			if st, ok := s.(*ast.CreateTableStmt); ok {
+				tbOptions = append(tbOptions, st.Options...)
+				if st.Partition != nil {
+					for _, def := range st.Partition.Definitions {
+						tbOptions = append(tbOptions, def.Options...)
+					}
+				}
+			} else if st, ok := s.(*ast.AlterTableStmt); ok {
+				for _, spec := range st.Specs {
+					switch spec.Tp {
+					case ast.AlterTableOption:
+						tbOptions = append(tbOptions, spec.Options...)
+					case ast.AlterTablePartitionOptions:
+						tbOptions = append(tbOptions, spec.Options...)
+					}
+				}
+			}
+			for _, opt := range tbOptions {
+				switch opt.Tp {
+				case ast.TableOptionPlacementPrimaryRegion,
+					ast.TableOptionPlacementRegions,
+					ast.TableOptionPlacementFollowerCount,
+					ast.TableOptionPlacementVoterCount,
+					ast.TableOptionPlacementLearnerCount,
+					ast.TableOptionPlacementSchedule,
+					ast.TableOptionPlacementConstraints,
+					ast.TableOptionPlacementLeaderConstraints,
+					ast.TableOptionPlacementLearnerConstraints,
+					ast.TableOptionPlacementFollowerConstraints,
+					ast.TableOptionPlacementVoterConstraints,
+					ast.TableOptionPlacementPolicy:
+					return ddl.ErrPlacementDisabled
+				}
+			}
+			return nil
+		case *ast.CreateDatabaseStmt, *ast.AlterDatabaseStmt:
+			var dbOptions []*ast.DatabaseOption
+			if st, ok := s.(*ast.CreateDatabaseStmt); ok {
+				dbOptions = st.Options
+			} else if st, ok := s.(*ast.AlterDatabaseStmt); ok {
+				dbOptions = st.Options
+			}
+			for _, opt := range dbOptions {
+				switch opt.Tp {
+				case ast.DatabaseOptionPlacementPrimaryRegion,
+					ast.DatabaseOptionPlacementRegions,
+					ast.DatabaseOptionPlacementFollowerCount,
+					ast.DatabaseOptionPlacementVoterCount,
+					ast.DatabaseOptionPlacementLearnerCount,
+					ast.DatabaseOptionPlacementSchedule,
+					ast.DatabaseOptionPlacementConstraints,
+					ast.DatabaseOptionPlacementLeaderConstraints,
+					ast.DatabaseOptionPlacementLearnerConstraints,
+					ast.DatabaseOptionPlacementFollowerConstraints,
+					ast.DatabaseOptionPlacementVoterConstraints,
+					ast.DatabaseOptionPlacementPolicy:
+					return ddl.ErrPlacementDisabled
+				}
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 // checkDuplicateColumnName checks if index exists duplicated columns.
