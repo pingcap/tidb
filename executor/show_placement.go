@@ -480,7 +480,6 @@ func fetchDBScheduled(ctx context.Context, scheduleState map[int64]bool, db *mod
 func toScheduleStateString(schedule bool) string {
 	if schedule {
 		return "SCHEDULED"
-	} else {
-		return "INPROGRESS"
 	}
+	return "INPROGRESS"
 }
