@@ -2277,7 +2277,7 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 	}
 	approxiCount, hasPD := b.getApproximateTableCountFromPD(sctx, tid)
 	// If there's no stats meta and no pd, return the default rate.
-	if statsTbl == nil || statsTbl.Pseudo && !hasPD {
+	if (statsTbl == nil || statsTbl.Pseudo) && !hasPD {
 		return defaultRate
 	}
 	// If the count in stats_meta is still 0 and there's no information from pd side, we scan all rows.
