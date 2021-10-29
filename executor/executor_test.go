@@ -22,6 +22,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -9185,7 +9186,7 @@ func (s *testSuiteWithData) TestPlanReplayerDumpSingle(c *C) {
 	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
 	path := s.testData.ConvertRowsToStrings(res.Rows())
 
-	reader, err := zip.OpenReader(path[0])
+	reader, err := zip.OpenReader(filepath.Join(domain.GetPlanReplayerDirName(), path[0]))
 	c.Assert(err, IsNil)
 	defer reader.Close()
 	for _, file := range reader.File {
