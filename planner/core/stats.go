@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -602,32 +601,9 @@ func (ds *DataSource) isInIndexMergeHints(name string) bool {
 	return false
 }
 
-// onlyContainEqExpr4PlanCache is used to check whether the lazy constant only exists in equal expression.
-func onlyContainEqExpr4PlanCache(ctx sessionctx.Context, exprs []expression.Expression) bool {
-	allEqExpr := true
-	for _, expr := range exprs {
-		if !expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{expr}) {
-			continue
-		}
-		switch v := expr.(type) {
-		case *expression.ScalarFunction:
-			funcName := v.FuncName.L
-			if funcName == "eq" {
-				continue
-			} else if funcName == "and" || funcName == "or" {
-				allEqExpr = onlyContainEqExpr4PlanCache(ctx, v.GetArgs())
-			} else {
-				allEqExpr = false
-			}
-		}
-	}
-	return allEqExpr
-}
-
 // accessPathsForConds generates all possible index paths for conditions.
 func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, usedIndexCount int) []*util.AccessPath {
 	var results = make([]*util.AccessPath, 0, usedIndexCount)
-	pruneOtherPaths := false
 	for i := 0; i < usedIndexCount; i++ {
 		path := &util.AccessPath{}
 		if ds.possibleAccessPaths[i].IsTablePath() {
@@ -663,7 +639,6 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 					results[0] = path
 					results = results[:1]
 				}
-				pruneOtherPaths = true
 				break
 			}
 		} else {
@@ -689,17 +664,10 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 					results[0] = path
 					results = results[:1]
 				}
-				pruneOtherPaths = true
 				break
 			}
 		}
 		results = append(results, path)
-	}
-	if pruneOtherPaths && expression.MaybeOverOptimized4PlanCache(ds.ctx, results[0].AccessConds) && !onlyContainEqExpr4PlanCache(ds.ctx, results[0].AccessConds) {
-		// Only the range of the path is empty or equal, the 'pruneOtherPaths' can be true.
-		// But we need to distinguish whether this range comes from a range query with parameters,
-		// which is obtained through optimization.
-		ds.ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 	}
 	return results
 }
