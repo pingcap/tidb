@@ -1305,5 +1305,56 @@ PARTITION BY RANGE ( a ) (
 		pcol := partition.Columns[1]
 		c.Assert(len(pcol.TopN.TopN), Equals, 2)
 	}
+}
 
+func (s *testSuite10) TestSampleRateOfTableAnalyzeOptions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("create table t(a int) STATS_SAMPLE_RATE=0.9")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+
+	handle.AutoAnalyzeMinCnt = 0
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.SampleRate, Equals, 0.9)
+	h := s.domain.StatsHandle()
+
+	// manual-analyze still uses the options after with
+	tk.MustExec("analyze table t with 0.8 samplerate ")
+	statuses := tk.MustQuery("show analyze status").Rows()
+	status := statuses[len(statuses)-1][3].(string)
+	c.Assert(strings.Contains(status, "SAMPLERATE=0.8"), IsTrue)
+
+	// auto-analyze uses the table-level options
+	tk.MustExec("insert into t values (20)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	h.HandleAutoAnalyze(is)
+	statuses = tk.MustQuery("show analyze status").Rows()
+	status = statuses[len(statuses)-1][3].(string)
+	c.Assert(strings.Contains(status, "SAMPLERATE=0.9"), IsTrue)
+
+	// alter table
+	tk.MustExec("alter table t STATS_OPTIONS=\"SAMPLE_RATE=0.7\"")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.SampleRate, Equals, 0.7)
+	tk.MustExec("insert into t values (21)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	h.HandleAutoAnalyze(is)
+	statuses = tk.MustQuery("show analyze status").Rows()
+	status = statuses[len(statuses)-1][3].(string)
+	c.Assert(strings.Contains(status, "SAMPLERATE=0.7"), IsTrue)
 }

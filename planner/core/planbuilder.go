@@ -2300,7 +2300,8 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int, statsOptions *mod
 				}
 			}
 			// analyzeOptionLimit could change, we can only check at planning instead of create/alter table
-			if valToSet > analyzeOptionLimit[key] {
+			if (key == ast.AnalyzeOptSampleRate && valToSet != analyzeOptionDefaultV2[key] && valToSet > analyzeOptionLimit[key]) ||
+				(key != ast.AnalyzeOptSampleRate && valToSet > analyzeOptionLimit[key]) {
 				return nil, errors.Errorf("value of analyze option %s should not be larger than %d", ast.AnalyzeOptionString[key], analyzeOptionLimit[key])
 			}
 			optMap[key] = valToSet

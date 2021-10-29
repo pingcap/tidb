@@ -2158,7 +2158,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 }
 
 func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
-	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze table"}
+	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze table with " + analyzeOptionsToString(opts)}
 	availableIdx := make([]*model.IndexInfo, 0, len(task.Indexes))
 	colGroups := make([]*tipb.AnalyzeColumnGroup, 0, len(task.Indexes))
 	if len(task.Indexes) > 0 {
@@ -2353,6 +2353,20 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+}
+
+func analyzeOptionsToString(opts map[ast.AnalyzeOptionType]uint64) string {
+	optList := make([]string, 0, len(opts))
+	for opType, opVal := range opts {
+		var valStr string
+		if opType == ast.AnalyzeOptSampleRate {
+			valStr = strconv.FormatFloat(math.Float64frombits(opVal), 'f', -1, 64)
+		} else {
+			valStr = strconv.FormatUint(opVal, 10)
+		}
+		optList = append(optList, ast.AnalyzeOptionString[opType]+"="+valStr)
+	}
+	return "[" + strings.Join(optList, ",") + "]"
 }
 
 func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {

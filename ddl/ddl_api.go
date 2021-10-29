@@ -2441,7 +2441,11 @@ func setStatsOption(statsOptions *model.StatsOptions, statsOptionType ast.StatsO
 	case ast.StatsOptionTopN:
 		statsOptions.TopN = op.UintValue
 	case ast.StatsOptionSampleRate:
-		statsOptions.SampleRate = op.Value.GetValue().(float64)
+		sampleRate, err := op.Value.(*driver.ValueExpr).Datum.ToFloat64(nil)
+		if err != nil {
+			return err
+		}
+		statsOptions.SampleRate = sampleRate
 	case ast.StatsOptionColsChoice:
 		switch strings.ToLower(op.StrValue) {
 		case "all":
