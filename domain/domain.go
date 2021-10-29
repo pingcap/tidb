@@ -1712,6 +1712,12 @@ func (do *Domain) serverIDKeeper() {
 	}
 }
 
+// MockInfoCacheAndLoadInfoSchema only used in unit test
+func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
+	do.infoCache = infoschema.NewCache(16)
+	do.infoCache.Insert(is, 0)
+}
+
 func init() {
 	initByLDFlagsForGlobalKill()
 }
