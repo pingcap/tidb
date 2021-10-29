@@ -16,6 +16,7 @@ package tables
 
 import (
 	"fmt"
+
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"

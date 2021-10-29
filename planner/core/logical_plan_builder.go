@@ -17,7 +17,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/log"
 	"math"
 	"math/bits"
 	"sort"
@@ -28,6 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"

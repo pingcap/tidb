@@ -15,8 +15,9 @@
 package tables_test
 
 import (
-	"github.com/pingcap/tidb/testkit"
 	"testing"
+
+	"github.com/pingcap/tidb/testkit"
 )
 
 func TestCacheTableBasicScan(t *testing.T) {
