@@ -142,6 +142,9 @@ type RecordSet interface {
 	// NewChunk create a chunk.
 	NewChunk() *chunk.Chunk
 
+	// NewChunk create a chunk from the allocator.
+	NewChunkFromAllocator(chunk.Allocator) *chunk.Chunk
+
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
 	Close() error
