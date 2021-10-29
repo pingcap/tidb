@@ -1038,9 +1038,14 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 	}
 }
 
-func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]chunk.Row, error) {
+func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, alloc chunk.Allocator) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	req := rs.NewChunk()
+	var req *chunk.Chunk
+	if alloc == nil {
+		req = rs.NewChunk()
+	} else {
+		req = rs.NewChunkFromAllocator(alloc)
+	}
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {
@@ -1131,6 +1136,9 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
 		return err
 	}
+	if sv.GlobalConfigName != "" {
+		domain.GetDomain(s).NotifyGlobalConfigChange(sv.GlobalConfigName, variable.OnOffToTrueFalse(value))
+	}
 	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
 }
 
@@ -1164,7 +1172,7 @@ func (s *session) GetTiDBTableValue(name string) (string, error) {
 
 var _ sqlexec.SQLParser = &session{}
 
-func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
+func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1175,7 +1183,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	defer parserPool.Put(p)
 	p.SetSQLMode(s.sessionVars.SQLMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
-	tmp, warn, err := p.Parse(sql, charset, collation)
+	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
 	if len(tmp) == 1 {
 		s.cache[0] = tmp[0]
@@ -1326,9 +1334,8 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
-	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 	parseStartTime := time.Now()
-	stmts, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	stmts, warns, err := s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -1379,11 +1386,10 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		// Charsets from clients may give chance injections.
 		// Refer to https://stackoverflow.com/questions/5741187/sql-injection-that-gets-around-mysql-real-escape-string/12118602.
 		parseStartTime = time.Now()
-		stmts, warns, err = s.ParseSQL(ctx, sql, mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation)
+		stmts, warns, err = s.ParseSQL(ctx, sql)
 	} else {
-		charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 		parseStartTime = time.Now()
-		stmts, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
+		stmts, warns, err = s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	}
 	if len(stmts) != 1 {
 		err = errors.New("run multiple statements internally is not supported")
@@ -1504,7 +1510,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 		}
 	}()
 	var rows []chunk.Row
-	rows, err = drainRecordSet(ctx, se, rs)
+	rows, err = drainRecordSet(ctx, se, rs, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1628,7 +1634,6 @@ var querySpecialKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
 	executor.IndexAdviseVarKey,
-	executor.PlanReplayerVarKey,
 }
 
 func (s *session) hasQuerySpecial() bool {
@@ -2441,6 +2446,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
+	se.GetSessionVars().InRestrictedSQL = true
 
 	// get system tz from mysql.tidb
 	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
@@ -2553,11 +2559,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	se8, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	dom.PlanReplayerLoop(se8)
+	dom.PlanReplayerLoop()
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()

@@ -18,15 +18,22 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
-// Cacheable checks whether the input ast is cacheable.
+// Cacheable checks whether the input ast is cacheable with empty session context, which is mainly for testing.
+func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
+	return CacheableWithCtx(nil, node, is)
+}
+
+// CacheableWithCtx checks whether the input ast is cacheable.
 // Handle "ignore_plan_cache()" hint
 // If there are multiple hints, only one will take effect
-func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
+func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) bool {
 	_, isSelect := node.(*ast.SelectStmt)
 	_, isUpdate := node.(*ast.UpdateStmt)
 	_, isInsert := node.(*ast.InsertStmt)
@@ -36,6 +43,7 @@ func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
 		return false
 	}
 	checker := cacheableChecker{
+		sctx:      sctx,
 		cacheable: true,
 		schema:    is,
 	}
@@ -49,6 +57,7 @@ func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
 // will not be cached currently.
 // NOTE: we can add more rules in the future.
 type cacheableChecker struct {
+	sctx      sessionctx.Context
 	cacheable bool
 	schema    infoschema.InfoSchema
 }
@@ -120,12 +129,49 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 	case *ast.TableName:
 		if checker.schema != nil {
 			if checker.isPartitionTable(node) {
+				if checker.sctx != nil && checker.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+					return in, false // dynamic-mode for partition tables can use plan-cache
+				}
+				checker.cacheable = false
+				return in, true
+			}
+			if checker.hasGeneratedCol(node) {
+				checker.cacheable = false
+				return in, true
+			}
+			if checker.isTempTable(node) {
 				checker.cacheable = false
 				return in, true
 			}
 		}
 	}
 	return in, false
+}
+
+func (checker *cacheableChecker) hasGeneratedCol(tn *ast.TableName) bool {
+	tb, err := checker.schema.TableByName(tn.Schema, tn.Name)
+	if err != nil {
+		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
+		return false
+	}
+	for _, col := range tb.Cols() {
+		if col.IsGenerated() {
+			return true
+		}
+	}
+	return false
+}
+
+func (checker *cacheableChecker) isTempTable(tn *ast.TableName) bool {
+	tb, err := checker.schema.TableByName(tn.Schema, tn.Name)
+	if err != nil {
+		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
+		return false
+	}
+	if tb.Meta().TempTableType != model.TempTableNone {
+		return true
+	}
+	return false
 }
 
 func (checker *cacheableChecker) isPartitionTable(tn *ast.TableName) bool {

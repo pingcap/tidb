@@ -196,6 +196,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowStatsHealthy:
 		e.fetchShowStatsHealthy()
 		return nil
+	case ast.ShowColumnStatsUsage:
+		return e.fetchShowColumnStatsUsage()
 	case ast.ShowPlugins:
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
@@ -1006,14 +1008,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	buf.WriteString("\n")
 
-	switch tableInfo.TempTableType {
-	case model.TempTableNone:
-		buf.WriteString(") ENGINE=InnoDB")
-	default:
-		// For now the only supported engine for temporary table is memory.
-		buf.WriteString(") ENGINE=memory")
-	}
-
+	buf.WriteString(") ENGINE=InnoDB")
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
@@ -1477,9 +1472,16 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		}
 		require = privValue.RequireStr()
 	}
+
+	authData := checker.GetEncodedPassword(e.User.Username, e.User.Hostname)
+	authStr := ""
+	if !(authplugin == mysql.AuthSocket && authData == "") {
+		authStr = fmt.Sprintf(" AS '%s'", authData)
+	}
+
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s' AS '%s' REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
-		e.User.Username, e.User.Hostname, authplugin, checker.GetEncodedPassword(e.User.Username, e.User.Hostname), require)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK",
+		e.User.Username, e.User.Hostname, authplugin, authStr, require)
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
