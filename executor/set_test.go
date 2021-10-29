@@ -933,14 +933,40 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@tmp_table_size;")
 	result.Check(testkit.Rows("167772161"))
 
-	tk.MustExec("set @@tmp_table_size=9223372036854775807")
+	tk.MustExec("set @@tmp_table_size=18446744073709551615")
 	result = tk.MustQuery("select @@tmp_table_size;")
-	result.Check(testkit.Rows("9223372036854775807"))
+	result.Check(testkit.Rows("18446744073709551615"))
 
 	_, err = tk.Exec("set @@tmp_table_size=18446744073709551616")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 
 	_, err = tk.Exec("set @@tmp_table_size='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@tidb_tmp_table_max_size=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '-1'"))
+	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
+	result.Check(testkit.Rows("1048576"))
+
+	tk.MustExec("set @@tidb_tmp_table_max_size=1048575")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '1048575'"))
+	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
+	result.Check(testkit.Rows("1048576"))
+
+	tk.MustExec("set @@tidb_tmp_table_max_size=167772161")
+	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
+	result.Check(testkit.Rows("167772161"))
+
+	tk.MustExec("set @@tidb_tmp_table_max_size=137438953472")
+	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
+	result.Check(testkit.Rows("137438953472"))
+
+	tk.MustExec("set @@tidb_tmp_table_max_size=137438953473")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '137438953473'"))
+	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
+	result.Check(testkit.Rows("137438953472"))
+
+	_, err = tk.Exec("set @@tidb_tmp_table_max_size='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 
 	tk.MustExec("set @@global.connect_timeout=1")
