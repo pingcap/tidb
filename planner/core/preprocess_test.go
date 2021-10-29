@@ -397,5 +397,4 @@ func TestPlacemenCheck(t *testing.T) {
 	tk.MustGetErrCode("alter table t voters=2;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("create table m (c int) partition by range (c) (partition p1 values less than (200) followers=2);", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t partition p1 placement policy=\"placement_x\";", errno.ErrUnsupportedDDLOperation)
-
 }
