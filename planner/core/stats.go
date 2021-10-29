@@ -602,10 +602,8 @@ func (ds *DataSource) isInIndexMergeHints(name string) bool {
 	return false
 }
 
+// onlyContainEqExpr4PlanCache is used to check whether the lazy constant only exists in equal expression.
 func onlyContainEqExpr4PlanCache(ctx sessionctx.Context, exprs []expression.Expression) bool {
-	if !expression.MaybeOverOptimized4PlanCache(ctx, exprs) {
-		return true
-	}
 	allEqExpr := true
 	for _, expr := range exprs {
 		if !expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{expr}) {
@@ -697,7 +695,10 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 		}
 		results = append(results, path)
 	}
-	if pruneOtherPaths && !onlyContainEqExpr4PlanCache(ds.ctx, results[0].AccessConds) {
+	if pruneOtherPaths && expression.MaybeOverOptimized4PlanCache(ds.ctx, results[0].AccessConds) && !onlyContainEqExpr4PlanCache(ds.ctx, results[0].AccessConds) {
+		// Only the range of the path is empty or equal, the 'pruneOtherPaths' can be true.
+		// But we need to distinguish whether this range comes from a range query with parameters,
+		// which is obtained through optimization.
 		ds.ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 	}
 	return results
