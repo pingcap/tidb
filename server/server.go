@@ -486,7 +486,9 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
-		conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+		if conn.ctx != nil {
+			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+		}
 		if plugin.IsEnable(plugin.Audit) && conn.ctx != nil {
 			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 				authPlugin := plugin.DeclareAuditManifest(p.Manifest)
