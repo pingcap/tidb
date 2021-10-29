@@ -27,7 +27,6 @@ import (
 
 func (s *testSuite5) TestShowPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.Se.GetSessionVars().EnableAlterPlacement = true
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3, t4, db2.t2")
 	tk.MustExec("drop database if exists db2")
