@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 )
 
 // Store implements kv.Storage interface.
@@ -85,3 +86,6 @@ func (s *Store) GetMinSafeTS(txnScope string) uint64 {
 func (s *Store) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 	return nil, nil
 }
+
+// GetPDClient implements kv.Storage interface.
+func (s *Store) GetPDClient() pd.Client { return nil }

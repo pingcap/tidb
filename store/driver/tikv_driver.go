@@ -355,3 +355,8 @@ func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 	}
 	return result, nil
 }
+
+// GetPDClient returns the PD client.
+func (s *tikvStore) GetPDClient() pd.Client {
+	return s.pdClient
+}

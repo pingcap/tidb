@@ -584,6 +584,10 @@ const (
 	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
 	TiDBEnableLocalTxn = "tidb_enable_local_txn"
+	// TiDBTSOEnableFollowerProxy indicates whether to enable the TSO Follower Proxy feature of PD client.
+	TiDBTSOEnableFollowerProxy = "tidb_tso_enable_follower_proxy"
+	// TiDBTSOClientBatchMaxWaitTime indicates the max value of the TSO Batch Wait interval time of PD client.
+	TiDBTSOClientBatchMaxWaitTime = "tidb_tso_client_batch_max_wait_time"
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
@@ -765,6 +769,8 @@ const (
 	DefTiDBTopSQLReportIntervalSeconds           = 60
 	DefTiDBTmpTableMaxSize                       = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                        = false
+	DefTiDBTSOClientBatchMaxWaitTime             = 0 // 0ms
+	DefTiDBTSOEnableFollowerProxy                = false
 	DefTiDBEnableOrderedResultMode               = false
 	DefTiDBEnablePseudoForOutdatedStats          = true
 	DefEnableMPPBalanceWithContinuousRegion      = true
@@ -801,8 +807,10 @@ var (
 		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
 		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
-	EnableLocalTxn     = atomic.NewBool(DefTiDBEnableLocalTxn)
-	RestrictedReadOnly = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	EnableLocalTxn          = atomic.NewBool(DefTiDBEnableLocalTxn)
+	MaxTSOBatchWaitInterval = atomic.NewInt64(DefTiDBTSOClientBatchMaxWaitTime)
+	EnableTSOFollowerProxy  = atomic.NewBool(DefTiDBTSOEnableFollowerProxy)
+	RestrictedReadOnly      = atomic.NewBool(DefTiDBRestrictedReadOnly)
 )
 
 // TopSQL is the variable for control top sql feature.

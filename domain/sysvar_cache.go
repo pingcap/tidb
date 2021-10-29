@@ -165,6 +165,15 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 func checkEnableServerGlobalVar(name, sVal string) {
 	var err error
 	switch name {
+	case variable.TiDBTSOClientBatchMaxWaitTime:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.MaxTSOBatchWaitInterval.Store(val)
+	case variable.TiDBTSOEnableFollowerProxy:
+		variable.EnableTSOFollowerProxy.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableLocalTxn:
 		variable.EnableLocalTxn.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableStmtSummary:

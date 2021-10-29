@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
@@ -228,6 +229,8 @@ func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 func (s *mockStorage) GetMinSafeTS(txnScope string) uint64 {
 	return 0
 }
+
+func (s *mockStorage) GetPDClient() pd.Client { return nil }
 
 // newMockStorage creates a new mockStorage.
 func newMockStorage() Storage {
