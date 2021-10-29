@@ -481,11 +481,13 @@ func getRows(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	return rows, nil
 }
 
+// PlanReplayerLoadExec represents a plan replayer load executor.
 type PlanReplayerLoadExec struct {
 	baseExecutor
 	info *PlanReplayerLoadInfo
 }
 
+// PlanReplayerLoadInfo contains file path and session context.
 type PlanReplayerLoadInfo struct {
 	Path string
 	Ctx  sessionctx.Context
@@ -497,8 +499,10 @@ func (k planReplayerLoadKeyType) String() string {
 	return "plan_replayer_load_var"
 }
 
+// PlanReplayerLoadVarKey is a variable key for plan replayer load.
 const PlanReplayerLoadVarKey planReplayerLoadKeyType = 0
 
+// Next implements the Executor Next interface.
 func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if len(e.info.Path) == 0 {
@@ -507,7 +511,8 @@ func (e *PlanReplayerLoadExec) Next(ctx context.Context, req *chunk.Chunk) error
 	val := e.ctx.Value(PlanReplayerLoadVarKey)
 	if val != nil {
 		e.ctx.SetValue(PlanReplayerLoadVarKey, nil)
-		return errors.New("plan replayer: previous plan replayer load option isn't closed normally, please try again.")
+		return errors.New(
+			"plan replayer: previous plan replayer load option isn't closed normally, please try again.")
 	}
 	e.ctx.SetValue(PlanReplayerLoadVarKey, e.info)
 	return nil
@@ -592,6 +597,7 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	return h.LoadStatsFromJSON(ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl)
 }
 
+// Update updates the data of the corresponding table.
 func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	b := bytes.NewReader(data)
 	z, err := zip.NewReader(b, int64(len(data)))
