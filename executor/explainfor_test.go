@@ -907,8 +907,7 @@ func (s *testPrepareSerialSuite) TestIndexMerge4PlanCache(c *C) {
 	c.Assert(res.Rows()[1][0], Matches, ".*IndexMerge.*")
 
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 ddcdsaf 3"))
-	// TODO: should use plan cache here
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 ddcdsaf 3"))
 	tkProcess = tk.Se.ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
@@ -929,8 +928,15 @@ func (s *testPrepareSerialSuite) TestIndexMerge4PlanCache(c *C) {
 	tk.MustExec("set @a = 10, @b = 11;")
 	tk.MustQuery("execute stmt using @a, @a, @a").Check(testkit.Rows("10 10 10"))
 	tk.MustQuery("execute stmt using @b, @b, @b").Check(testkit.Rows("11 11 11"))
-	// TODO: should use plan cache here
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustExec("prepare stmt from 'select /*+ use_index_merge(t1) */ * from t1 where c=? or (b=? and (a=? or a=?));';")
+	tk.MustQuery("execute stmt using @a, @a, @a, @a").Check(testkit.Rows("10 10 10"))
+	tk.MustQuery("execute stmt using @b, @b, @b, @b").Check(testkit.Rows("11 11 11"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustExec("prepare stmt from 'select /*+ use_index_merge(t1) */ * from t1 where c=? or (b=? and (a=? and c=?));';")
+	tk.MustQuery("execute stmt using @a, @a, @a, @a").Check(testkit.Rows("10 10 10"))
+	tk.MustQuery("execute stmt using @b, @b, @b, @b").Check(testkit.Rows("11 11 11"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
 	tk.MustExec("drop table if exists t0")
 	tk.MustExec("CREATE TABLE t0(c0 INT AS (1), c1 INT PRIMARY KEY)")
