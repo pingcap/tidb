@@ -93,12 +93,6 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		TLS:              dsn.TLS,
 	}
 
-	if dsn.Vars != nil {
-		for k, v := range dsn.Vars {
-			param.Vars[k] = v
-		}
-	}
-
 	db, err := param.Connect()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -117,6 +111,11 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		"tidb_opt_write_row_id": "1",
 		// always set auto-commit to ON
 		"autocommit": "1",
+	}
+	if dsn.Vars != nil {
+		for k, v := range dsn.Vars {
+			param.Vars[k] = v
+		}
 	}
 
 	for k, v := range vars {
