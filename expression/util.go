@@ -879,12 +879,42 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 	return false
 }
 
+<<<<<<< HEAD
 // ContainMutableConst checks if the expressions contain a lazy constant.
 func ContainMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 	// Treat all constants immutable if plan cache is not enabled for this query.
 	if !ctx.GetSessionVars().StmtCtx.UseCache {
 		return false
 	}
+=======
+// MaybeOverOptimized4PlanCache used to check whether an optimization can work
+// for the statement when we enable the plan cache.
+// In some situations, some optimizations maybe over-optimize and cache an
+// overOptimized plan. The cached plan may not get the correct result when we
+// reuse the plan for other statements.
+// For example, `pk>=$a and pk<=$b` can be optimized to a PointGet when
+// `$a==$b`, but it will cause wrong results when `$a!=$b`.
+// So we need to do the check here. The check includes the following aspects:
+// 1. Whether the plan cache switch is enable.
+// 2. Whether the statement can be cached.
+// 3. Whether the expressions contain a lazy constant.
+// TODO: Do more careful check here.
+func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bool {
+	// If we do not enable plan cache, all the optimization can work correctly.
+	if !ctx.GetSessionVars().StmtCtx.UseCache {
+		return false
+	}
+	if ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
+		// If the current statement can not be cached. We should remove the mutable constant.
+		RemoveMutableConst(ctx, exprs)
+		return false
+	}
+	return containMutableConst(ctx, exprs)
+}
+
+// containMutableConst checks if the expressions contain a lazy constant.
+func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
+>>>>>>> 83e559db0... planner: allow refineArgs for plan cache in some situations (#28944)
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
@@ -898,6 +928,19 @@ func ContainMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 		}
 	}
 	return false
+}
+
+// RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
+func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) {
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Constant:
+			v.ParamMarker = nil
+			v.DeferredExpr = nil
+		case *ScalarFunction:
+			RemoveMutableConst(ctx, v.GetArgs())
+		}
+	}
 }
 
 const (
