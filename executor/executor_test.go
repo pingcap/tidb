@@ -203,6 +203,10 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	}
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
+	c.Assert(err, IsNil)
 	d.SetStatsUpdating(true)
 	s.domain = d
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -214,13 +218,6 @@ func (s *testSuiteWithData) SetUpSuite(c *C) {
 	s.baseTestSuite.SetUpSuite(c)
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "executor_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testSuite5) SetUpSuite(c *C) {
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
 	c.Assert(err, IsNil)
 }
 
