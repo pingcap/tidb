@@ -1467,3 +1467,13 @@ func (s *testSerialSuite) TestMoreSessions4PlanCache(c *C) {
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
+
+func (s *testSuite) TestIssue28792(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t12(a INT, b INT)")
+	tk.MustExec("CREATE TABLE t97(a INT, b INT UNIQUE NOT NULL);")
+	r1 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 on t12.b = t97.b;").Rows()
+	r2 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b;").Rows()
+	c.Assert(r1, DeepEquals, r2)
+}
