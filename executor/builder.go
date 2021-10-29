@@ -2277,7 +2277,7 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 	}
 	approxiCount, hasPD := b.getApproximateTableCountFromPD(sctx, tid)
 	// If there's no stats meta and no pd, return the default rate.
-	if (statsTbl == nil || statsTbl.Pseudo) && !hasPD {
+	if statsTbl == nil && !hasPD {
 		return defaultRate
 	}
 	// If the count in stats_meta is still 0 and there's no information from pd side, we scan all rows.
@@ -2292,6 +2292,10 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
 		return math.Min(1, 150000/approxiCount)
+	}
+	// If we don't go into the above if branch and we still detect the count is zero. Return 1 to prevent the dividing zero.
+	if statsTbl.Count == 0 {
+		return 1
 	}
 	// We are expected to scan about 100000 rows or so.
 	// Since there's tiny error rate around the count from the stats meta, we use
