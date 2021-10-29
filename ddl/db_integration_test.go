@@ -2887,13 +2887,6 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustGetErrCode("create table t(id int) on commit delete rows", errno.ErrParse)
 	tk.MustGetErrCode("create table t(id int) on commit preserve rows", errno.ErrParse)
 
-	tk.MustGetErrCode("create global temporary table tplacement (id int) followers=4  on commit delete rows", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create global temporary table tplacement (id int) primary_region='us-east-1' regions='us-east-1,us-west-1' on commit delete rows", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create global temporary table tplacement (id int) placement policy='x' on commit delete rows", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create temporary table tplacement (id int) followers=4", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create temporary table tplacement (id int) primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create temporary table tplacement (id int) placement policy='x'", errno.ErrOptOnTemporaryTable)
-
 	// Not support yet.
 	tk.MustGetErrCode("create global temporary table t (id int) on commit preserve rows", errno.ErrUnsupportedDDLOperation)
 
@@ -2965,6 +2958,74 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
+}
+
+func (s *testSerialDBSuite) TestPlacementOnTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.tplacement1, db2.t1, db2.tplacement3, db2.tplacement5")
+	tk.MustExec("drop database if exists db2")
+	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("create placement policy x primary_region='r1' regions='r1'")
+	defer tk.MustExec("drop placement policy x")
+
+	// Cannot create temporary table with placement options
+	tk.MustGetErrCode("create global temporary table tplacement1 (id int) followers=4  on commit delete rows", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create global temporary table tplacement1 (id int) primary_region='us-east-1' regions='us-east-1,us-west-1' on commit delete rows", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create global temporary table tplacement1 (id int) placement policy='x' on commit delete rows", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create temporary table tplacement2 (id int) followers=4", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create temporary table tplacement2 (id int) primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create temporary table tplacement2 (id int) placement policy='x'", errno.ErrOptOnTemporaryTable)
+
+	// Cannot alter temporary table with placement options
+	tk.MustExec("create global temporary table tplacement1 (id int) on commit delete rows")
+	defer tk.MustExec("drop table tplacement1")
+	tk.MustGetErrCode("alter table tplacement1 followers=4", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("alter table tplacement1  primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("alter table tplacement1  placement policy='x'", errno.ErrOptOnTemporaryTable)
+
+	tk.MustExec("create temporary table tplacement2 (id int)")
+	tk.MustGetErrCode("alter table tplacement2 followers=4", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table tplacement2  primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table tplacement2  placement policy='x'", errno.ErrUnsupportedDDLOperation)
+
+	// Temporary table will not inherit placement from db
+	tk.MustExec("create database db2 placement policy x")
+	defer tk.MustExec("drop database db2")
+
+	tk.MustExec("create global temporary table db2.tplacement3 (id int) on commit delete rows")
+	defer tk.MustExec("drop table db2.tplacement3")
+	tk.MustQuery("show create table db2.tplacement3").Check(testkit.Rows(
+		"tplacement3 CREATE GLOBAL TEMPORARY TABLE `tplacement3` (\n" +
+			"  `id` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS",
+	))
+
+	tk.MustExec("create temporary table db2.tplacement4 (id int)")
+	tk.MustQuery("show create table db2.tplacement4").Check(testkit.Rows(
+		"tplacement4 CREATE TEMPORARY TABLE `tplacement4` (\n" +
+			"  `id` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec("create table db2.t1 (a int) placement policy 'default'")
+	defer tk.MustExec("drop table db2.t1")
+
+	tk.MustExec("create global temporary table db2.tplacement5 like db2.t1 on commit delete rows")
+	defer tk.MustExec("drop table db2.tplacement5")
+	tk.MustQuery("show create table db2.tplacement5").Check(testkit.Rows(
+		"tplacement5 CREATE GLOBAL TEMPORARY TABLE `tplacement5` (\n" +
+			"  `a` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS",
+	))
+
+	tk.MustExec("create temporary table db2.tplacement6 like db2.t1")
+	defer tk.MustExec("drop table db2.tplacement6")
+	tk.MustQuery("show create table db2.tplacement6").Check(testkit.Rows(
+		"tplacement6 CREATE TEMPORARY TABLE `tplacement6` (\n" +
+			"  `a` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }
 
 func (s *testIntegrationSuite3) TestAvoidCreateViewOnLocalTemporaryTable(c *C) {
