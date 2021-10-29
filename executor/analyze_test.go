@@ -1376,10 +1376,15 @@ func (s *testSuite10) TestSampleRateWithAnother(c *C) {
 	tableInfo := table.Meta()
 	h := s.domain.StatsHandle()
 
-	// manual-analyze still uses the options after with
-	tk.MustExec("analyze table t with 2 topn, 2 buckets, 0.9 samplerate")
+	tk.MustExec("analyze table t with 2 topn, 2 buckets")
 	tbl := h.GetTableStats(tableInfo)
 	col := tbl.Columns[1]
+	c.Assert(len(col.TopN.TopN), Equals, 2)
+	c.Assert(len(col.Buckets), Equals, 2)
+
+	tk.MustExec("analyze table t with 2 topn, 2 buckets, 0.9 samplerate")
+	tbl = h.GetTableStats(tableInfo)
+	col = tbl.Columns[1]
 	c.Assert(len(col.TopN.TopN), Equals, 2)
 	c.Assert(len(col.Buckets), Equals, 2)
 }
