@@ -804,7 +804,7 @@ func (s *testSerialSuite) TestIssue28087And28162(c *C) {
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows("\x01"))
 	tk.MustExec(`set @a=0x00, @b=0x00, @c=0x01`)
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows("\x00", "\x01"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
 	// issue 28162
 	tk.MustExec(`drop table if exists IDT_MC21780`)
