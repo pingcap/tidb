@@ -1358,3 +1358,28 @@ func (s *testSuite10) TestSampleRateOfTableAnalyzeOptions(c *C) {
 	status = statuses[len(statuses)-1][3].(string)
 	c.Assert(strings.Contains(status, "SAMPLERATE=0.7"), IsTrue)
 }
+
+func (s *testSuite10) TestSampleRateWithAnother(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+	handle.AutoAnalyzeMinCnt = 0
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	h := s.domain.StatsHandle()
+
+	// manual-analyze still uses the options after with
+	tk.MustExec("analyze table t with 2 topn, 2 buckets, 0.9 samplerate")
+	tbl := h.GetTableStats(tableInfo)
+	col := tbl.Columns[1]
+	c.Assert(len(col.TopN.TopN), Equals, 2)
+	c.Assert(len(col.Buckets), Equals, 2)
+}
