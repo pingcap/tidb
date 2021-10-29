@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
@@ -415,10 +416,11 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 	if err != nil {
 		return errors.AddStack(err)
 	}
-	if len(sRows) != 2 {
+	if len(sRows) == 0 || len(sRows[0]) != 2 {
 		return errors.New(fmt.Sprintf("plan replayer: get create table %v.%v failed", pair.DBName, pair.TableName))
 	}
-	fmt.Fprintf(fw, "%s", sRows[1])
+	fmt.Fprintf(fw, "create database `%v`; use `%v`;", pair.DBName, pair.DBName)
+	fmt.Fprintf(fw, "%s", sRows[0][1])
 	if len(recordSets) > 0 {
 		if err := recordSets[0].Close(); err != nil {
 			return err
@@ -542,16 +544,7 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 	return nil
 }
 
-func createSchemaAndTables(ctx sessionctx.Context, schema string, f *zip.File) error {
-	if len(schema) == 0 {
-		return errors.New("plan replayer: empty schema name")
-	}
-	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("create database `%s`", schema))
-	fmt.Println("[err]", err)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("use `%s`", schema))
-	if err != nil {
-		return err
-	}
+func createSchemaAndTables(ctx sessionctx.Context, f *zip.File) error {
 	r, err := f.Open()
 	if err != nil {
 		return errors.AddStack(err)
@@ -559,10 +552,44 @@ func createSchemaAndTables(ctx sessionctx.Context, schema string, f *zip.File) e
 	defer r.Close()
 	buf := new(bytes.Buffer)
 	buf.ReadFrom(r)
-	fmt.Println("[buf]", buf.String())
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), buf.String())
-
+	sqls := strings.Split(buf.String(), ";")
+	if len(sqls) != 3 {
+		return errors.New("plan replayer: create schema and tables failed")
+	}
+	// create database
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sqls[0])
+	logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
+	// use database
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sqls[1])
+	if err != nil {
+		return err
+	}
+	// create table
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sqls[2])
+	if err != nil {
+		return err
+	}
 	return nil
+}
+
+func loadStats(ctx sessionctx.Context, f *zip.File) error {
+	jsonTbl := &handle.JSONTable{}
+	r, err := f.Open()
+	if err != nil {
+		return errors.AddStack(err)
+	}
+	defer r.Close()
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(r)
+	if err := json.Unmarshal(buf.Bytes(), jsonTbl); err != nil {
+		return errors.AddStack(err)
+	}
+	do := domain.GetDomain(ctx)
+	h := do.StatsHandle()
+	if h == nil {
+		return errors.New("plan replayer: hanlde is nil")
+	}
+	return h.LoadStatsFromJSON(ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl)
 }
 
 func (e *PlanReplayerLoadInfo) Update(data []byte) error{
@@ -582,7 +609,18 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error{
 	for _, zipFile := range z.File {
 		path := strings.Split(zipFile.Name, "/")
 		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 {
-			err = createSchemaAndTables(e.Ctx, strings.Split(path[1], ".")[0], zipFile)
+			err = createSchemaAndTables(e.Ctx, zipFile)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	// load stats
+	for _, zipFile := range z.File {
+		path := strings.Split(zipFile.Name, "/")
+		if len(path) == 2 && strings.Compare(path[0], "stats") == 0 {
+			err = loadStats(e.Ctx, zipFile)
 			if err != nil {
 				return err
 			}
