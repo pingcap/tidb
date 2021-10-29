@@ -1496,6 +1496,11 @@ error = '''
 invalid as of timestamp: %s
 '''
 
+["planner:8137"]
+error = '''
+Column '%s' in ANALYZE column option does not exist in table '%s'
+'''
+
 ["planner:8242"]
 error = '''
 '%s' is unsupported on cache tables.
