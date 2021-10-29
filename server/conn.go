@@ -158,6 +158,7 @@ func newClientConn(s *Server) *clientConn {
 		connectionID: s.globalConnID.NextID(),
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
+		chunkAlloc:   chunk.NewAllocator(),
 		status:       connStatusDispatching,
 		lastActive:   time.Now(),
 		authPlugin:   mysql.AuthNativePassword,
@@ -177,6 +178,7 @@ type clientConn struct {
 	dbname        string            // default database name.
 	salt          []byte            // random bytes used for authentication.
 	alloc         arena.Allocator   // an memory allocator for reducing memory allocation.
+	chunkAlloc    chunk.Allocator
 	lastPacket    []byte            // latest sql query string, currently used for logging error.
 	ctx           *TiDBContext      // an interface to execute sql statements.
 	attrs         map[string]string // attributes parsed from client handshake response, not used for now.
@@ -983,6 +985,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err)
 		}
 	}()
+
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
 	// the status to special values, for example: kill or graceful shutdown.
@@ -1028,7 +1031,9 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 
 		startTime := time.Now()
-		if err = cc.dispatch(ctx, data); err != nil {
+		err = cc.dispatch(ctx, data)
+		cc.chunkAlloc.Reset()
+		if err != nil {
 			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
@@ -1676,15 +1681,6 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 	return nil
 }
 
-// handlePlanReplayer dose the export/import work for reproducing sql queries.
-func (cc *clientConn) handlePlanReplayer(ctx context.Context, info executor.PlanReplayerInfo) (string, error) {
-	switch info.(type) {
-	case *executor.PlanReplayerSingleInfo:
-		return info.Process()
-	}
-	return "", errors.New("plan replayer: not supporting info type")
-}
-
 func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
@@ -1964,19 +1960,6 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 		}
 	}
 
-	planReplayer := cc.ctx.Value(executor.PlanReplayerVarKey)
-	if planReplayer != nil {
-		handled = true
-		defer cc.ctx.SetValue(executor.PlanReplayerVarKey, nil)
-		token, err := cc.handlePlanReplayer(ctx, planReplayer.(executor.PlanReplayerInfo))
-		if err != nil {
-			return handled, err
-		}
-		if token != "" {
-			return handled, cc.writeOkWith(ctx, token, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
-		}
-	}
-
 	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
 }
 
@@ -2071,7 +2054,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 // The first return value indicates whether error occurs at the first call of ResultSet.Next.
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) (bool, error) {
 	data := cc.alloc.AllocWithLen(4, 1024)
-	req := rs.NewChunk()
+	req := rs.NewChunkFromAllocator(cc.chunkAlloc)
 	gotColumnInfo := false
 	firstNext := true
 	var stmtDetail *execdetails.StmtExecDetails
@@ -2143,8 +2126,8 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
 
+	req := rs.NewChunkFromAllocator(cc.chunkAlloc)
 	// if fetchedRows is not enough, getting data from recordSet.
-	req := rs.NewChunk()
 	for len(fetchedRows) < fetchSize {
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, req)
