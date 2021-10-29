@@ -159,15 +159,17 @@ func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
-	if encodedStr, err := charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(cryptStr); err == nil {
-		cryptStr = encodedStr
+	cryptStr, err = charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(cryptStr)
+	if err != nil {
+		return "", false, err
 	}
 	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	if encodedStr, err := charset.NewEncoding(b.args[1].GetType().Charset).EncodeString(keyStr); err == nil {
-		keyStr = encodedStr
+	keyStr, err = charset.NewEncoding(b.args[1].GetType().Charset).EncodeString(keyStr)
+	if err != nil {
+		return "", false, err
 	}
 	if !b.ivRequired && len(b.args) == 3 {
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
@@ -208,24 +210,27 @@ func (b *builtinAesDecryptIVSig) evalString(row chunk.Row) (string, bool, error)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	if encodedStr, err := charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(cryptStr); err == nil {
-		cryptStr = encodedStr
+	cryptStr, err = charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(cryptStr)
+	if err != nil {
+		return "", false, err
 	}
 
 	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	if encodedStr, err := charset.NewEncoding(b.args[1].GetType().Charset).EncodeString(keyStr); err == nil {
-		keyStr = encodedStr
+	keyStr, err = charset.NewEncoding(b.args[1].GetType().Charset).EncodeString(keyStr)
+	if err != nil {
+		return "", false, err
 	}
 
 	iv, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	if encodedStr, err := charset.NewEncoding(b.args[2].GetType().Charset).EncodeString(iv); err == nil {
-		iv = encodedStr
+	iv, err = charset.NewEncoding(b.args[2].GetType().Charset).EncodeString(iv)
+	if err != nil {
+		return "", false, err
 	}
 	if len(iv) < aes.BlockSize {
 		return "", true, errIncorrectArgs.GenWithStack("The initialization vector supplied to aes_decrypt is too short. Must be at least %d bytes long", aes.BlockSize)

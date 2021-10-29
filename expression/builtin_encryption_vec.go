@@ -76,9 +76,9 @@ func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		encodedBuf []byte
 	)
 	if isConstKey {
-		keyBytes := keyBuf.GetBytes(0)
-		if encodedBuf, err = keyEnc.Encode(encodedBuf, keyBytes); err == nil {
-			keyBytes = encodedBuf
+		keyBytes, err := keyEnc.Encode(encodedBuf, keyBuf.GetBytes(0))
+		if err != nil {
+			return err
 		}
 		key = encrypt.DeriveKeyMySQL(keyBytes, b.keySize)
 	}
@@ -96,18 +96,18 @@ func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			stmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
 		}
 		if !isConstKey {
-			keyBytes := keyBuf.GetBytes(i)
-			if encodedBuf, err = keyEnc.Encode(encodedBuf, keyBytes); err == nil {
-				keyBytes = encodedBuf
+			keyBytes, err := keyEnc.Encode(encodedBuf, keyBuf.GetBytes(i))
+			if err != nil {
+				return err
 			}
 			key = encrypt.DeriveKeyMySQL(keyBytes, b.keySize)
 		}
 		// ANNOTATION:
 		// we can't use GetBytes here because GetBytes return raw memory in strBuf,
 		// and the memory will be modified in AESEncryptWithECB & AESDecryptWithECB
-		str := []byte(strBuf.GetString(i))
-		if encodedBuf, err = cryptEnc.Encode(encodedBuf, str); err == nil {
-			str = encodedBuf
+		str, err := cryptEnc.Encode(encodedBuf, []byte(strBuf.GetString(i)))
+		if err != nil {
+			return err
 		}
 		plainText, err := encrypt.AESDecryptWithECB(str, key)
 		if err != nil {
@@ -355,9 +355,9 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		ivEncodedBuf []byte
 	)
 	if isConst {
-		keyBytes := keyBuf.GetBytes(0)
-		if encodedBuf, err = keyEnc.Encode(encodedBuf, keyBytes); err == nil {
-			keyBytes = encodedBuf
+		keyBytes, err := keyEnc.Encode(encodedBuf, keyBuf.GetBytes(0))
+		if err != nil {
+			return err
 		}
 		key = encrypt.DeriveKeyMySQL(keyBytes, b.keySize)
 	}
@@ -370,9 +370,9 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 			continue
 		}
 
-		iv := ivBuf.GetBytes(i)
-		if ivEncodedBuf, err = ivEnc.Encode(ivEncodedBuf, iv); err == nil {
-			iv = ivEncodedBuf
+		iv, err := ivEnc.Encode(ivEncodedBuf, ivBuf.GetBytes(i))
+		if err != nil {
+			return err
 		}
 		if len(iv) < aes.BlockSize {
 			return errIncorrectArgs.GenWithStack("The initialization vector supplied to aes_decrypt is too short. Must be at least %d bytes long", aes.BlockSize)
@@ -380,9 +380,9 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
 		iv = iv[0:aes.BlockSize]
 		if !isConst {
-			keyBytes := keyBuf.GetBytes(i)
-			if encodedBuf, err = keyEnc.Encode(encodedBuf, keyBytes); err == nil {
-				keyBytes = encodedBuf
+			keyBytes, err := keyEnc.Encode(encodedBuf, keyBuf.GetBytes(i))
+			if err != nil {
+				return err
 			}
 			key = encrypt.DeriveKeyMySQL(keyBytes, b.keySize)
 		}
@@ -391,8 +391,8 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		// ANNOTATION:
 		// we can't use GetBytes here because GetBytes return raw memory in strBuf,
 		// and the memory will be modified in AESDecryptWithCBC & AESDecryptWithOFB & AESDecryptWithCFB
-		str := []byte(strBuf.GetString(i))
-		if encodedBuf, err = cryptEnc.Encode(encodedBuf, str); err == nil {
+		str, err := cryptEnc.Encode(encodedBuf, []byte(strBuf.GetString(i)))
+		if err == nil {
 			str = encodedBuf
 		}
 		if isCBC {
