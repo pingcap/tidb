@@ -274,7 +274,7 @@ func dumpStats(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *domain.Doma
 
 func dumpVariables(ctx sessionctx.Context, zw *zip.Writer) error {
 	varMap := make(map[string]string)
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show variables")
+	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show variables")
 	if err != nil {
 		return err
 	}
@@ -301,7 +301,7 @@ func dumpVariables(ctx sessionctx.Context, zw *zip.Writer) error {
 }
 
 func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show bindings")
+	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show bindings")
 	if err != nil {
 		return err
 	}
@@ -325,7 +325,7 @@ func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 }
 
 func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show global bindings")
+	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show global bindings")
 	if err != nil {
 		return err
 	}
@@ -353,13 +353,13 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, sql string, isAnalyze b
 	var err error
 	if isAnalyze {
 		// Explain analyze
-		recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain analyze %s", sql))
+		recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain analyze %s", sql))
 		if err != nil {
 			return err
 		}
 	} else {
 		// Explain
-		recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain %s", sql))
+		recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain %s", sql))
 		if err != nil {
 			return err
 		}
@@ -404,7 +404,7 @@ func getStatsForTable(do *domain.Domain, pair tableNamePair) (*handle.JSONTable,
 }
 
 func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Context) error {
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
+	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
 	if err != nil {
 		return err
 	}
@@ -561,16 +561,17 @@ func createSchemaAndTables(ctx sessionctx.Context, f *zip.File) error {
 	if len(sqls) != 3 {
 		return errors.New("plan replayer: create schema and tables failed")
 	}
+	c := context.Background()
 	// create database
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sqls[0])
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[0])
 	logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
 	// use database
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sqls[1])
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[1])
 	if err != nil {
 		return err
 	}
 	// create table
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sqls[2])
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sqls[2])
 	if err != nil {
 		return err
 	}
