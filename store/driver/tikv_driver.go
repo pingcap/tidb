@@ -176,7 +176,6 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (kv.Storage,
 		etcdAddrs: etcdAddrs,
 		tlsConfig: tlsConfig,
 		memCache:  kv.NewCacheDB(),
-		pdClient:  &pdClient,
 		enableGC:  !disableGC,
 		coprStore: coprStore,
 	}
@@ -190,7 +189,6 @@ type tikvStore struct {
 	etcdAddrs []string
 	tlsConfig *tls.Config
 	memCache  kv.MemManager // this is used to query from memory
-	pdClient  pd.Client
 	enableGC  bool
 	gcWorker  *gcworker.GCWorker
 	coprStore *copr.Store
@@ -354,9 +352,4 @@ func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 		result = append(result, entries...)
 	}
 	return result, nil
-}
-
-// GetPDClient returns the PD client.
-func (s *tikvStore) GetPDClient() pd.Client {
-	return s.pdClient
 }

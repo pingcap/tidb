@@ -24,7 +24,6 @@ import (
 	driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
 )
 
 // Wraps tikv.KVStore and make it compatible with kv.Storage.
@@ -132,5 +131,3 @@ type MockLockWaitSetter interface {
 func (s *mockStorage) SetMockLockWaits(lockWaits []*deadlockpb.WaitForEntry) {
 	s.LockWaits = lockWaits
 }
-
-func (s *mockStorage) GetPDClient() pd.Client { return nil }

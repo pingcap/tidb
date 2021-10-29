@@ -2779,7 +2779,11 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 
 // PreparePDClient sets PD client option before executing.
 func (s *session) preparePDClient() error {
-	pdClient := s.GetStore().GetPDClient()
+	store, ok := s.GetStore().(interface{ GetPDClient() pd.Client })
+	if !ok {
+		return nil
+	}
+	pdClient := store.GetPDClient()
 	if pdClient == nil {
 		return nil
 	}

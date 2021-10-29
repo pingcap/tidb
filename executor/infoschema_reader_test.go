@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
 )
 
@@ -811,7 +810,6 @@ func (s *mockStore) TLSConfig() *tls.Config       { panic("not implemented") }
 func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
 func (s *mockStore) Name() string                 { return "mockStore" }
 func (s *mockStore) Describe() string             { return "" }
-func (s *mockStore) GetPDClient() pd.Client       { return nil }
 
 func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	mockAddr := s.mockAddr

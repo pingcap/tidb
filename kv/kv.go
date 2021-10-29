@@ -30,7 +30,6 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -438,8 +437,6 @@ type Storage interface {
 	GetMinSafeTS(txnScope string) uint64
 	// GetLockWaits return all lock wait information
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
-	// GetPDClient returns the PD client.
-	GetPDClient() pd.Client
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.
