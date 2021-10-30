@@ -1720,10 +1720,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeNone, Name: TiDBEnableEnhancedSecurity, Value: Off, Type: TypeBool},
 	{Scope: ScopeSession, Name: PluginLoad, Value: "", GetSession: func(s *SessionVars) (string, error) {
-		return config.GetGlobalConfig().Plugin.Dir, nil
+		return config.GetGlobalConfig().Plugin.Load, nil
 	}},
 	{Scope: ScopeSession, Name: PluginDir, Value: "/data/deploy/plugin", GetSession: func(s *SessionVars) (string, error) {
-		return config.GetGlobalConfig().Plugin.Load, nil
+		return config.GetGlobalConfig().Plugin.Dir, nil
 	}},
 
 	/* tikv gc metrics */
