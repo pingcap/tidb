@@ -178,7 +178,7 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		if err != nil {
 			break
 		}
-	case variable.TiDBTSOEnableFollowerProxy:
+	case variable.TiDBEnableTSOFollowerProxy:
 		val := variable.TiDBOptOn(sVal)
 		variable.EnableTSOFollowerProxy.Store(val)
 		err = do.SetPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)

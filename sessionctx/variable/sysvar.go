@@ -800,7 +800,7 @@ var defaultSysVars = []*SysVar{
 		MaxTSOBatchWaitInterval.Store(tidbOptInt64(val, DefTiDBTSOClientBatchMaxWaitTime))
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBTSOEnableFollowerProxy, Value: BoolToOnOff(DefTiDBTSOEnableFollowerProxy), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
+	{Scope: ScopeGlobal, Name: TiDBEnableTSOFollowerProxy, Value: BoolToOnOff(DefTiDBEnableTSOFollowerProxy), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableTSOFollowerProxy.Load()), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		EnableTSOFollowerProxy.Store(TiDBOptOn(val))

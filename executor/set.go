@@ -218,7 +218,7 @@ func (e *SetExecutor) checkPDClientDynamicOption(name, valStr string, sessionVar
 			return err
 		}
 		logutil.BgLogger().Info("set pd client dynamic option", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
-	case variable.TiDBTSOEnableFollowerProxy:
+	case variable.TiDBEnableTSOFollowerProxy:
 		val := variable.TiDBOptOn(valStr)
 		err = domain.GetDomain(e.ctx).SetPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
 		if err != nil {

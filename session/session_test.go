@@ -5739,11 +5739,11 @@ func (s *testSessionSuite) TestSetPDClientDynmaicOption(c *C) {
 		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
 	}
 
-	tk.MustQuery("select @@tidb_tso_enable_follower_proxy;").Check(testkit.Rows("0"))
-	tk.MustExec("set global tidb_tso_enable_follower_proxy = on;")
-	tk.MustQuery("select @@tidb_tso_enable_follower_proxy;").Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_tso_enable_follower_proxy = off;")
-	tk.MustQuery("select @@tidb_tso_enable_follower_proxy;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_tso_follower_proxy = on;")
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_tso_follower_proxy = off;")
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("0"))
 	err = tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 0;")
 	c.Assert(err, NotNil)
 }
