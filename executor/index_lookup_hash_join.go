@@ -759,7 +759,7 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 		}
 	}
 	// TODO: matchedInnerRowPtrs and matchedInnerRows can be moved to inner worker.
-	matchedInnerRows := make([]chunk.Row, len(task.matchedInnerRowPtrs))
+	matchedInnerRows := make([]chunk.Row, 0, len(task.matchedInnerRowPtrs))
 	var hasMatched, hasNull, ok bool
 	for chkIdx, innerRowPtrs4Chk := range task.matchedInnerRowPtrs {
 		for outerRowIdx, innerRowPtrs := range innerRowPtrs4Chk {

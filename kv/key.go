@@ -59,7 +59,7 @@ func (k Key) PrefixNext() Key {
 	}
 	if i == -1 {
 		copy(buf, k)
-		buf = append(buf, 0)
+		buf = append(buf, 0) // nozero
 	}
 	return buf
 }

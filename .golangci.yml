@@ -20,6 +20,7 @@ linters:
     - bodyclose
     - rowserrcheck
     - unconvert
+    - makezero
 
 linters-settings:
   staticcheck:
@@ -36,3 +37,4 @@ issues:
         - errcheck
         - gosec
         - rowserrcheck
+        - makezero
