@@ -2975,7 +2975,8 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 
 		expr, err := yield(assign.Expr)
 		if err != nil {
-			if ErrSubqueryMoreThan1Row.Equal(err) {
+			// Throw other error as soon as possible except ErrSubqueryMoreThan1Row which need duplicate in insert in triggered.
+			if !ErrSubqueryMoreThan1Row.Equal(err) {
 				return nil, err
 			}
 		}
