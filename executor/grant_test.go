@@ -462,8 +462,8 @@ func TestGrantOnNonExistTable(t *testing.T) {
 	tk.MustExec("use test")
 	_, err := tk.Exec("select * from nonexist")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
-	// GRANT ON non-existent table success, see issue #28533
-	tk.MustExec("grant Select,Insert on nonexist to 'genius'")
+	_, err = tk.Exec("grant Select,Insert on nonexist to 'genius'")
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
 
 	tk.MustExec("create table if not exists xx (id int)")
 	// Case sensitive
@@ -474,6 +474,38 @@ func TestGrantOnNonExistTable(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Exec("grant Select,Update on test.xx to 'genius'")
 	require.NoError(t, err)
+
+	// issue #29268
+	tk.MustExec("CREATE DATABASE d29268")
+	defer tk.MustExec("DROP DATABASE IF EXISTS d29268")
+	tk.MustExec("USE d29268")
+	tk.MustExec("CREATE USER u29268")
+	defer tk.MustExec("DROP USER u29268")
+
+	// without create privilege
+	err = tk.ExecToErr("GRANT SELECT ON t29268 TO u29268")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+	fmt.Println(err)
+	err = tk.ExecToErr("GRANT UPDATE ON t29268 TO u29268")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+	err = tk.ExecToErr("GRANT DROP, DELETE ON t29268 TO u29268")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+	err = tk.ExecToErr("GRANT CREATE VIEW, SHOW VIEW ON t29268 TO u29268")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+	err = tk.ExecToErr("GRANT INSERT, REFERENCES, ALTER ON t29268 TO u29268")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+
+	// with create privilege
+	tk.MustExec("GRANT CREATE ON t29268 TO u29268")
+	tk.MustExec("GRANT CREATE, SELECT ON t29268 TO u29268")
+	tk.MustExec("GRANT CREATE, DROP, CREATE VIEW ON t29268 TO u29268")
+	tk.MustExec("GRANT CREATE, INSERT, REFERENCES, ALTER ON t29268 TO u29268")
+	tk.MustExec("GRANT ALL ON t29268 TO u29268")
 }
 
 func TestIssue22721(t *testing.T) {
@@ -541,7 +573,6 @@ func TestPerformanceSchemaPrivGrant(t *testing.T) {
 	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
 }
-
 func TestGrantDynamicPrivs(t *testing.T) {
 	t.Parallel()
 
