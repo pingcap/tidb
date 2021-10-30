@@ -138,7 +138,7 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 		if _, ok := tableContents[sv.Name]; ok {
 			sVal = tableContents[sv.Name]
 		}
-		// session cache stores non-skipable variables, which essentially means session scope.
+		// session cache stores non-skippable variables, which essentially means session scope.
 		// for historical purposes there are some globals, but these should eventually be removed.
 		if !sv.SkipInit() {
 			newSessionCache[sv.Name] = sVal

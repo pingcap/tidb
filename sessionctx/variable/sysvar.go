@@ -794,13 +794,13 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 
 	/* TiDB specific variables */
-	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.Itoa(DefTiDBTSOClientBatchMaxWaitTime), Hidden: false, Type: TypeInt, MinValue: 0, MaxValue: 10, GetGlobal: func(sv *SessionVars) (string, error) {
+	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.Itoa(DefTiDBTSOClientBatchMaxWaitTime), Type: TypeInt, MinValue: 0, MaxValue: 10, GetGlobal: func(sv *SessionVars) (string, error) {
 		return strconv.Itoa(int(MaxTSOBatchWaitInterval.Load())), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		MaxTSOBatchWaitInterval.Store(tidbOptInt64(val, DefTiDBTSOClientBatchMaxWaitTime))
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBTSOEnableFollowerProxy, Value: BoolToOnOff(DefTiDBTSOEnableFollowerProxy), Hidden: false, Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
+	{Scope: ScopeGlobal, Name: TiDBTSOEnableFollowerProxy, Value: BoolToOnOff(DefTiDBTSOEnableFollowerProxy), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableTSOFollowerProxy.Load()), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		EnableTSOFollowerProxy.Store(TiDBOptOn(val))
