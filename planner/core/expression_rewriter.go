@@ -220,6 +220,7 @@ type expressionRewriter struct {
 	schema     *expression.Schema
 	names      []*types.FieldName
 	err        error
+	lazyErr    error
 	aggrMap    map[*ast.AggregateFuncExpr]int
 	windowMap  map[*ast.WindowFuncExpr]int
 	b          *PlanBuilder
