@@ -229,8 +229,8 @@ SHOW PLACEMENT;
 +----------------------------+----------------------------------------------------------------------+------------------+
 | target                     | placement                                                            | scheduling_state |
 +----------------------------+----------------------------------------------------------------------+------------------+
-| POLICY system              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4 |                  |
-| POLICY default             | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             |                  |
+| POLICY system              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4 | NULL             |
+| POLICY default             | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | NULL             |
 | DATABASE test              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | SCHEDULED        |
 | TABLE test.t1              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | SCHEDULED        |
 | TABLE test.t1 PARTITION p1 | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | INPROGRESS       |
@@ -241,8 +241,8 @@ SHOW PLACEMENT LIKE 'POLICY%';
 +----------------------------+----------------------------------------------------------------------+------------------+
 | target                     | placement                                                            | scheduling_state |
 +----------------------------+----------------------------------------------------------------------+------------------+
-| POLICY system              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4 |                  |
-| POLICY default             | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             |                  |
+| POLICY system              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4 | NULL             |
+| POLICY default             | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | NULL             |
 +----------------------------+----------------------------------------------------------------------+------------------+
 2 rows in set (0.00 sec)
 
@@ -269,7 +269,7 @@ The output of this statement contains these fields:
   * For table, it is shown in the format `TABLE database_name.table_name`
   * For partition, it is shown in the format `TABLE database_name.table_name PARTITION partition_name`
 * Placement: An equivalent `ALTER` statement on `target` that defines the placement rule.
-* Scheduling state: The scheduling progress from the PD aspect. It is always empty for policies.
+* Scheduling state: The scheduling progress from the PD aspect. It is always `NULL` for policies.
 
 For finding the current use of a placement policy, the following syntax can be used:
 
