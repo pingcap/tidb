@@ -2704,7 +2704,7 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 	tk.MustExec(dropStmt)
 	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate_tmp_all", Hostname: "localhost"}, nil, nil)
 	err = tk.ExecToErr(createStmt)
-	// TODO: to be fixed, it should report an error.
+	// TODO: issue #29280 to be fixed.
 	// require.EqualError(t, err, "[planner:1044]Access denied for user 'vcreate_tmp_all'@'%' to database 'test'")
 
 	tests := []struct {
@@ -2766,7 +2766,7 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 		{
 			sql: "show create table tmp",
 		},
-		// TODO: to be fixed, it should report an error.
+		// TODO: issue #29281 to be fixed.
 		//{
 		//	sql: "show create table t",
 		//	errcode: mysql.ErrTableaccessDenied,
@@ -2810,13 +2810,15 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 		}
 	}
 
-	// TODO: to be fixed. Now prepared statements ignore temporary tables.
+	// TODO: issue #29282 to be fixed.
 	//for i, test := range tests {
-	//	stmt := fmt.Sprintf("prepare stmt%d from '%s'", i, test.sql)
+	//	preparedStmt := fmt.Sprintf("prepare stmt%d from '%s'", i, test.sql)
+	//	executeStmt := fmt.Sprintf("execute stmt%d", i)
+	//	tk.MustExec(preparedStmt)
 	//	if test.errcode == 0 {
-	//		tk.MustExec(stmt)
+	//		tk.MustExec(executeStmt)
 	//	} else {
-	//		tk.MustGetErrCode(stmt, test.errcode)
+	//		tk.MustGetErrCode(executeStmt, test.errcode)
 	//	}
 	//}
 }

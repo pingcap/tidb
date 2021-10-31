@@ -121,9 +121,9 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 	return nil
 }
 
-// Privilege check of local temporary tables is different with normal tables, so we change it here.
-// `CREATE` statement needs `CREATE TEMPORARY TABLE` privilege from the database, and subsequent statements
-// do not need any privileges.
+// VisitInfo4PrivCheck generates privilege check infos because privilege check of local temporary tables is different
+// with normal tables. `CREATE` statement needs `CREATE TEMPORARY TABLE` privilege from the database, and subsequent
+// statements do not need any privileges.
 func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo) (privVisitInfo []visitInfo) {
 	if node == nil {
 		return vs
