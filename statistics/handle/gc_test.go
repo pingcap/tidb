@@ -54,6 +54,7 @@ func createTestKitAndDom(t *testing.T) (*testkit.TestKit, *domain.Domain, func()
 }
 
 func TestGCStats(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("set @@tidb_analyze_version = 1")
@@ -87,6 +88,7 @@ func TestGCStats(t *testing.T) {
 }
 
 func TestGCPartition(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("set @@tidb_analyze_version = 1")
@@ -125,6 +127,7 @@ func TestGCPartition(t *testing.T) {
 }
 
 func TestGCExtendedStats(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("set @@tidb_analyze_version = 1")
