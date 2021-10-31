@@ -166,9 +166,9 @@ func TestGCExtendedStats(t *testing.T) {
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows())
 }
 
-func (s *testStatsSuite) TestGCColumnStatsUsage(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
+func TestGCColumnStatsUsage(t *testing.T) {
+	testKit, dom, clean := createTestKitAndDom(t)
+	defer clean()
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int)")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
@@ -176,12 +176,12 @@ func (s *testStatsSuite) TestGCColumnStatsUsage(c *C) {
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("3"))
 	testKit.MustExec("alter table t drop column a")
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("3"))
-	h := s.do.StatsHandle()
+	h := dom.StatsHandle()
 	ddlLease := time.Duration(0)
-	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("2"))
 	testKit.MustExec("drop table t")
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("2"))
-	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("0"))
 }
