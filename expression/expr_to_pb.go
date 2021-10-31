@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -34,8 +33,8 @@ import (
 )
 
 // ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
-func ExpressionsToPBList(sv *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
-	pc := PbConverter{client: client, sv: sv}
+func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
+	pc := PbConverter{client: client, sc: sc}
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
@@ -47,15 +46,15 @@ func ExpressionsToPBList(sv *stmtctx.StatementContext, exprs []Expression, clien
 	return
 }
 
-// PbConverter supplys methods to convert TiDB expressions to TiPB.
+// PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
-	sv     *variable.SessionVars
+	sc     *stmtctx.StatementContext
 }
 
 // NewPBConverter creates a PbConverter.
-func NewPBConverter(client kv.Client, sv *variable.SessionVars) PbConverter {
-	return PbConverter{client: client, sv: sv}
+func NewPBConverter(client kv.Client, sc *stmtctx.StatementContext) PbConverter {
+	return PbConverter{client: client, sc: sc}
 }
 
 // ExprToPB converts Expression to TiPB.

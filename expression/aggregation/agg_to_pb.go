@@ -30,7 +30,7 @@ import (
 
 // AggFuncToPBExpr converts aggregate function to pb.
 func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFuncDesc) *tipb.Expr {
-	pc := expression.NewPBConverter(client, sctx.GetSessionVars())
+	pc := expression.NewPBConverter(client, sctx.GetSessionVars().StmtCtx)
 	var tp tipb.ExprType
 	switch aggFunc.Name {
 	case ast.AggFuncCount:

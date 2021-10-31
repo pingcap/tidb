@@ -1206,8 +1206,8 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 				panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
 			})
 		}
-		if storeType == kv.TiFlash {
-			pc.sv.RaiseWarningWhenMPPEnforced("MPP mode may be blocked because scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") can not be pushed to TiFlash now.")
+		if storeType == kv.TiFlash && pc.sc.InExplainStmt {
+			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to TiFlash now."))
 		}
 		return false
 	}
@@ -1234,13 +1234,15 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 	if storeType == kv.TiFlash {
 		switch expr.GetType().Tp {
 		case mysql.TypeDuration:
-			pc.sv.RaiseWarningWhenMPPEnforced("MPP mode may be blocked because Expr '" + expr.String() + "' has unsupported calculation about type 'Duration'('Time').")
+			if pc.sc.InExplainStmt {
+				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type `Duration`(or `Time`)."))
+			}
 			return false
 		case mysql.TypeEnum:
-			if !canEnumPush {
-				pc.sv.RaiseWarningWhenMPPEnforced("MPP mode may be blocked because Expr '" + expr.String() + "' has unsupported calculation about type 'Enum'.")
-				return false
+			if !canEnumPush && pc.sc.InExplainStmt {
+				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type `Enum`."))
 			}
+			return false
 		default:
 		}
 	}
@@ -1251,7 +1253,9 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
 		if pc.columnToPBExpr(x) != nil {
-			pc.sv.RaiseWarningWhenMPPEnforced("MPP mode may be blocked because Expr '" + x.String() + "' has unsupported calculation about type '" + types.TypeStr(x.GetType().Tp) + "'.")
+			if storeType == kv.TiFlash && pc.sc.InExplainStmt {
+				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(x.GetType().Tp) + "'."))
+			}
 			return false
 		}
 		return true
