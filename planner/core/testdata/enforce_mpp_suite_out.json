@@ -325,11 +325,11 @@
           "    └─TableFullScan_10 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) can not be pushed to tiflash",
+          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
-          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) can not be pushed to tiflash",
+          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
-          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) can not be pushed to tiflash",
+          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"
         ]
       },
@@ -350,7 +350,7 @@
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT count(a) from t where d=1; -- 11. type not supported",
+        "SQL": "EXPLAIN SELECT count(a) from t where d=1; -- 11.1. type not supported",
         "Plan": [
           "HashAgg_9 1.00 root  funcs:count(test.t.a)->Column#6",
           "└─Selection_19 8000.00 root  eq(test.t.d, 1)",
