@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/parser/terror"
 	"math"
 	"strings"
 	"time"
@@ -3139,7 +3140,7 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 		expr, err := yield(assign.Expr)
 		if err != nil {
 			// Throw other error as soon as possible except ErrSubqueryMoreThan1Row which need duplicate in insert in triggered.
-			if !ErrSubqueryMoreThan1Row.Equal(err) {
+			if terr, ok := errors.Cause(err).(*terror.Error); !(ok && ErrSubqueryMoreThan1Row.Code() == terr.Code()) {
 				return nil, err
 			}
 		}
