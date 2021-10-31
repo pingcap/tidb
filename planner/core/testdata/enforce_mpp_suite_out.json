@@ -333,19 +333,19 @@
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT count(a) from t where c=1; -- 11. type supported",
+        "SQL": "EXPLAIN SELECT count(a) from t where c=1; -- 11. type not supported",
         "Plan": [
           "StreamAgg_11 1.00 root  funcs:count(test.t.a)->Column#6",
-          "└─Selection_29 10.00 root  eq(test.t.c, 00:00:01.000000)",
+          "└─Selection_29 10.00 root  eq(test.t.c, 1)",
           "  └─TableReader_28 10000.00 root  data:TableFullScan_27",
           "    └─TableFullScan_27 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'time'.",
-          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'time'.",
-          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'time'.",
-          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'time'.",
-          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'time'."
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Expression about 'test.t.c' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'."
         ]
       },
       {
