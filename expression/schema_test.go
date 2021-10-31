@@ -64,7 +64,7 @@ func TestSchemaRetrieveColumn(t *testing.T) {
 		UniqueID: 100,
 	}
 	for _, col := range schema.Columns {
-	require.Equal(t, col, schema.RetrieveColumn(col))
+		require.Equal(t, col, schema.RetrieveColumn(col))
 	}
 	require.Nil(t, schema.RetrieveColumn(colOutSchema))
 }
@@ -79,9 +79,9 @@ func TestSchemaIsUniqueKey(t *testing.T) {
 	}
 	for i, col := range schema.Columns {
 		if i < len(schema.Columns)-1 {
-	require.Equal(t, true, schema.IsUniqueKey(col))
+			require.Equal(t, true, schema.IsUniqueKey(col))
 		} else {
-	require.Equal(t, false, schema.IsUniqueKey(col))
+			require.Equal(t, false, schema.IsUniqueKey(col))
 		}
 	}
 	require.Equal(t, false, schema.IsUniqueKey(colOutSchema))
@@ -95,7 +95,7 @@ func TestSchemaContains(t *testing.T) {
 		UniqueID: 100,
 	}
 	for _, col := range schema.Columns {
-	require.Equal(t, true, schema.Contains(col))
+		require.Equal(t, true, schema.Contains(col))
 	}
 	require.Equal(t, false, schema.Contains(colOutSchema))
 }
@@ -110,7 +110,7 @@ func TestSchemaColumnsIndices(t *testing.T) {
 	for i := 0; i < len(schema.Columns)-1; i++ {
 		colIndices := schema.ColumnsIndices([]*Column{schema.Columns[i], schema.Columns[i+1]})
 		for j, res := range colIndices {
-	require.Equal(t, i+j, res)
+			require.Equal(t, i+j, res)
 		}
 	}
 	require.Nil(t, schema.ColumnsIndices([]*Column{schema.Columns[0], schema.Columns[1], colOutSchema, schema.Columns[2]}))
@@ -123,7 +123,7 @@ func TestSchemaColumnsByIndices(t *testing.T) {
 	indices := []int{0, 1, 2, 3}
 	retCols := schema.ColumnsByIndices(indices)
 	for i, ret := range retCols {
-	require.Equal(t, fmt.Sprintf("%p", ret), fmt.Sprintf("%p", schema.Columns[i]))
+		require.Equal(t, fmt.Sprintf("%p", ret), fmt.Sprintf("%p", schema.Columns[i]))
 	}
 }
 
@@ -142,10 +142,10 @@ func TestSchemaMergeSchema(t *testing.T) {
 
 	schema := MergeSchema(lSchema, rSchema)
 	for i := 0; i < len(lSchema.Columns); i++ {
-	require.Equal(t, lSchema.Columns[i].UniqueID, schema.Columns[i].UniqueID)
+		require.Equal(t, lSchema.Columns[i].UniqueID, schema.Columns[i].UniqueID)
 	}
 	for i := 0; i < len(rSchema.Columns); i++ {
-	require.Equal(t, rSchema.Columns[i].UniqueID, schema.Columns[i+len(lSchema.Columns)].UniqueID)
+		require.Equal(t, rSchema.Columns[i].UniqueID, schema.Columns[i+len(lSchema.Columns)].UniqueID)
 	}
 }
 

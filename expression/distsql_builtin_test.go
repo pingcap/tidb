@@ -40,7 +40,7 @@ func TestPBToExpr(t *testing.T) {
 		expr := datumExpr(t, d)
 		expr.Val = expr.Val[:len(expr.Val)/2]
 		_, err := PBToExpr(expr, fieldTps, sc)
-	require.Error(t, err)
+		require.Error(t, err)
 	}
 
 	expr := &tipb.Expr{
@@ -783,13 +783,13 @@ func TestEval(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
 		expr, err := PBToExpr(tt.expr, fieldTps, sc)
-	require.NoError(t, err)
+		require.NoError(t, err)
 		result, err := expr.Eval(row)
-	require.NoError(t, err)
-	require.Equal(t, tt.result.Kind(), result.Kind())
+		require.NoError(t, err)
+		require.Equal(t, tt.result.Kind(), result.Kind())
 		cmp, err := result.CompareDatum(sc, &tt.result)
-	require.NoError(t, err)
-	require.Equal(t, 0, cmp)
+		require.NoError(t, err)
+		require.Equal(t, 0, cmp)
 	}
 }
 
@@ -822,18 +822,18 @@ func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 		expr.Tp = tipb.ExprType_MysqlDecimal
 		var err error
 		expr.Val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
-	require.NoError(t, err)
+		require.NoError(t, err)
 	case types.KindMysqlJSON:
 		expr.Tp = tipb.ExprType_MysqlJson
 		var err error
 		expr.Val = make([]byte, 0, 1024)
 		expr.Val, err = codec.EncodeValue(nil, expr.Val, d)
-	require.NoError(t, err)
+		require.NoError(t, err)
 	case types.KindMysqlTime:
 		expr.Tp = tipb.ExprType_MysqlTime
 		var err error
 		expr.Val, err = codec.EncodeMySQLTime(nil, d.GetMysqlTime(), mysql.TypeUnspecified, nil)
-	require.NoError(t, err)
+		require.NoError(t, err)
 		expr.FieldType = ToPBFieldType(newDateFieldType())
 	default:
 		expr.Tp = tipb.ExprType_Null

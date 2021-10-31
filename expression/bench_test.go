@@ -238,7 +238,7 @@ func (r *lockedSource) Seed(seed int64) {
 }
 
 func newDefaultRandGen() *defaultRandGen {
-	return &defaultRandGen{rand.New(&lockedSource{src:rand.NewSource(int64(rand.Uint64()))})}
+	return &defaultRandGen{rand.New(&lockedSource{src: rand.NewSource(int64(rand.Uint64()))})}
 }
 
 type defaultGener struct {
