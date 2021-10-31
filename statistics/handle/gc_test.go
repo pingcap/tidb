@@ -172,6 +172,7 @@ func TestGCExtendedStats(t *testing.T) {
 }
 
 func TestGCColumnStatsUsage(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
