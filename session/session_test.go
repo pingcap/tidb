@@ -3802,6 +3802,11 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@max_heap_table_size;").Check(testkit.Rows("16777216"))
 
+	tk.Se.GetSessionVars().SetSystemVar("tmp_table_size", "16777216")
+	tk.MustQuery("SELECT /*+ SET_VAR(tmp_table_size=16384) */ @@tmp_table_size;").Check(testkit.Rows("16384"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
+	tk.MustQuery("SELECT @@tmp_table_size;").Check(testkit.Rows("16777216"))
+
 	tk.Se.GetSessionVars().SetSystemVar("div_precision_increment", "4")
 	tk.MustQuery("SELECT /*+ SET_VAR(div_precision_increment=0) */ @@div_precision_increment;").Check(testkit.Rows("0"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
@@ -4739,47 +4744,47 @@ func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
 }
 
 func (s *testSessionSuite) TestTMPTableSize(c *C) {
-	// Test the @@tmp_table_size system variable.
+	// Test the @@tidb_tmp_table_max_size system variable.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create global temporary table t (c1 int, c2 varchar(512)) on commit delete rows")
-	tk.MustExec("create temporary table tl (c1 int, c2 varchar(512))")
+	tk.MustExec("create global temporary table t (c1 int, c2 mediumtext) on commit delete rows")
+	tk.MustExec("create temporary table tl (c1 int, c2 mediumtext)")
 
-	tk.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows(strconv.Itoa(variable.DefTMPTableSize)))
-	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTMPTableSize))
+	tk.MustQuery("select @@global.tidb_tmp_table_max_size").Check(testkit.Rows(strconv.Itoa(variable.DefTiDBTmpTableMaxSize)))
+	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTiDBTmpTableMaxSize))
 
-	// Min value 1024, so the result is change to 1024, with a warning.
-	tk.MustExec("set @@global.tmp_table_size = 123")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tmp_table_size value: '123'"))
+	// Min value 1M, so the result is change to 1M, with a warning.
+	tk.MustExec("set @@global.tidb_tmp_table_max_size = 123")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_tmp_table_max_size value: '123'"))
 
-	// Change the session scope value.
-	tk.MustExec("set @@session.tmp_table_size = 2097152")
+	// Change the session scope value to 2M.
+	tk.MustExec("set @@session.tidb_tmp_table_max_size = 2097152")
 	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(2097152))
 
-	// Check in another sessin, change session scope value does not affect the global scope.
+	// Check in another session, change session scope value does not affect the global scope.
 	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows("1024"))
+	tk1.MustQuery("select @@global.tidb_tmp_table_max_size").Check(testkit.Rows(strconv.Itoa(1 << 20)))
 
-	// The value is now 1024, check the error when table size exceed it.
-	tk.MustExec("set @@session.tmp_table_size = 1024")
+	// The value is now 1M, check the error when table size exceed it.
+	tk.MustExec(fmt.Sprintf("set @@session.tidb_tmp_table_max_size = %d", 1<<20))
 	tk.MustExec("begin")
-	tk.MustExec("insert into t values (1, repeat('x', 512))")
-	tk.MustExec("insert into t values (1, repeat('x', 512))")
-	tk.MustGetErrCode("insert into t values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("insert into t values (1, repeat('x', 512*1024))")
+	tk.MustExec("insert into t values (1, repeat('x', 512*1024))")
+	tk.MustGetErrCode("insert into t values (1, repeat('x', 512*1024))", errno.ErrRecordFileFull)
 	tk.MustExec("rollback")
 
 	// Check local temporary table
 	tk.MustExec("begin")
-	tk.MustExec("insert into tl values (1, repeat('x', 512))")
-	tk.MustExec("insert into tl values (1, repeat('x', 512))")
-	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
+	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
+	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512*1024))", errno.ErrRecordFileFull)
 	tk.MustExec("rollback")
 
 	// Check local temporary table with some data in session
-	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
 	tk.MustExec("begin")
-	tk.MustExec("insert into tl values (1, repeat('x', 512))")
-	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("insert into tl values (1, repeat('x', 512*1024))")
+	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512*1024))", errno.ErrRecordFileFull)
 	tk.MustExec("rollback")
 }
 
@@ -5707,4 +5712,38 @@ func (s *testSessionSuite) TestFixSetTiDBSnapshotTS(c *C) {
 	// update any session variable and assert whether infoschema is changed
 	tk.MustExec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER';")
 	tk.MustExec("use t123")
+}
+
+func (s *testSessionSuite) TestSetPDClientDynmaicOption(c *C) {
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 1;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
+	err = tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 0;")
+	c.Assert(err, NotNil)
+	if *withTiKV {
+		err = tk.ExecToErr("set global tidb_tso_client_batch_max_wait_time = -1;")
+		c.Assert(err, NotNil)
+		c.Assert(err, ErrorMatches, ".*invalid max TSO batch wait interval.*")
+		err = tk.ExecToErr("set global tidb_tso_client_batch_max_wait_time = 11;")
+		c.Assert(err, NotNil)
+		c.Assert(err, ErrorMatches, ".*invalid max TSO batch wait interval.*")
+	} else {
+		// Because the PD client in the unit test may be nil, so we only check the warning here.
+		tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -1;")
+		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'"))
+		tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 11;")
+		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
+	}
+
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_tso_follower_proxy = on;")
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_tso_follower_proxy = off;")
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("0"))
+	err = tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 0;")
+	c.Assert(err, NotNil)
 }
