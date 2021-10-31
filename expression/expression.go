@@ -1206,12 +1206,8 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 				panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
 			})
 		}
-		if pc.sc.InExplainStmt {
-			storageName := storeType.Name()
-			if storeType == kv.UnSpecified {
-				storageName = "storage layer"
-			}
-			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") can not be pushed to " + storageName))
+		if storeType == kv.TiFlash {
+			pc.sv.RaiseWarningWhenMPPEnforced("MPP mode may be blocked because scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") can not be pushed to TiFlash now.")
 		}
 		return false
 	}
@@ -1235,13 +1231,30 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 }
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
+	if storeType == kv.TiFlash {
+		switch expr.GetType().Tp {
+		case mysql.TypeDuration:
+			pc.sv.RaiseWarningWhenMPPEnforced("MPP mode may be blocked because Expr '" + expr.String() + "' has unsupported calculation about type 'Duration'('Time').")
+			return false
+		case mysql.TypeEnum:
+			if !canEnumPush {
+				pc.sv.RaiseWarningWhenMPPEnforced("MPP mode may be blocked because Expr '" + expr.String() + "' has unsupported calculation about type 'Enum'.")
+				return false
+			}
+		default:
+		}
+	}
 	switch x := expr.(type) {
 	case *CorrelatedColumn:
 		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column) != nil
 	case *Constant:
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
-		return pc.columnToPBExpr(x) != nil
+		if pc.columnToPBExpr(x) != nil {
+			pc.sv.RaiseWarningWhenMPPEnforced("MPP mode may be blocked because Expr '" + x.String() + "' has unsupported calculation about type '" + types.TypeStr(x.GetType().Tp) + "'.")
+			return false
+		}
+		return true
 	case *ScalarFunction:
 		return canScalarFuncPushDown(x, pc, storeType)
 	}

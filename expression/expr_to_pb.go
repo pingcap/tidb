@@ -34,8 +34,8 @@ import (
 )
 
 // ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
-func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
-	pc := PbConverter{client: client, sc: sc}
+func ExpressionsToPBList(sv *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
+	pc := PbConverter{client: client, sv: sv}
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
@@ -210,13 +210,8 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
-
 	switch column.GetType().Tp {
 	case mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
-		pc.sv.RaiseWarningWhenMPPEnforced("MPP mode may be blocked because")
-
-			"Calculation of expr '" + column.String() + "' can not be pushed to TiFlash because it contains '" + types.TypeStr(column.GetType().Tp) + "' type"))
-
 		return nil
 	case mysql.TypeEnum:
 		if !IsPushDownEnabled("enum", kv.UnSpecified) {
