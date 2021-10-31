@@ -2298,7 +2298,7 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 		return 1
 	}
 	// We are expected to scan about 100000 rows or so.
-	// Since there's tiny error rate around the count from the stats meta, we use
+	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
 	return math.Min(1, 110000/float64(statsTbl.Count))
 }
 
