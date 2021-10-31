@@ -1474,8 +1474,12 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		ret = false
 	}
 
-	if !ret && sc.InExplainStmt && storeType == kv.TiFlash {
-		sc.AppendWarning(errors.New("Aggregation can not be pushed to TiFlash because " + reason))
+	if !ret && sc.InExplainStmt {
+		storageName := storeType.Name()
+		if storeType == kv.UnSpecified {
+			storageName = "storage layer"
+		}
+		sc.AppendWarning(errors.New("Aggregation can not be pushed to " + storageName + " because " + reason))
 	}
 	return ret
 }

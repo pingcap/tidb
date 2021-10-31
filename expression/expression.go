@@ -1218,8 +1218,12 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 				panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
 			})
 		}
-		if storeType == kv.TiFlash && pc.sc.InExplainStmt {
-			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to TiFlash now."))
+		if pc.sc.InExplainStmt {
+			storageName := storeType.Name()
+			if storeType == kv.UnSpecified {
+				storageName = "storage layer"
+			}
+			pc.sc.AppendWarning(errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") can not be pushed to " + storageName))
 		}
 		return false
 	}

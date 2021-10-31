@@ -295,10 +295,11 @@
           "  └─TableRowIDScan_41(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "Aggregation can not be pushed to TiFlash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
-          "Aggregation can not be pushed to TiFlash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
-          "Aggregation can not be pushed to TiFlash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
-          "Aggregation can not be pushed to TiFlash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now"
+          "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "Aggregation can not be pushed to tikv because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
+          "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now"
         ]
       },
       {
@@ -310,9 +311,9 @@
           "    └─TableFullScan_10 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "Aggregation can not be pushed to TiFlash because groupByItems contain virtual columns, which is not supported now",
-          "Aggregation can not be pushed to TiFlash because groupByItems contain virtual columns, which is not supported now",
-          "Aggregation can not be pushed to TiFlash because groupByItems contain virtual columns, which is not supported now"
+          "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now",
+          "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now",
+          "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now"
         ]
       },
       {
@@ -324,12 +325,12 @@
           "    └─TableFullScan_10 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to TiFlash now.",
-          "Aggregation can not be pushed to TiFlash because groupByItems contain unsupported exprs",
-          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to TiFlash now.",
-          "Aggregation can not be pushed to TiFlash because groupByItems contain unsupported exprs",
-          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to TiFlash now.",
-          "Aggregation can not be pushed to TiFlash because groupByItems contain unsupported exprs"
+          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) can not be pushed to tiflash",
+          "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
+          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) can not be pushed to tiflash",
+          "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
+          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) can not be pushed to tiflash",
+          "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"
         ]
       },
       {
