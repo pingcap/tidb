@@ -1252,7 +1252,7 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 	case *Constant:
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
-		if pc.columnToPBExpr(x) != nil {
+		if pc.columnToPBExpr(x) == nil {
 			if storeType == kv.TiFlash && pc.sc.InExplainStmt {
 				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(x.GetType().Tp) + "'."))
 			}
