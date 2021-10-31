@@ -127,6 +127,7 @@ func (s *testSuite5) TestAdminCheckIndexInLocalTemporaryMode(c *C) {
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
 	tk.MustExec("drop table if exists local_temporary_admin_checksum_table_with_index_test,local_temporary_admin_checksum_table_without_index_test;")
 }
+
 func (s *testSuite5) TestAdminCheckIndexInCacheTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -137,6 +138,8 @@ func (s *testSuite5) TestAdminCheckIndexInCacheTable(c *C) {
 	tk.MustExec("admin check table cache_admin_test;")
 	tk.MustExec("admin check index cache_admin_test c1;")
 	tk.MustExec("admin check index cache_admin_test c2;")
+	tk.MustExec("drop table if exists cache_admin_test;")
+
 	tk.MustExec(`drop table if exists check_index_test;`)
 	tk.MustExec(`create table check_index_test (a int, b varchar(10), index a_b (a, b), index b (b))`)
 	tk.MustExec(`insert check_index_test values (3, "ab"),(2, "cd"),(1, "ef"),(-1, "hi")`)
@@ -145,7 +148,8 @@ func (s *testSuite5) TestAdminCheckIndexInCacheTable(c *C) {
 	result.Check(testkit.Rows("1 ef 3", "2 cd 2"))
 	result = tk.MustQuery("admin check index check_index_test a_b (3, 5);")
 	result.Check(testkit.Rows("-1 hi 4", "1 ef 3"))
-	tk.MustExec("drop table if exists cache_admin_test;")
+	tk.MustExec("drop table if exists check_index_test;")
+
 	tk.MustExec("drop table if exists cache_admin_table_with_index_test;")
 	tk.MustExec("drop table if exists cache_admin_table_without_index_test;")
 	tk.MustExec("create table cache_admin_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count))")
@@ -156,6 +160,7 @@ func (s *testSuite5) TestAdminCheckIndexInCacheTable(c *C) {
 	tk.MustExec("admin checksum table cache_admin_table_without_index_test;")
 	tk.MustExec("drop table if exists cache_admin_table_with_index_test,cache_admin_table_without_index_test;")
 }
+
 func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

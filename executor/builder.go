@@ -2896,7 +2896,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	ts := v.GetTableScan()
-	if err = b.validCanReadTemporaryTable(ts.Table); err != nil {
+	if err = b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		return nil, err
 	}
 
@@ -3012,7 +3012,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	ts := v.GetTableScan()
-	if err = b.validCanReadTemporaryTable(ts.Table); err != nil {
+	if err = b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil
 	}
@@ -3235,7 +3235,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) Executor {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	if err := b.validCanReadTemporaryTable(is.Table); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
 		return nil
 	}
@@ -3394,7 +3394,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	if err := b.validCanReadTemporaryTable(is.Table); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
 		return nil
 	}
@@ -3509,7 +3509,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) Executor {
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-	if err := b.validCanReadTemporaryTable(ts.Table); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil
 	}
@@ -4314,7 +4314,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
-	if err := b.validCanReadTemporaryTable(plan.TblInfo); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
 		b.err = err
 		return nil
 	}
@@ -4598,6 +4598,28 @@ func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) E
 		iterInTbl:    storages.IterInTbl,
 		chkIdx:       0,
 	}
+}
+func (b *executorBuilder) validCanReadTemporaryOrCacheTable(tbl *model.TableInfo) error {
+	err := b.validCanReadTemporaryTable(tbl)
+	if err != nil {
+		return err
+	}
+	return b.validCanReadCacheTable(tbl)
+}
+
+func (b *executorBuilder) validCanReadCacheTable(tbl *model.TableInfo) error {
+	if tbl.TableCacheStatusType == model.TableCacheStatusDisable {
+		return nil
+	}
+
+	sessionVars := b.ctx.GetSessionVars()
+
+	// Temporary table can't switch into cache table. so the following code will not cause confusion
+	if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
+		return errors.Trace(errors.New("can not stale read cache table"))
+	}
+
+	return nil
 }
 
 func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error {
