@@ -15,7 +15,6 @@
 package handle_test
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -34,23 +33,7 @@ func createTestKitAndDom(t *testing.T) (*testkit.TestKit, *domain.Domain, func()
 		require.NoError(t, err)
 	}
 	tk := testkit.NewTestKit(t, store)
-	statsClean := func() {
-		tk.MustExec("use test")
-		r := tk.MustQuery("show tables")
-		for _, tb := range r.Rows() {
-			tableName := tb[0]
-			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-		}
-		tk.MustExec("delete from mysql.stats_meta")
-		tk.MustExec("delete from mysql.stats_histograms")
-		tk.MustExec("delete from mysql.stats_buckets")
-		tk.MustExec("delete from mysql.stats_extended")
-		tk.MustExec("delete from mysql.stats_fm_sketch")
-		tk.MustExec("delete from mysql.schema_index_usage")
-		dom.StatsHandle().Clear()
-		clean()
-	}
-	return tk, dom, statsClean
+	return tk, dom, clean
 }
 
 func TestGCStats(t *testing.T) {
