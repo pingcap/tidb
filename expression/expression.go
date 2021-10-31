@@ -1233,17 +1233,14 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
 	if storeType == kv.TiFlash {
 		switch expr.GetType().Tp {
-		case mysql.TypeDuration:
+		case mysql.TypeEnum, mysql.TypeDuration, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
+			if expr.GetType().Tp == mysql.TypeEnum && canEnumPush {
+				break
+			}
 			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type `Duration`(or `Time`)."))
+				pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().Tp) + "'."))
 			}
 			return false
-		case mysql.TypeEnum:
-			if !canEnumPush && pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type `Enum`."))
-			}
-			return false
-		default:
 		}
 	}
 	switch x := expr.(type) {
@@ -1252,13 +1249,7 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 	case *Constant:
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
-		if pc.columnToPBExpr(x) == nil {
-			if storeType == kv.TiFlash && pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(x.GetType().Tp) + "'."))
-			}
-			return false
-		}
-		return true
+		return pc.columnToPBExpr(x) != nil
 	case *ScalarFunction:
 		return canScalarFuncPushDown(x, pc, storeType)
 	}
