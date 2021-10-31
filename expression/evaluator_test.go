@@ -20,7 +20,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -40,19 +39,7 @@ var _ = Suite(&testVectorizeSuite2{})
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
-
-	fpname := "github.com/pingcap/tidb/expression/PanicIfPbCodeUnspecified"
-	err := failpoint.Enable(fpname, "return(true)")
-	if err != nil {
-		t.Fatalf("enable global failpoint `%s` failed: %v", fpname, err)
-	}
-
 	TestingT(t)
-
-	err = failpoint.Disable(fpname)
-	if err != nil {
-		t.Fatalf("disable global failpoint `%s` failed: %v", fpname, err)
-	}
 }
 
 type testEvaluatorSuiteBase struct {
