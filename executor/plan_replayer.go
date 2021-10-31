@@ -542,6 +542,9 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 					continue
 				}
 				err = vars.SetSystemVar(name, sVal)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -555,7 +558,10 @@ func createSchemaAndTables(ctx sessionctx.Context, f *zip.File) error {
 	}
 	defer r.Close()
 	buf := new(bytes.Buffer)
-	buf.ReadFrom(r)
+	_, err = buf.ReadFrom(r)
+	if err != nil {
+		return errors.AddStack(err)
+	}
 	sqls := strings.Split(buf.String(), ";")
 	if len(sqls) != 3 {
 		return errors.New("plan replayer: create schema and tables failed")
@@ -585,7 +591,10 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	}
 	defer r.Close()
 	buf := new(bytes.Buffer)
-	buf.ReadFrom(r)
+	_, err = buf.ReadFrom(r)
+	if err != nil {
+		return errors.AddStack(err)
+	}
 	if err := json.Unmarshal(buf.Bytes(), jsonTbl); err != nil {
 		return errors.AddStack(err)
 	}
