@@ -15,7 +15,6 @@
 package executor_test
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -486,7 +485,6 @@ func TestGrantOnNonExistTable(t *testing.T) {
 	err = tk.ExecToErr("GRANT SELECT ON t29268 TO u29268")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
-	fmt.Println(err)
 	err = tk.ExecToErr("GRANT UPDATE ON t29268 TO u29268")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
