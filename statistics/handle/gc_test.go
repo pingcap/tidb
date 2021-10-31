@@ -130,7 +130,6 @@ func TestGCExtendedStats(t *testing.T) {
 	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
-	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("set session tidb_enable_extended_stats = on")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int)")
@@ -175,7 +174,6 @@ func TestGCExtendedStats(t *testing.T) {
 func TestGCColumnStatsUsage(t *testing.T) {
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
-	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int)")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
