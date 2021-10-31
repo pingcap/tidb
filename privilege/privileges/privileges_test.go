@@ -2685,7 +2685,7 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 	defer clean()
 
 	createStmt := "CREATE TEMPORARY TABLE test.tmp(id int)"
-	dropStmt := "DROP TABLE IF EXISTS test.tmp"
+	dropStmt := "DROP TEMPORARY TABLE IF EXISTS test.tmp"
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(dropStmt)
@@ -2703,9 +2703,9 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 	tk.MustExec(createStmt)
 	tk.MustExec(dropStmt)
 	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate_tmp_all", Hostname: "localhost"}, nil, nil)
-	err = tk.ExecToErr(createStmt)
 	// TODO: issue #29280 to be fixed.
-	// require.EqualError(t, err, "[planner:1044]Access denied for user 'vcreate_tmp_all'@'%' to database 'test'")
+	//err = tk.ExecToErr(createStmt)
+	//require.EqualError(t, err, "[planner:1044]Access denied for user 'vcreate_tmp_all'@'%' to database 'test'")
 
 	tests := []struct {
 		sql     string
@@ -2740,6 +2740,12 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 		{
 			sql:     "delete t1 from tmp t1 join t t2 where t1.id=t2.id",
 			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql: "select * from tmp where id=1",
+		},
+		{
+			sql: "select * from tmp where id in (1,2)",
 		},
 		{
 			sql: "select * from tmp",
