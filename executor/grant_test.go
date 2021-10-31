@@ -486,24 +486,31 @@ func TestGrantOnNonExistTable(t *testing.T) {
 	err = tk.ExecToErr("GRANT SELECT ON t29268 TO u29268")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
-	err = tk.ExecToErr("GRANT UPDATE ON t29268 TO u29268")
+	err = tk.ExecToErr("GRANT DROP, INSERT ON t29268 TO u29268")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
-	err = tk.ExecToErr("GRANT DROP, DELETE ON t29268 TO u29268")
+	err = tk.ExecToErr("GRANT UPDATE, CREATE VIEW, SHOW VIEW ON t29268 TO u29268")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
-	err = tk.ExecToErr("GRANT CREATE VIEW, SHOW VIEW ON t29268 TO u29268")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
-	err = tk.ExecToErr("GRANT INSERT, REFERENCES, ALTER ON t29268 TO u29268")
+	err = tk.ExecToErr("GRANT DELETE, REFERENCES, ALTER ON t29268 TO u29268")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
 
 	// with create privilege
 	tk.MustExec("GRANT CREATE ON t29268 TO u29268")
 	tk.MustExec("GRANT CREATE, SELECT ON t29268 TO u29268")
-	tk.MustExec("GRANT CREATE, DROP, CREATE VIEW ON t29268 TO u29268")
-	tk.MustExec("GRANT CREATE, INSERT, REFERENCES, ALTER ON t29268 TO u29268")
+	tk.MustExec("GRANT CREATE, DROP, INSERT ON t29268 TO u29268")
+
+	// check privilege
+	tk.Session().Auth(&auth.UserIdentity{Username: "u29268", Hostname: "localhost"}, nil, nil)
+	tk.MustExec("USE d29268")
+	tk.MustExec("CREATE TABLE t29268 (c1 int)")
+	tk.MustExec("INSERT INTO t29268 VALUES (1), (2)")
+	tk.MustQuery("SELECT c1 FROM t29268").Check(testkit.Rows("1", "2"))
+	tk.MustExec("DROP TABLE t29268")
+
+	// check grant all
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil)
 	tk.MustExec("GRANT ALL ON t29268 TO u29268")
 }
 
@@ -572,6 +579,7 @@ func TestPerformanceSchemaPrivGrant(t *testing.T) {
 	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'root'@'%' to database 'performance_schema'")
 }
+
 func TestGrantDynamicPrivs(t *testing.T) {
 	t.Parallel()
 
