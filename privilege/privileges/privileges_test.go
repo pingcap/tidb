@@ -599,9 +599,9 @@ func TestShowViewPriv(t *testing.T) {
 		{"vshowview",
 			"[planner:1142]SELECT command denied to user 'vshowview'@'%' for table 'v'",
 			"",
+			"[executor:1142]SELECT command denied to user 'vshowview'@'%' for table 'v'",
 			"",
-			"",
-			"",
+			"[executor:1142]SELECT command denied to user 'vshowview'@'%' for table 'v'",
 			"",
 			"1",
 			"0",
@@ -646,19 +646,16 @@ func TestShowViewPriv(t *testing.T) {
 			err = tk.QueryToErr("explain test.v")
 			require.EqualError(t, err, test.explainErr, test)
 		} else {
-			// TODO: expecting empty set but got one row for vshowview.
-			// tk.MustQuery("explain test.v").Check(testkit.Rows(test.explainRes))
+			tk.MustQuery("explain test.v").Check(testkit.Rows(test.explainRes))
 		}
 		if test.descErr != "" {
 			err = tk.QueryToErr("explain test.v")
 			require.EqualError(t, err, test.descErr, test)
 		} else {
-			// TODO: expecting empty set but got one row for vshowview.
-			// tk.MustQuery("desc test.v").Check(testkit.Rows(test.descRes))
+			tk.MustQuery("desc test.v").Check(testkit.Rows(test.descRes))
 		}
 		tk.MustQuery("select count(*) from information_schema.tables where table_schema='test' and table_name='v'").Check(testkit.Rows(test.tablesNum))
-		// TODO: expecting 0 but got 1 for vshowview.
-		// tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows(test.columnsNum))
+		tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows(test.columnsNum))
 	}
 }
 
@@ -2745,4 +2742,29 @@ func TestGrantRoutine(t *testing.T) {
 		`GRANT CREATE ROUTINE,ALTER ROUTINE ON routine_db.* TO 'u1'@'%'`))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE routine_db")
+}
+
+func TestIssue28675(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`DROP VIEW IF EXISTS test.v`)
+	tk.MustExec(`create user test_user`)
+	tk.MustExec("create view test.v as select 1")
+	tk.MustExec("grant show view on test.v to test_user")
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_user", Hostname: "localhost"}, nil, nil))
+	tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("0"))
+	tk.ExecToErr("desc test.v")
+	tk.ExecToErr("explain test.v")
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	tk.MustExec("grant update on test.v to test_user")
+	tk.MustExec("grant select on test.v to test_user")
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_user", Hostname: "localhost"}, nil, nil))
+	tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("1"))
+	tk.MustQuery("select privileges from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("select,update"))
+	require.Equal(t, 1, len(tk.MustQuery("desc test.v").Rows()))
+	require.Equal(t, 1, len(tk.MustQuery("explain test.v").Rows()))
 }

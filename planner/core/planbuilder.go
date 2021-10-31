@@ -4332,8 +4332,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Key", "Values"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeJSON}
 	case ast.ShowPlacement, ast.ShowPlacementForDatabase, ast.ShowPlacementForTable, ast.ShowPlacementForPartition:
-		names = []string{"Target", "Placement"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar}
+		names = []string{"Target", "Placement", "Scheduling_State"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
