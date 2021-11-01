@@ -190,7 +190,7 @@ func (s *testDBSuite6) TestPlacementValidation(c *C) {
 			err := tk.ExecToErr(sql)
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Equals, ca.errmsg)
-			tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east\""))
+			tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east\" NULL"))
 		}
 	}
 	tk.MustExec("drop placement policy x")
@@ -342,14 +342,14 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 
 	// test for normal cases
 	tk.MustExec("alter placement policy x PRIMARY_REGION=\"bj\" REGIONS=\"bj,sh\"")
-	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj,sh\""))
+	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj,sh\" NULL"))
 	tk.MustQuery("select * from information_schema.placement_rules where policy_name = 'x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x <nil> <nil> <nil> bj bj,sh      0 0"))
 
 	tk.MustExec("alter placement policy x " +
 		"PRIMARY_REGION=\"bj\" " +
 		"REGIONS=\"bj\" " +
 		"SCHEDULE=\"EVEN\"")
-	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj\" SCHEDULE=\"EVEN\""))
+	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"bj\" SCHEDULE=\"EVEN\" NULL"))
 	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_RULES WHERE POLICY_NAME='x'").Check(testkit.Rows(strconv.FormatInt(policy.ID, 10) + " def x <nil> <nil> <nil> bj bj     EVEN 0 0"))
 
 	tk.MustExec("alter placement policy x " +
@@ -357,7 +357,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 		"FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" " +
 		"FOLLOWERS=3")
 	tk.MustQuery("show placement where target='POLICY x'").Check(
-		testkit.Rows("POLICY x LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\""),
+		testkit.Rows("POLICY x LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" NULL"),
 	)
 	tk.MustQuery("SELECT POLICY_NAME,LEADER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,FOLLOWERS FROM information_schema.PLACEMENT_RULES WHERE POLICY_NAME = 'x'").Check(
 		testkit.Rows("x [+region=us-east-1] [+region=us-east-2] 3"),
@@ -370,7 +370,7 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 		"VOTERS=5 " +
 		"LEARNERS=3")
 	tk.MustQuery("show placement where target='POLICY x'").Check(
-		testkit.Rows("POLICY x CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\""),
+		testkit.Rows("POLICY x CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" NULL"),
 	)
 	tk.MustQuery("SELECT " +
 		"CATALOG_NAME,POLICY_NAME,SCHEMA_NAME,TABLE_NAME,PARTITION_NAME," +
@@ -661,7 +661,7 @@ func (s *testDBSuite6) TestPolicyCacheAndPolicyDependency(c *C) {
 	tk.MustExec("create placement policy x primary_region=\"r1\" regions=\"r1,r2\" schedule=\"EVEN\";")
 	po := testGetPolicyByName(c, tk.Se, "x", true)
 	c.Assert(po, NotNil)
-	tk.MustQuery("show placement").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\""))
+	tk.MustQuery("show placement").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" NULL"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int) placement policy \"x\"")
@@ -851,7 +851,7 @@ func testGetPartitionDefinitionsByName(c *C, ctx sessionctx.Context, db string, 
 func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t, t0")
 	tk.MustExec("drop placement policy if exists x")
 
 	// test table inherit database's placement rules.
@@ -870,6 +870,17 @@ func (s *testDBSuite6) TestPolicyInheritance(c *C) {
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] CONSTRAINTS=\"[+zone=suzhou]\" */"))
 	tk.MustExec("drop table if exists t")
+
+	// test create table like should not inherit database's placement rules.
+	tk.MustExec("create table t0 (a int) placement policy 'default'")
+	tk.MustQuery("show create table t0").Check(testkit.Rows("t0 CREATE TABLE `t0` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("create table t1 like t0")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table if exists t0, t")
 
 	// table will inherit db's placement rules, which is shared by all partition as default one.
 	tk.MustExec("create table t(a int) partition by range(a) (partition p0 values less than (100), partition p1 values less than (200))")
