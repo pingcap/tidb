@@ -88,7 +88,6 @@ type executorBuilder struct {
 	hasLock          bool
 	Ti               *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
-	isStaleness      bool
 	readReplicaScope string
 }
 
@@ -100,13 +99,12 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, replicaReadScope string) *executorBuilder {
 	return &executorBuilder{
 		ctx:              ctx,
 		is:               is,
 		Ti:               ti,
 		snapshotTS:       snapshotTS,
-		isStaleness:      isStaleness,
 		readReplicaScope: replicaReadScope,
 	}
 }
@@ -698,7 +696,6 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 	b.snapshotTS = v.SnapshotTS
-	b.isStaleness = v.IsStaleness
 	b.readReplicaScope = v.ReadReplicaScope
 	if b.snapshotTS != 0 {
 		b.is, b.err = domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
@@ -2920,7 +2917,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		dagPB:            dagReq,
 		startTS:          startTS,
 		readReplicaScope: b.readReplicaScope,
-		isStaleness:      b.isStaleness,
 		table:            tbl,
 		keepOrder:        ts.KeepOrder,
 		desc:             ts.Desc,
@@ -2993,7 +2989,7 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
-	if v.StoreType != kv.TiKV && b.isStaleness {
+	if v.StoreType != kv.TiKV && b.ctx.GetSessionVars().StmtCtx.IsStaleness {
 		b.err = errors.New("stale requests require tikv backend")
 		return nil
 	}
@@ -3197,7 +3193,6 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		dagPB:            dagReq,
 		startTS:          startTS,
 		readReplicaScope: b.readReplicaScope,
-		isStaleness:      b.isStaleness,
 		physicalTableID:  physicalTableID,
 		table:            tbl,
 		index:            is.Index,
@@ -3815,7 +3810,6 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetReadReplicaScope(e.readReplicaScope).
-		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		Build()
@@ -4337,7 +4331,6 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		rowDecoder:       decoder,
 		startTS:          startTS,
 		readReplicaScope: b.readReplicaScope,
-		isStaleness:      b.isStaleness,
 		keepOrder:        plan.KeepOrder,
 		desc:             plan.Desc,
 		lock:             plan.Lock,
@@ -4620,7 +4613,7 @@ func (b *executorBuilder) validCanReadCacheTable(tbl *model.TableInfo) error {
 	sessionVars := b.ctx.GetSessionVars()
 
 	// Temporary table can't switch into cache table. so the following code will not cause confusion
-	if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
+	if sessionVars.TxnCtx.IsStaleness || b.ctx.GetSessionVars().StmtCtx.IsStaleness {
 		return errors.Trace(errors.New("can not stale read cache table"))
 	}
 
@@ -4641,7 +4634,7 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 		return errors.New("can not read local temporary table when 'tidb_snapshot' is set")
 	}
 
-	if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
+	if sessionVars.TxnCtx.IsStaleness || b.ctx.GetSessionVars().StmtCtx.IsStaleness {
 		return errors.New("can not stale read temporary table")
 	}
 

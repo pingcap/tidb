@@ -56,7 +56,6 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	e := &PointGetExecutor{
 		baseExecutor:     newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 		readReplicaScope: b.readReplicaScope,
-		isStaleness:      b.isStaleness,
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
@@ -80,7 +79,6 @@ type PointGetExecutor struct {
 	idxVals          []types.Datum
 	startTS          uint64
 	readReplicaScope string
-	isStaleness      bool
 	txn              kv.Transaction
 	snapshot         kv.Snapshot
 	done             bool
@@ -167,7 +165,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	e.snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
-	e.snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
+	e.snapshot.SetOption(kv.IsStalenessReadOnly, e.ctx.GetSessionVars().StmtCtx.IsStaleness)
 	if readReplicaType.IsClosestRead() && e.readReplicaScope != kv.GlobalTxnScope {
 		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
@@ -419,7 +417,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
-	if e.isStaleness {
+	if e.ctx.GetSessionVars().StmtCtx.IsStaleness {
 		return nil
 	}
 	txnScope := e.readReplicaScope

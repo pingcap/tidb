@@ -854,7 +854,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil, 0, oracle.GlobalTxnScope)
 	return b.build(j)
 }
 

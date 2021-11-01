@@ -247,6 +247,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
 	builder.SetResourceGroupTag(sv.StmtCtx)
+	builder.IsStaleness = sv.StmtCtx.IsStaleness
 	return builder
 }
 
@@ -334,12 +335,6 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 // SetReadReplicaScope sets request readReplicaScope
 func (builder *RequestBuilder) SetReadReplicaScope(scope string) *RequestBuilder {
 	builder.ReadReplicaScope = scope
-	return builder
-}
-
-// SetIsStaleness sets request IsStaleness
-func (builder *RequestBuilder) SetIsStaleness(is bool) *RequestBuilder {
-	builder.IsStaleness = is
 	return builder
 }
 

@@ -171,7 +171,6 @@ type IndexReaderExecutor struct {
 	dagPB            *tipb.DAGRequest
 	startTS          uint64
 	readReplicaScope string
-	isStaleness      bool
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result distsql.SelectResult
 	// columns are only required by union scan.
@@ -293,7 +292,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetReadReplicaScope(e.readReplicaScope).
-		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker)
@@ -553,7 +551,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
 			SetReadReplicaScope(e.readReplicaScope).
-			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(tracker)
@@ -648,7 +645,6 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		dagPB:               e.tableRequest,
 		startTS:             e.startTS,
 		readReplicaScope:    e.readReplicaScope,
-		isStaleness:         e.isStaleness,
 		columns:             e.columns,
 		streaming:           e.tableStreaming,
 		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),

@@ -84,7 +84,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	return &ExecStmt{
 		GoCtx:            ctx,
 		SnapshotTS:       ret.LastSnapshotTS,
-		IsStaleness:      ret.IsStaleness,
 		ReplicaReadScope: ret.ReadReplicaScope,
 		InfoSchema:       ret.InfoSchema,
 		Plan:             finalPlan,

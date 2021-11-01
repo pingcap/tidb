@@ -188,7 +188,6 @@ type Execute struct {
 	PrepareParams    []types.Datum
 	ExecID           uint32
 	SnapshotTS       uint64
-	IsStaleness      bool
 	ReadReplicaScope string
 	Stmt             ast.StmtNode
 	StmtType         string
@@ -300,7 +299,6 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	}
 	e.SnapshotTS = snapshotTS
 	e.ReadReplicaScope = readReplicaScope
-	e.IsStaleness = isStaleness
 	e.Stmt = prepared.Stmt
 	return nil
 }

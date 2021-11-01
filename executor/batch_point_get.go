@@ -57,7 +57,6 @@ type BatchPointGetExec struct {
 	idxVals          [][]types.Datum
 	startTS          uint64
 	readReplicaScope string
-	isStaleness      bool
 	snapshotTS       uint64
 	txn              kv.Transaction
 	lock             bool
@@ -129,7 +128,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	}
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
 	snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
-	snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
+	snapshot.SetOption(kv.IsStalenessReadOnly, e.ctx.GetSessionVars().StmtCtx.IsStaleness)
 	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
 		if replicaReadType.IsClosestRead() && assertScope != e.readReplicaScope {

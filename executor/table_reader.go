@@ -79,7 +79,6 @@ type TableReaderExecutor struct {
 	dagPB            *tipb.DAGRequest
 	startTS          uint64
 	readReplicaScope string
-	isStaleness      bool
 	// columns are only required by union scan and virtual column.
 	columns []*model.ColumnInfo
 
@@ -360,7 +359,6 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
 		SetReadReplicaScope(e.readReplicaScope).
-		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
