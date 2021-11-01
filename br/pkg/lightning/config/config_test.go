@@ -507,6 +507,20 @@ func (s *configTestSuite) TestDurationMarshalJSON(c *C) {
 	c.Assert(string(result), Equals, `"13m20s"`)
 }
 
+func (s *configTestSuite) TestDuplicateResolutionAlgorithm(c *C) {
+	var dra config.DuplicateResolutionAlgorithm
+	dra.FromStringValue("record")
+	c.Assert(dra, Equals, config.DupeResAlgRecord)
+	dra.FromStringValue("none")
+	c.Assert(dra, Equals, config.DupeResAlgNone)
+	dra.FromStringValue("remove")
+	c.Assert(dra, Equals, config.DupeResAlgRemove)
+
+	c.Assert(config.DupeResAlgRecord.String(), Equals, "record")
+	c.Assert(config.DupeResAlgNone.String(), Equals, "none")
+	c.Assert(config.DupeResAlgRemove.String(), Equals, "remove")
+}
+
 func (s *configTestSuite) TestLoadConfig(c *C) {
 	cfg, err := config.LoadGlobalConfig([]string{"-tidb-port", "sss"}, nil)
 	c.Assert(err, ErrorMatches, `invalid value "sss" for flag -tidb-port: parse error`)

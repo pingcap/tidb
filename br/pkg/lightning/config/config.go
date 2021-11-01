@@ -358,13 +358,13 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 type DuplicateResolutionAlgorithm int
 
 const (
-	// DupeResAlgLog only logs duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB.
-	DupeResAlgLog DuplicateResolutionAlgorithm = iota
+	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB.
+	DupeResAlgRecord DuplicateResolutionAlgorithm = iota
 
 	// DupeResAlgNone doesn't detect duplicate.
 	DupeResAlgNone
 
-	// DupeResAlgRemove logs all duplicate records like the 'log' algorithm and remove all information related to the
+	// DupeResAlgRemove records all duplicate records like the 'log' algorithm and remove all information related to the
 	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
 	DupeResAlgRemove
 )
@@ -373,7 +373,7 @@ func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v interface{}) error {
 	if val, ok := v.(string); ok {
 		return dra.FromStringValue(val)
 	}
-	return errors.Errorf("invalid duplicate-resolution '%v', please choose valid option between ['log', 'none', 'remove']", v)
+	return errors.Errorf("invalid duplicate-resolution '%v', please choose valid option between ['record', 'none', 'remove']", v)
 }
 
 func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
@@ -382,14 +382,14 @@ func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
 
 func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
-	case "log":
-		*dra = DupeResAlgLog
+	case "record":
+		*dra = DupeResAlgRecord
 	case "none":
 		*dra = DupeResAlgNone
 	case "remove":
 		*dra = DupeResAlgRemove
 	default:
-		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['log', 'none', 'remove']", s)
+		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['record', 'none', 'remove']", s)
 	}
 	return nil
 }
@@ -404,8 +404,8 @@ func (dra *DuplicateResolutionAlgorithm) UnmarshalJSON(data []byte) error {
 
 func (dra DuplicateResolutionAlgorithm) String() string {
 	switch dra {
-	case DupeResAlgLog:
-		return "log"
+	case DupeResAlgRecord:
+		return "record"
 	case DupeResAlgNone:
 		return "none"
 	case DupeResAlgRemove:
@@ -643,7 +643,7 @@ func NewConfig() *Config {
 			SendKVPairs:         32768,
 			RegionSplitSize:     0,
 			DiskQuota:           ByteSize(math.MaxInt64),
-			DuplicateResolution: DupeResAlgLog,
+			DuplicateResolution: DupeResAlgRecord,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
