@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -89,7 +90,8 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 		}
 		if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
 			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
-				return domain.GetDomain(sctx).InfoSchema()
+				is := domain.GetDomain(sctx).InfoSchema()
+				return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is)
 			}
 		}
 	}
