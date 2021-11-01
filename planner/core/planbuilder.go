@@ -4356,7 +4356,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 }
 
 func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) Plan {
-	p := &PlanReplayerSingle{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
+	p := &PlanReplayer{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
 	schema := newColumnsWithNames(1)
 	schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))
 	p.SetSchema(schema.col2Schema())

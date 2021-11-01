@@ -361,7 +361,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return err
 	}
 
-	return e.tempTableDDL.CreateLocalTemporaryTable(dbInfo.Name, tbInfo)
+	return e.tempTableDDL.CreateLocalTemporaryTable(dbInfo, tbInfo)
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
