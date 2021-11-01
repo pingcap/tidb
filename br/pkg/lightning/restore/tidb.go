@@ -123,6 +123,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 			vars[k] = v
 		}
 	}
+
 	for k, v := range vars {
 		q := fmt.Sprintf("SET SESSION %s = %s;", k, v)
 		log.L().Info("Set session", zap.String("query", q))
