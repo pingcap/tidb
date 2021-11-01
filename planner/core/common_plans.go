@@ -735,6 +735,9 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 			if err != nil {
 				return err
 			}
+			if len(res.AccessConds) != len(ts.AccessCondition) {
+				return errors.New("rebuild range for cached plan failed")
+			}
 			ts.Ranges = res.Ranges
 		} else {
 			ts.Ranges = ranger.FullRange()
@@ -766,6 +769,9 @@ func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIn
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens)
 	if err != nil {
 		return err
+	}
+	if len(res.AccessConds) != len(is.AccessCondition) {
+		return errors.New("rebuild range for cached plan failed")
 	}
 	is.Ranges = res.Ranges
 	return
