@@ -6469,40 +6469,51 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 	if !spec.Default {
 		if spec.StatsOptions == "" && meta.StatsOptions != nil {
 			statsOptions = meta.StatsOptions
-		} else {
+		} else if spec.StatsOptions != "" {
 			attrBytes := []byte(spec.StatsOptions)
 			var attrs map[string]string
 			err = json.Unmarshal(attrBytes, &attrs)
 			if err != nil {
 				return errors.Wrapf(err, "%w: %s", errInvalidStatsOptionsFormat, spec.StatsOptions)
 			}
+			hasBuckets, hasTopn, hasSampleRate, hasColChoice, hasColList := false, false, false, false, false
 			for key, val := range attrs {
 				switch strings.ToUpper(key) {
-				case "AUTO_RECALC":
-					autoRecalc, err0 := strconv.ParseBool(val)
-					if err0 != nil {
-						return fmt.Errorf("%w: %s", errors.New("AUTO_RECALC should be a bool"), val)
-					}
-					statsOptions.AutoRecalc = autoRecalc
 				case "BUCKETS":
-					buckets, err0 := strconv.ParseUint(val, 0, 64)
-					if err0 != nil {
-						return fmt.Errorf("%w: %s", errors.New("BUCKETS should be a unit"), val)
+					hasBuckets = true
+					if strings.ToLower(val) == "default" {
+						statsOptions.Buckets = uint64(0)
+					} else {
+						buckets, err0 := strconv.ParseUint(val, 0, 64)
+						if err0 != nil {
+							return fmt.Errorf("%w: %s", errors.New("BUCKETS should be a unit"), val)
+						}
+						statsOptions.Buckets = buckets
 					}
-					statsOptions.Buckets = buckets
 				case "TOPN":
-					topn, err0 := strconv.ParseUint(val, 0, 64)
-					if err0 != nil {
-						return fmt.Errorf("%w: %s", errors.New("TOPN should be a unit"), val)
+					hasTopn = true
+					if strings.ToLower(val) == "default" {
+						statsOptions.TopN = uint64(0)
+					} else {
+						topn, err0 := strconv.ParseUint(val, 0, 64)
+						if err0 != nil {
+							return fmt.Errorf("%w: %s", errors.New("TOPN should be a unit"), val)
+						}
+						statsOptions.TopN = topn
 					}
-					statsOptions.TopN = topn
 				case "SAMPLE_RATE":
-					sampleRate, err0 := strconv.ParseFloat(val, 64)
-					if err0 != nil {
-						return fmt.Errorf("%w: %s", errors.New("SAMPLE_RATE should be a float"), val)
+					hasSampleRate = true
+					if strings.ToLower(val) == "default" {
+						statsOptions.SampleRate = 0.0
+					} else {
+						sampleRate, err0 := strconv.ParseFloat(val, 64)
+						if err0 != nil {
+							return fmt.Errorf("%w: %s", errors.New("SAMPLE_RATE should be a float"), val)
+						}
+						statsOptions.SampleRate = sampleRate
 					}
-					statsOptions.SampleRate = sampleRate
 				case "COL_CHOICE":
+					hasColChoice = true
 					switch strings.ToLower(val) {
 					case "all":
 						statsOptions.ColumnChoice = model.AllColumns
@@ -6510,19 +6521,44 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 						statsOptions.ColumnChoice = model.ColumnList
 					case "predicate":
 						statsOptions.ColumnChoice = model.PredicateColumns
+					case "default":
+						statsOptions.ColumnChoice = model.AllColumns
 					default:
 						return fmt.Errorf("%w: %s", errors.New("COL_CHOICE should be one of all|list|predicate"), val)
 					}
 				case "COL_LIST":
-					cols := strings.Split(val, ",")
-					colList := make([]model.CIStr, 0, len(cols))
-					for _, colStr := range cols {
-						colName := strings.TrimSpace(colStr)
-						colList = append(colList, model.NewCIStr(colName))
+					hasColList = true
+					if strings.ToLower(val) == "default" {
+						statsOptions.ColumnList = []model.CIStr{}
+					} else {
+						cols := strings.Split(val, ",")
+						colList := make([]model.CIStr, 0, len(cols))
+						for _, colStr := range cols {
+							colName := strings.TrimSpace(colStr)
+							colList = append(colList, model.NewCIStr(colName))
+						}
+						statsOptions.ColumnList = colList
 					}
-					statsOptions.ColumnList = colList
 				default:
 					return errors.Trace(errors.New("unknown table stats option"))
+				}
+			}
+			// merge old meta if not set at this time
+			if meta.StatsOptions != nil {
+				if !hasBuckets {
+					statsOptions.Buckets = meta.StatsOptions.Buckets
+				}
+				if !hasTopn {
+					statsOptions.TopN = meta.StatsOptions.TopN
+				}
+				if !hasSampleRate {
+					statsOptions.SampleRate = meta.StatsOptions.SampleRate
+				}
+				if !hasColChoice {
+					statsOptions.ColumnChoice = meta.StatsOptions.ColumnChoice
+				}
+				if !hasColList {
+					statsOptions.ColumnList = meta.StatsOptions.ColumnList
 				}
 			}
 		}

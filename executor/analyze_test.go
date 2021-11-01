@@ -1448,3 +1448,76 @@ func (s *testSuite10) TestColumnOption(c *C) {
 	status = statuses[len(statuses)-1][3].(string)
 	c.Assert(strings.Contains(status, "columns b,c"), IsTrue)
 }
+
+func (s *testSuite10) TestAlterOptions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int) STATS_BUCKETS=10,STATS_TOPN=5,STATS_COL_CHOICE='list',STATS_COL_LIST='a,b'")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.Buckets, Equals, uint64(10))
+	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(5))
+	c.Assert(tableInfo.StatsOptions.SampleRate, Equals, float64(0))
+	c.Assert(tableInfo.StatsOptions.ColumnChoice, Equals, model.ColumnList)
+	c.Assert(len(tableInfo.StatsOptions.ColumnList), Equals, 2)
+	c.Assert(tableInfo.StatsOptions.ColumnList[0].L, Equals, "a")
+	c.Assert(tableInfo.StatsOptions.ColumnList[1].L, Equals, "b")
+
+	// partially alter table
+	tk.MustExec("alter table t STATS_OPTIONS='{\"TOPN\":\"default\",\"SAMPLE_RATE\":\"0.5\",\"COL_CHOICE\":\"list\",\"COL_LIST\":\"b,c\"}'")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.Buckets, Equals, uint64(10))
+	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(0))
+	c.Assert(tableInfo.StatsOptions.SampleRate, Equals, 0.5)
+	c.Assert(tableInfo.StatsOptions.ColumnChoice, Equals, model.ColumnList)
+	c.Assert(len(tableInfo.StatsOptions.ColumnList), Equals, 2)
+	c.Assert(tableInfo.StatsOptions.ColumnList[0].L, Equals, "b")
+	c.Assert(tableInfo.StatsOptions.ColumnList[1].L, Equals, "c")
+
+	// alter table with wrong format
+	err = tk.ExecToErr("alter table t STATS_OPTIONS='{\"BUCKETS\":\"abc\"}'")
+	c.Assert(err, NotNil)
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.Buckets, Equals, uint64(10))
+
+	// alter table with empty
+	tk.MustExec("alter table t STATS_OPTIONS=''")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.Buckets, Equals, uint64(10))
+	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(0))
+	c.Assert(tableInfo.StatsOptions.SampleRate, Equals, 0.5)
+	c.Assert(tableInfo.StatsOptions.ColumnChoice, Equals, model.ColumnList)
+	c.Assert(len(tableInfo.StatsOptions.ColumnList), Equals, 2)
+	c.Assert(tableInfo.StatsOptions.ColumnList[0].L, Equals, "b")
+	c.Assert(tableInfo.StatsOptions.ColumnList[1].L, Equals, "c")
+
+	// alter table with default
+	tk.MustExec("alter table t STATS_OPTIONS=default")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.Buckets, Equals, uint64(0))
+	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(0))
+	c.Assert(tableInfo.StatsOptions.SampleRate, Equals, float64(0))
+	c.Assert(tableInfo.StatsOptions.ColumnChoice, Equals, model.AllColumns)
+	c.Assert(len(tableInfo.StatsOptions.ColumnList), Equals, 0)
+
+}
