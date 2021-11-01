@@ -15,23 +15,24 @@
 ## Introduction
 
 Currently, the split table(regions) in tidb is constructed by following 2 steps:
-
 1. Notify tikv to split regions
 2. Notify pd to scatter regions
 
-But this will let the time cost for the whole splitting table become unstable and rather time-consuming.
+However, because split and scatter tasks are asynchronous, which causes many split and scatter tasks at times, the time cost for the whole splitting table become unstable and rather time-consuming:
+1. At the same time will cause multiple conflicts on the same region, then we need more time to retry.
+2. It is very likely to cause a split from a scattering region, resulting in many 4 replicas regions, which will lead to the time-consuming of split table be unstable.
 
-More importantly, there exists different ways of tidb and other tools to split and scatter region which make it hard to be managed. Let pd to handle the whole work will make it easy to manage.
+More importantly, there exists different ways of tidb and other tools to split and scatter region which make it hard to be managed. 
 
-So, This proposal aims to let pd handle  split and scatter region work directly
+So, in order to make the time cost of the whole process more stable and unify the upstream, this proposal aims to let pd handle split and scatter region work directly.
 
 ## Motivation or Background
 
-Split table region : split a region into multi regions by split-keys
+`Split table region` means split a region into multi regions by split-keys
 
-Scatter table regions: regions are still in the original stores after split. Scatter is to load balance regions and evenly distribute regions to other stores
+`Scatter table regions`: means distribute new regions to other stores
 
-Our purpose is to add a new  PD API -- SplitAndScatterRegions(), so that TIDB and other tools can easily call this API uniformly
+Our purpose is to add a new PD API -- SplitAndScatterRegions(), so that TIDB and other tools can easily call this API uniformly and make the time cost of the whole process more stable.
 
 ## Detailed Design
 
@@ -47,10 +48,6 @@ This can be achieved through the following steps
 
 4. Wait scatter done if needed
 
-
-
-
-
 ## Test Design
 
 I will test the stability and performance by controlling variables under different parameter conditions
@@ -63,8 +60,6 @@ For example:
 - ...............
 
 I will record the time spent in these cases
-
-
 
 ## Follow-up work
 
