@@ -519,7 +519,7 @@ type TikvImporter struct {
 	DiskQuota        ByteSize `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency int      `toml:"range-concurrency" json:"range-concurrency"`
 	// Deprecated: only used to keep the compatibility.
-	DuplicateDetection bool `toml:"duplicate-detection" json:"duplicate-detection"`
+	DuplicateDetection bool `toml:"duplicate-detection" json:"-"`
 
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
 
