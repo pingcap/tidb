@@ -1681,6 +1681,23 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 	return nil
 }
 
+func (cc *clientConn) handlePlanReplayerLoad(ctx context.Context, planReplayerLoadInfo *executor.PlanReplayerLoadInfo) error {
+	if cc.capability&mysql.ClientLocalFiles == 0 {
+		return errNotAllowedCommand
+	}
+	if planReplayerLoadInfo == nil {
+		return errors.New("plan replayer load: info is empty")
+	}
+	data, err := cc.getDataFromPath(ctx, planReplayerLoadInfo.Path)
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	return planReplayerLoadInfo.Update(data)
+}
+
 func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
@@ -1956,6 +1973,15 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 		handled = true
 		defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
 		if err := cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo)); err != nil {
+			return handled, err
+		}
+	}
+
+	planReplayerLoad := cc.ctx.Value(executor.PlanReplayerLoadVarKey)
+	if planReplayerLoad != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.PlanReplayerLoadVarKey, nil)
+		if err := cc.handlePlanReplayerLoad(ctx, planReplayerLoad.(*executor.PlanReplayerLoadInfo)); err != nil {
 			return handled, err
 		}
 	}
