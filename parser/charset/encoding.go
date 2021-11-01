@@ -110,6 +110,36 @@ func (e *Encoding) EncodeString(src string) (string, error) {
 	return string(bs), err
 }
 
+// EncodeInternal convert bytes from utf-8 charset to a specific charset, we actually do not do the real convert, just find the inconvertible character and use ? replace.
+// The code below is equivalent to
+//		expr, _ := e.Encode(dest, src)
+//		ret, _ := e.Decode(nil, expr)
+//		return ret
+func (e *Encoding) EncodeInternal(dest, src []byte) []byte {
+	if !e.enabled() {
+		return src
+	}
+	if dest == nil {
+		dest = make([]byte, 0, len(src))
+	}
+	var srcOffset int
+
+	var buf [4]byte
+	transformer := e.enc.NewEncoder()
+	for srcOffset < len(src) {
+		length := characterLengthUTF8(src[srcOffset:])
+		_, _, err := transformer.Transform(buf[:], src[srcOffset:srcOffset+length], true)
+		if err != nil {
+			dest = append(dest, byte('?'))
+		} else {
+			dest = append(dest, src[srcOffset:srcOffset+length]...)
+		}
+		srcOffset += length
+	}
+
+	return dest
+}
+
 // Decode convert bytes from a specific charset to utf-8 charset.
 func (e *Encoding) Decode(dest, src []byte) ([]byte, error) {
 	if !e.enabled() {
