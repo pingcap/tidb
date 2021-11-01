@@ -33,18 +33,21 @@ import (
 
 // PlanReplayerHandler is the handler for dumping plan replayer file.
 type PlanReplayerHandler struct {
-	infoSyncer *infosync.InfoSyncer
+	infoGetter *infosync.InfoSyncer
 	address    string
 	statusPort uint
 }
 
 func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
 	cfg := config.GetGlobalConfig()
-	return &PlanReplayerHandler{
-		infoSyncer: s.dom.InfoSyncer(),
+	prh := &PlanReplayerHandler{
 		address:    cfg.AdvertiseAddress,
 		statusPort: cfg.Status.StatusPort,
 	}
+	if s.dom != nil && s.dom.InfoSyncer() != nil {
+		prh.infoGetter = s.dom.InfoSyncer()
+	}
+	return prh
 }
 
 func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -77,6 +80,10 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	if prh.infoGetter == nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	// we didn't find file for forward request, return 404
 	forwarded := req.URL.Query().Get("forward")
 	if len(forwarded) > 0 {
@@ -84,7 +91,7 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		return
 	}
 	// If we didn't find file in origin request, try to broadcast the request to all remote tidb-servers
-	topos, err := prh.infoSyncer.GetAllTiDBTopology(req.Context())
+	topos, err := prh.infoGetter.GetAllTiDBTopology(req.Context())
 	if err != nil {
 		writeError(w, err)
 		return
