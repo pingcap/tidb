@@ -90,10 +90,8 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 		}
 		if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
 			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
-				if vars.LocalTemporaryTables != nil {
-					is := domain.GetDomain(sctx).InfoSchema()
-					return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is)
-				}
+				is := domain.GetDomain(sctx).InfoSchema()
+				return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is)
 			}
 		}
 	}
