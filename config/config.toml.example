@@ -321,7 +321,7 @@ header-timeout = 5
 
 [prepared-plan-cache]
 enabled = false
-capacity = 100
+capacity = 1000
 memory-guard-ratio = 0.1
 
 [opentracing]
@@ -483,6 +483,8 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
+# enable creating expression index.
+allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]

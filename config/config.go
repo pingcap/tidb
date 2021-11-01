@@ -561,6 +561,8 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
+	// Whether enable creating expression index.
+	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable global kill.
 	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
 	// Whether enable charset feature.
@@ -658,7 +660,7 @@ var defaultConf = Config{
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          false,
-		Capacity:         100,
+		Capacity:         1000,
 		MemoryGuardRatio: 0.1,
 	},
 	OpenTracing: OpenTracing{
@@ -674,6 +676,10 @@ var defaultConf = Config{
 	Binlog: Binlog{
 		WriteTimeout: "15s",
 		Strategy:     "range",
+	},
+	Plugin: Plugin{
+		Dir:  "/data/deploy/plugin",
+		Load: "",
 	},
 	PessimisticTxn: DefaultPessimisticTxn(),
 	StmtSummary: StmtSummary{
@@ -732,21 +738,20 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":                 {},
-	"pessimistic-txn.enable":              {},
-	"log.file.log-rotate":                 {},
-	"log.log-slow-query":                  {},
-	"txn-local-latches":                   {},
-	"txn-local-latches.enabled":           {},
-	"txn-local-latches.capacity":          {},
-	"performance.max-memory":              {},
-	"max-txn-time-use":                    {},
-	"experimental.allow-auto-random":      {},
-	"enable-redact-log":                   {}, // use variable tidb_redact_log instead
-	"tikv-client.copr-cache.enable":       {},
-	"alter-primary-key":                   {}, // use NONCLUSTERED keyword instead
-	"enable-streaming":                    {},
-	"experimental.allow-expression-index": {},
+	"pessimistic-txn.ttl":            {},
+	"pessimistic-txn.enable":         {},
+	"log.file.log-rotate":            {},
+	"log.log-slow-query":             {},
+	"txn-local-latches":              {},
+	"txn-local-latches.enabled":      {},
+	"txn-local-latches.capacity":     {},
+	"performance.max-memory":         {},
+	"max-txn-time-use":               {},
+	"experimental.allow-auto-random": {},
+	"enable-redact-log":              {}, // use variable tidb_redact_log instead
+	"tikv-client.copr-cache.enable":  {},
+	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
+	"enable-streaming":               {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
