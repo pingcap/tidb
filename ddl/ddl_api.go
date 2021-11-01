@@ -4683,10 +4683,14 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 
 	var table_list []PollTiFlashReplicaStatusContext = make([]PollTiFlashReplicaStatusContext, 0)
 	for _, db := range schema.AllSchemas() {
+		fmt.Printf("PollTiFlashReplicaStatus has db %v\n", db.Name)
 		tbls := schema.SchemaTables(db.Name)
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
-
+			if tblInfo.TiFlashReplica == nil {
+				// reject tables that has no tiflash replica such like `INFORMATION_SCHEMA`
+				continue
+			}
 			if pi := tblInfo.GetPartitionInfo(); pi != nil {
 				for _, p := range pi.Definitions {
 					table_list = append(table_list, PollTiFlashReplicaStatusContext{p.ID, tblInfo})
@@ -4709,6 +4713,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 		for _, l := range store.Store.Labels {
 			if l.Key == "engine" && l.Value == "tiflash" {
 				tiflashStores[store.Store.ID] = store
+				fmt.Printf("tiflashStores has tiflash %v %v\n", store.Store.ID, store.Store.Address)
 			}
 		}
 	}
@@ -4724,19 +4729,15 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 				store.Store.StatusAddress,
 				tb.ID,
 			)
+			fmt.Printf("startUrl %v\n", statURL)
 			resp, err := util.InternalHTTPClient().Get(statURL)
 			if err != nil {
-				return errors.Trace(err)
+				continue
 			}
 
 			defer func() {
 				resp.Body.Close()
 			}()
-
-			//data, err := ioutil.ReadAll(resp.Body)
-			//if err != nil{
-			//	return errors.Trace(err)
-			//}
 
 			reader := bufio.NewReader(resp.Body)
 			ns, _, _ := reader.ReadLine()
@@ -4747,10 +4748,11 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 			for i := int64(0); i < n; i++ {
 				rs, _, _ := reader.ReadLine()
 				// for (`table`, `store`), has region `r`
-				r, err := strconv.ParseInt(string(rs), 10, 32)
+				r, err := strconv.ParseInt(strings.Trim(string(rs), "\r\n \t"), 10, 32)
 				if err != nil {
 					return errors.Trace(err)
 				}
+				fmt.Printf("find replica %v\n", r)
 				if i, ok := regionReplica[r]; ok {
 					regionReplica[r] = i + 1
 				} else {
@@ -4760,11 +4762,11 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 		}
 
 		var stats helper.PDRegionStats
-		tikvHelper.GetPDRegionStats(tb.ID, &stats)
+		tikvHelper.GetPDRegionStats2(tb.ID, &stats)
 
 		regionCount := stats.Count
 		flashRegionCount := len(regionReplica)
-		fmt.Printf("GetPDRegionStats output table %v RegionCount %v FlashRegionCount\n", tb.ID, regionCount, flashRegionCount)
+		fmt.Printf("GetPDRegionStats output table %v RegionCount %v FlashRegionCount %v %v\n", tb.ID, regionCount, flashRegionCount, stats)
 	}
 
 	return nil

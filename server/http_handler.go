@@ -789,6 +789,7 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	replicaInfos := make([]*tableFlashReplicaInfo, 0)
 	allDBs := schema.AllSchemas()
 	for _, db := range allDBs {
+		fmt.Printf("ServeHTTP has db %v\n", db.Name)
 		tbls := schema.SchemaTables(db.Name)
 		for _, tbl := range tbls {
 			replicaInfos = h.getTiFlashReplicaInfo(tbl.Meta(), replicaInfos)
@@ -800,6 +801,7 @@ func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	replicaInfos = append(replicaInfos, dropedOrTruncateReplicaInfos...)
+
 	writeData(w, replicaInfos)
 }
 

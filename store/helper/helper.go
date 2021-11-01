@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
 	"net/http"
 	"net/url"
@@ -902,3 +903,41 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 
 	return dec.Decode(stats)
 }
+
+func (h *Helper) GetPDRegionStats2(tableID int64, stats *PDRegionStats) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return err
+	}
+
+	startKey := tablecodec.GenTableRecordPrefix(tableID)
+	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+	startKey = codec.EncodeBytes([]byte{}, startKey)
+	endKey = codec.EncodeBytes([]byte{}, endKey)
+
+	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+		url.QueryEscape(string(startKey)),
+		url.QueryEscape(string(endKey)))
+
+	fmt.Printf("startUrl %v\n", statURL);
+
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			log.Error("err", zap.Error(err))
+		}
+	}()
+
+	data, err := ioutil.ReadAll(resp.Body)
+	fmt.Printf("GetPDRegionStats return %v\n", string(data))
+	dec := json.NewDecoder(resp.Body)
+
+	return dec.Decode(stats)
+}
+
