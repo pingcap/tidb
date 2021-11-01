@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
@@ -211,6 +212,9 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
+	bufTp := b.args[0].GetType()
+	bufEnc := charset.NewEncoding(bufTp.Charset)
+
 	buf1, err1 := b.bufAllocator.get()
 	if err1 != nil {
 		return err1
@@ -219,15 +223,24 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
+	buf1Tp := b.args[1].GetType()
+	buf1Enc := charset.NewEncoding(buf1Tp.Charset)
 	result.ReserveString(n)
+	var encodedBuf []byte
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		dataStr := buf.GetString(i)
-		passwordStr := buf1.GetString(i)
-		decodeStr, err := encrypt.SQLDecode(dataStr, passwordStr)
+		dataStr, err := bufEnc.Encode(encodedBuf, buf.GetBytes(i))
+		if err != nil {
+			return err
+		}
+		passwordStr, err := buf1Enc.Encode(encodedBuf, buf1.GetBytes(i))
+		if err != nil {
+			return err
+		}
+		decodeStr, err := encrypt.SQLDecodeBuf(dataStr, passwordStr)
 		if err != nil {
 			return err
 		}
@@ -254,19 +267,31 @@ func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err1 != nil {
 		return err1
 	}
+	bufTp := b.args[0].GetType()
+	bufEnc := charset.NewEncoding(bufTp.Charset)
 	defer b.bufAllocator.put(buf1)
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
+	buf1Tp := b.args[1].GetType()
+	buf1Enc := charset.NewEncoding(buf1Tp.Charset)
 	result.ReserveString(n)
+	var encodedBuf []byte
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		decodeStr := buf.GetString(i)
-		passwordStr := buf1.GetString(i)
-		dataStr, err := encrypt.SQLEncode(decodeStr, passwordStr)
+
+		decodeStr, err := bufEnc.Encode(encodedBuf, []byte(buf.GetString(i)))
+		if err != nil {
+			return err
+		}
+		passwordStr, err := buf1Enc.Encode(encodedBuf, []byte(buf1.GetString(i)))
+		if err != nil {
+			return err
+		}
+		dataStr, err := encrypt.SQLEncodeBuf(decodeStr, passwordStr)
 		if err != nil {
 			return err
 		}

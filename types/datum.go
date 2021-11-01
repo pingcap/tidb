@@ -1926,6 +1926,9 @@ func NewStringDatum(s string) (d Datum) {
 
 // NewCollationStringDatum creates a new Datum from a string with collation and length info.
 func NewCollationStringDatum(s string, collation string, length int) (d Datum) {
+	if collation == "" {
+		collation = mysql.DefaultCollationName
+	}
 	d.SetString(s, collation)
 	return d
 }

@@ -31,6 +31,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -406,13 +407,23 @@ func (b *builtinDecodeSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
+	dataTp := b.args[0].GetType()
+	dataBuf, err := charset.NewEncoding(dataTp.Charset).Encode(nil, []byte(dataStr))
+	if err != nil {
+		return "", true, err
+	}
 
 	passwordStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
+	passwordTp := b.args[0].GetType()
+	passwordBuf, err := charset.NewEncoding(passwordTp.Charset).Encode(nil, []byte(passwordStr))
+	if err != nil {
+		return "", true, err
+	}
 
-	decodeStr, err := encrypt.SQLDecode(dataStr, passwordStr)
+	decodeStr, err := encrypt.SQLDecodeBuf(dataBuf, passwordBuf)
 	return decodeStr, false, err
 }
 
@@ -469,13 +480,23 @@ func (b *builtinEncodeSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
+	decodeTp := b.args[0].GetType()
+	decodeBuff, err := charset.NewEncoding(decodeTp.Charset).EncodeString(decodeStr)
+	if err != nil {
+		return "", true, err
+	}
 
 	passwordStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
+	passwordTp := b.args[1].GetType()
+	passwordBuff, err := charset.NewEncoding(passwordTp.Charset).EncodeString(passwordStr)
+	if err != nil {
+		return "", true, err
+	}
 
-	dataStr, err := encrypt.SQLEncode(decodeStr, passwordStr)
+	dataStr, err := encrypt.SQLEncodeBuf([]byte(decodeBuff), []byte(passwordBuff))
 	return dataStr, false, err
 }
 
