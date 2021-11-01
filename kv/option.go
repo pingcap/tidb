@@ -70,6 +70,8 @@ const (
 	//		2. Ranges of Retrievers do not intersect each other.
 	//		3. Retrievers are sorted by range.
 	SortedCustomRetrievers
+	// AssertionLevel controls how strict the assertions on data during transactions should be.
+	AssertionLevel
 )
 
 // ReplicaReadType is the type of replica to read data from

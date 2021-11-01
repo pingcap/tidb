@@ -952,6 +952,9 @@ type SessionVars struct {
 		curr int8
 		data [2]stmtctx.StatementContext
 	}
+
+	// AssertionLevel controls how strict the assertions on data mutations should be.
+	AssertionLevel AssertionLevel
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

@@ -584,6 +584,10 @@ const (
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// TiDBTxnAssertionLevel indicates how strict the assertion will be, which helps detecting and preventing data &
+	// index inconsistency problems.
+	TiDBTxnAssertionLevel = "tidb_txn_assertion_level"
 )
 
 // TiDB vars that have only global scope
@@ -745,6 +749,7 @@ const (
 	DefTMPTableSize                       = 16777216
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBEnableOrderedResultMode        = false
+	DefTiDBTxnAssertionLevel              = AssertionFastStr
 )
 
 // Process global variables.
