@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	pd "github.com/tikv/pd/client"
 	"io"
 	"math"
 	"os"
@@ -1254,7 +1255,53 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 
 var checksumManagerKey struct{}
 
+const (
+	pauseGCTTLForDupeRes       = time.Hour
+	pauseGCIntervalForDupeRes  = time.Minute
+	pauseGCServiceIDForDupeRes = "lightning-duplicate-resolution"
+)
+
+func (rc *Controller) pauseGCOnce(ctx context.Context, pdCli pd.Client) error {
+	// Get current GC safe point.
+	safepoint, err := pdCli.UpdateGCSafePoint(ctx, 0)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Pause GC for 1 hour.
+	_, err = pdCli.UpdateServiceGCSafePoint(ctx,
+		pauseGCServiceIDForDupeRes, int64(pauseGCTTLForDupeRes/time.Second), safepoint)
+	return err
+}
+
+func (rc *Controller) keepPauseGC(ctx context.Context, pdCli pd.Client) {
+	ticker := time.NewTicker(pauseGCIntervalForDupeRes)
+	for {
+		select {
+		case <-ticker.C:
+			if err := rc.pauseGCOnce(ctx, pdCli); err != nil {
+				log.L().Error("failed to pause GC", zap.Error(err))
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 func (rc *Controller) restoreTables(ctx context.Context) error {
+	if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+		tlsOpt := rc.tls.ToPDSecurityOption()
+		pdCli, err := pd.NewClientWithContext(ctx, []string{rc.cfg.TiDB.PdAddr}, tlsOpt)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err = rc.pauseGCOnce(ctx, pdCli); err != nil {
+			return errors.Trace(err)
+		}
+		subCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go rc.keepPauseGC(subCtx, pdCli)
+	}
+
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
 	if rc.tableWorkers == nil {
 		rc.tableWorkers = worker.NewPool(ctx, rc.cfg.App.TableConcurrency, "table")
