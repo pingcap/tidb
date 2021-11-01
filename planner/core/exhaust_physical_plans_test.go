@@ -287,7 +287,7 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys, false)
 		require.NoError(t, err)
 		require.Equal(t, tt.accesses, fmt.Sprintf("%v", helper.chosenAccess))
-		require.Equal(t, tt.ranges, fmt.Sprintf("%v", helper.chosenRanges), "test case: ", i)
+		require.Equal(t, tt.ranges, fmt.Sprintf("%v", helper.chosenRanges.Range()), "test case: ", i)
 		require.Equal(t, tt.idxOff2KeyOff, fmt.Sprintf("%v", helper.idxOff2KeyOff))
 		require.Equal(t, tt.remained, fmt.Sprintf("%v", helper.chosenRemained))
 		require.Equal(t, tt.compareFilters, fmt.Sprintf("%v", helper.lastColManager))
