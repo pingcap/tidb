@@ -726,7 +726,6 @@ func TestSelectivityGreedyAlgo(t *testing.T) {
 }
 
 func TestCollationColumnEstimate(t *testing.T) {
-	t.Parallel()
 	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()

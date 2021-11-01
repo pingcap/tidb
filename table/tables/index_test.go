@@ -93,7 +93,6 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 }
 
 func TestMultiColumnCommonHandle(t *testing.T) {
-	t.Parallel()
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tblInfo := buildTableInfo(t, "create table t (a int, b int, u varchar(64) unique, nu varchar(64), primary key (a, b), index nu (nu))")
