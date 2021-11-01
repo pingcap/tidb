@@ -3997,9 +3997,10 @@ func (s *testIntegrationSuite) TestIncrementalAnalyzeStatsVer2(c *C) {
 	c.Assert(rows[0][0], Equals, "3")
 	tk.MustExec("insert into t values(4,4),(5,5),(6,6)")
 	tk.MustExec("analyze incremental table t index idx_b")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 2)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 3)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "The version 2 would collect all statistics not only the selected indexes")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[1].Err.Error(), Equals, "The version 2 stats would ignore the INCREMENTAL keyword and do full sampling")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[2].Err.Error(), Equals, "Analyze use auto adjusted sample rate 1.000000 for table test.t.")
 	rows = tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1", tblID)).Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "6")
@@ -4647,4 +4648,43 @@ func (s *testIntegrationSuite) TestIssue28154(c *C) {
 	c.Assert(err, ErrorMatches, "\\[types:1292\\]Truncated incorrect DOUBLE value.*")
 	result = tk.MustQuery("select * from t")
 	result.Check(testkit.Rows("abc"))
+}
+
+func (s *testIntegrationSerialSuite) TestRejectSortForMPP(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
+	tk.MustExec("analyze table t")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_enforce_mpp=1;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
 }

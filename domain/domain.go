@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/globalconfigsync"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -74,6 +75,7 @@ type Domain struct {
 	statsLease           time.Duration
 	ddl                  ddl.DDL
 	info                 *infosync.InfoSyncer
+	globalCfgSyncer      *globalconfigsync.GlobalConfigSyncer
 	m                    sync.Mutex
 	SchemaValidator      SchemaValidator
 	sysSessionPool       *sessionPool
@@ -331,6 +333,19 @@ func (do *Domain) InfoSyncer() *infosync.InfoSyncer {
 	return do.info
 }
 
+// NotifyGlobalConfigChange notify global config syncer to store the global config into PD(etcd).
+func (do *Domain) NotifyGlobalConfigChange(name, value string) {
+	if do.globalCfgSyncer == nil {
+		return
+	}
+	do.globalCfgSyncer.Notify(name, value)
+}
+
+// GetGlobalConfigSyncer exports for testing.
+func (do *Domain) GetGlobalConfigSyncer() *globalconfigsync.GlobalConfigSyncer {
+	return do.globalCfgSyncer
+}
+
 // Store gets KV store from domain.
 func (do *Domain) Store() kv.Storage {
 	return do.store
@@ -479,6 +494,26 @@ func (do *Domain) infoSyncerKeeper() {
 			} else {
 				logutil.BgLogger().Info("server info syncer restarted")
 			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) globalConfigSyncerKeeper() {
+	defer func() {
+		do.wg.Done()
+		logutil.BgLogger().Info("globalConfigSyncerKeeper exited.")
+		util.Recover(metrics.LabelDomain, "globalConfigSyncerKeeper", nil, false)
+	}()
+	for {
+		select {
+		case entry := <-do.globalCfgSyncer.NotifyCh:
+			err := do.globalCfgSyncer.StoreGlobalConfig(context.Background(), entry)
+			if err != nil {
+				logutil.BgLogger().Error("global config syncer store failed", zap.Error(err))
+			}
+		// TODO(crazycs520): Add owner to maintain global config is consistency with global variable.
 		case <-do.exit:
 			return
 		}
@@ -748,6 +783,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return err
 	}
+	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(do.etcdClient)
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
 		return err
@@ -788,11 +824,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
-	do.wg.Add(1)
+	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
-
-	do.wg.Add(1)
 	go do.infoSyncerKeeper()
+	go do.globalConfigSyncerKeeper()
 
 	if !skipRegisterToDashboard {
 		do.wg.Add(1)
@@ -931,7 +966,8 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
 // it should be called only once in BootstrapSession.
 func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
-	err := do.rebuildSysVarCache()
+	ctx.GetSessionVars().InRestrictedSQL = true
+	err := do.rebuildSysVarCache(ctx)
 	if err != nil {
 		return err
 	}
@@ -980,7 +1016,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			}
 			count = 0
 			logutil.BgLogger().Debug("Rebuilding sysvar cache from etcd watch event.")
-			err := do.rebuildSysVarCache()
+			err := do.rebuildSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
@@ -1141,7 +1177,7 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 }
 
 // PlanReplayerLoop creates a goroutine that handles `exit` and `gc`.
-func (do *Domain) PlanReplayerLoop(ctx sessionctx.Context) {
+func (do *Domain) PlanReplayerLoop() {
 	do.wg.Add(1)
 	go func() {
 		gcTicker := time.NewTicker(do.planReplayer.planReplayerGCLease)
@@ -1439,7 +1475,7 @@ func (do *Domain) NotifyUpdateSysVarCache() {
 		}
 	}
 	// update locally
-	if err := do.rebuildSysVarCache(); err != nil {
+	if err := do.rebuildSysVarCache(nil); err != nil {
 		logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 	}
 }
@@ -1674,6 +1710,12 @@ func (do *Domain) serverIDKeeper() {
 			return
 		}
 	}
+}
+
+// MockInfoCacheAndLoadInfoSchema only used in unit test
+func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
+	do.infoCache = infoschema.NewCache(16)
+	do.infoCache.Insert(is, 0)
 }
 
 func init() {
