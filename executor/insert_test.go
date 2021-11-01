@@ -206,8 +206,10 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustExec("insert into a values(1)")
 	tk.MustExec("insert into b values(1, 2)")
 	tk.MustExec("insert into a select x from b ON DUPLICATE KEY UPDATE a.x=b.y")
-	tk.MustExec("insert into a select 2 from b ON DUPLICATE KEY UPDATE a.x=b.y")
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery("select * from a").Check(testkit.Rows("2"))
+	tk.MustExec("insert into a select 2 from b ON DUPLICATE KEY UPDATE a.x=b.y")
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
 	tk.MustQuery("select * from a").Check(testkit.Rows("2"))
 
 	// reproduce insert on duplicate key update bug under new row format.
