@@ -2763,6 +2763,14 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 			errcode: mysql.ErrTableaccessDenied,
 		},
 		{
+			sql:     "create table tmp(id int primary key)",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql:     "create table t(id int primary key)",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
 			sql: "analyze table tmp",
 		},
 		{

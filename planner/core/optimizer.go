@@ -133,14 +133,22 @@ func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo
 	case *ast.CreateTableStmt:
 		privVisitInfo = make([]visitInfo, 0, len(vs))
 		for _, v := range vs {
-			if stmt.TemporaryKeyword == ast.TemporaryLocal && v.privilege == mysql.CreatePriv {
-				// `CREATE TEMPORARY TABLE` privilege is required from the database, not the table.
-				newVisitInfo := v
-				newVisitInfo.privilege = mysql.CreateTMPTablePriv
-				newVisitInfo.table = ""
-				privVisitInfo = append(privVisitInfo, newVisitInfo)
+			if v.privilege == mysql.CreatePriv {
+				if stmt.TemporaryKeyword == ast.TemporaryLocal {
+					// `CREATE TEMPORARY TABLE` privilege is required from the database, not the table.
+					newVisitInfo := v
+					newVisitInfo.privilege = mysql.CreateTMPTablePriv
+					newVisitInfo.table = ""
+					privVisitInfo = append(privVisitInfo, newVisitInfo)
+				} else {
+					// If both the normal table and temporary table already exist, we need to check the privilege.
+					privVisitInfo = append(privVisitInfo, v)
+				}
 			} else {
-				privVisitInfo = append(privVisitInfo, v)
+				// `CREATE TABLE LIKE tmp` or `CREATE TABLE FROM SELECT tmp` in the future.
+				if needCheckTmpTablePriv(is, v) {
+					privVisitInfo = append(privVisitInfo, v)
+				}
 			}
 		}
 	case *ast.DropTableStmt:
