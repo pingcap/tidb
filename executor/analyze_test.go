@@ -1195,7 +1195,7 @@ func (s *testSuite10) TestTableAnalyzeOptions(c *C) {
 	c.Assert(len(col.Buckets), Equals, 5)
 
 	// options changed after alter table
-	tk.MustExec("alter table t STATS_OPTIONS=\"TOPN=4,BUCKETS=4\"")
+	tk.MustExec("alter table t STATS_OPTIONS='{\"TOPN\":\"4\",\"BUCKETS\":\"4\"}'")
 	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -1237,7 +1237,7 @@ func (s *testSuite10) TestTableAnalyzeOptions(c *C) {
 	c.Assert(len(col2.TopN.TopN), Equals, 12)
 
 	// alter table with empty
-	tk.MustExec("alter table t STATS_OPTIONS=\"\"")
+	tk.MustExec("alter table t STATS_OPTIONS=''")
 	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -1267,7 +1267,7 @@ func (s *testSuite10) TestTableAnalyzeOptions(c *C) {
 	c.Assert(len(col.TopN.TopN), Equals, int(col.Count))
 
 	// alter table with value exceeds limit
-	tk.MustExec("alter table t STATS_OPTIONS=\"TOPN=200000\"")
+	tk.MustExec("alter table t STATS_OPTIONS='{\"TOPN\":\"200000\"}'")
 	// refresh infoschema
 	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1316,7 +1316,7 @@ PARTITION BY RANGE ( a ) (
 	}
 
 	// alter table & auto-analyze uses the table-level options
-	tk.MustExec("alter table t STATS_OPTIONS=\"TOPN=2\"")
+	tk.MustExec("alter table t STATS_OPTIONS='{\"TOPN\":\"2\"}'")
 	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -1370,7 +1370,7 @@ func (s *testSuite10) TestSampleRateOption(c *C) {
 	c.Assert(strings.Contains(status, "SAMPLERATE=0.9"), IsTrue)
 
 	// alter table
-	tk.MustExec("alter table t STATS_OPTIONS=\"SAMPLE_RATE=0.7\"")
+	tk.MustExec("alter table t STATS_OPTIONS='{\"SAMPLE_RATE\":\"0.7\"}'")
 	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
