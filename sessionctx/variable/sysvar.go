@@ -1838,7 +1838,7 @@ var defaultSysVars = []*SysVar{
 		s.EnablePseudoForOutdatedStats = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMPPBalanceWithContinuousRegion, Type: TypeBool, Value: BoolToOnOff(DefEnableMPPBalanceWithContinuousRegion), SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMPPBalanceWithContinuousRegion, Type: TypeBool, Hidden: true, Value: BoolToOnOff(DefEnableMPPBalanceWithContinuousRegion), SetSession: func(s *SessionVars, val string) error {
 		s.EnableMPPBalanceWithContinuousRegion = TiDBOptOn(val)
 		return nil
 	}},
