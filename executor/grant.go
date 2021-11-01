@@ -76,10 +76,8 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.Level.Level == ast.GrantLevelTable {
 		// Return if privilege is invalid, to fail before not existing table, see issue #29302
 		for _, p := range e.Privs {
-			// TODO: https://github.com/pingcap/parser/pull/581 removed privs from all priv lists
-			// it is to avoid add GRANT in GRANT ALL SQLs
-			// WithGRANT seems broken, fix it later
-			if p.Priv != mysql.GrantPriv && !mysql.AllTablePrivs.Has(p.Priv) {
+			// Exclude column level
+			if len(p.Cols) == 0 && !mysql.AllowedTablePrivs.Has(p.Priv) {
 				return ErrIllegalGrantForTable
 			}
 		}

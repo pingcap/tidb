@@ -314,6 +314,9 @@ var AllDBPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, Crea
 // AllTablePrivs is all the privileges in table scope.
 var AllTablePrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, IndexPriv, ReferencesPriv, AlterPriv, CreateViewPriv, ShowViewPriv}
 
+// AllowedTablePrivs is all the privileges allowed in table scope.
+var AllowedTablePrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, IndexPriv, ReferencesPriv, AlterPriv, CreateViewPriv, ShowViewPriv, GrantPriv, UsagePriv, AllPriv}
+
 // AllColumnPrivs is all the privileges in column scope.
 var AllColumnPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, ReferencesPriv}
 
