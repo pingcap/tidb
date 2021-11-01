@@ -364,7 +364,7 @@ const (
 	// DupeResAlgNone doesn't detect duplicate.
 	DupeResAlgNone
 
-	// DupeResAlgRemove records all duplicate records like the 'log' algorithm and remove all information related to the
+	// DupeResAlgRemove records all duplicate records like the 'record' algorithm and remove all information related to the
 	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
 	DupeResAlgRemove
 )
