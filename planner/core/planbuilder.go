@@ -1820,7 +1820,11 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(specifiedColumns []model.CIStr, tbl 
 	for _, colName := range specifiedColumns {
 		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 		if colInfo == nil {
-			return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.O, tblInfo.Name.O)
+			if b.ctx.GetSessionVars().InRestrictedSQL {
+				continue
+			} else {
+				return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.O, tblInfo.Name.O)
+			}
 		}
 		columnIDs[colInfo.ID] = struct{}{}
 	}
@@ -2308,11 +2312,18 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int, statsOptions *mod
 					if statsOptions.SampleNum > 0 {
 						valToSet = statsOptions.SampleNum
 					}
+				case ast.AnalyzeOptSampleRate:
+					if statsOptions.SampleRate > 0 {
+						sampleRateLimit := math.Float64frombits(analyzeOptionLimit[ast.AnalyzeOptSampleRate])
+						if statsOptions.SampleRate > sampleRateLimit {
+							return nil, errors.Errorf("value of analyze option %s should not be larger than %d", ast.AnalyzeOptSampleRate, sampleRateLimit)
+						}
+						valToSet = math.Float64bits(statsOptions.SampleRate)
+					}
 				}
 			}
 			// analyzeOptionLimit could change, we can only check at planning instead of create/alter table
-			if (key == ast.AnalyzeOptSampleRate && valToSet != analyzeOptionDefaultV2[key] && valToSet > analyzeOptionLimit[key]) ||
-				(key != ast.AnalyzeOptSampleRate && valToSet > analyzeOptionLimit[key]) {
+			if key != ast.AnalyzeOptSampleRate && valToSet > analyzeOptionLimit[key] {
 				return nil, errors.Errorf("value of analyze option %s should not be larger than %d", ast.AnalyzeOptionString[key], analyzeOptionLimit[key])
 			}
 			optMap[key] = valToSet

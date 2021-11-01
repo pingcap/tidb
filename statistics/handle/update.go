@@ -900,52 +900,6 @@ func (h *Handle) getAutoAnalyzeParameters() map[string]string {
 	return parameters
 }
 
-func (h *Handle) getAutoAnalyzeOptions(statsOptions *model.StatsOptions) string {
-	if statsOptions == nil {
-		return ""
-	}
-	var optBuilder strings.Builder
-	switch statsOptions.ColumnChoice {
-	case model.PredicateColumns:
-		optBuilder.WriteString(" PREDICATE COLUMNS ")
-	case model.ColumnList:
-		optBuilder.WriteString(" COLUMNS ")
-		colStrs := make([]string, 0, len(statsOptions.ColumnList))
-		for _, col := range statsOptions.ColumnList {
-			colStrs = append(colStrs, col.L)
-		}
-		optBuilder.WriteString(strings.Join(colStrs, ",") + " ")
-	default:
-	}
-	buckets := statsOptions.Buckets
-	if buckets > 0 {
-		optBuilder.WriteString(" WITH ")
-		optBuilder.WriteString(strconv.FormatUint(buckets, 10))
-		optBuilder.WriteString(" BUCKETS")
-	}
-	topN := statsOptions.TopN
-	if topN > 0 {
-		if optBuilder.Len() > 0 {
-			optBuilder.WriteString(", ")
-		} else {
-			optBuilder.WriteString(" WITH ")
-		}
-		optBuilder.WriteString(strconv.FormatUint(topN, 10))
-		optBuilder.WriteString(" TOPN")
-	}
-	sampleRate := statsOptions.SampleRate
-	if sampleRate > 0 {
-		if optBuilder.Len() > 0 {
-			optBuilder.WriteString(", ")
-		} else {
-			optBuilder.WriteString(" WITH ")
-		}
-		optBuilder.WriteString(strconv.FormatFloat(sampleRate, 'f', -1, 64))
-		optBuilder.WriteString(" SAMPLERATE")
-	}
-	return optBuilder.String()
-}
-
 func parseAutoAnalyzeRatio(ratio string) float64 {
 	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
 	if err != nil {
@@ -994,7 +948,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		}
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
-			analyzeOpts := h.getAutoAnalyzeOptions(tbl.Meta().StatsOptions)
 			tblInfo := tbl.Meta()
 			if tblInfo.IsView() {
 				continue
@@ -1003,7 +956,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
 				sql := "analyze table %n.%n"
-				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, analyzeOpts, db, tblInfo.Name.O)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
 					// analyze one table at a time to let it get the freshest parameters.
 					// others will be analyzed next round which is just 3s later.
@@ -1021,7 +974,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			for _, def := range pi.Definitions {
 				sql := "analyze table %n.%n partition %n"
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, analyzeOpts, db, tblInfo.Name.O, def.Name.O)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
 					return true
 				}
@@ -1031,7 +984,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	return false
 }
 
-func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string, analyzeOpts string, params ...interface{}) bool {
+func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, start, end time.Time, ratio float64, sql string, params ...interface{}) bool {
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 		return false
 	}
@@ -1043,12 +996,12 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", escaped), zap.String("reason", reason))
 		tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		h.execAutoAnalyze(tableStatsVer, sql+analyzeOpts, params...)
+		h.execAutoAnalyze(tableStatsVer, sql, params...)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
-			sqlWithIdx := sql + " index %n" + analyzeOpts
+			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlexec.EscapeSQL(sqlWithIdx, paramsWithIdx...)
 			if err != nil {
