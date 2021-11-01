@@ -1280,7 +1280,7 @@ func (rc *Controller) keepPauseGC(ctx context.Context, pdCli pd.Client) {
 		select {
 		case <-ticker.C:
 			if err := rc.pauseGCOnce(ctx, pdCli); err != nil {
-				log.L().WARN("failed to pause GC", zap.Error(err))
+				log.L().Warn("failed to pause GC", zap.Error(err))
 			}
 		case <-ctx.Done():
 			return
