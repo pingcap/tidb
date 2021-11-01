@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -285,6 +286,9 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 		joinNode.OtherConditions = others
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
 		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys, false)
+		if helper.chosenRanges == nil {
+			helper.chosenRanges = ranger.Ranges{}
+		}
 		require.NoError(t, err)
 		require.Equal(t, tt.accesses, fmt.Sprintf("%v", helper.chosenAccess))
 		require.Equal(t, tt.ranges, fmt.Sprintf("%v", helper.chosenRanges.Range()), "test case: ", i)
