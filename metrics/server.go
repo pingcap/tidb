@@ -172,6 +172,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblSQLType})
 
+	TotalSlowQueryCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "slow_query_total",
+			Help:      "Counter of of slow queries.",
+		}, []string{LblSQLType})
+
 	MaxProcs = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",

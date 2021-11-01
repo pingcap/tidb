@@ -69,9 +69,11 @@ var (
 	totalQueryProcHistogramGeneral  = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblGeneral)
 	totalCopProcHistogramGeneral    = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblGeneral)
 	totalCopWaitHistogramGeneral    = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblGeneral)
+	totalSlowQueryCounterGeneral    = metrics.TotalSlowQueryCounter.WithLabelValues(metrics.LblGeneral)
 	totalQueryProcHistogramInternal = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblInternal)
 	totalCopProcHistogramInternal   = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblInternal)
 	totalCopWaitHistogramInternal   = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal)
+	totalSlowQueryCounterInternal   = metrics.TotalSlowQueryCounter.WithLabelValues(metrics.LblInternal)
 )
 
 // processinfoSetter is the interface use to set current running process info.
@@ -1032,10 +1034,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			totalQueryProcHistogramInternal.Observe(costTime.Seconds())
 			totalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
 			totalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+			totalSlowQueryCounterInternal.Inc()
 		} else {
 			totalQueryProcHistogramGeneral.Observe(costTime.Seconds())
 			totalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
 			totalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+			totalSlowQueryCounterGeneral.Inc()
 		}
 		var userString string
 		if sessVars.User != nil {
