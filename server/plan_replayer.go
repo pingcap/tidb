@@ -95,7 +95,7 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 			continue
 		}
 		url := fmt.Sprintf("http://%s:%v/plan_replayer/dump/%s?forward=true", topo.IP, topo.StatusPort, name)
-		resp, err := http.Get(url)
+		resp, err := http.Get(url) // #nosec G107
 		if err != nil {
 			terror.Log(errors.Trace(err))
 			logutil.BgLogger().Error("forward request failed", zap.String("addr", topo.IP), zap.Uint("port", topo.StatusPort), zap.Error(err))
