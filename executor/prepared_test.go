@@ -17,6 +17,7 @@ package executor_test
 import (
 	"crypto/tls"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -406,7 +407,7 @@ func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
 	}
 }
 
-func (s *testPrepareSuite) TestPlanCacheXXX(c *C) {
+func (s *testPrepareSuite) TestPlanCacheOperators(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
@@ -431,6 +432,212 @@ func (s *testPrepareSuite) TestPlanCacheXXX(c *C) {
 
 	cases := []PrepCase{
 		{"use test", nil},
+
+		// cases for TableReader on PK
+		{"create table t (a int, b int, primary key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select a from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select a from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select a from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexReader on UK
+		{"create table t (a int, b int, unique key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select a from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select a from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select a from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexReader on Index
+		{"create table t (a int, b int, key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select a from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select a from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select a from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexLookUp on UK
+		{"create table t (a int, b int, unique key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select * from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select * from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select * from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexLookUp on Index
+		{"create table t (a int, b int, key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select * from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select * from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select * from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for HashJoin
+		{"create table t (a int, b int, key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
+			{[]string{"1", "10"}, false},
+			{[]string{"3", "5"}, true},
+			{[]string{"5", "3"}, true},
+		}},
+
+		// cases for MergeJoin
+		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
+			{[]string{"1", "10"}, false},
+			{[]string{"3", "5"}, true},
+			{[]string{"5", "3"}, true},
+		}},
+
+		// cases for IndexJoin
+		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
+			{[]string{"1", "10"}, false},
+			{[]string{"3", "5"}, true},
+			{[]string{"5", "3"}, true},
+		}},
+
+		// cases for NestedLoopJoin (Apply)
+		{"select * from t t1 where t1.b>? and t1.a > (select min(t2.a) from t t2 where t2.b < t1.b)", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, false}, // plans with sub-queries cannot be cached, but the result must be correct
+			{[]string{"5"}, false},
+		}},
+		{"select * from t t1 where t1.a > (select min(t2.a) from t t2 where t2.b < t1.b+?)", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, false},
+			{[]string{"5"}, false},
+		}},
+		{"select * from t t1 where t1.b>? and t1.a > (select min(t2.a) from t t2 where t2.b < t1.b+?)", []ExecCase{
+			{[]string{"1", "1"}, false},
+			{[]string{"3", "2"}, false},
+			{[]string{"5", "3"}, false},
+		}},
+		{"drop table t", nil},
+
+		// cases for Window
+		{"create table t (name varchar(50), y int, sale decimal(14,2))", nil},
+		{"insert into t values ('Bob',2016,2.4), ('Bob',2017,3.2), ('Bob',2018,2.1), ('Alice',2016,1.4), ('Alice',2017,2), ('Alice',2018,3.3), ('John',2016,4), ('John',2017,2.1), ('John',2018,5)", nil},
+		{"select *, sum(sale) over (partition by y order by sale) total from t where sale>? order by y", []ExecCase{
+			{[]string{"0.1"}, false},
+			{[]string{"0.5"}, true},
+			{[]string{"1.5"}, true},
+			{[]string{"3.5"}, true},
+		}},
+		{"select *, sum(sale) over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
+			{[]string{"0.1"}, false},
+			{[]string{"0.5"}, true},
+			{[]string{"1.5"}, true},
+			{[]string{"3.5"}, true},
+		}},
+		{"select *, rank() over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
+			{[]string{"0.1"}, false},
+			{[]string{"0.5"}, true},
+			{[]string{"1.5"}, true},
+			{[]string{"3.5"}, true},
+		}},
+		{"select *, first_value(sale) over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
+			{[]string{"0.1"}, false},
+			{[]string{"0.5"}, true},
+			{[]string{"1.5"}, true},
+			{[]string{"3.5"}, true},
+		}},
+		{"select *, first_value(sale) over (partition by y order by sale rows ? preceding) total from t order by y", []ExecCase{
+			{[]string{"1"}, false}, // window plans with parameters in frame cannot be cached
+			{[]string{"2"}, false},
+			{[]string{"3"}, false},
+			{[]string{"4"}, false},
+		}},
+		{"drop table t", nil},
 
 		// cases for Limit
 		{"create table t (a int)", nil},
@@ -597,7 +804,7 @@ func (s *testSerialSuite) TestIssue28087And28162(c *C) {
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows("\x01"))
 	tk.MustExec(`set @a=0x00, @b=0x00, @c=0x01`)
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows("\x00", "\x01"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
 	// issue 28162
 	tk.MustExec(`drop table if exists IDT_MC21780`)
@@ -614,6 +821,347 @@ func (s *testSerialSuite) TestIssue28087And28162(c *C) {
 	tk.MustExec(`set @a="1976-09-09 20:21:11", @b="2021-07-14 09:28:16", @c="1982-01-09 03:36:39", @d="1970-12-18 10:53:28"`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28 1970-12-18 10:53:28"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func (s *testPrepareSuite) TestParameterPushDown(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a int, b int, c int, key(a))`)
+	tk.MustExec(`insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6)`)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec(`set @x1=1,@x5=5,@x10=10,@x20=20`)
+
+	var input []struct {
+		SQL string
+	}
+	var output []struct {
+		Result    []string
+		Plan      []string
+		FromCache string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+
+	for i, tt := range input {
+		if strings.HasPrefix(tt.SQL, "execute") {
+			res := tk.MustQuery(tt.SQL).Sort()
+			fromCache := tk.MustQuery("select @@last_plan_from_cache")
+			tk.MustQuery(tt.SQL)
+			tkProcess := tk.Se.ShowProcess()
+			ps := []*util.ProcessInfo{tkProcess}
+			tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+			plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+
+			s.testData.OnRecord(func() {
+				output[i].Result = s.testData.ConvertRowsToStrings(res.Rows())
+				output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+				output[i].FromCache = fromCache.Rows()[0][0].(string)
+			})
+
+			res.Check(testkit.Rows(output[i].Result...))
+			plan.Check(testkit.Rows(output[i].Plan...))
+			c.Assert(output[i].FromCache, Equals, fromCache.Rows()[0][0].(string))
+		} else {
+			tk.MustExec(tt.SQL)
+			s.testData.OnRecord(func() {
+				output[i].Result = nil
+			})
+		}
+	}
+}
+
+func (s *testSerialSuite) TestPreparePlanCache4Function(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+
+	// Testing for non-deterministic functions
+	tk.MustExec("prepare stmt from 'select rand()';")
+	res := tk.MustQuery("execute stmt;")
+	c.Assert(len(res.Rows()), Equals, 1)
+
+	res1 := tk.MustQuery("execute stmt;")
+	c.Assert(len(res1.Rows()), Equals, 1)
+	c.Assert(res.Rows()[0][0] != res1.Rows()[0][0], Equals, true)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// Testing for control functions
+	tk.MustExec("prepare stmt from 'SELECT IFNULL(?,0);';")
+	tk.MustExec("set @a = 1, @b = null;")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("prepare stmt from 'select a, case when a = ? then 0 when a <=> ? then 1 else 2 end b from t order by a;';")
+	tk.MustExec("insert into t values(0), (1), (2), (null);")
+	tk.MustExec("set @a = 0, @b = 1, @c = 2, @d = null;")
+	tk.MustQuery("execute stmt using @a, @b;").Check(testkit.Rows("<nil> 2", "0 0", "1 1", "2 2"))
+	tk.MustQuery("execute stmt using @c, @d;").Check(testkit.Rows("<nil> 1", "0 2", "1 2", "2 0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+}
+
+func (s *testSerialSuite) TestPreparePlanCache4DifferentSystemVars(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+
+	// Testing for 'sql_select_limit'
+	tk.MustExec("set @@sql_select_limit = 1")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(0), (1), (null);")
+	tk.MustExec("prepare stmt from 'select a from t order by a;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("set @@sql_select_limit = 2")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("<nil>", "0"))
+	// The 'sql_select_limit' will be stored in the cache key. So if the `sql_select_limit`
+	// have been changed, the plan cache can not be reused.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@sql_select_limit = 18446744073709551615")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("<nil>", "0", "1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	// test for 'tidb_enable_index_merge'
+	tk.MustExec("set @@tidb_enable_index_merge = 1;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("prepare stmt from 'select * from t use index(idx_a, idx_b) where a > 1 or b > 1;';")
+	tk.MustExec("execute stmt;")
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
+
+	tk.MustExec("set @@tidb_enable_index_merge = 0;")
+	tk.MustExec("execute stmt;")
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	// test for 'tidb_enable_parallel_apply'
+	tk.MustExec("set @@tidb_enable_collect_execution_info=1;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (null, null)")
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("prepare stmt from 'select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);';")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(res.Rows()[1][0], Matches, ".*Apply.*")
+	c.Assert(res.Rows()[1][5], Matches, ".*Concurrency.*")
+
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(res.Rows()[1][0], Matches, ".*Apply.*")
+	executionInfo := fmt.Sprintf("%v", res.Rows()[1][4])
+	// Do not use the parallel apply.
+	c.Assert(strings.Contains(executionInfo, "Concurrency") == false, Equals, true)
+	tk.MustExec("execute stmt;")
+	// The subquery plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	// test for apply cache
+	tk.MustExec("set @@tidb_enable_collect_execution_info=1;")
+	tk.MustExec("set tidb_mem_quota_apply_cache=33554432")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (null, null)")
+
+	tk.MustExec("prepare stmt from 'select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a);';")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(res.Rows()[1][0], Matches, ".*Apply.*")
+	c.Assert(res.Rows()[1][5], Matches, ".*cache:ON.*")
+
+	tk.MustExec("set tidb_mem_quota_apply_cache=0")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(res.Rows()[1][0], Matches, ".*Apply.*")
+	executionInfo = fmt.Sprintf("%v", res.Rows()[1][5])
+	// Do not use the apply cache.
+	c.Assert(strings.Contains(executionInfo, "cache:OFF") == true, Equals, true)
+	tk.MustExec("execute stmt;")
+	// The subquery plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
+
+func (s *testSerialSuite) TestTemporaryTable4PlanCache(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists tmp2")
+	tk.MustExec("create temporary table tmp2 (a int, b int, key(a), key(b));")
+	tk.MustExec("prepare stmt from 'select * from tmp2;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table if exists tmp_t;")
+	tk.MustExec("create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows")
+	tk.MustExec("prepare stmt from 'select * from tmp_t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+}
+
+func (s *testSerialSuite) TestPreparePlanCache4Blacklist(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+
+	// test the blacklist of optimization rules
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("prepare stmt from 'select min(a) from t;';")
+	tk.MustExec("execute stmt;")
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	c.Assert(res.Rows()[1][0], Matches, ".*TopN.*")
+
+	res = tk.MustQuery("explain format = 'brief' select min(a) from t")
+	c.Assert(res.Rows()[1][0], Matches, ".*TopN.*")
+
+	tk.MustExec("INSERT INTO mysql.opt_rule_blacklist VALUES('max_min_eliminate');")
+	tk.MustExec("ADMIN reload opt_rule_blacklist;")
+
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustExec("execute stmt;")
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	// Plans that have been cached will not be affected by the blacklist.
+	c.Assert(res.Rows()[1][0], Matches, ".*TopN.*")
+
+	res = tk.MustQuery("explain format = 'brief' select min(a) from t")
+	c.Assert(res.Rows()[0][0], Matches, ".*StreamAgg.*")
+
+	// test the blacklist of Expression Pushdown
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("prepare stmt from 'SELECT * FROM t WHERE a < 2 and a > 2;';")
+	tk.MustExec("execute stmt;")
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[1][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
+
+	res = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE a < 2 and a > 2;")
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
+
+	tk.MustExec("INSERT INTO mysql.expr_pushdown_blacklist VALUES('<','tikv','');")
+	tk.MustExec("ADMIN reload expr_pushdown_blacklist;")
+
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustExec("execute stmt;")
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+	// The expressions can still be pushed down to tikv.
+	c.Assert(len(res.Rows()), Equals, 3)
+	c.Assert(res.Rows()[1][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[1][4], Equals, "gt(test.t.a, 2), lt(test.t.a, 2)")
+
+	res = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE a < 2 and a > 2;")
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[0][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[0][4], Equals, "lt(test.t.a, 2)")
+	c.Assert(res.Rows()[2][0], Matches, ".*Selection.*")
+	c.Assert(res.Rows()[2][4], Equals, "gt(test.t.a, 2)")
+
+	tk.MustExec("DELETE FROM mysql.expr_pushdown_blacklist;")
+	tk.MustExec("ADMIN reload expr_pushdown_blacklist;")
 }
 
 func (s *testSerialSuite) TestIssue28064(c *C) {

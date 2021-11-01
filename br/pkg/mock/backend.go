@@ -15,6 +15,7 @@ import (
 	uuid "github.com/google/uuid"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
 	kv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	config "github.com/pingcap/tidb/br/pkg/lightning/config"
 	model "github.com/pingcap/tidb/parser/model"
 	table "github.com/pingcap/tidb/table"
 )
@@ -97,33 +98,33 @@ func (mr *MockBackendMockRecorder) CloseEngine(arg0, arg1, arg2 interface{}) *go
 }
 
 // CollectLocalDuplicateRows mocks base method
-func (m *MockBackend) CollectLocalDuplicateRows(arg0 context.Context, arg1 table.Table) (bool, error) {
+func (m *MockBackend) CollectLocalDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CollectLocalDuplicateRows", arg0, arg1)
+	ret := m.ctrl.Call(m, "CollectLocalDuplicateRows", arg0, arg1, arg2)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // CollectLocalDuplicateRows indicates an expected call of CollectLocalDuplicateRows
-func (mr *MockBackendMockRecorder) CollectLocalDuplicateRows(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) CollectLocalDuplicateRows(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CollectLocalDuplicateRows", reflect.TypeOf((*MockBackend)(nil).CollectLocalDuplicateRows), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CollectLocalDuplicateRows", reflect.TypeOf((*MockBackend)(nil).CollectLocalDuplicateRows), arg0, arg1, arg2)
 }
 
 // CollectRemoteDuplicateRows mocks base method
-func (m *MockBackend) CollectRemoteDuplicateRows(arg0 context.Context, arg1 table.Table) (bool, error) {
+func (m *MockBackend) CollectRemoteDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CollectRemoteDuplicateRows", arg0, arg1)
+	ret := m.ctrl.Call(m, "CollectRemoteDuplicateRows", arg0, arg1, arg2)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // CollectRemoteDuplicateRows indicates an expected call of CollectRemoteDuplicateRows
-func (mr *MockBackendMockRecorder) CollectRemoteDuplicateRows(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) CollectRemoteDuplicateRows(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CollectRemoteDuplicateRows", reflect.TypeOf((*MockBackend)(nil).CollectRemoteDuplicateRows), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CollectRemoteDuplicateRows", reflect.TypeOf((*MockBackend)(nil).CollectRemoteDuplicateRows), arg0, arg1, arg2)
 }
 
 // EngineFileSizes mocks base method
@@ -267,6 +268,20 @@ func (m *MockBackend) ResetEngine(arg0 context.Context, arg1 uuid.UUID) error {
 func (mr *MockBackendMockRecorder) ResetEngine(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetEngine", reflect.TypeOf((*MockBackend)(nil).ResetEngine), arg0, arg1)
+}
+
+// ResolveDuplicateRows mocks base method
+func (m *MockBackend) ResolveDuplicateRows(arg0 context.Context, arg1 table.Table, arg2 string, arg3 config.DuplicateResolutionAlgorithm) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResolveDuplicateRows", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResolveDuplicateRows indicates an expected call of ResolveDuplicateRows
+func (mr *MockBackendMockRecorder) ResolveDuplicateRows(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveDuplicateRows", reflect.TypeOf((*MockBackend)(nil).ResolveDuplicateRows), arg0, arg1, arg2, arg3)
 }
 
 // RetryImportDelay mocks base method

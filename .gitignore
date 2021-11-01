@@ -22,3 +22,7 @@ vendor
 .DS_Store
 .vscode
 bench_daily.json
+coverage.txt
+var
+fix.sql
+export-20*/
