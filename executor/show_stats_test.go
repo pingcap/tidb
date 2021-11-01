@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -231,7 +232,7 @@ func (s *testShowStatsSuite) TestShowAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[0][0], Equals, "test")
 	c.Assert(result.Rows()[0][1], Equals, "t")
 	c.Assert(result.Rows()[0][2], Equals, "")
-	c.Assert(result.Rows()[0][3], Equals, "analyze table")
+	c.Assert(strings.Contains(result.Rows()[0][3].(string), "analyze table"), IsTrue)
 	c.Assert(result.Rows()[0][4], Equals, "2")
 	c.Assert(result.Rows()[0][5], NotNil)
 	c.Assert(result.Rows()[0][6], NotNil)

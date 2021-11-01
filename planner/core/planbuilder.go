@@ -1820,13 +1820,12 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(specifiedColumns []model.CIStr, tbl 
 	for _, colName := range specifiedColumns {
 		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 		if colInfo == nil {
-			if b.ctx.GetSessionVars().InRestrictedSQL {
-				continue
-			} else {
+			if !b.ctx.GetSessionVars().InRestrictedSQL {
 				return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.O, tblInfo.Name.O)
 			}
+		} else {
+			columnIDs[colInfo.ID] = struct{}{}
 		}
-		columnIDs[colInfo.ID] = struct{}{}
 	}
 	missingCols := make(map[int64]struct{}, len(tblInfo.Columns)-len(columnIDs))
 	if len(tblInfo.Indices) > 0 {
