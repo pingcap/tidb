@@ -3140,6 +3140,7 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 		expr, err := yield(assign.Expr)
 		if err != nil {
 			// Throw other error as soon as possible except ErrSubqueryMoreThan1Row which need duplicate in insert in triggered.
+			// Refer to https://github.com/pingcap/tidb/issues/29260 for more information.
 			if terr, ok := errors.Cause(err).(*terror.Error); !(ok && ErrSubqueryMoreThan1Row.Code() == terr.Code()) {
 				return nil, err
 			}
