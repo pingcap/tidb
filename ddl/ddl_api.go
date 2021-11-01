@@ -19,8 +19,10 @@
 package ddl
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/store/helper"
 	"math"
 	"strconv"
 	"strings"
@@ -4655,6 +4657,119 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
+type PollTiFlashReplicaStatusContext struct {
+	ID int64
+	TableInfo *model.TableInfo
+}
+
+type TiFlashReplicaStatusResult struct {
+	ID int64
+	RegionCount int64
+	FlashRegionCount int64
+	ReplicaDetail map[int64]int
+}
+
+func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
+	tikvStore, ok := ctx.GetStore().(helper.Storage)
+	if !ok {
+		return errors.New("Can not get Helper")
+	}
+	tikvHelper := &helper.Helper{
+		Store: tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
+
+	schema := d.GetInfoSchemaWithInterceptor(ctx)
+
+	var table_list []PollTiFlashReplicaStatusContext = make([]PollTiFlashReplicaStatusContext, 0)
+	for _, db := range schema.AllSchemas() {
+		tbls := schema.SchemaTables(db.Name)
+		for _, tbl := range tbls {
+			tblInfo := tbl.Meta()
+
+			if pi := tblInfo.GetPartitionInfo(); pi != nil {
+				for _, p := range pi.Definitions {
+					table_list = append(table_list, PollTiFlashReplicaStatusContext{p.ID, tblInfo})
+				}
+				for _, p := range pi.AddingDefinitions {
+					table_list = append(table_list, PollTiFlashReplicaStatusContext{p.ID, tblInfo})
+				}
+			}else{
+				table_list = append(table_list, PollTiFlashReplicaStatusContext{tblInfo.ID, tblInfo})
+			}
+		}
+	}
+
+	tikvStats, err := tikvHelper.GetStoresStat()
+	if err != nil{
+		return errors.Trace(err)
+	}
+	tiflashStores := make(map[int64]helper.StoreStat)
+	for _, store := range tikvStats.Stores {
+		for _, l := range store.Store.Labels {
+			if l.Key == "engine" && l.Value == "tiflash" {
+				tiflashStores[store.Store.ID] = store
+			}
+		}
+	}
+
+	for _, tb := range table_list{
+		// for every region in each table, if it has one replica, we reckon it ready
+		// TODO Can we batch request table?
+
+		regionReplica := make(map[int64]int)
+		for _, store := range tiflashStores {
+			statURL := fmt.Sprintf("%s://%s/tiflash/sync-status/%d",
+				util.InternalHTTPSchema(),
+				store.Store.StatusAddress,
+				tb.ID,
+			)
+			resp, err := util.InternalHTTPClient().Get(statURL)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			defer func() {
+				resp.Body.Close()
+			}()
+
+			//data, err := ioutil.ReadAll(resp.Body)
+			//if err != nil{
+			//	return errors.Trace(err)
+			//}
+
+			reader := bufio.NewReader(resp.Body)
+			ns, _, _ := reader.ReadLine()
+			n, err := strconv.ParseInt(string(ns), 10, 64)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			for i := int64(0); i < n; i++{
+				rs, _, _ := reader.ReadLine()
+				// for (`table`, `store`), has region `r`
+				r, err := strconv.ParseInt(string(rs), 10, 32)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if i, ok := regionReplica[r]; ok{
+					regionReplica[r] = i + 1
+				}else{
+					regionReplica[r] = 1
+				}
+			}
+		}
+
+		var stats helper.PDRegionStats
+		tikvHelper.GetPDRegionStats(tb.ID, &stats)
+
+		regionCount := stats.Count
+		flashRegionCount := len(regionReplica)
+		fmt.Printf("GetPDRegionStats output table %v RegionCount %v FlashRegionCount\n", tb.ID, regionCount, flashRegionCount)
+	}
+
+	return nil
+}
+
 // AlterTableSetTiFlashReplica sets the TiFlash replicas info.
 func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Ident, replicaInfo *ast.TiFlashReplicaSpec) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
@@ -4667,7 +4782,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	} else if tb.Meta().TempTableType != model.TempTableNone {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash replica")
 	}
-
+	d.PollTiFlashReplicaStatus(ctx);
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
 		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
