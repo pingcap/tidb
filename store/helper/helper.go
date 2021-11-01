@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/http"
 	"net/url"
@@ -934,8 +933,8 @@ func (h *Helper) GetPDRegionStats2(tableID int64, stats *PDRegionStats) error {
 		}
 	}()
 
-	data, err := ioutil.ReadAll(resp.Body)
-	fmt.Printf("GetPDRegionStats return %v\n", string(data))
+	//data, err := ioutil.ReadAll(resp.Body)
+	//fmt.Printf("GetPDRegionStats return %v\n", string(data))
 	dec := json.NewDecoder(resp.Body)
 
 	return dec.Decode(stats)

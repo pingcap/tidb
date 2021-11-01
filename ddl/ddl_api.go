@@ -4762,7 +4762,9 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 		}
 
 		var stats helper.PDRegionStats
-		tikvHelper.GetPDRegionStats2(tb.ID, &stats)
+		if err = tikvHelper.GetPDRegionStats2(tb.ID, &stats); err != nil {
+			fmt.Printf("err %v", err)
+		}
 
 		regionCount := stats.Count
 		flashRegionCount := len(regionReplica)
