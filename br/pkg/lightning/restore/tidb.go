@@ -112,9 +112,10 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		// always set auto-commit to ON
 		"autocommit": "1",
 	}
+
 	if dsn.Vars != nil {
 		for k, v := range dsn.Vars {
-			param.Vars[k] = v
+			vars[k] = v
 		}
 	}
 
