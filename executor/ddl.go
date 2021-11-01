@@ -798,6 +798,7 @@ func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
 	}
 
 	if !config.TableLockEnabled() {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Lock tables works only when enable-table-lock is set in config file"))
 		return nil
 	}
 	return domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
@@ -805,6 +806,7 @@ func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
 
 func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 	if !config.TableLockEnabled() {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Unlock tables works only when enable-table-lock is set in config file"))
 		return nil
 	}
 	lockedTables := e.ctx.GetAllTableLocks()

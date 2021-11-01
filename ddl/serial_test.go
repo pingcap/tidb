@@ -1124,6 +1124,9 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	})
 
 	tk.MustExec("lock tables t1 write")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1105 Lock tables works only when enable-table-lock is set in config file"))
+	tk.MustExec("unlock tables")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1105 Unlock tables works only when enable-table-lock is set in config file"))
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
 }
 
