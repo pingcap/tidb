@@ -1263,13 +1263,13 @@ const (
 
 func (rc *Controller) pauseGCOnce(ctx context.Context, pdCli pd.Client) error {
 	// Get current GC safe point.
-	safepoint, err := pdCli.UpdateGCSafePoint(ctx, 0)
+	safePoint, err := pdCli.UpdateGCSafePoint(ctx, 0)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Pause GC for 1 hour.
 	_, err = pdCli.UpdateServiceGCSafePoint(ctx,
-		pauseGCServiceIDForDupeRes, int64(pauseGCTTLForDupeRes/time.Second), safepoint)
+		pauseGCServiceIDForDupeRes, int64(pauseGCTTLForDupeRes/time.Second), safePoint)
 	return err
 }
 

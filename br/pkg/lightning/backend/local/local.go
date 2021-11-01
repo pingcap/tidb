@@ -2139,11 +2139,8 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	}()
 
 	switch algorithm {
-	case config.DupeResAlgLog:
-		logger.Warn("[resolve-dupe] skipping resolution since algorithm is 'log'. this table will become inconsistent!")
-		return nil
-	case config.DupeResAlgNone:
-		logger.Warn("[resolve-dupe] skipping resolution since algorithm is 'none'. this table will become inconsistent!")
+	case config.DupeResAlgLog, config.DupeResAlgNone:
+		logger.Warn("[resolve-dupe] skipping resolution due to selected algorithm. this table will become inconsistent!", zap.Stringer("algorithm", algorithm))
 		return nil
 	case config.DupeResAlgRemove:
 		break
