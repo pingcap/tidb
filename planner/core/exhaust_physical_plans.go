@@ -414,12 +414,16 @@ func (p *LogicalJoin) constructIndexJoin(
 	prop *property.PhysicalProperty,
 	outerIdx int,
 	innerTask task,
-	ranges []*ranger.Range,
+	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
 	extractOtherEQ bool,
 ) []PhysicalPlan {
+	if ranges == nil {
+		ranges = ranger.Ranges{} // empty range
+	}
+
 	joinType := p.JoinType
 	var (
 		innerJoinKeys []*expression.Column
@@ -524,7 +528,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 	prop *property.PhysicalProperty,
 	outerIdx int,
 	innerTask task,
-	ranges []*ranger.Range,
+	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
@@ -631,7 +635,7 @@ func (p *LogicalJoin) constructIndexHashJoin(
 	prop *property.PhysicalProperty,
 	outerIdx int,
 	innerTask task,
-	ranges []*ranger.Range,
+	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
@@ -707,7 +711,7 @@ func (p *LogicalJoin) getIndexJoinBuildHelper(ds *DataSource, innerJoinKeys []*e
 	}
 	for _, path := range ds.possibleAccessPaths {
 		if checkPathValid(path) {
-			emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys, outerJoinKeys)
+			emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys, outerJoinKeys, false)
 			if emptyRange {
 				return nil, nil
 			}
@@ -751,7 +755,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	}
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	newOuterJoinKeys := make([]*expression.Column, 0)
-	var ranges []*ranger.Range
+	var ranges ranger.MutableRanges = ranger.Ranges{}
 	var innerTask, innerTask2 task
 	var helper *indexJoinBuildHelper
 	if ds.tableInfo.IsCommonHandle {
@@ -873,7 +877,7 @@ type indexJoinBuildHelper struct {
 	chosenRemained []expression.Expression
 	idxOff2KeyOff  []int
 	lastColManager *ColWithCmpFuncManager
-	chosenRanges   []*ranger.Range
+	chosenRanges   ranger.MutableRanges
 	chosenPath     *util.AccessPath
 
 	curPossibleUsedKeys []*expression.Column
@@ -1337,7 +1341,47 @@ func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expres
 	return notKeyEqAndIn, nil
 }
 
-func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath, innerPlan *DataSource, innerJoinKeys []*expression.Column, outerJoinKeys []*expression.Column) (emptyRange bool, err error) {
+type mutableIndexJoinRange struct {
+	ranges []*ranger.Range
+
+	buildHelper   *indexJoinBuildHelper
+	path          *util.AccessPath
+	innerJoinKeys []*expression.Column
+	outerJoinKeys []*expression.Column
+}
+
+func (mr *mutableIndexJoinRange) Range() []*ranger.Range {
+	return mr.ranges
+}
+
+func (mr *mutableIndexJoinRange) Rebuild() error {
+	empty, err := mr.buildHelper.analyzeLookUpFilters(mr.path, mr.buildHelper.innerPlan, mr.innerJoinKeys, mr.outerJoinKeys, true)
+	if err != nil {
+		return err
+	}
+	if empty { // empty ranges are dangerous for plan-cache, it's better to optimize the whole plan again in this case
+		return errors.New("rebuild range failed")
+	}
+	mr.ranges = mr.buildHelper.chosenRanges.Range()
+	return nil
+}
+
+func (ijHelper *indexJoinBuildHelper) createMutableIndexJoinRange(notKeyEqAndIn []expression.Expression, ranges []*ranger.Range, path *util.AccessPath, innerKeys, outerKeys []*expression.Column) ranger.MutableRanges {
+	// if the plan-cache is enabled and these ranges depend on some parameters, we have to rebuild these ranges after changing parameters
+	if expression.MaybeOverOptimized4PlanCache(ijHelper.join.ctx, notKeyEqAndIn) {
+		// assume that path, innerKeys and outerKeys will not be modified in the follow-up process
+		return &mutableIndexJoinRange{
+			ranges:        ranges,
+			buildHelper:   ijHelper,
+			path:          path,
+			innerJoinKeys: innerKeys,
+			outerJoinKeys: outerKeys,
+		}
+	}
+	return ranger.Ranges(ranges)
+}
+
+func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath, innerPlan *DataSource, innerJoinKeys []*expression.Column, outerJoinKeys []*expression.Column, rebuildMode bool) (emptyRange bool, err error) {
 	if len(path.IdxCols) == 0 {
 		return false, nil
 	}
@@ -1375,7 +1419,8 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		if emptyRange {
 			return true, nil
 		}
-		ijHelper.updateBestChoice(ranges, path, accesses, remained, nil, lastColPos)
+		mutableRange := ijHelper.createMutableIndexJoinRange(notKeyEqAndIn, ranges, path, innerJoinKeys, outerJoinKeys)
+		ijHelper.updateBestChoice(mutableRange, path, accesses, remained, nil, lastColPos, rebuildMode)
 		return false, nil
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
@@ -1417,7 +1462,8 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		if len(colAccesses) > 0 {
 			lastColPos = lastColPos + 1
 		}
-		ijHelper.updateBestChoice(ranges, path, accesses, remained, nil, lastColPos)
+		mutableRange := ijHelper.createMutableIndexJoinRange(notKeyEqAndIn, ranges, path, innerJoinKeys, outerJoinKeys)
+		ijHelper.updateBestChoice(mutableRange, path, accesses, remained, nil, lastColPos, rebuildMode)
 		return false, nil
 	}
 	accesses = append(accesses, lastColAccess...)
@@ -1429,15 +1475,21 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	if emptyRange {
 		return true, nil
 	}
-	ijHelper.updateBestChoice(ranges, path, accesses, remained, lastColManager, lastColPos+1)
+	mutableRange := ijHelper.createMutableIndexJoinRange(notKeyEqAndIn, ranges, path, innerJoinKeys, outerJoinKeys)
+	ijHelper.updateBestChoice(mutableRange, path, accesses, remained, lastColManager, lastColPos+1, rebuildMode)
 	return false, nil
 }
 
-func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, path *util.AccessPath, accesses,
-	remained []expression.Expression, lastColManager *ColWithCmpFuncManager, usedColsLen int) {
+func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges ranger.MutableRanges, path *util.AccessPath, accesses,
+	remained []expression.Expression, lastColManager *ColWithCmpFuncManager, usedColsLen int, rebuildMode bool) {
+	if rebuildMode { // rebuild the range for plan-cache, update the chosenRanges anyway
+		ijHelper.chosenRanges = ranges
+		return
+	}
+
 	// Notice that there may be the cases like `t1.a = t2.a and b > 2 and b < 1`, so ranges can be nil though the conditions are valid.
 	// Obviously when the range is nil, we don't need index join.
-	if len(ranges) == 0 {
+	if len(ranges.Range()) == 0 {
 		return
 	}
 	var innerNDV float64
@@ -1454,7 +1506,7 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, p
 		return
 	}
 	ijHelper.chosenPath = path
-	ijHelper.usedColsLen = len(ranges[0].LowVal)
+	ijHelper.usedColsLen = len(ranges.Range()[0].LowVal)
 	ijHelper.usedColsNDV = innerNDV
 	ijHelper.chosenRanges = ranges
 	ijHelper.chosenAccess = accesses
@@ -1498,9 +1550,6 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 			continue
 		}
 		exprs := []expression.Expression{eqAndInFuncs[j]}
-		if !sc.MaybeOverOptimized4PlanCache && expression.MaybeOverOptimized4PlanCache(ijHelper.join.ctx, exprs) {
-			sc.MaybeOverOptimized4PlanCache = true
-		}
 		oneColumnRan, err := ranger.BuildColumnRange(exprs, sc, ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j])
 		if err != nil {
 			return nil, false, err
@@ -1866,7 +1915,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenProps := make([]*property.PhysicalProperty, 2)
 	if useBCJ {
-		childrenProps[preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.BroadcastType, CanAddEnforcer: true}
+		childrenProps[preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.BroadcastType, CanAddEnforcer: true, RejectSort: true}
 		expCnt := math.MaxFloat64
 		if prop.ExpectedCnt < p.stats.RowCount {
 			expCntScale := prop.ExpectedCnt / p.stats.RowCount
@@ -1879,12 +1928,12 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 				hashKeys = lPartitionKeys
 			}
 			if matches := prop.IsSubsetOf(hashKeys); len(matches) != 0 {
-				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.HashType, MPPPartitionCols: prop.MPPPartitionCols}
+				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.HashType, MPPPartitionCols: prop.MPPPartitionCols, RejectSort: true}
 			} else {
 				return nil
 			}
 		} else {
-			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.AnyType}
+			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.AnyType, RejectSort: true}
 		}
 	} else {
 		lPartitionKeys, rPartitionKeys := p.GetPotentialPartitionKeys()
@@ -1913,8 +1962,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			lPartitionKeys = choosePartitionKeys(lPartitionKeys, matches)
 			rPartitionKeys = choosePartitionKeys(rPartitionKeys, matches)
 		}
-		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: lPartitionKeys, CanAddEnforcer: true}
-		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: rPartitionKeys, CanAddEnforcer: true}
+		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: lPartitionKeys, CanAddEnforcer: true, RejectSort: true}
+		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: rPartitionKeys, CanAddEnforcer: true, RejectSort: true}
 	}
 	join := PhysicalHashJoin{
 		basePhysicalJoin: baseJoin,
@@ -2279,6 +2328,12 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 			} else {
 				return false
 			}
+		case *LogicalSort:
+			if storeTp == kv.TiFlash {
+				ret = ret && c.canPushToCopImpl(storeTp, true)
+			} else {
+				return false
+			}
 		case *LogicalProjection:
 			if storeTp == kv.TiFlash {
 				ret = ret && c.canPushToCopImpl(storeTp, considerDual)
@@ -2482,7 +2537,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		// If there are no available partition cols, but still have group by items, that means group by items are all expressions or constants.
 		// To avoid mess, we don't do any one-phase aggregation in this case.
 		if len(partitionCols) != 0 {
-			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols, CanAddEnforcer: true}
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols, CanAddEnforcer: true, RejectSort: true}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
 			agg.MppRunMode = Mpp1Phase
@@ -2490,7 +2545,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		}
 
 		// 2-phase agg
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType}
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, RejectSort: true}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp2Phase
@@ -2499,7 +2554,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {
-			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
 			agg.MppRunMode = MppTiDB
@@ -2507,7 +2562,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		}
 	} else {
 		// TODO: support scalar agg in MPP, merge the final result to one node
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
 		if la.HasDistinct() || la.HasOrderBy() {
@@ -2537,9 +2592,6 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if la.HasDistinct() {
 		// TODO: remove after the cost estimation of distinct pushdown is implemented.
 		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
-			if la.ctx.GetSessionVars().StmtCtx.InExplainStmt {
-				la.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("Aggregation can not be pushed to storage layer in non-mpp mode because it contains agg function with distinct"))
-			}
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
@@ -2685,9 +2737,10 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
 				ExpectedCnt: prop.ExpectedCnt,
 				TaskTp:      property.MppTaskType,
+				RejectSort:  true,
 			})
 		} else {
-			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt})
+			chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt, RejectSort: true})
 		}
 	}
 	ua := PhysicalUnionAll{
@@ -2700,6 +2753,7 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 			chReqProps = append(chReqProps, &property.PhysicalProperty{
 				ExpectedCnt: prop.ExpectedCnt,
 				TaskTp:      property.MppTaskType,
+				RejectSort:  true,
 			})
 		}
 		mppUA := PhysicalUnionAll{mpp: true}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
@@ -2721,7 +2775,7 @@ func (p *LogicalPartitionUnionAll) exhaustPhysicalPlans(prop *property.PhysicalP
 }
 
 func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *PhysicalSort {
-	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
+	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, &property.PhysicalProperty{TaskTp: prop.TaskTp, ExpectedCnt: math.MaxFloat64, RejectSort: true})
 	return ps
 }
 
@@ -2730,6 +2784,7 @@ func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *Nomin
 	if !canPass {
 		return nil
 	}
+	prop.RejectSort = true
 	prop.ExpectedCnt = reqProp.ExpectedCnt
 	ps := NominalSort{OnlyColumn: onlyColumn, ByItems: ls.ByItems}.Init(
 		ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, prop)
@@ -2737,14 +2792,24 @@ func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *Nomin
 }
 
 func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	if MatchItems(prop, ls.ByItems) {
-		ret := make([]PhysicalPlan, 0, 2)
-		ret = append(ret, ls.getPhysicalSort(prop))
-		ns := ls.getNominalSort(prop)
-		if ns != nil {
-			ret = append(ret, ns)
+	if prop.TaskTp == property.RootTaskType {
+		if MatchItems(prop, ls.ByItems) {
+			ret := make([]PhysicalPlan, 0, 2)
+			ret = append(ret, ls.getPhysicalSort(prop))
+			ns := ls.getNominalSort(prop)
+			if ns != nil {
+				ret = append(ret, ns)
+			}
+			return ret, true, nil
 		}
-		return ret, true, nil
+	} else if prop.TaskTp == property.MppTaskType && prop.RejectSort {
+		if ls.canPushToCopImpl(kv.TiFlash, true) {
+			newProp := prop.CloneEssentialFields()
+			newProp.RejectSort = true
+			ps := NominalSort{OnlyColumn: true, ByItems: ls.ByItems}.Init(
+				ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), ls.blockOffset, newProp)
+			return []PhysicalPlan{ps}, true, nil
+		}
 	}
 	return nil, true, nil
 }

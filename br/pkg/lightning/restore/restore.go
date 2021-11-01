@@ -1804,13 +1804,13 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 
 	if rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements {
 		fmt.Print(rc.checkTemplate.Output())
-		if !rc.checkTemplate.Success() {
-			if !taskExist && rc.taskMgr != nil {
-				rc.taskMgr.CleanupTask(ctx)
-			}
-			return errors.Errorf("tidb-lightning pre-check failed." +
-				" Please fix the failed check(s) or set --check-requirements=false to skip checks")
+	}
+	if !rc.checkTemplate.Success() {
+		if !taskExist && rc.taskMgr != nil {
+			rc.taskMgr.CleanupTask(ctx)
 		}
+		return errors.Errorf("tidb-lightning check failed."+
+			" Please fix the failed check(s):\n %s", rc.checkTemplate.FailedMsg())
 	}
 	return nil
 }

@@ -67,15 +67,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 		return ver, errors.Trace(err)
 	}
-	// placement rules meta inheritance.
-	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	err = inheritPlacementRuleFromDB(tbInfo, dbInfo)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
 
 	// build table & partition bundles if any.
 	var bundles []*placement.Bundle
@@ -130,24 +121,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	default:
 		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
-}
-
-func inheritPlacementRuleFromDB(tbInfo *model.TableInfo, dbInfo *model.DBInfo) error {
-	if tbInfo.DirectPlacementOpts == nil && tbInfo.PlacementPolicyRef == nil {
-		if dbInfo.DirectPlacementOpts != nil {
-			clone := *dbInfo.DirectPlacementOpts
-			tbInfo.DirectPlacementOpts = &clone
-		}
-		if dbInfo.PlacementPolicyRef != nil {
-			clone := *dbInfo.PlacementPolicyRef
-			tbInfo.PlacementPolicyRef = &clone
-		}
-	}
-	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
-	if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
-		return ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name)
-	}
-	return nil
 }
 
 func newBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) (*placement.Bundle, error) {
@@ -1307,7 +1280,7 @@ func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD label rule")
+		return 0, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
@@ -1345,7 +1318,7 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD region label")
+		return 0, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
@@ -1502,7 +1475,9 @@ func onAlterCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		return ver, nil
 	}
-
+	if tbInfo.TempTableType != model.TempTableNone {
+		return ver, errors.Trace(ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache"))
+	}
 	switch tbInfo.TableCacheStatusType {
 	case model.TableCacheStatusDisable:
 		// disable -> switching

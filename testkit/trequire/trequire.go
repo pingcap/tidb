@@ -25,9 +25,9 @@ import (
 )
 
 // DatumEqual verifies that the actual value is equal to the expected value.
-func DatumEqual(t *testing.T, expected types.Datum, actual types.Datum, msgAndArgs ...interface{}) {
+func DatumEqual(t *testing.T, expected, actual types.Datum, msgAndArgs ...interface{}) {
 	sc := new(stmtctx.StatementContext)
-	res, err := expected.CompareDatum(sc, &actual)
+	res, err := actual.CompareDatum(sc, &expected)
 	require.NoError(t, err, msgAndArgs)
 	require.Zero(t, res, msgAndArgs)
 }

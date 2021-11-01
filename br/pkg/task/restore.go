@@ -480,7 +480,7 @@ func dropToBlackhole(
 	outCh := make(chan struct{}, 1)
 	go func() {
 		defer func() {
-			outCh <- struct{}{}
+			close(outCh)
 		}()
 		for {
 			select {
