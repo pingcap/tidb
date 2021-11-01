@@ -6637,6 +6637,9 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	if t.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
 		return nil
 	}
+	if t.Meta().TempTableType != model.TempTableNone {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache")
+	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		SchemaName: schema.Name.L,

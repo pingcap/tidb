@@ -557,6 +557,24 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
 	tk.MustExec("set session tidb_opt_prefer_range_scan = 0")
 	tk.MustQuery("select @@session.tidb_opt_prefer_range_scan").Check(testkit.Rows("0"))
+
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 1")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time").Check(testkit.Rows("10"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 11")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
+	c.Assert(tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 1"), NotNil)
+
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_tso_follower_proxy = 1")
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_tso_follower_proxy = 0")
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("0"))
+	c.Assert(tk.ExecToErr("set tidb_enable_tso_follower_proxy = 1"), NotNil)
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
@@ -933,14 +951,40 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@tmp_table_size;")
 	result.Check(testkit.Rows("167772161"))
 
-	tk.MustExec("set @@tmp_table_size=9223372036854775807")
+	tk.MustExec("set @@tmp_table_size=18446744073709551615")
 	result = tk.MustQuery("select @@tmp_table_size;")
-	result.Check(testkit.Rows("9223372036854775807"))
+	result.Check(testkit.Rows("18446744073709551615"))
 
 	_, err = tk.Exec("set @@tmp_table_size=18446744073709551616")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 
 	_, err = tk.Exec("set @@tmp_table_size='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@tidb_tmp_table_max_size=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '-1'"))
+	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
+	result.Check(testkit.Rows("1048576"))
+
+	tk.MustExec("set @@tidb_tmp_table_max_size=1048575")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '1048575'"))
+	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
+	result.Check(testkit.Rows("1048576"))
+
+	tk.MustExec("set @@tidb_tmp_table_max_size=167772161")
+	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
+	result.Check(testkit.Rows("167772161"))
+
+	tk.MustExec("set @@tidb_tmp_table_max_size=137438953472")
+	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
+	result.Check(testkit.Rows("137438953472"))
+
+	tk.MustExec("set @@tidb_tmp_table_max_size=137438953473")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tmp_table_max_size value: '137438953473'"))
+	result = tk.MustQuery("select @@tidb_tmp_table_max_size;")
+	result.Check(testkit.Rows("137438953472"))
+
+	_, err = tk.Exec("set @@tidb_tmp_table_max_size='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 
 	tk.MustExec("set @@global.connect_timeout=1")

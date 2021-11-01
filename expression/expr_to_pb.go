@@ -46,7 +46,7 @@ func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, clien
 	return
 }
 
-// PbConverter supplys methods to convert TiDB expressions to TiPB.
+// PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
 	sc     *stmtctx.StatementContext
