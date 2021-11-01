@@ -18,9 +18,10 @@ Currently, the split table(regions) in tidb is constructed by following 2 steps:
 1. Notify tikv to split regions
 2. Notify pd to scatter regions
 
-However, because split and scatter tasks are asynchronous, which causes many split and scatter tasks at times, the time cost for the whole splitting table become unstable and rather time-consuming:
-1. At the same time will cause multiple conflicts on the same region, then we need more time to retry.
-2. It is very likely to cause a split from a scattering region, resulting in many 4 replicas regions, which will lead to the time-consuming of split table be unstable.
+However, because of the following reasons, the time cost for the whole splitting table become unstable and rather time-consuming:
+1. Split and scatter tasks are asynchronous, which will cause many split and scatter tasks at times.
+2. At the same time will cause multiple conflicts on the same region, then we need more time to retry.
+3. It is very likely to cause a split from a scattering region, resulting in many 4 replicas regions, which will lead to the time-consuming of split table be unstable.
 
 More importantly, there exists different ways of tidb and other tools to split and scatter region which make it hard to be managed. 
 
