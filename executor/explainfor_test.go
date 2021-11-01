@@ -907,7 +907,7 @@ func (s *testPrepareSerialSuite) TestIndexMerge4PlanCache(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	c.Assert(res.Rows()[0][0], Matches, ".*IndexMerge.*")
+	c.Assert(res.Rows()[1][0], Matches, ".*IndexMerge.*")
 
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 ddcdsaf 3"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
