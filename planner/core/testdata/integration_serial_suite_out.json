@@ -2821,23 +2821,23 @@
       {
         "SQL": "desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and length(b)=1)",
         "Plan": [
-          "IndexMerge 1.72 root  ",
+          "IndexMerge 8.00 root  ",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false",
-          "├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
+          "├─Selection(Build) 0.80 cop[tikv]  1",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false",
-          "└─TableRowIDScan(Probe) 1.72 cop[tikv] table:t keep order:false"
+          "└─TableRowIDScan(Probe) 8.00 cop[tikv] table:t keep order:false"
         ],
         "Warnings": null
       },
       {
         "SQL": "desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1)",
         "Plan": [
-          "IndexMerge 1.54 root  ",
-          "├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
+          "IndexMerge 8.00 root  ",
+          "├─Selection(Build) 0.80 cop[tikv]  1",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false",
-          "├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
+          "├─Selection(Build) 0.80 cop[tikv]  1",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false",
-          "└─TableRowIDScan(Probe) 1.54 cop[tikv] table:t keep order:false"
+          "└─TableRowIDScan(Probe) 8.00 cop[tikv] table:t keep order:false"
         ],
         "Warnings": null
       },

@@ -6298,6 +6298,10 @@ func (s *testIntegrationSerialSuite) TestCacheRefineArgs(c *C) {
 	tk.MustExec("set @p0='0'")
 	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("1"))
 
+	tk.MustExec("prepare stmt from 'SELECT UCASE(?) < col_int from t;';")
+	tk.MustExec("set @a1 = 'xayh7vrWVNqZtzlJmdJQUwAHnkI8Ec';")
+	tk.MustQuery("execute stmt using @a1;").Check(testkit.Rows("<nil>"))
+
 	tk.MustExec("delete from t")
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("prepare stmt from 'SELECT col_int < ? FROM t'")
@@ -10391,6 +10395,29 @@ func (s *testIntegrationSuite) TestIdentity(c *C) {
 	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("2 2"))
 	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
 	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
+}
+
+func (s *testIntegrationSuite) TestIssue28804(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists perf_offline_day;")
+	tk.MustExec(`CREATE TABLE perf_offline_day (
+uuid varchar(50),
+ts timestamp NOT NULL,
+user_id varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+platform varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+host_id bigint(20) DEFAULT NULL,
+PRIMARY KEY (uuid,ts) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+PARTITION BY RANGE ( UNIX_TIMESTAMP(ts) ) (
+PARTITION p20210906 VALUES LESS THAN (1630944000),
+PARTITION p20210907 VALUES LESS THAN (1631030400),
+PARTITION p20210908 VALUES LESS THAN (1631116800),
+PARTITION p20210909 VALUES LESS THAN (1631203200)
+);`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec("INSERT INTO `perf_offline_day` VALUES ('dd082c8a-3bab-4431-943a-348fe0592abd','2021-09-08 13:00:07','Xg9C8zq81jGNbugM', 'pc', 12345);")
+	tk.MustQuery("SELECT cast(floor(hour(ts) / 4) as char) as win_start FROM perf_offline_day partition (p20210907, p20210908) GROUP BY win_start;").Check(testkit.Rows("3"))
 }
 
 func (s *testIntegrationSuite) TestIssue28643(c *C) {

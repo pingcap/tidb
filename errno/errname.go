@@ -1020,6 +1020,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrAddColumnWithSequenceAsDefault:      mysql.Message("Unsupported using sequence as default value in add column '%s'", nil),
 	ErrUnsupportedType:                     mysql.Message("Unsupported type %T", nil),
 	ErrAnalyzeMissIndex:                    mysql.Message("Index '%s' in field list does not exist in table '%s'", nil),
+	ErrAnalyzeMissColumn:                   mysql.Message("Column '%s' in ANALYZE column option does not exist in table '%s'", nil),
 	ErrCartesianProductUnsupported:         mysql.Message("Cartesian product is unsupported", nil),
 	ErrPreparedStmtNotFound:                mysql.Message("Prepared statement not found", nil),
 	ErrWrongParamCount:                     mysql.Message("Wrong parameter count", nil),

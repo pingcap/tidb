@@ -997,6 +997,11 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// sysdate
+	function, err = NewFunction(mock.NewContext(), ast.Sysdate, types.NewFieldType(mysql.TypeDatetime), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
 	c.Assert(canPush, Equals, true)
 
