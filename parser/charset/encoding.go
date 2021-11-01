@@ -124,11 +124,11 @@ func (e *Encoding) EncodeInternal(dest, src []byte) []byte {
 	}
 	var srcOffset int
 
-	buf := make([]byte, 4)
+	var buf [4]byte
 	transformer := e.enc.NewEncoder()
 	for srcOffset < len(src) {
 		length := characterLengthUTF8(src[srcOffset:])
-		_, _, err := transformer.Transform(buf, src[srcOffset:srcOffset+length], true)
+		_, _, err := transformer.Transform(buf[:], src[srcOffset:srcOffset+length], true)
 		if err != nil {
 			dest = append(dest, byte('?'))
 		} else {
