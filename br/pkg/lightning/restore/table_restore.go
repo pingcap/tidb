@@ -198,7 +198,6 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 	// If there is an index engine only, it indicates no data needs to restore.
 	// So we can change status to imported directly and avoid opening engine.
 	if len(cp.Engines) == 1 {
-		tr.logger.Info("There is an index engine only")
 		if err := rc.saveStatusCheckpoint(pCtx, tr.tableName, indexEngineID, nil, checkpoints.CheckpointStatusImported); err != nil {
 			return errors.Trace(err)
 		}
@@ -227,7 +226,6 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
 	}
-	tr.logger.Info("begin restoreEngines", zap.Uint8("index-engine-status", uint8(indexEngineCp.Status)))
 	if indexEngineCp.Status < checkpoints.CheckpointStatusClosed {
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
@@ -293,17 +291,13 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 			default:
 			}
 			if engineErr.Get() != nil {
-				logTask.Error("break because met error", zap.Error(engineErr.Get()))
 				break
 			}
 
 			// Should skip index engine
 			if engineID < 0 {
-				logTask.Info("Skip IndexEngine")
 				continue
 			}
-			logTask.Info("Begin Import Data Engine", zap.Int8("status", int8(engine.Status)), zap.Int32("engineID", engineID),
-				zap.Int("chunk size", len(engine.Chunks)))
 
 			if engine.Status < checkpoints.CheckpointStatusImported {
 				wg.Add(1)

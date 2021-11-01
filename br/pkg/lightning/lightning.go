@@ -264,7 +264,6 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 		failpoint.Return(nil)
 	})
 
-	log.L().Info("Before RegisterMySQL")
 	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
 		return err
 	}
@@ -282,21 +281,17 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	// initiation of default glue should be after RegisterMySQL, which is ready to be called after taskCfg.Adjust
 	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
 	if g == nil {
-		log.L().Info("Before create NewExternalTiDBGlue connection")
 		db, err := restore.DBFromConfig(ctx, taskCfg.TiDB)
 		if err != nil {
 			return err
 		}
 		g = glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode)
-		log.L().Info("End create NewExternalTiDBGlue connection")
 	}
 
-	log.L().Info("Before create storage backend")
 	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
 	if err != nil {
 		return errors.Annotate(err, "parse backend failed")
 	}
-	log.L().Info("Before create storage")
 	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
 	if err != nil {
 		return errors.Annotate(err, "create storage failed")
@@ -304,19 +299,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 
 	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
 	var mdl *mydump.MDLoader
-	log.L().Info("Before create MyDumper")
 	mdl, err = mydump.NewMyDumpLoaderWithStore(ctx, taskCfg, s)
 	loadTask.End(zap.ErrorLevel, err)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.L().Info("Before checkSystemRequirement")
 	err = checkSystemRequirement(taskCfg, mdl.GetDatabases())
 	if err != nil {
 		log.L().Error("check system requirements failed", zap.Error(err))
 		return errors.Trace(err)
 	}
-	log.L().Info("Before check checkSchemaConflict")
 	// check table schema conflicts
 	err = checkSchemaConflict(taskCfg, mdl.GetDatabases())
 	if err != nil {
@@ -329,7 +321,6 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 
 	var procedure *restore.Controller
 
-	log.L().Info("Before NewRestoreController")
 	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, &l.status, s, g)
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
@@ -337,9 +328,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	}
 	defer procedure.Close()
 
-	log.L().Info("Before procedure run")
 	err = procedure.Run(ctx)
-	log.L().Info("Before procedure close")
 	return errors.Trace(err)
 }
 

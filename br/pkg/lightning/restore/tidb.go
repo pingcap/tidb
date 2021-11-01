@@ -93,13 +93,10 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		TLS:              dsn.TLS,
 	}
 
-	log.L().Info("Before connect DB")
 	db, err := param.Connect()
 	if err != nil {
-		log.L().Info("After connect Error")
 		return nil, errors.Trace(err)
 	}
-	log.L().Info("After connect DB")
 
 	vars := map[string]string{
 		"tidb_build_stats_concurrency":       strconv.Itoa(dsn.BuildStatsConcurrency),
@@ -132,11 +129,9 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		log.L().Info("Set session End")
 	}
 	_ = db.Close()
-	log.L().Info("Close connections")
 
 	param.Vars = vars
 	db, err = param.Connect()
-	log.L().Info("connect again")
 	return db, errors.Trace(err)
 }
 

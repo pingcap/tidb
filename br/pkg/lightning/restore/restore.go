@@ -1520,7 +1520,6 @@ func (tr *TableRestore) restoreTable(
 			},
 		}
 	}
-	tr.logger.Info("Begin restoreEngines")
 
 	// 2. Restore engines (if still needed)
 	err := tr.restoreEngines(ctx, rc, cp)

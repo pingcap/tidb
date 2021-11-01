@@ -323,17 +323,11 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 		}
 	}
 	encoded.WriteByte(')')
-	r := tidbRow{
+	return tidbRow{
 		insertStmt: encoded.String(),
 		path:       path,
 		offset:     offset,
-	}
-	logger.Info("tidb encode failed",
-		zap.Int64("offset", offset),
-		zap.String("path", path),
-		zap.String("sql", r.insertStmt),
-	)
-	return r, nil
+	}, nil
 }
 
 // EncodeRowForRecord encodes a row to a string compatible with INSERT statements.
