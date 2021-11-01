@@ -114,7 +114,7 @@ func TestTopology(t *testing.T) {
 	require.True(t, ttlExists)
 }
 
-func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*topologyInfo, error) {
+func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*TopologyInfo, error) {
 	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, is.info.IP, is.info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
@@ -126,7 +126,7 @@ func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*topologyInfo, e
 	if len(resp.Kvs) != 1 {
 		return nil, errors.New("resp.Kvs error")
 	}
-	var ret topologyInfo
+	var ret TopologyInfo
 	err = json.Unmarshal(resp.Kvs[0].Value, &ret)
 	if err != nil {
 		return nil, err
