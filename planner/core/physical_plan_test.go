@@ -224,7 +224,12 @@ func (s *testPlanSuite) TestAnalyzeSetRate(c *C) {
 		p, _, err := planner.Optimize(context.Background(), sctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 		ana := p.(*core.Analyze)
-		c.Assert(math.Float64frombits(ana.Opts[ast.AnalyzeOptSampleRate]), Equals, tt.rate)
+		var opts map[ast.AnalyzeOptionType]uint64
+		for _, val := range ana.TableOpts {
+			opts = val
+			break
+		}
+		c.Assert(math.Float64frombits(opts[ast.AnalyzeOptSampleRate]), Equals, tt.rate)
 	}
 }
 
