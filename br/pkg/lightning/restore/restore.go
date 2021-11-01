@@ -1261,11 +1261,11 @@ const (
 	pauseGCIntervalForDupeRes = time.Minute
 )
 
-func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) error {
+func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
 	pdCli, err := pd.NewClientWithContext(ctx, []string{rc.cfg.TiDB.PdAddr}, tlsOpt)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	defer pdCli.Close()
 
@@ -1283,11 +1283,11 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) error {
 		}
 		minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, 1)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		newMinSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, minSafePoint)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if newMinSafePoint <= minSafePoint {
 			safePoint = minSafePoint
@@ -1302,10 +1302,12 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) error {
 		)
 	}
 	if !paused {
-		return errors.New("failed to pause GC for duplicate resolution after all retries")
+		return nil, errors.New("failed to pause GC for duplicate resolution after all retries")
 	}
 
+	exitCh := make(chan struct{})
 	go func(safePoint uint64) {
+		defer close(exitCh)
 		ticker := time.NewTicker(pauseGCIntervalForDupeRes)
 		defer ticker.Stop()
 		for {
@@ -1325,20 +1327,28 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) error {
 					safePoint = minSafePoint
 				}
 			case <-ctx.Done():
+				if _, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, 0, safePoint); err != nil {
+					log.L().Warn("Failed to reset safe point ttl to zero", zap.Error(err))
+				}
 				return
 			}
 		}
 	}(safePoint)
-	return nil
+	return exitCh, nil
 }
 
 func (rc *Controller) restoreTables(ctx context.Context) error {
 	if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		subCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		if err := rc.keepPauseGCForDupeRes(subCtx); err != nil {
+		exitCh, err := rc.keepPauseGCForDupeRes(subCtx)
+		if err != nil {
+			cancel()
 			return errors.Trace(err)
 		}
+		defer func() {
+			cancel()
+			<-exitCh
+		}()
 	}
 
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
