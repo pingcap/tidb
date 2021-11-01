@@ -1253,6 +1253,52 @@ func (s *testPlanSerialSuite) TestIssue28867(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func (s *testPlanSerialSuite) TestIssue28828(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("CREATE TABLE t (" +
+		"id bigint(20) NOT NULL," +
+		"audit_id bigint(20) NOT NULL," +
+		"PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */," +
+		"KEY index_audit_id (audit_id)" +
+		");")
+	tk.MustExec("insert into t values(1,9941971237863475), (2,9941971237863476), (3, 0);")
+	tk.MustExec("prepare stmt from 'select * from t where audit_id=?';")
+	tk.MustExec("set @a='9941971237863475', @b=9941971237863475, @c='xayh7vrWVNqZtzlJmdJQUwAHnkI8Ec', @d='0.0', @e='0.1', @f = '9941971237863476';")
+
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1 9941971237863475"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("1 9941971237863475"))
+	// When the type of parameters have been changed, the plan cache can not be used.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("3 0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @d;").Check(testkit.Rows("3 0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @e;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @d;").Check(testkit.Rows("3 0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @f;").Check(testkit.Rows("2 9941971237863476"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("prepare stmt from 'select count(*) from t where audit_id in (?, ?, ?, ?, ?)';")
+	tk.MustQuery("execute stmt using @a, @b, @c, @d, @e;").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @f, @b, @c, @d, @e;").Check(testkit.Rows("3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
+
 func (s *testPlanSerialSuite) TestIssue28920(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
