@@ -1275,6 +1275,7 @@ func (rc *Controller) pauseGCOnce(ctx context.Context, pdCli pd.Client) error {
 
 func (rc *Controller) keepPauseGC(ctx context.Context, pdCli pd.Client) {
 	ticker := time.NewTicker(pauseGCIntervalForDupeRes)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
