@@ -162,8 +162,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
-		case infoschema.TableRegionLabel:
-			err = e.setDataForRegionLabel(sctx)
+		case infoschema.TableAttributes:
+			err = e.setDataForAttributes(sctx)
 		case infoschema.TablePlacementRules:
 			err = e.setDataFromPlacementRules(ctx, sctx, dbs)
 		}
@@ -2747,11 +2747,11 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	return rows, nil
 }
 
-func (e *memtableRetriever) setDataForRegionLabel(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(ctx)
 	var rows [][]types.Datum
 	rules, err := infosync.GetAllLabelRules(context.TODO())
-	failpoint.Inject("mockOutputOfRegionLabel", func() {
+	failpoint.Inject("mockOutputOfAttributes", func() {
 		convert := func(i interface{}) []interface{} {
 			return []interface{}{i}
 		}
@@ -2770,7 +2770,7 @@ func (e *memtableRetriever) setDataForRegionLabel(ctx sessionctx.Context) error 
 	})
 
 	if err != nil {
-		return errors.Wrap(err, "get region label failed")
+		return errors.Wrap(err, "get the label rules failed")
 	}
 	for _, rule := range rules {
 		skip := true
