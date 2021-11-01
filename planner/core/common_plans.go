@@ -548,6 +548,20 @@ func (e *Execute) rebuildRange(p Plan) error {
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
 	switch x := p.(type) {
+	case *PhysicalIndexHashJoin:
+		return e.rebuildRange(&x.PhysicalIndexJoin)
+	case *PhysicalIndexMergeJoin:
+		return e.rebuildRange(&x.PhysicalIndexJoin)
+	case *PhysicalIndexJoin:
+		if err := x.Ranges.Rebuild(); err != nil {
+			return err
+		}
+		for _, child := range x.Children() {
+			err = e.rebuildRange(child)
+			if err != nil {
+				return err
+			}
+		}
 	case *PhysicalTableScan:
 		err = e.buildRangeForTableScan(sctx, x)
 		if err != nil {
@@ -966,8 +980,8 @@ type LoadStats struct {
 	Path string
 }
 
-// PlanReplayerSingle represents a plan replayer plan.
-type PlanReplayerSingle struct {
+// PlanReplayer represents a plan replayer plan.
+type PlanReplayer struct {
 	baseSchemaProducer
 	ExecStmt ast.StmtNode
 	Analyze  bool
