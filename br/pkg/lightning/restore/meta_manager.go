@@ -10,14 +10,14 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
 )
 
@@ -234,6 +234,9 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				maxRowIDMax = rowIDMax
 			}
 		}
+		if rows.Err() != nil {
+			return errors.Trace(rows.Err())
+		}
 
 		// no enough info are available, fetch row_id max for table
 		if curStatus == metaStatusInitial {
@@ -441,6 +444,9 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 		}
 		rows.Close()
 		closed = true
+		if rows.Err() != nil {
+			return errors.Trace(rows.Err())
+		}
 
 		query = fmt.Sprintf("update %s set total_kvs = ?, total_bytes = ?, checksum = ?, status = ?, has_duplicates = ? where table_id = ? and task_id = ?", m.tableName)
 		_, err = tx.ExecContext(ctx, query, checksum.SumKVS(), checksum.SumSize(), checksum.Sum(), newStatus.String(), hasLocalDupes, m.tr.tableInfo.ID, m.taskID)
@@ -602,8 +608,14 @@ func (m *dbTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
 				exist = true
 			}
 		}
-		err = rows.Close()
-		return errors.Trace(err)
+		if err := rows.Close(); err != nil {
+			return errors.Trace(err)
+		}
+		if err := rows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+
+		return nil
 	})
 	return exist, errors.Trace(err)
 }
@@ -731,6 +743,10 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 		}
 		closed = true
 
+		if err = rows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+
 		if cfgStr != "" {
 			err = json.Unmarshal([]byte(cfgStr), &pausedCfg)
 			return errors.Trace(err)
@@ -852,6 +868,10 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 		}
 		closed = true
 
+		if err = rows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+
 		if taskStatus < taskMetaStatusSwitchSkipped {
 			newStatus := taskMetaStatusSwitchBack
 			newState := taskStateNormal
@@ -966,7 +986,7 @@ func (m noopTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.
 }
 
 func (m noopTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
-	return false, nil
+	return true, nil
 }
 
 func (m noopTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (bool, bool, error) {

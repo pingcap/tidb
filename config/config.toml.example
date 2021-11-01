@@ -16,7 +16,7 @@ store = "unistore"
 path = "/tmp/tidb"
 
 # The socket file to use for connection.
-socket = ""
+socket = "/tmp/tidb.sock"
 
 # Run ddl worker on this tidb-server.
 run-ddl = true
@@ -483,6 +483,8 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
+# enable creating expression index.
+allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]

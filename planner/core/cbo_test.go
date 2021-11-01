@@ -25,11 +25,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -441,20 +441,24 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	var input []struct {
-		SQL                   string
-		RatioOfPseudoEstimate float64
+		SQL                          string
+		EnablePseudoForOutdatedStats bool
+		RatioOfPseudoEstimate        float64
 	}
 	var output []struct {
-		SQL                   string
-		RatioOfPseudoEstimate float64
-		Plan                  []string
+		SQL                          string
+		EnablePseudoForOutdatedStats bool
+		RatioOfPseudoEstimate        float64
+		Plan                         []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
+		testKit.Se.GetSessionVars().SetEnablePseudoForOutdatedStats(tt.EnablePseudoForOutdatedStats)
 		statistics.RatioOfPseudoEstimate.Store(tt.RatioOfPseudoEstimate)
 		plan := testKit.MustQuery(tt.SQL)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt.SQL
+			output[i].EnablePseudoForOutdatedStats = tt.EnablePseudoForOutdatedStats
 			output[i].RatioOfPseudoEstimate = tt.RatioOfPseudoEstimate
 			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
 		})

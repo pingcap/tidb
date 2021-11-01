@@ -24,7 +24,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
@@ -286,7 +286,7 @@ func StrToInt(sc *stmtctx.StatementContext, str string, isFuncCast bool) (int64,
 	return iVal, errors.Trace(err)
 }
 
-// StrToUint converts a string to an unsigned integer at the best-effortt.
+// StrToUint converts a string to an unsigned integer at the best-effort.
 func StrToUint(sc *stmtctx.StatementContext, str string, isFuncCast bool) (uint64, error) {
 	str = strings.TrimSpace(str)
 	validPrefix, err := getValidIntPrefix(sc, str, isFuncCast)

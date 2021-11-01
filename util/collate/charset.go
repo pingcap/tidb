@@ -17,7 +17,7 @@ package collate
 import (
 	"strings"
 
-	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/tidb/parser/charset"
 )
 
 var (
@@ -74,11 +74,19 @@ func removeCharset() {
 	}
 }
 
-// All the experimental supported charset should be in the following table, only used when charset feature is enable.
-var experimentalCharsetInfo = []*charset.Charset{
-	{Name: charset.CharsetGBK, DefaultCollation: charset.CollationGBKBin, Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2},
-}
+var (
+	// All the experimental supported charset should be in the following table, only used when charset feature is enable.
+	experimentalCharsetInfo []*charset.Charset
 
-var experimentalCollation = map[string]Collator{
-	charset.CollationGBKBin: &gbkBinCollator{},
+	experimentalCollation map[string]Collator
+)
+
+func init() {
+	experimentalCollation = make(map[string]Collator)
+	experimentalCharsetInfo = append(experimentalCharsetInfo,
+		&charset.Charset{Name: charset.CharsetGBK, DefaultCollation: "gbk_chinese_ci", Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2},
+	)
+	e, _ := charset.Lookup(charset.CharsetGBK)
+	experimentalCollation[charset.CollationGBKBin] = &gbkBinCollator{e.NewEncoder()}
+	experimentalCollation["gbk_chinese_ci"] = &gbkChineseCICollator{}
 }

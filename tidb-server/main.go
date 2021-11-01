@@ -30,9 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	parsertypes "github.com/pingcap/parser/types"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -41,6 +38,9 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	parsertypes "github.com/pingcap/tidb/parser/types"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -110,6 +110,9 @@ const (
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
 	nmAffinityCPU                = "affinity-cpus"
+
+	nmInitializeSecure   = "initialize-secure"
+	nmInitializeInsecure = "initialize-insecure"
 )
 
 var (
@@ -125,7 +128,7 @@ var (
 	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
 	port             = flag.String(nmPort, "4000", "tidb server port")
 	cors             = flag.String(nmCors, "", "tidb server allow cors origin")
-	socket           = flag.String(nmSocket, "", "The socket file to use for connection.")
+	socket           = flag.String(nmSocket, "/tmp/tidb.sock", "The socket file to use for connection.")
 	enableBinlog     = flagBoolean(nmEnableBinlog, false, "enable generate binlog")
 	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
@@ -152,6 +155,10 @@ var (
 	// PROXY Protocol
 	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
 	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
+
+	// Security
+	initializeSecure   = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
+	initializeInsecure = flagBoolean(nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
 )
 
 func main() {
@@ -190,6 +197,11 @@ func main() {
 
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
+
+	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
+	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
+	// For regression of issue like https://github.com/pingcap/tidb/issues/28190
+	terror.RegisterFinish()
 
 	exited := make(chan struct{})
 	signal.SetupSignalHandler(func(graceful bool) {
@@ -500,6 +512,28 @@ func overrideConfig(cfg *config.Config) {
 	if actualFlags[nmProxyProtocolHeaderTimeout] {
 		cfg.ProxyProtocol.HeaderTimeout = *proxyProtocolHeaderTimeout
 	}
+
+	// Sanity check: can't specify both options
+	if actualFlags[nmInitializeSecure] && actualFlags[nmInitializeInsecure] {
+		err = fmt.Errorf("the options --initialize-insecure and --initialize-secure are mutually exclusive")
+		terror.MustNil(err)
+	}
+	// The option --initialize-secure=true ensures that a secure bootstrap is used.
+	if actualFlags[nmInitializeSecure] {
+		cfg.Security.SecureBootstrap = *initializeSecure
+	}
+	// The option --initialize-insecure=true/false was used.
+	// Store the inverted value of this to the secure bootstrap cfg item
+	if actualFlags[nmInitializeInsecure] {
+		cfg.Security.SecureBootstrap = !*initializeInsecure
+	}
+	// Secure bootstrap initializes with Socket authentication
+	// which is not supported on windows. Only the insecure bootstrap
+	// method is supported.
+	if runtime.GOOS == "windows" && cfg.Security.SecureBootstrap {
+		err = fmt.Errorf("the option --initialize-secure is not supported on Windows")
+		terror.MustNil(err)
+	}
 }
 
 func setGlobalVars() {
@@ -522,6 +556,8 @@ func setGlobalVars() {
 	session.SetStatsLease(statsLeaseDuration)
 	indexUsageSyncLeaseDuration := parseDuration(cfg.Performance.IndexUsageSyncLease)
 	session.SetIndexUsageSyncLease(indexUsageSyncLeaseDuration)
+	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
+	session.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
@@ -562,6 +598,7 @@ func setGlobalVars() {
 	if hostname, err := os.Hostname(); err != nil {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}
+	variable.GlobalLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))
 
 	if cfg.Security.EnableSEM {
 		sem.Enable()

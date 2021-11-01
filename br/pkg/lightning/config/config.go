@@ -33,13 +33,12 @@ import (
 	"github.com/docker/go-units"
 	gomysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidbcfg "github.com/pingcap/tidb/config"
-	"github.com/tikv/pd/server/api"
+	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -129,10 +128,11 @@ type DBStore struct {
 	SQLMode          mysql.SQLMode `toml:"-" json:"-"`
 	MaxAllowedPacket uint64        `toml:"max-allowed-packet" json:"max-allowed-packet"`
 
-	DistSQLScanConcurrency     int `toml:"distsql-scan-concurrency" json:"distsql-scan-concurrency"`
-	BuildStatsConcurrency      int `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
-	IndexSerialScanConcurrency int `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
-	ChecksumTableConcurrency   int `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
+	DistSQLScanConcurrency     int               `toml:"distsql-scan-concurrency" json:"distsql-scan-concurrency"`
+	BuildStatsConcurrency      int               `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
+	IndexSerialScanConcurrency int               `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
+	ChecksumTableConcurrency   int               `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
+	Vars                       map[string]string `toml:"-" json:"vars"`
 }
 
 type Config struct {
@@ -242,6 +242,74 @@ func (t PostOpLevel) String() string {
 	}
 }
 
+type CheckpointKeepStrategy int
+
+const (
+	// remove checkpoint data
+	CheckpointRemove CheckpointKeepStrategy = iota
+	// keep by rename checkpoint file/db according to task id
+	CheckpointRename
+	// keep checkpoint data unchanged
+	CheckpointOrigin
+)
+
+func (t *CheckpointKeepStrategy) UnmarshalTOML(v interface{}) error {
+	switch val := v.(type) {
+	case bool:
+		if val {
+			*t = CheckpointRename
+		} else {
+			*t = CheckpointRemove
+		}
+	case string:
+		return t.FromStringValue(val)
+	default:
+		return errors.Errorf("invalid checkpoint keep strategy '%v', please choose valid option between ['remove', 'rename', 'origin']", v)
+	}
+	return nil
+}
+
+func (t CheckpointKeepStrategy) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
+}
+
+// parser command line parameter
+func (t *CheckpointKeepStrategy) FromStringValue(s string) error {
+	switch strings.ToLower(s) {
+	//nolint:goconst // This 'false' and other 'false's aren't the same.
+	case "remove", "false":
+		*t = CheckpointRemove
+	case "rename", "true":
+		*t = CheckpointRename
+	case "origin":
+		*t = CheckpointOrigin
+	default:
+		return errors.Errorf("invalid checkpoint keep strategy '%s', please choose valid option between ['remove', 'rename', 'origin']", s)
+	}
+	return nil
+}
+
+func (t *CheckpointKeepStrategy) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + t.String() + `"`), nil
+}
+
+func (t *CheckpointKeepStrategy) UnmarshalJSON(data []byte) error {
+	return t.FromStringValue(strings.Trim(string(data), `"`))
+}
+
+func (t CheckpointKeepStrategy) String() string {
+	switch t {
+	case CheckpointRemove:
+		return "remove"
+	case CheckpointRename:
+		return "rename"
+	case CheckpointOrigin:
+		return "origin"
+	default:
+		panic(fmt.Sprintf("invalid post process type '%d'", t))
+	}
+}
+
 // MaxError configures the maximum number of acceptable errors per kind.
 type MaxError struct {
 	// Syntax is the maximum number of syntax errors accepted.
@@ -284,6 +352,69 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 	default:
 	}
 	return errors.Errorf("invalid max-error '%v', should be an integer", v)
+}
+
+// DuplicateResolutionAlgorithm is the config type of how to resolve duplicates.
+type DuplicateResolutionAlgorithm int
+
+const (
+	// DupeResAlgUnsafeNoop does not perform resolution. This is unsafe as the
+	// table will be left in an inconsistent state.
+	DupeResAlgUnsafeNoop DuplicateResolutionAlgorithm = iota
+
+	// DupeResAlgDelete deletes all information related to the duplicated rows.
+	// Users need to analyze the lightning_task_info.conflict_error_v1 table to
+	// add back the correct rows.
+	DupeResAlgDelete
+
+	// DupeResAlgKeepAnyOne keeps a single row from the any transitive set of
+	// duplicated rows. The choice is arbitrary.
+	// This algorithm is not implemented yet.
+	DupeResAlgKeepAnyOne
+)
+
+func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v interface{}) error {
+	if val, ok := v.(string); ok {
+		return dra.FromStringValue(val)
+	}
+	return errors.Errorf("invalid duplicate-resolution '%v', please choose valid option between ['unsafe-noop', 'delete']", v)
+}
+
+func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
+	return []byte(dra.String()), nil
+}
+
+func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
+	switch strings.ToLower(s) {
+	case "unsafe-noop":
+		*dra = DupeResAlgUnsafeNoop
+	case "delete":
+		*dra = DupeResAlgDelete
+	default:
+		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['unsafe-noop', 'delete']", s)
+	}
+	return nil
+}
+
+func (dra *DuplicateResolutionAlgorithm) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + dra.String() + `"`), nil
+}
+
+func (dra *DuplicateResolutionAlgorithm) UnmarshalJSON(data []byte) error {
+	return dra.FromStringValue(strings.Trim(string(data), `"`))
+}
+
+func (dra DuplicateResolutionAlgorithm) String() string {
+	switch dra {
+	case DupeResAlgUnsafeNoop:
+		return "unsafe-noop"
+	case DupeResAlgDelete:
+		return "delete"
+	case DupeResAlgKeepAnyOne:
+		return "keep-any-one"
+	default:
+		panic(fmt.Sprintf("invalid duplicate-resolution type '%d'", dra))
+	}
 }
 
 // PostRestore has some options which will be executed after kv restored.
@@ -391,16 +522,18 @@ type TikvImporter struct {
 	RangeConcurrency   int      `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateDetection bool     `toml:"duplicate-detection" json:"duplicate-detection"`
 
+	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
 }
 
 type Checkpoint struct {
-	Schema           string `toml:"schema" json:"schema"`
-	DSN              string `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
-	Driver           string `toml:"driver" json:"driver"`
-	Enable           bool   `toml:"enable" json:"enable"`
-	KeepAfterSuccess bool   `toml:"keep-after-success" json:"keep-after-success"`
+	Schema           string                 `toml:"schema" json:"schema"`
+	DSN              string                 `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
+	Driver           string                 `toml:"driver" json:"driver"`
+	Enable           bool                   `toml:"enable" json:"enable"`
+	KeepAfterSuccess CheckpointKeepStrategy `toml:"keep-after-success" json:"keep-after-success"`
 }
 
 type Cron struct {
@@ -507,12 +640,13 @@ func NewConfig() *Config {
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
-			Backend:         "",
-			OnDuplicate:     ReplaceOnDup,
-			MaxKVPairs:      4096,
-			SendKVPairs:     32768,
-			RegionSplitSize: 0,
-			DiskQuota:       ByteSize(math.MaxInt64),
+			Backend:             "",
+			OnDuplicate:         ReplaceOnDup,
+			MaxKVPairs:          4096,
+			SendKVPairs:         32768,
+			RegionSplitSize:     0,
+			DiskQuota:           ByteSize(math.MaxInt64),
+			DuplicateResolution: DupeResAlgDelete,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
@@ -668,6 +802,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		mustHaveInternalConnections = false
 		cfg.PostRestore.Checksum = OpLevelOff
 		cfg.PostRestore.Analyze = OpLevelOff
+		cfg.PostRestore.Compact = false
 		cfg.TikvImporter.DuplicateDetection = false
 	case BackendImporter, BackendLocal:
 		// RegionConcurrency > NumCPU is meaningless.
@@ -675,7 +810,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		if cfg.App.RegionConcurrency > cpuCount {
 			cfg.App.RegionConcurrency = cpuCount
 		}
-		cfg.DefaultVarsForImporterAndLocalBackend(ctx)
+		cfg.DefaultVarsForImporterAndLocalBackend()
 	default:
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
 	}
@@ -773,39 +908,7 @@ func (cfg *Config) DefaultVarsForTiDBBackend() {
 	}
 }
 
-func (cfg *Config) adjustDistSQLConcurrency(ctx context.Context) error {
-	tls, err := cfg.ToTLS()
-	if err != nil {
-		return err
-	}
-	result := &api.StoresInfo{}
-	err = tls.WithHost(cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.TiDB.DistSQLScanConcurrency = len(result.Stores) * distSQLScanConcurrencyPerStore
-	if cfg.TiDB.DistSQLScanConcurrency < defaultDistSQLScanConcurrency {
-		cfg.TiDB.DistSQLScanConcurrency = defaultDistSQLScanConcurrency
-	}
-	log.L().Info("adjust scan concurrency success", zap.Int("DistSQLScanConcurrency", cfg.TiDB.DistSQLScanConcurrency))
-	return nil
-}
-
-func (cfg *Config) DefaultVarsForImporterAndLocalBackend(ctx context.Context) {
-	if cfg.TiDB.DistSQLScanConcurrency == defaultDistSQLScanConcurrency {
-		var e error
-		for i := 0; i < maxRetryTimes; i++ {
-			e = cfg.adjustDistSQLConcurrency(ctx)
-			if e == nil {
-				break
-			}
-			time.Sleep(defaultRetryBackoffTime)
-		}
-		if e != nil {
-			log.L().Error("failed to adjust scan concurrency", zap.Error(e))
-		}
-	}
-
+func (cfg *Config) DefaultVarsForImporterAndLocalBackend() {
 	if cfg.App.IndexConcurrency == 0 {
 		cfg.App.IndexConcurrency = defaultIndexConcurrency
 	}

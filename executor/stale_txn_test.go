@@ -275,17 +275,17 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		{
 			name:   "coprocessor read",
 			sql:    "select * from t",
-			assert: "github.com/pingcap/distsql/assertRequestBuilderStalenessOption",
+			assert: "github.com/pingcap/tidb/distsql/assertRequestBuilderReplicaOption",
 		},
 		{
 			name:   "point get read",
 			sql:    "select * from t where id = 1",
-			assert: "github.com/pingcap/tidb/executor/assertPointStalenessOption",
+			assert: "github.com/pingcap/tidb/executor/assertPointReplicaOption",
 		},
 		{
 			name:   "batch point get read",
 			sql:    "select * from t where id in (1,2,3)",
-			assert: "github.com/pingcap/tidb/executor/assertBatchPointStalenessOption",
+			assert: "github.com/pingcap/tidb/executor/assertBatchPointReplicaOption",
 		},
 	}
 	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
@@ -305,13 +305,6 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		failpoint.Disable(testcase.assert)
 	}
 	// assert follower read closest read
-	for _, testcase := range testcases {
-		failpoint.Enable(testcase.assert, `return("sh")`)
-		tk.MustExec(`begin;`)
-		tk.MustQuery(testcase.sql)
-		tk.MustExec(`commit`)
-		failpoint.Disable(testcase.assert)
-	}
 	for _, testcase := range testcases {
 		failpoint.Enable(testcase.assert, `return("sh")`)
 		tk.MustQuery(testcase.sql)

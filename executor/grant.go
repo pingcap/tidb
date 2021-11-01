@@ -20,11 +20,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
@@ -76,19 +77,30 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		dbNameStr := model.NewCIStr(dbName)
 		schema := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
 		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName))
+		// Allow GRANT on non-existent table with at least create privilege, see issue #28533 #29268
 		if err != nil {
-			return err
+			allowed := false
+			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				for _, p := range e.Privs {
+					if p.Priv == mysql.AllPriv || p.Priv&mysql.CreatePriv > 0 {
+						allowed = true
+						break
+					}
+				}
+			}
+			if !allowed {
+				return err
+			}
 		}
-		err = infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 		// Note the table name compare is case sensitive here.
-		if tbl.Meta().Name.String() != e.Level.TableName {
-			return err
+		if tbl != nil && tbl.Meta().Name.String() != e.Level.TableName {
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 		}
 		if len(e.Level.DBName) > 0 {
 			// The database name should also match.
 			db, succ := schema.SchemaByName(dbNameStr)
 			if !succ || db.Name.L != dbNameStr.L {
-				return err
+				return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 			}
 		}
 	}
@@ -214,8 +226,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	isCommit = true
-	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return nil
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 func containsNonDynamicPriv(privList []*ast.PrivElem) bool {
@@ -770,6 +781,9 @@ func getTargetSchemaAndTable(ctx sessionctx.Context, dbName, tableName string, i
 	}
 	name := model.NewCIStr(tableName)
 	tbl, err := is.TableByName(model.NewCIStr(dbName), name)
+	if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+		return dbName, nil, err
+	}
 	if err != nil {
 		return "", nil, err
 	}

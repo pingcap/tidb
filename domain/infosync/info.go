@@ -17,6 +17,7 @@ package infosync
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,8 +30,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -39,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/types"
 	util2 "github.com/pingcap/tidb/util"
@@ -333,13 +334,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		res, err = util2.InternalHTTPClient().Do(req)
-		failpoint.Inject("FailPlacement", func(val failpoint.Value) {
-			if val.(bool) {
-				res = &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}
-				err = nil
-			}
-		})
+		res, err = doRequestWithFailpoint(req)
 		if err == nil {
 			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
@@ -357,6 +352,45 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		}
 	}
 	return nil, err
+}
+
+func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {
+	fpEnabled := false
+	failpoint.Inject("FailPlacement", func(val failpoint.Value) {
+		if val.(bool) {
+			fpEnabled = true
+			resp = &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}
+			err = nil
+		}
+	})
+	if fpEnabled {
+		return
+	}
+	return util2.InternalHTTPClient().Do(req)
+}
+
+// GetReplicationState is used to check if regions in the given keyranges are replicated from PD.
+func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (bool, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return false, err
+	}
+
+	if is.etcdCli == nil {
+		return false, nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return false, errors.Errorf("pd unavailable")
+	}
+
+	res, err := doRequest(ctx, addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pdapi.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
+	if err == nil && res != nil {
+		return string(res) == "true\n", nil
+	}
+	return false, err
 }
 
 // GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
@@ -696,6 +730,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer resp.Body.Close()
 	var metricStorage metricStorage
 	dec := json.NewDecoder(resp.Body)
 	err = dec.Decode(&metricStorage)

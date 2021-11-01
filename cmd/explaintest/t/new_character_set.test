@@ -1,0 +1,41 @@
+-- @@character_set_results = 'gbk', TiDB transforms row value into GBK charset.
+drop table if exists t;
+set names utf8mb4;
+create table t (a varchar(255) charset utf8mb4);
+insert into t values ('一二三四一');
+select hex(a) from t;
+select a from t;
+set @@character_set_results = 'gbk';
+select a from t;
+-- TiDB transforms table name and column name into GBK charset.
+drop table if exists 一;
+create table 一 (二 char(20));
+show create table 一;
+
+-- @@character_set_results = null or binary.
+drop table if exists t;
+set names utf8mb4;
+create table t (a varchar(255) charset gbk, b varchar(255) charset utf8mb4, c varchar(255) charset binary);
+insert into t values ('一', '一', '一');
+set @@character_set_results = null;
+select * from t;
+set @@character_set_results = BINARY;
+select * from t;
+set @@character_set_results = "BINARY";
+select * from t;
+set names utf8mb4;
+select * from t;
+set @@character_set_results = 'utf8mb4';
+
+-- Test for @@character_set_client.
+drop table if exists t;
+create table t (a varchar(255) charset utf8mb4);
+set @@character_set_client = 'gbk';
+insert into t values ('中文');
+set @@character_set_client = 'utf8mb4';
+insert into t values ('中文');
+set @@character_set_client = 'gbk';
+prepare p1 from "insert into t values ('中文');";
+execute p1;
+select a, hex(a) from t;
+set @@character_set_client = 'utf8mb4';
