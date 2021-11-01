@@ -91,7 +91,7 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
 	if e.ExecStmt == nil {
 		return errors.New("plan replayer: sql is empty")
 	}
-	res, err := e.dumpSingle(filepath.Join(domain.GetPlanReplayerDirName(), fmt.Sprintf("%v", os.Getpid())))
+	res, err := e.dumpSingle(domain.GetPlanReplayerDirName())
 	if err != nil {
 		return err
 	}
@@ -210,7 +210,7 @@ func (e *PlanReplayerSingleExec) dumpSingle(path string) (string, error) {
 		return "", err
 	}
 
-	return filepath.Join(path, fileName), nil
+	return fileName, nil
 }
 
 func dumpConfig(zw *zip.Writer) error {

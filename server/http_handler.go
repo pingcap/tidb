@@ -85,6 +85,7 @@ const (
 	pColumnLen  = "colLen"
 	pRowBin     = "rowBin"
 	pSnapshot   = "snapshot"
+	pFileName   = "filename"
 )
 
 // For query string
