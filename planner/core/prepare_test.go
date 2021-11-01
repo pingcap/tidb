@@ -1242,14 +1242,12 @@ func (s *testPlanSerialSuite) TestIssue28867(c *C) {
 	tk.MustExec(`set @a=1`)
 	tk.MustExec(`execute stmt using @a`)
 	tk.MustExec(`execute stmt using @a`)
-	// the index range [a, b] depends on parameters, so it cannot use plan-cache
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec(`prepare stmt from 'select /*+ INL_JOIN(t1,t2) */ * from t1, t2 where t1.a=t2.a and t1.c=?'`)
 	tk.MustExec(`set @a=1`)
 	tk.MustExec(`execute stmt using @a`)
 	tk.MustExec(`execute stmt using @a`)
-	// the index range [a] doesn't depend on parameters, so it can use plan-cache
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
@@ -1592,19 +1590,17 @@ func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
 	tk.MustExec("insert into t4 values(2,1,1)")
 	tk.MustExec("prepare s4 from 'select /*+ use_index_merge(t4) */ * from t4 where (c1 >= ? and c1 <= ?) or c2 > 1'")
 	tk.MustExec("set @a4=1,@b4=3")
-	// IndexMerge plan would be built, we should not cache it.
 	tk.MustQuery("execute s4 using @a4,@a4").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute s4 using @a4,@b4").Check(testkit.Rows("2 1 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec("prepare s4 from 'select /*+ use_index_merge(t4) */ * from t4 where (c1 >= ? and c1 <= ?) or c2 > 1'")
 	tk.MustExec("set @a4=1,@b4=3")
-	// IndexMerge plan would be built, we should not cache it.
 	tk.MustQuery("execute s4 using @b4,@a4").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute s4 using @a4,@b4").Check(testkit.Rows("2 1 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func (s *testPrepareSuite) TestIssue26873(c *C) {
