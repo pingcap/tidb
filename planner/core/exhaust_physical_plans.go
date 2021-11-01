@@ -2310,16 +2310,20 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 		switch c := ch.(type) {
 		case *DataSource:
 			validDs := false
+			considerIndexMerge := false
 			for _, path := range c.possibleAccessPaths {
 				if path.StoreType == storeTp {
 					validDs = true
+				}
+				if len(path.PartialIndexPaths) > 0 {
+					considerIndexMerge = true
 				}
 			}
 			ret = ret && validDs
 
 			_, isTopN := p.self.(*LogicalTopN)
 			_, isLimit := p.self.(*LogicalLimit)
-			if (isTopN || isLimit) && len(c.indexMergeHints) != 0 {
+			if (isTopN || isLimit) && considerIndexMerge {
 				return false // TopN and Limit cannot be pushed down to IndexMerge
 			}
 		case *LogicalUnionAll:

@@ -2972,6 +2972,89 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustExec(updateSafePoint)
 }
 
+func (s *testIntegrationSuite3) TestAccessLocalTmpTableAfterDropDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists tmpdb")
+	tk.MustExec("create temporary table tmpdb.tmp(id int)")
+	tk.MustExec("drop database tmpdb")
+
+	tests := []struct {
+		sql         string
+		errcode     int
+		result      []string
+		queryResult []string
+	}{
+		{
+			sql:    "insert into tmpdb.tmp values(1)",
+			result: []string{"1"},
+		},
+		{
+			sql:         "select * from tmpdb.tmp t1 join tmpdb.tmp t2 where t1.id=t2.id",
+			queryResult: []string{"1 1"},
+		},
+		{
+			sql:         "select (select id from tmpdb.tmp) id1, t1.id id2 from (select * from tmpdb.tmp) t1 where t1.id=1",
+			queryResult: []string{"1 1"},
+		},
+		{
+			sql:    "update tmpdb.tmp set id=2 where id=1",
+			result: []string{"2"},
+		},
+		{
+			sql:    "delete from tmpdb.tmp where id=2",
+			result: []string{},
+		},
+		{
+			sql:    "insert into tmpdb.tmp select 1 from dual",
+			result: []string{"1"},
+		},
+		{
+			sql:    "update tmpdb.tmp t1, tmpdb.tmp t2 set t1.id=2 where t1.id=t2.id",
+			result: []string{"2"},
+		},
+		{
+			sql:    "delete t1 from tmpdb.tmp t1 join tmpdb.tmp t2 where t1.id=t2.id",
+			result: []string{},
+		},
+		{
+			sql:     "admin check table tmpdb.tmp",
+			errcode: errno.ErrOptOnTemporaryTable,
+		},
+		{
+			sql:     "alter table tmpdb.tmp add column name char(10)",
+			errcode: errno.ErrUnsupportedDDLOperation,
+		},
+	}
+
+	executeTests := func() {
+		tk.MustExec("truncate table tmpdb.tmp")
+		for _, test := range tests {
+			switch {
+			case test.errcode != 0:
+				tk.MustGetErrCode(test.sql, test.errcode)
+			case test.queryResult != nil:
+				tk.MustQuery(test.sql).Check(testkit.Rows(test.queryResult...))
+			case test.result != nil:
+				tk.MustExec(test.sql)
+				tk.MustQuery("select * from tmpdb.tmp").Check(testkit.Rows(test.result...))
+			default:
+				tk.MustExec(test.sql)
+			}
+		}
+	}
+
+	executeTests()
+
+	// Create the database again.
+	tk.MustExec("create database tmpdb")
+	executeTests()
+
+	// Create another table in the database and drop the database again.
+	tk.MustExec("create temporary table tmpdb.tmp2(id int)")
+	tk.MustExec("drop database tmpdb")
+	executeTests()
+}
+
 func (s *testSerialDBSuite) TestPlacementOnTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3492,4 +3575,40 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("drop database testt")
 	tk.MustExec("truncate table testt.t3")
 	tk.MustQuery("select * from testt.t3").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite3) TestIssue29282(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists issue29828_t")
+	tk.MustExec("create table issue29828_t (id int)")
+	tk.MustExec("create temporary table issue29828_tmp(id int);")
+	tk.MustExec("insert into issue29828_tmp values(1)")
+	tk.MustExec("prepare stmt from 'insert into issue29828_t select * from issue29828_tmp';")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select *from issue29828_t").Check(testkit.Rows("1"))
+
+	tk.MustExec("create temporary table issue29828_tmp1(id int);")
+	tk.MustExec("insert into issue29828_tmp1 values(1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("prepare stmt1 from 'select * from issue29828_t for update union select * from issue29828_tmp1';")
+	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
+	ch := make(chan struct{}, 1)
+	tk1.MustExec("use test")
+	tk1.MustExec("begin pessimistic")
+	go func() {
+		// This query should block.
+		tk1.MustQuery("select * from issue29828_t where id = 1 for update;").Check(testkit.Rows("1"))
+		ch <- struct{}{}
+	}()
+
+	select {
+	case <-time.After(100 * time.Millisecond):
+		// Expected, query blocked, not finish within 100ms.
+		tk.MustExec("rollback")
+	case <-ch:
+		// Unexpected, test fail.
+		c.Fail()
+	}
 }
