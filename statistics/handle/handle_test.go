@@ -2177,6 +2177,7 @@ func (s *testStatsSuite) TestFMSWithAnalyzePartition(c *C) {
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("0"))
 	tk.MustExec("analyze table t partition p0 with 1 topn, 2 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0.",
 		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
 		"Warning 8131 Build table: `t` index: `a` global-level stats failed due to missing partition-level stats",
 	))
@@ -3093,7 +3094,10 @@ func (s *testStatsSuite) TestAnalyzeColumnsWithPrimaryKey(c *C) {
 	tblID := tbl.Meta().ID
 
 	tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats."))
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+		"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
 	c.Assert(len(rows), Equals, 2)
 	c.Assert(rows[0][3], Equals, "a")
@@ -3136,7 +3140,10 @@ func (s *testStatsSuite) TestAnalyzeColumnsWithIndex(c *C) {
 	tblID := tbl.Meta().ID
 
 	tk.MustExec("analyze table t columns c with 2 topn, 2 buckets")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Columns b,d are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats."))
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+		"Warning 1105 Columns b,d are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
 	c.Assert(len(rows), Equals, 3)
 	c.Assert(rows[0][3], Equals, "b")
@@ -3188,7 +3195,10 @@ func (s *testStatsSuite) TestAnalyzeColumnsWithClusteredIndex(c *C) {
 	tblID := tbl.Meta().ID
 
 	tk.MustExec("analyze table t columns c with 2 topn, 2 buckets")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Columns b,d are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats."))
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+		"Warning 1105 Columns b,d are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
 	c.Assert(len(rows), Equals, 3)
 	c.Assert(rows[0][3], Equals, "b")
@@ -3263,7 +3273,11 @@ func (s *testStatsSuite) TestAnalyzeColumnsWithDynamicPartitionTable(c *C) {
 	p1ID := defs[1].ID
 
 	tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats."))
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0.",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1.",
+		"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
 	c.Assert(len(rows), Equals, 6)
 	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t", "global", "a"})
@@ -3361,7 +3375,11 @@ func (s *testStatsSuite) TestAnalyzeColumnsWithStaticPartitionTable(c *C) {
 	p1ID := defs[1].ID
 
 	tk.MustExec("analyze table t columns a with 2 topn, 2 buckets")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats."))
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0.",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p1.",
+		"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
 	c.Assert(len(rows), Equals, 4)
 	c.Assert(rows[0][:4], DeepEquals, []interface{}{"test", "t", "p0", "a"})
@@ -3440,7 +3458,10 @@ func (s *testStatsSuite) TestAnalyzeColumnsWithExtendedStats(c *C) {
 	tblID := tbl.Meta().ID
 
 	tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats."))
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+		"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Sort().Rows()
 	c.Assert(len(rows), Equals, 2)
 	c.Assert(rows[0][3], Equals, "b")
@@ -3486,7 +3507,10 @@ func (s *testStatsSuite) TestAnalyzeColumnsWithVirtualColumnIndex(c *C) {
 	tblID := tbl.Meta().ID
 
 	tk.MustExec("analyze table t columns b with 2 topn, 2 buckets")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats."))
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.",
+		"Warning 1105 Columns c are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.",
+	))
 	// virtual column c is skipped when dumping stats into disk, so only the stats of column b are updated
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't' and last_analyzed_at is not null").Rows()
 	c.Assert(len(rows), Equals, 1)

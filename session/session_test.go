@@ -5713,3 +5713,101 @@ func (s *testSessionSuite) TestFixSetTiDBSnapshotTS(c *C) {
 	tk.MustExec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_CREATE_USER';")
 	tk.MustExec("use t123")
 }
+
+func (s *testSessionSuite) TestSetPDClientDynmaicOption(c *C) {
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 1;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
+	err = tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 0;")
+	c.Assert(err, NotNil)
+	if *withTiKV {
+		err = tk.ExecToErr("set global tidb_tso_client_batch_max_wait_time = -1;")
+		c.Assert(err, NotNil)
+		c.Assert(err, ErrorMatches, ".*invalid max TSO batch wait interval.*")
+		err = tk.ExecToErr("set global tidb_tso_client_batch_max_wait_time = 11;")
+		c.Assert(err, NotNil)
+		c.Assert(err, ErrorMatches, ".*invalid max TSO batch wait interval.*")
+	} else {
+		// Because the PD client in the unit test may be nil, so we only check the warning here.
+		tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -1;")
+		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'"))
+		tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 11;")
+		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
+	}
+
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_tso_follower_proxy = on;")
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_tso_follower_proxy = off;")
+	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("0"))
+	err = tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 0;")
+	c.Assert(err, NotNil)
+}
+
+func (s *testSessionSuite) TestSameNameObjectWithLocalTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop sequence if exists s1")
+	tk.MustExec("drop view if exists v1")
+
+	// prepare
+	tk.MustExec("create table t1 (a int)")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustQuery("show create table t1").Check(testkit.Rows(
+		"t1 CREATE TABLE `t1` (\n" +
+			"  `a` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("create view v1 as select 1")
+	defer tk.MustExec("drop view if exists v1")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1` utf8mb4 utf8mb4_bin"))
+	tk.MustQuery("show create table v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1` utf8mb4 utf8mb4_bin"))
+
+	tk.MustExec("create sequence s1")
+	defer tk.MustExec("drop sequence if exists s1")
+	tk.MustQuery("show create sequence s1").Check(testkit.Rows("s1 CREATE SEQUENCE `s1` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+	tk.MustQuery("show create table s1").Check(testkit.Rows("s1 CREATE SEQUENCE `s1` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+
+	// temp table
+	tk.MustExec("create temporary table t1 (ct1 int)")
+	tk.MustQuery("show create table t1").Check(testkit.Rows(
+		"t1 CREATE TEMPORARY TABLE `t1` (\n" +
+			"  `ct1` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("create temporary table v1 (cv1 int)")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1` utf8mb4 utf8mb4_bin"))
+	tk.MustQuery("show create table v1").Check(testkit.Rows(
+		"v1 CREATE TEMPORARY TABLE `v1` (\n" +
+			"  `cv1` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("create temporary table s1 (cs1 int)")
+	tk.MustQuery("show create sequence s1").Check(testkit.Rows("s1 CREATE SEQUENCE `s1` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+	tk.MustQuery("show create table s1").Check(testkit.Rows(
+		"s1 CREATE TEMPORARY TABLE `s1` (\n" +
+			"  `cs1` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// drop
+	tk.MustExec("drop view v1")
+	err := tk.ExecToErr("show create view v1")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v1' doesn't exist")
+	tk.MustQuery("show create table v1").Check(testkit.Rows(
+		"v1 CREATE TEMPORARY TABLE `v1` (\n" +
+			"  `cv1` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop sequence s1")
+	err = tk.ExecToErr("show create sequence s1")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.s1' doesn't exist")
+	tk.MustQuery("show create table s1").Check(testkit.Rows(
+		"s1 CREATE TEMPORARY TABLE `s1` (\n" +
+			"  `cs1` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
