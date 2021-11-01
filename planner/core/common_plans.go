@@ -965,8 +965,8 @@ type LoadStats struct {
 	Path string
 }
 
-// PlanReplayerSingle represents a plan replayer plan.
-type PlanReplayerSingle struct {
+// PlanReplayer represents a plan replayer plan.
+type PlanReplayer struct {
 	baseSchemaProducer
 	ExecStmt ast.StmtNode
 	Analyze  bool
