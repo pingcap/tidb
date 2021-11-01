@@ -123,15 +123,11 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	// we can't find dump file in any tidb-server, return 404 directly
 	logutil.BgLogger().Info("can't find dump file in any remote server", zap.String("filename", name))
 	w.WriteHeader(http.StatusNotFound)
-	return
 }
 
 func isExists(path string) bool {
 	_, err := os.Stat(path)
-	if err != nil {
-		if os.IsExist(err) {
-			return true
-		}
+	if err != nil && !os.IsExist(err) {
 		return false
 	}
 	return true
