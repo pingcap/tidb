@@ -40,6 +40,15 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+var _ = SerialSuites(&testExecSuite{})
+var _ = SerialSuites(&testExecSerialSuite{})
+
+type testExecSuite struct {
+}
+
+type testExecSerialSuite struct {
+}
+
 type requiredRowsDataSource struct {
 	baseExecutor
 	totalRows int

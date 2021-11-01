@@ -677,6 +677,10 @@ var defaultConf = Config{
 		WriteTimeout: "15s",
 		Strategy:     "range",
 	},
+	Plugin: Plugin{
+		Dir:  "/data/deploy/plugin",
+		Load: "",
+	},
 	PessimisticTxn: DefaultPessimisticTxn(),
 	StmtSummary: StmtSummary{
 		Enable:              true,
