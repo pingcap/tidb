@@ -694,8 +694,12 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	}
 	encoder := encoding.NewEncoder()
 	decoder := encoding.NewDecoder()
-	enc := charset.NewEncoding(b.tp.Charset)
 	isBinaryStr := types.IsBinaryStr(b.args[0].GetType())
+	isRetBinary := types.IsBinaryStr(b.tp)
+	enc := charset.NewEncoding(b.tp.Charset)
+	if isRetBinary {
+		enc = charset.NewEncoding(b.args[0].GetType().Charset)
+	}
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
@@ -713,6 +717,14 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 			exprInternal, _, _ := transform.String(decoder, target)
 			result.AppendString(exprInternal)
 		} else {
+			if isRetBinary {
+				str, err := enc.EncodeString(exprI)
+				if err != nil {
+					return err
+				}
+				result.AppendString(str)
+				continue
+			}
 			result.AppendString(string(enc.EncodeInternal(nil, []byte(exprI))))
 		}
 	}

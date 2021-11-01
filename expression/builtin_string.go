@@ -1177,7 +1177,11 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 		exprInternal, _, _ := transform.String(encoding.NewDecoder(), target)
 		return exprInternal, false, nil
 	}
-
+	if types.IsBinaryStr(b.tp) {
+		enc := charset.NewEncoding(b.args[0].GetType().Charset)
+		expr, err = enc.EncodeString(expr)
+		return expr, false, err
+	}
 	enc := charset.NewEncoding(b.tp.Charset)
 	return string(enc.EncodeInternal(nil, []byte(expr))), false, nil
 }
