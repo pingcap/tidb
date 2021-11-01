@@ -18,6 +18,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/google/uuid"
+	pd "github.com/tikv/pd/client"
 	"io"
 	"math"
 	"os"
@@ -56,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/collate"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -1256,51 +1257,88 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 var checksumManagerKey struct{}
 
 const (
-	pauseGCTTLForDupeRes       = time.Hour
-	pauseGCIntervalForDupeRes  = time.Minute
-	pauseGCServiceIDForDupeRes = "lightning-duplicate-resolution"
+	pauseGCTTLForDupeRes      = time.Hour
+	pauseGCIntervalForDupeRes = time.Minute
 )
 
-func (rc *Controller) pauseGCOnce(ctx context.Context, pdCli pd.Client) error {
-	// Get current GC safe point.
-	safePoint, err := pdCli.UpdateGCSafePoint(ctx, 0)
+func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) error {
+	tlsOpt := rc.tls.ToPDSecurityOption()
+	pdCli, err := pd.NewClientWithContext(ctx, []string{rc.cfg.TiDB.PdAddr}, tlsOpt)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Pause GC for 1 hour.
-	_, err = pdCli.UpdateServiceGCSafePoint(ctx,
-		pauseGCServiceIDForDupeRes, int64(pauseGCTTLForDupeRes/time.Second), safePoint)
-	return err
-}
+	defer pdCli.Close()
 
-func (rc *Controller) keepPauseGC(ctx context.Context, pdCli pd.Client) {
-	ticker := time.NewTicker(pauseGCIntervalForDupeRes)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if err := rc.pauseGCOnce(ctx, pdCli); err != nil {
-				log.L().Warn("failed to pause GC", zap.Error(err))
-			}
-		case <-ctx.Done():
-			return
+	serviceID := "lightning-duplicate-resolution-" + uuid.New().String()
+	ttl := int64(pauseGCTTLForDupeRes / time.Second)
+
+	var (
+		safePoint uint64
+		paused    bool
+	)
+	// Try to get the minimum safe point across all services as our GC safe point.
+	for i := 0; i < 10; i++ {
+		if i > 0 {
+			time.Sleep(time.Second * 3)
 		}
+		minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, 1)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newMinSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, minSafePoint)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if newMinSafePoint <= minSafePoint {
+			safePoint = minSafePoint
+			paused = true
+			break
+		}
+		log.L().Warn(
+			"Failed to register GC safe point because the current minimum safe point is newer"+
+				" than what we assume, will retry newMinSafePoint next time",
+			zap.Uint64("minSafePoint", minSafePoint),
+			zap.Uint64("newMinSafePoint", newMinSafePoint),
+		)
 	}
+	if !paused {
+		return errors.New("failed to pause GC for duplicate resolution after all retries")
+	}
+
+	go func(safePoint uint64) {
+		ticker := time.NewTicker(pauseGCIntervalForDupeRes)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
+				if err != nil {
+					log.L().Warn("Failed to register GC safe point", zap.Error(err))
+					continue
+				}
+				if minSafePoint > safePoint {
+					log.L().Warn("The current minimum safe point is newer than what we hold, duplicate records are at"+
+						"risk of being GC and not detectable",
+						zap.Uint64("safePoint", safePoint),
+						zap.Uint64("minSafePoint", minSafePoint),
+					)
+					safePoint = minSafePoint
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}(safePoint)
+	return nil
 }
 
 func (rc *Controller) restoreTables(ctx context.Context) error {
 	if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-		tlsOpt := rc.tls.ToPDSecurityOption()
-		pdCli, err := pd.NewClientWithContext(ctx, []string{rc.cfg.TiDB.PdAddr}, tlsOpt)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if err = rc.pauseGCOnce(ctx, pdCli); err != nil {
-			return errors.Trace(err)
-		}
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		go rc.keepPauseGC(subCtx, pdCli)
+		if err := rc.keepPauseGCForDupeRes(subCtx); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
