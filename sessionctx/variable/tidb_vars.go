@@ -121,6 +121,9 @@ const (
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
+	// tidb_general_log is used to log every query in the server in info level.
+	TiDBLogFileMaxDays = "tidb_log_file_max_days"
+
 	// tidb_pprof_sql_cpu is used to add label sql label to pprof result.
 	TiDBPProfSQLCPU = "tidb_pprof_sql_cpu"
 
@@ -581,9 +584,19 @@ const (
 	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
 	TiDBEnableLocalTxn = "tidb_enable_local_txn"
+	// TiDBTSOClientBatchMaxWaitTime indicates the max value of the TSO Batch Wait interval time of PD client.
+	TiDBTSOClientBatchMaxWaitTime = "tidb_tso_client_batch_max_wait_time"
+	// TiDBEnableTSOFollowerProxy indicates whether to enable the TSO Follower Proxy feature of PD client.
+	TiDBEnableTSOFollowerProxy = "tidb_enable_tso_follower_proxy"
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
+	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
+
+	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
+	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
 
 	// TiDBEnableMPPBalanceWithContinuousRegion indicates whether MPP balance logic will take account of region's continuity in TiFlash.
 	TiDBEnableMPPBalanceWithContinuousRegion = "tidb_enable_mpp_balance_with_continuous_region"
@@ -754,16 +767,21 @@ const (
 	DefTiDBTopSQLMaxStatementCount               = 200
 	DefTiDBTopSQLMaxCollect                      = 10000
 	DefTiDBTopSQLReportIntervalSeconds           = 60
-	DefTMPTableSize                              = 16777216
+	DefTiDBTmpTableMaxSize                       = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                        = false
+	DefTiDBTSOClientBatchMaxWaitTime             = 0 // 0ms
+	DefTiDBEnableTSOFollowerProxy                = false
 	DefTiDBEnableOrderedResultMode               = false
+	DefTiDBEnablePseudoForOutdatedStats          = true
 	DefEnableMPPBalanceWithContinuousRegion      = true
 	DefEnableMPPBalanceWithContinuousRegionCount = 20
+	DefEnablePlacementCheck                      = true
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog           = atomic.NewBool(false)
+	GlobalLogMaxDays            = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
 	EnablePProfSQLCPU           = atomic.NewBool(false)
 	ddlReorgWorkerCounter int32 = DefTiDBDDLReorgWorkerCount
 	ddlReorgBatchSize     int32 = DefTiDBDDLReorgBatchSize
@@ -789,8 +807,10 @@ var (
 		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
 		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
-	EnableLocalTxn     = atomic.NewBool(DefTiDBEnableLocalTxn)
-	RestrictedReadOnly = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	EnableLocalTxn          = atomic.NewBool(DefTiDBEnableLocalTxn)
+	MaxTSOBatchWaitInterval = atomic.NewInt64(DefTiDBTSOClientBatchMaxWaitTime)
+	EnableTSOFollowerProxy  = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
+	RestrictedReadOnly      = atomic.NewBool(DefTiDBRestrictedReadOnly)
 )
 
 // TopSQL is the variable for control top sql feature.

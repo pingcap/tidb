@@ -21,6 +21,11 @@ error = '''
 backup no leader
 '''
 
+["BR:Common:ErrEnvNotSpecified"]
+error = '''
+environment variable not found
+'''
+
 ["BR:Common:ErrFailedToConnect"]
 error = '''
 failed to make gRPC channels
@@ -44,6 +49,11 @@ undefined restore databases or tables
 ["BR:Common:ErrUnknown"]
 error = '''
 internal error
+'''
+
+["BR:Common:ErrUnsupportedOperation"]
+error = '''
+the operation is not supported
 '''
 
 ["BR:Common:ErrVersionMismatch"]
@@ -1484,6 +1494,16 @@ Feature '%s' is not supported when security enhanced mode is enabled
 ["planner:8135"]
 error = '''
 invalid as of timestamp: %s
+'''
+
+["planner:8137"]
+error = '''
+Column '%s' in ANALYZE column option does not exist in table '%s'
+'''
+
+["planner:8242"]
+error = '''
+'%s' is unsupported on cache tables.
 '''
 
 ["privilege:1141"]
