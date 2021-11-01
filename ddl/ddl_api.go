@@ -4658,15 +4658,15 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 }
 
 type PollTiFlashReplicaStatusContext struct {
-	ID int64
+	ID        int64
 	TableInfo *model.TableInfo
 }
 
 type TiFlashReplicaStatusResult struct {
-	ID int64
-	RegionCount int64
+	ID               int64
+	RegionCount      int64
 	FlashRegionCount int64
-	ReplicaDetail map[int64]int
+	ReplicaDetail    map[int64]int
 }
 
 func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
@@ -4675,7 +4675,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 		return errors.New("Can not get Helper")
 	}
 	tikvHelper := &helper.Helper{
-		Store: tikvStore,
+		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 
@@ -4694,14 +4694,14 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 				for _, p := range pi.AddingDefinitions {
 					table_list = append(table_list, PollTiFlashReplicaStatusContext{p.ID, tblInfo})
 				}
-			}else{
+			} else {
 				table_list = append(table_list, PollTiFlashReplicaStatusContext{tblInfo.ID, tblInfo})
 			}
 		}
 	}
 
 	tikvStats, err := tikvHelper.GetStoresStat()
-	if err != nil{
+	if err != nil {
 		return errors.Trace(err)
 	}
 	tiflashStores := make(map[int64]helper.StoreStat)
@@ -4713,7 +4713,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 		}
 	}
 
-	for _, tb := range table_list{
+	for _, tb := range table_list {
 		// for every region in each table, if it has one replica, we reckon it ready
 		// TODO Can we batch request table?
 
@@ -4744,16 +4744,16 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			for i := int64(0); i < n; i++{
+			for i := int64(0); i < n; i++ {
 				rs, _, _ := reader.ReadLine()
 				// for (`table`, `store`), has region `r`
 				r, err := strconv.ParseInt(string(rs), 10, 32)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				if i, ok := regionReplica[r]; ok{
+				if i, ok := regionReplica[r]; ok {
 					regionReplica[r] = i + 1
-				}else{
+				} else {
 					regionReplica[r] = 1
 				}
 			}
@@ -4782,7 +4782,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	} else if tb.Meta().TempTableType != model.TempTableNone {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash replica")
 	}
-	d.PollTiFlashReplicaStatus(ctx);
+	d.PollTiFlashReplicaStatus(ctx)
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
 		len(tbReplicaInfo.LocationLabels) == len(replicaInfo.Labels) {
