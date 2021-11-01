@@ -615,3 +615,17 @@ func TestGrantDynamicPrivs(t *testing.T) {
 	tk.MustQuery("SELECT Grant_Priv FROM mysql.user WHERE `Host` = '%' AND `User` = 'dyn'").Check(testkit.Rows("Y"))
 	tk.MustQuery("SELECT WITH_GRANT_OPTION FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' AND Priv='CONNECTION_ADMIN'").Check(testkit.Rows("Y"))
 }
+
+func TestNonExistTableIllegalGrant(t *testing.T) {
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create user i29302")
+	defer tk.MustExec("drop user i29302")
+
+	tk.MustGetErrCode("grant create temporary tables on tmpdb.tmp29302 to test_user", mysql.ErrIllegalGrantForTable)
+	tk.MustGetErrCode("grant lock tables on test.tmp29302 to test_user", mysql.ErrIllegalGrantForTable)
+}

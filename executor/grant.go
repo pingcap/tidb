@@ -72,8 +72,17 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		dbName = e.ctx.GetSessionVars().CurrentDB
 	}
 
-	// Make sure the table exist.
+	// For table , check whether table exists and privilege is valid
 	if e.Level.Level == ast.GrantLevelTable {
+		// Return if privilege is invalid, to fail before not existing table, see issue #29302
+		for _, p := range e.Privs {
+			// TODO: https://github.com/pingcap/parser/pull/581 removed privs from all priv lists
+			// it is to avoid add GRANT in GRANT ALL SQLs
+			// WithGRANT seems broken, fix it later
+			if p.Priv != mysql.GrantPriv && !mysql.AllTablePrivs.Has(p.Priv) {
+				return ErrIllegalGrantForTable
+			}
+		}
 		dbNameStr := model.NewCIStr(dbName)
 		schema := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
 		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName))
@@ -633,13 +642,6 @@ func composeDBPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value s
 func composeTablePrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string) error {
 	var newTablePriv, newColumnPriv []string
 	if priv != mysql.AllPriv {
-		// TODO: https://github.com/pingcap/parser/pull/581 removed privs from all priv lists
-		// it is to avoid add GRANT in GRANT ALL SQLs
-		// WithGRANT seems broken, fix it later
-		if priv != mysql.GrantPriv && !mysql.AllTablePrivs.Has(priv) {
-			return ErrIllegalGrantForTable
-		}
-
 		currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
 		if err != nil {
 			return err
