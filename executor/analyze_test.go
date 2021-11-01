@@ -1398,7 +1398,7 @@ func (s *testSuite10) TestColumnOption(c *C) {
 	c.Assert(strings.Contains(status, "columns a,b"), IsTrue)
 
 	// alter table
-	tk.MustExec("alter table t STATS_OPTIONS=\"COL_CHOICE=list,COL_LIST=b#c\"")
+	tk.MustExec("alter table t STATS_OPTIONS='{\"COL_CHOICE\":\"list\",\"COL_LIST\":\"b,c\"}'")
 	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)

@@ -974,16 +974,20 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	// Test show table with stats options
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int) STATS_BUCKETS=1,STATS_TOPN=1")
+	tk.MustExec("create table t(a int,b int,c int) STATS_BUCKETS=1,STATS_TOPN=1,STATS_SAMPLE_RATE=0.2,STATS_COL_CHOICE='list',STATS_COL_LIST='a,b'")
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! STATS_BUCKETS=1,STATS_TOPN=1 */"))
-	tk.MustExec("alter table t STATS_OPTIONS=\"BUCKETS=2,TOPN=2\"")
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` int(11) DEFAULT NULL,\n"+
+			"  `c` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! STATS_BUCKETS=1,STATS_TOPN=1,STATS_SAMPLE_RATE=0.2,STATS_COL_CHOICE='list',STATS_COL_LIST='a,b' */"))
+	tk.MustExec("alter table t STATS_OPTIONS='{\"BUCKETS\":\"2\",\"TOPN\":\"2\",\"SAMPLE_RATE\":\"0.3\",\"COL_CHOICE\":\"list\",\"COL_LIST\":\"b,c\"}'")
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! STATS_BUCKETS=2,STATS_TOPN=2 */"))
+			"  `a` int(11) DEFAULT NULL,\n"+
+			"  `b` int(11) DEFAULT NULL,\n"+
+			"  `c` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! STATS_BUCKETS=2,STATS_TOPN=2,STATS_SAMPLE_RATE=0.3,STATS_COL_CHOICE='list',STATS_COL_LIST='b,c' */"))
 	tk.MustExec("drop table t")
 }
 

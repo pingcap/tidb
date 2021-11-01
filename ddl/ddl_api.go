@@ -20,6 +20,7 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -59,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
-	"gopkg.in/yaml.v2"
 )
 
 const (
@@ -6456,7 +6456,7 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 }
 
 var (
-	errInvalidStatsOptionsFormat = errors.New("Stats options should be in format 'key=value'")
+	errInvalidStatsOptionsFormat = errors.New("Stats options should be in json format")
 )
 
 func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, spec *ast.StatsOptionsSpec) error {
@@ -6470,48 +6470,36 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 		if spec.StatsOptions == "" && meta.StatsOptions != nil {
 			statsOptions = meta.StatsOptions
 		} else {
-			attrBytes := []byte("[" + spec.StatsOptions + "]")
-			var attrs []string
-			err = yaml.UnmarshalStrict(attrBytes, &attrs)
+			attrBytes := []byte(spec.StatsOptions)
+			var attrs map[string]string
+			err = json.Unmarshal(attrBytes, &attrs)
 			if err != nil {
-				return err
+				return errors.Wrapf(err, "%w: %s", errInvalidStatsOptionsFormat, spec.StatsOptions)
 			}
-			for _, attr := range attrs {
-				kv := strings.Split(attr, "=")
-				if len(kv) != 2 {
-					return fmt.Errorf("%w: %s", errInvalidStatsOptionsFormat, kv)
-				}
-				key := strings.TrimSpace(kv[0])
-				if key == "" {
-					return fmt.Errorf("%w: %s", errInvalidStatsOptionsFormat, key)
-				}
-				val := strings.TrimSpace(kv[1])
-				if val == "" {
-					return fmt.Errorf("%w: %s", errInvalidStatsOptionsFormat, val)
-				}
+			for key, val := range attrs {
 				switch strings.ToUpper(key) {
 				case "AUTO_RECALC":
 					autoRecalc, err0 := strconv.ParseBool(val)
 					if err0 != nil {
-						return fmt.Errorf("%w: %s", errors.New("STATS_AUTO_RECALC should be a bool"), val)
+						return fmt.Errorf("%w: %s", errors.New("AUTO_RECALC should be a bool"), val)
 					}
 					statsOptions.AutoRecalc = autoRecalc
 				case "BUCKETS":
 					buckets, err0 := strconv.ParseUint(val, 0, 64)
 					if err0 != nil {
-						return fmt.Errorf("%w: %s", errors.New("STATS_BUCKETS should be a unit"), val)
+						return fmt.Errorf("%w: %s", errors.New("BUCKETS should be a unit"), val)
 					}
 					statsOptions.Buckets = buckets
 				case "TOPN":
 					topn, err0 := strconv.ParseUint(val, 0, 64)
 					if err0 != nil {
-						return fmt.Errorf("%w: %s", errors.New("STATS_TOPN should be a unit"), val)
+						return fmt.Errorf("%w: %s", errors.New("TOPN should be a unit"), val)
 					}
 					statsOptions.TopN = topn
 				case "SAMPLE_RATE":
 					sampleRate, err0 := strconv.ParseFloat(val, 64)
 					if err0 != nil {
-						return fmt.Errorf("%w: %s", errors.New("STATS_SAMPLE_RATE should be a float"), val)
+						return fmt.Errorf("%w: %s", errors.New("SAMPLE_RATE should be a float"), val)
 					}
 					statsOptions.SampleRate = sampleRate
 				case "COL_CHOICE":
@@ -6523,10 +6511,10 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 					case "predicate":
 						statsOptions.ColumnChoice = model.PredicateColumns
 					default:
-						statsOptions.ColumnChoice = model.AllColumns
+						return fmt.Errorf("%w: %s", errors.New("COL_CHOICE should be one of all|list|predicate"), val)
 					}
 				case "COL_LIST":
-					cols := strings.Split(val, "#")
+					cols := strings.Split(val, ",")
 					colList := make([]model.CIStr, 0, len(cols))
 					for _, colStr := range cols {
 						colName := strings.TrimSpace(colStr)

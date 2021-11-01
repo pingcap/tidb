@@ -1063,7 +1063,17 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.StatsOptions != nil {
-		fmt.Fprintf(buf, " /*T! STATS_BUCKETS=%d,STATS_TOPN=%d */", tableInfo.StatsOptions.Buckets, tableInfo.StatsOptions.TopN)
+		cols := make([]string, 0, len(tableInfo.StatsOptions.ColumnList))
+		for _, col := range tableInfo.StatsOptions.ColumnList {
+			cols = append(cols, col.L)
+		}
+		fmt.Fprintf(buf,
+			" /*T! STATS_BUCKETS=%d,STATS_TOPN=%d,STATS_SAMPLE_RATE=%s,STATS_COL_CHOICE='%s',STATS_COL_LIST='%s' */",
+			tableInfo.StatsOptions.Buckets,
+			tableInfo.StatsOptions.TopN,
+			strconv.FormatFloat(tableInfo.StatsOptions.SampleRate, 'f', -1, 64),
+			tableInfo.StatsOptions.ColumnChoice.String(),
+			strings.Join(cols, ","))
 	}
 
 	if len(tableInfo.Comment) > 0 {
