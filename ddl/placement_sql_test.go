@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -904,5 +905,33 @@ func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
 			"/*T![placement] PRIMARY_REGION=\"se\" REGIONS=\"se\" FOLLOWERS=2 */",
 	))
+}
 
+func (s *testDBSuite6) TestEnablePlacementCheck(c *C) {
+
+	tk := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("drop database if exists TestPlacementDB;")
+	tk.MustExec("create database TestPlacementDB;")
+	tk.MustExec("use TestPlacementDB;")
+	tk.MustExec("drop placement policy if exists placement_x;")
+	tk.MustExec("create placement policy placement_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";")
+	se.GetSessionVars().EnableAlterPlacement = true
+	tk.MustExec("create table t(c int) partition by range (c) (partition p1 values less than (200) followers=2);")
+	defer func() {
+		tk.MustExec("drop database if exists TestPlacementDB;")
+		tk.MustExec("drop placement policy if exists placement_x;")
+	}()
+
+	tk.Se.GetSessionVars().EnableAlterPlacement = false
+	tk.MustGetErrCode("create database TestPlacementDB2 followers=2;", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter database TestPlacementDB placement policy=placement_x", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("create table t (c int) FOLLOWERS=2;", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t voters=2;", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("create table m (c int) partition by range (c) (partition p1 values less than (200) followers=2);", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t partition p1 placement policy=\"placement_x\";", mysql.ErrUnsupportedDDLOperation)
 }
