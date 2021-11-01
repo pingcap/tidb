@@ -910,7 +910,7 @@ func (h *Handle) getAutoAnalyzeOptions(statsOptions *model.StatsOptions) string 
 		optBuilder.WriteString(" PREDICATE COLUMNS ")
 	case model.ColumnList:
 		optBuilder.WriteString(" COLUMNS ")
-		colStrs := make([]string, len(statsOptions.ColumnList))
+		colStrs := make([]string, 0, len(statsOptions.ColumnList))
 		for _, col := range statsOptions.ColumnList {
 			colStrs = append(colStrs, col.L)
 		}

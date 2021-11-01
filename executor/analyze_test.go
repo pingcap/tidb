@@ -1307,7 +1307,7 @@ PARTITION BY RANGE ( a ) (
 	}
 }
 
-func (s *testSuite10) TestSampleRateOfTableAnalyzeOptions(c *C) {
+func (s *testSuite10) TestSampleRateOption(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1359,32 +1359,65 @@ func (s *testSuite10) TestSampleRateOfTableAnalyzeOptions(c *C) {
 	c.Assert(strings.Contains(status, "SAMPLERATE=0.7"), IsTrue)
 }
 
-func (s *testSuite10) TestSampleRateWithAnother(c *C) {
+func (s *testSuite10) TestColumnOption(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@tidb_analyze_version=2")
-	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t(a int, b int, c int) STATS_COL_CHOICE='list',STATS_COL_LIST='a,b'")
 	for i := 0; i < 20; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
 	}
+
 	handle.AutoAnalyzeMinCnt = 0
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
 	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.ColumnChoice, Equals, model.ColumnList)
+	c.Assert(len(tableInfo.StatsOptions.ColumnList), Equals, 2)
+	c.Assert(tableInfo.StatsOptions.ColumnList[0].L, Equals, "a")
+	c.Assert(tableInfo.StatsOptions.ColumnList[1].L, Equals, "b")
 	h := s.domain.StatsHandle()
 
-	tk.MustExec("analyze table t with 2 topn, 2 buckets")
-	tbl := h.GetTableStats(tableInfo)
-	col := tbl.Columns[1]
-	c.Assert(len(col.TopN.TopN), Equals, 2)
-	c.Assert(len(col.Buckets), Equals, 2)
+	// manual-analyze still uses the column list in cmd
+	tk.MustExec("analyze table t columns a,c ")
+	statuses := tk.MustQuery("show analyze status").Rows()
+	status := statuses[len(statuses)-1][3].(string)
+	c.Assert(strings.Contains(status, "columns a,c"), IsTrue)
 
-	tk.MustExec("analyze table t with 2 topn, 2 buckets, 0.9 samplerate")
-	tbl = h.GetTableStats(tableInfo)
-	col = tbl.Columns[1]
-	c.Assert(len(col.TopN.TopN), Equals, 2)
-	c.Assert(len(col.Buckets), Equals, 2)
+	// auto-analyze uses the table-level options
+	tk.MustExec("insert into t values (20, 20, 20)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	h.HandleAutoAnalyze(is)
+	statuses = tk.MustQuery("show analyze status").Rows()
+	status = statuses[len(statuses)-1][3].(string)
+	c.Assert(strings.Contains(status, "columns a,b"), IsTrue)
+
+	// alter table
+	tk.MustExec("alter table t STATS_OPTIONS=\"COL_CHOICE=list,COL_LIST=b#c\"")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions.ColumnChoice, Equals, model.ColumnList)
+	c.Assert(len(tableInfo.StatsOptions.ColumnList), Equals, 2)
+	c.Assert(tableInfo.StatsOptions.ColumnList[0].L, Equals, "b")
+	c.Assert(tableInfo.StatsOptions.ColumnList[1].L, Equals, "c")
+	tk.MustExec("insert into t values (21, 21, 21)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	h.HandleAutoAnalyze(is)
+	statuses = tk.MustQuery("show analyze status").Rows()
+	status = statuses[len(statuses)-1][3].(string)
+	c.Assert(strings.Contains(status, "columns b,c"), IsTrue)
+
+	// manual-analyze without column list uses table-level column list
+	tk.MustExec("analyze table t")
+	statuses = tk.MustQuery("show analyze status").Rows()
+	status = statuses[len(statuses)-1][3].(string)
+	c.Assert(strings.Contains(status, "columns b,c"), IsTrue)
 }

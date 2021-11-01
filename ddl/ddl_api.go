@@ -2459,7 +2459,7 @@ func setStatsOption(statsOptions *model.StatsOptions, statsOptionType ast.StatsO
 		}
 	case ast.StatsOptionColList:
 		cols := strings.Split(op.StrValue, ",")
-		colList := make([]model.CIStr, len(cols))
+		colList := make([]model.CIStr, 0, len(cols))
 		for _, colStr := range cols {
 			colName := strings.TrimSpace(colStr)
 			colList = append(colList, model.NewCIStr(colName))
@@ -6523,8 +6523,8 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 						statsOptions.ColumnChoice = model.AllColumns
 					}
 				case "COL_LIST":
-					cols := strings.Split(val, ",")
-					colList := make([]model.CIStr, len(cols))
+					cols := strings.Split(val, "#")
+					colList := make([]model.CIStr, 0, len(cols))
 					for _, colStr := range cols {
 						colName := strings.TrimSpace(colStr)
 						colList = append(colList, model.NewCIStr(colName))

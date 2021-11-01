@@ -1811,16 +1811,16 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 // 1. For `ANALYZE TABLE t PREDICATE COLUMNS`, it returns union of the predicate columns and the columns in index/primary key/extended stats.
 // 2. For `ANALYZE TABLE t COLUMNS c1, c2, ..., cn`, it returns union of the specified columns(c1, c2, ..., cn) and the columns in index/primary key/extended stats.
 // 3. Otherwise it returns all the columns.
-func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
+func (b *PlanBuilder) getAnalyzeColumnsInfo(specifiedColumns []model.CIStr, tbl *ast.TableName) ([]*model.ColumnInfo, error) {
 	tblInfo := tbl.TableInfo
-	if len(as.ColumnNames) == 0 {
+	if len(specifiedColumns) == 0 {
 		return tblInfo.Columns, nil
 	}
 	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
-	for _, colName := range as.ColumnNames {
-		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
+	for _, colName := range specifiedColumns {
+		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 		if colInfo == nil {
-			return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.Name.O, tblInfo.Name.O)
+			return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.O, tblInfo.Name.O)
 		}
 		columnIDs[colInfo.ID] = struct{}{}
 	}
@@ -1953,7 +1953,19 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	if as.Incremental {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The version 2 stats would ignore the INCREMENTAL keyword and do full sampling"))
 	}
-	colsInfo, err := b.getAnalyzeColumnsInfo(as, tbl)
+	var specifiedColumns []model.CIStr
+	if len(as.ColumnNames) > 0 {
+		specifiedColumns = make([]model.CIStr, 0, len(as.ColumnNames))
+		for _, colName := range as.ColumnNames {
+			specifiedColumns = append(specifiedColumns, colName.Name)
+		}
+	} else {
+		// TODO analyze all columns
+		if tbl.TableInfo.StatsOptions != nil && tbl.TableInfo.StatsOptions.ColumnChoice == model.ColumnList {
+			specifiedColumns = tbl.TableInfo.StatsOptions.ColumnList
+		}
+	}
+	colsInfo, err := b.getAnalyzeColumnsInfo(specifiedColumns, tbl)
 	if err != nil {
 		return nil, err
 	}
@@ -1972,7 +1984,6 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			Incremental:   false,
 			StatsVersion:  version,
 		}
-		// TODO handle column list
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,
 			ColsInfo:    colsInfo,
