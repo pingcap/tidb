@@ -600,7 +600,7 @@ func (p *Insert) ResolveIndices() (err error) {
 			return err
 		}
 		asgn.Col = newCol.(*expression.Column)
-		// once the asgn.lazyErr exists, asgn.Expr here is nil
+		// Once the asgn.lazyErr exists, asgn.Expr here is nil.
 		if asgn.Expr != nil {
 			asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
 			if err != nil {
