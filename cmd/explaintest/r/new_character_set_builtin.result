@@ -49,3 +49,78 @@ select to_base64(a), to_base64(b), to_base64(c) from t;
 to_base64(a)	to_base64(b)	to_base64(c)
 5LiA5LqM5LiJ	0ru2/sj9	5LiA5LqM5LiJAAAAAAAAAAAAAAA=
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t(a char(10));
+insert into t values ('中文'), ('啊'), ('a'), ('1'), ('ㅂ');
+set @@tidb_enable_vectorized_expression = true;
+select hex(convert(a using gbk)), convert(a using gbk) from t;
+hex(convert(a using gbk))	convert(a using gbk)
+D6D0CEC4	中文
+B0A1	啊
+61	a
+31	1
+3F	?
+select hex(convert('中文' using gbk)), convert('中文' using gbk);
+hex(convert('中文' using gbk))	convert('中文' using gbk)
+D6D0CEC4	中文
+select hex(convert('啊' using gbk)), convert('啊' using gbk);
+hex(convert('啊' using gbk))	convert('啊' using gbk)
+B0A1	啊
+select hex(convert('a' using gbk)), convert('a' using gbk);
+hex(convert('a' using gbk))	convert('a' using gbk)
+61	a
+select hex(convert('1' using gbk)), convert('1' using gbk);
+hex(convert('1' using gbk))	convert('1' using gbk)
+31	1
+select hex(convert('ㅂ' using gbk)), convert('ㅂ' using gbk);
+hex(convert('ㅂ' using gbk))	convert('ㅂ' using gbk)
+3F	?
+select convert(a using binary), convert(convert(a using gbk) using binary) from t;
+convert(a using binary)	convert(convert(a using gbk) using binary)
+中文	����
+啊	��
+a	a
+1	1
+ㅂ	?
+select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
+convert(convert('中文' using gbk) using binary)	convert('中文' using binary)
+����	中文
+select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
+convert(convert('ㅂ' using gbk) using binary)	convert('ㅂ' using binary)
+?	ㅂ
+set @@tidb_enable_vectorized_expression = false;
+select hex(convert(a using gbk)), convert(a using gbk) from t;
+hex(convert(a using gbk))	convert(a using gbk)
+D6D0CEC4	中文
+B0A1	啊
+61	a
+31	1
+3F	?
+select hex(convert('中文' using gbk)), convert('中文' using gbk);
+hex(convert('中文' using gbk))	convert('中文' using gbk)
+D6D0CEC4	中文
+select hex(convert('啊' using gbk)), convert('啊' using gbk);
+hex(convert('啊' using gbk))	convert('啊' using gbk)
+B0A1	啊
+select hex(convert('a' using gbk)), convert('a' using gbk);
+hex(convert('a' using gbk))	convert('a' using gbk)
+61	a
+select hex(convert('1' using gbk)), convert('1' using gbk);
+hex(convert('1' using gbk))	convert('1' using gbk)
+31	1
+select hex(convert('ㅂ' using gbk)), convert('ㅂ' using gbk);
+hex(convert('ㅂ' using gbk))	convert('ㅂ' using gbk)
+3F	?
+select convert(a using binary) from t;
+convert(a using binary)
+中文
+啊
+a
+1
+ㅂ
+select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
+convert(convert('中文' using gbk) using binary)	convert('中文' using binary)
+����	中文
+select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
+convert(convert('ㅂ' using gbk) using binary)	convert('ㅂ' using binary)
+?	ㅂ
