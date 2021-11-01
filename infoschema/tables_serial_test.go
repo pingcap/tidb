@@ -1431,19 +1431,19 @@ func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 	_ = tk.MustQuery("select * from information_schema.deadlocks")
 }
 
-func TestRegionLabel(t *testing.T) {
+func TestAttributes(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	// test the failpoint for testing
-	fpName := "github.com/pingcap/tidb/executor/mockOutputOfRegionLabel"
+	fpName := "github.com/pingcap/tidb/executor/mockOutputOfAttributes"
 	tk := newTestKitWithRoot(t, store)
-	tk.MustQuery("select * from information_schema.region_label").Check(testkit.Rows())
+	tk.MustQuery("select * from information_schema.attributes").Check(testkit.Rows())
 
 	require.NoError(t, failpoint.Enable(fpName, "return"))
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
-	tk.MustQuery(`select * from information_schema.region_label`).Check(testkit.Rows(
+	tk.MustQuery(`select * from information_schema.attributes`).Check(testkit.Rows(
 		`schema/test/test_label key-range "merge_option=allow" [7480000000000000ff395f720000000000fa, 7480000000000000ff3a5f720000000000fa]`,
 	))
 }
