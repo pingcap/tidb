@@ -17,7 +17,6 @@ package planner
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/table/temptable"
 	"math"
 	"runtime/trace"
 	"strings"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
