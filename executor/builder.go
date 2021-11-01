@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -163,8 +164,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildLoadStats(v)
 	case *plannercore.IndexAdvise:
 		return b.buildIndexAdvise(v)
-	case *plannercore.PlanReplayerSingle:
-		return b.buildPlanReplayerSingle(v)
+	case *plannercore.PlanReplayer:
+		return b.buildPlanReplayer(v)
 	case *plannercore.PhysicalLimit:
 		return b.buildLimit(v)
 	case *plannercore.Prepare:
@@ -906,13 +907,18 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 	return e
 }
 
-func (b *executorBuilder) buildPlanReplayerSingle(v *plannercore.PlanReplayerSingle) Executor {
+func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executor {
+	if v.Load {
+		e := &PlanReplayerLoadExec{
+			baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+			info:         &PlanReplayerLoadInfo{Path: v.File, Ctx: b.ctx},
+		}
+		return e
+	}
 	e := &PlanReplayerSingleExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		ExecStmt:     v.ExecStmt,
 		Analyze:      v.Analyze,
-		Load:         v.Load,
-		File:         v.File,
 	}
 	return e
 }
@@ -1601,7 +1607,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
-			strings.ToLower(infoschema.TableRegionLabel),
+			strings.ToLower(infoschema.TableAttributes),
 			strings.ToLower(infoschema.TablePlacementRules):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -2230,6 +2236,22 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
 		if *sampleRate < 0 {
 			*sampleRate = b.getAdjustedSampleRate(b.ctx, task.TableID.GetStatisticsID(), task.TblInfo)
+			if task.PartitionName != "" {
+				sc.AppendNote(errors.Errorf(
+					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s.",
+					*sampleRate,
+					task.DBName,
+					task.TableName,
+					task.PartitionName,
+				))
+			} else {
+				sc.AppendNote(errors.Errorf(
+					"Analyze use auto adjusted sample rate %f for table %s.%s.",
+					*sampleRate,
+					task.DBName,
+					task.TableName,
+				))
+			}
 		}
 	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
@@ -2250,6 +2272,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
 }
 
+// getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
 func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int64, tblInfo *model.TableInfo) float64 {
 	statsHandle := domain.GetDomain(sctx).StatsHandle()
 	defaultRate := 0.001
@@ -2262,15 +2285,45 @@ func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int
 	} else {
 		statsTbl = statsHandle.GetPartitionStats(tblInfo, tid)
 	}
-	if statsTbl == nil {
+	approxiCount, hasPD := b.getApproximateTableCountFromPD(sctx, tid)
+	// If there's no stats meta and no pd, return the default rate.
+	if statsTbl == nil && !hasPD {
 		return defaultRate
 	}
-	// If the count in stats_meta is still 0, the table is not large, we scan all rows.
+	// If the count in stats_meta is still 0 and there's no information from pd side, we scan all rows.
+	if statsTbl.Count == 0 && !hasPD {
+		return 1
+	}
+	// we have issue https://github.com/pingcap/tidb/issues/29216.
+	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
+	// If the count from the stats_meta is extremely smaller than the approximate count from the pd,
+	// we think that we meet this issue and use the approximate count to calculate the sample rate.
+	if float64(statsTbl.Count*100) < approxiCount {
+		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
+		// So we increase the number to 150000 to reduce this error rate.
+		return math.Min(1, 150000/approxiCount)
+	}
+	// If we don't go into the above if branch and we still detect the count is zero. Return 1 to prevent the dividing zero.
 	if statsTbl.Count == 0 {
 		return 1
 	}
 	// We are expected to scan about 100000 rows or so.
+	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
 	return math.Min(1, 110000/float64(statsTbl.Count))
+}
+
+func (b *executorBuilder) getApproximateTableCountFromPD(sctx sessionctx.Context, tid int64) (float64, bool) {
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
+	if !ok {
+		return 0, false
+	}
+	regionStats := &helper.PDRegionStats{}
+	pdHelper := helper.NewHelper(tikvStore)
+	err := pdHelper.GetPDRegionStats(tid, regionStats)
+	if err != nil {
+		return 0, false
+	}
+	return float64(regionStats.StorageKeys), true
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
