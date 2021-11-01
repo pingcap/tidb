@@ -6298,6 +6298,10 @@ func (s *testIntegrationSerialSuite) TestCacheRefineArgs(c *C) {
 	tk.MustExec("set @p0='0'")
 	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("1"))
 
+	tk.MustExec("prepare stmt from 'SELECT UCASE(?) < col_int from t;';")
+	tk.MustExec("set @a1 = 'xayh7vrWVNqZtzlJmdJQUwAHnkI8Ec';")
+	tk.MustQuery("execute stmt using @a1;").Check(testkit.Rows("<nil>"))
+
 	tk.MustExec("delete from t")
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("prepare stmt from 'SELECT col_int < ? FROM t'")

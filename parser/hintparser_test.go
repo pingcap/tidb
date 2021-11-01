@@ -14,7 +14,9 @@
 package parser_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -22,11 +24,9 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 )
 
-var _ = Suite(&testHintParserSuite{})
+func TestParseHint(t *testing.T) {
+	t.Parallel()
 
-type testHintParserSuite struct{}
-
-func (s *testHintParserSuite) TestParseHint(c *C) {
 	testCases := []struct {
 		input  string
 		mode   mysql.SQLMode
@@ -346,10 +346,11 @@ func (s *testHintParserSuite) TestParseHint(c *C) {
 
 	for _, tc := range testCases {
 		output, errs := parser.ParseHint("/*+"+tc.input+"*/", tc.mode, parser.Pos{Line: 1})
-		c.Assert(errs, HasLen, len(tc.errs), Commentf("input = %s,\n... errs = %q", tc.input, errs))
+		require.Lenf(t, errs, len(tc.errs), "input = %s,\n... errs = %q", tc.input, errs)
 		for i, err := range errs {
-			c.Assert(err, ErrorMatches, tc.errs[i], Commentf("input = %s, i = %d", tc.input, i))
+			require.Errorf(t, err, "input = %s, i = %d", tc.input, i)
+			require.Regexpf(t, tc.errs[i], err, "input = %s, i = %d", tc.input, i)
 		}
-		c.Assert(output, DeepEquals, tc.output, Commentf("input = %s,\n... output = %q", tc.input, output))
+		require.Equalf(t, tc.output, output, "input = %s,\n... output = %q", tc.input, output)
 	}
 }

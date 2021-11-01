@@ -5917,6 +5917,17 @@ func (s *testDBSuite2) TestAlterTableCache(c *C) {
 	// Multiple alter cache is okay
 	tk.MustExec("alter table t cache")
 	tk.MustExec("alter table t cache")
+	// Test a temporary table
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create temporary table t (id int primary key auto_increment, u int unique, v int)")
+	tk.MustExec("drop table if exists tmp1")
+	// local temporary table alter is not supported
+	tk.MustGetErrCode("alter table t cache", errno.ErrUnsupportedDDLOperation)
+	// test global temporary table
+	tk.MustExec("create global temporary table tmp1 " +
+		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
+		"on commit delete rows")
+	tk.MustGetErrMsg("alter table tmp1 cache", ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache").Error())
 
 }
 

@@ -3293,5 +3293,132 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestRejectSortForMPP",
+    "Cases": [
+      {
+        "SQL": "desc format = 'brief' select count(*) from (select * from t order by id)a group by name,id order by id",
+        "Plan": [
+          "Projection 8000.00 root  Column#5",
+          "└─Sort 8000.00 root  test.t.id",
+          "  └─TableReader 8000.00 root  data:ExchangeSender",
+          "    └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "      └─Projection 8000.00 batchCop[tiflash]  Column#5, test.t.id",
+          "        └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, test.t.name, funcs:sum(Column#7)->Column#5, funcs:firstrow(test.t.id)->test.t.id",
+          "          └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "            └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.name, collate: N/A], [name: test.t.id, collate: N/A]",
+          "              └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, test.t.name, funcs:count(1)->Column#7",
+          "                └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select count(*) from (select * from t order by id)a group by name order by 1",
+        "Plan": [
+          "Sort 8000.00 root  Column#5",
+          "└─TableReader 8000.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection 8000.00 batchCop[tiflash]  Column#5",
+          "      └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.name, funcs:sum(Column#8)->Column#5",
+          "        └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.name, collate: N/A]",
+          "            └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.name, funcs:count(1)->Column#8",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select count(*) from (select id,name from t group by id,name order by id,name)a group by name order by 1",
+        "Plan": [
+          "Sort 8000.00 root  Column#5",
+          "└─TableReader 8000.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection 8000.00 batchCop[tiflash]  Column#5",
+          "      └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.name, funcs:count(1)->Column#5",
+          "        └─Projection 8000.00 batchCop[tiflash]  test.t.id, test.t.name",
+          "          └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, test.t.name, funcs:firstrow(test.t.id)->test.t.id, funcs:firstrow(test.t.name)->test.t.name",
+          "            └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "              └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.name, collate: N/A]",
+          "                └─HashAgg 8000.00 batchCop[tiflash]  group by:test.t.id, test.t.name, ",
+          "                  └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select * from (select id from t group by id order by id)a join t on a.id=t.id order by 1",
+        "Plan": [
+          "Sort 9990.00 root  test.t.id",
+          "└─TableReader 9990.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection 9990.00 batchCop[tiflash]  test.t.id, test.t.id, test.t.value, test.t.name",
+          "      └─HashJoin 9990.00 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "        ├─ExchangeReceiver(Build) 7992.00 batchCop[tiflash]  ",
+          "        │ └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Projection 7992.00 batchCop[tiflash]  test.t.id",
+          "        │     └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
+          "        │       └─ExchangeReceiver 7992.00 batchCop[tiflash]  ",
+          "        │         └─ExchangeSender 7992.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: N/A]",
+          "        │           └─HashAgg 7992.00 batchCop[tiflash]  group by:test.t.id, ",
+          "        │             └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
+          "        │               └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.t.id))",
+          "          └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select * from (select * from t order by id)a join t on a.id=t.id order by 1",
+        "Plan": [
+          "Sort 12487.50 root  test.t.id",
+          "└─TableReader 12487.50 root  data:ExchangeSender",
+          "  └─ExchangeSender 12487.50 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection 12487.50 cop[tiflash]  test.t.id, test.t.value, test.t.name, test.t.id, test.t.value, test.t.name",
+          "      └─HashJoin 12487.50 cop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "        ├─ExchangeReceiver(Build) 9990.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "        │     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
+          "          └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select * from ((select id from t order by 1)  union all (select id+1 from t order by 1))c",
+        "Plan": [
+          "TableReader 20000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 20000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Union 20000.00 cop[tiflash]  ",
+          "    ├─Projection 10000.00 cop[tiflash]  cast(test.t.id, bigint(20) BINARY)->Column#10",
+          "    │ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─Projection 10000.00 cop[tiflash]  plus(test.t.id, 1)->Column#10",
+          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select * from ((select count(*) from (select id,name from t order by id)a group by name,id order by id)  union all (select id+1 from t order by 1))c",
+        "Plan": [
+          "TableReader 18000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 18000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Union 18000.00 cop[tiflash]  ",
+          "    ├─Projection 8000.00 cop[tiflash]  cast(Column#12, bigint(21) BINARY)->Column#12",
+          "    │ └─Projection 8000.00 cop[tiflash]  Column#5",
+          "    │   └─Projection 8000.00 cop[tiflash]  Column#5, test.t.id",
+          "    │     └─HashAgg 8000.00 cop[tiflash]  group by:test.t.id, test.t.name, funcs:sum(Column#19)->Column#5, funcs:firstrow(test.t.id)->test.t.id",
+          "    │       └─ExchangeReceiver 8000.00 cop[tiflash]  ",
+          "    │         └─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.name, collate: N/A], [name: test.t.id, collate: N/A]",
+          "    │           └─HashAgg 8000.00 cop[tiflash]  group by:test.t.id, test.t.name, funcs:count(1)->Column#19",
+          "    │             └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─Projection 10000.00 cop[tiflash]  cast(Column#11, bigint(21) BINARY)->Column#12",
+          "      └─Projection 10000.00 cop[tiflash]  plus(test.t.id, 1)->Column#11",
+          "        └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select * from (select * from t order by id)a order by name",
+        "Plan": [
+          "Sort 10000.00 root  test.t.name",
+          "└─TableReader 10000.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]
