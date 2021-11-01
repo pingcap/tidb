@@ -3576,3 +3576,39 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("truncate table testt.t3")
 	tk.MustQuery("select * from testt.t3").Check(testkit.Rows())
 }
+
+func (s *testIntegrationSuite3) TestIssue29282(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists issue29828_t")
+	tk.MustExec("create table issue29828_t (id int)")
+	tk.MustExec("create temporary table issue29828_tmp(id int);")
+	tk.MustExec("insert into issue29828_tmp values(1)")
+	tk.MustExec("prepare stmt from 'insert into issue29828_t select * from issue29828_tmp';")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select *from issue29828_t").Check(testkit.Rows("1"))
+
+	tk.MustExec("create temporary table issue29828_tmp1(id int);")
+	tk.MustExec("insert into issue29828_tmp1 values(1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("prepare stmt1 from 'select * from issue29828_t for update union select * from issue29828_tmp1';")
+	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
+	ch := make(chan struct{}, 1)
+	tk1.MustExec("use test")
+	tk1.MustExec("begin pessimistic")
+	go func() {
+		// This query should block.
+		tk1.MustQuery("select * from issue29828_t where id = 1 for update;").Check(testkit.Rows("1"))
+		ch <- struct{}{}
+	}()
+
+	select {
+	case <-time.After(100 * time.Millisecond):
+		// Expected, query blocked, not finish within 100ms.
+		tk.MustExec("rollback")
+	case <-ch:
+		// Unexpected, test fail.
+		c.Fail()
+	}
+}

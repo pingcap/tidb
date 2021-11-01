@@ -711,6 +711,11 @@ error = '''
 Placement policy '%-.192s' is still in use
 '''
 
+["ddl:8242"]
+error = '''
+'%s' is unsupported on cache tables.
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV

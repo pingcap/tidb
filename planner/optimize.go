@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -89,7 +90,8 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 		}
 		if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
 			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
-				return domain.GetDomain(sctx).InfoSchema()
+				is := domain.GetDomain(sctx).InfoSchema()
+				return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is)
 			}
 		}
 	}
@@ -343,7 +345,8 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// we need the table information to check privilege, which is collected
 	// into the visitInfo in the logical plan builder.
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		if err := plannercore.CheckPrivilege(activeRoles, pm, builder.GetVisitInfo()); err != nil {
+		visitInfo := plannercore.VisitInfo4PrivCheck(is, node, builder.GetVisitInfo())
+		if err := plannercore.CheckPrivilege(activeRoles, pm, visitInfo); err != nil {
 			return nil, nil, 0, err
 		}
 	}
