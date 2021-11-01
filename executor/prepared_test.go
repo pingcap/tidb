@@ -780,6 +780,90 @@ func (s *testSerialSuite) TestIssue28782(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
+func (s *testSerialSuite) TestIssue29101(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+
+	tk.MustExec(`use test`)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec(`CREATE TABLE customer (
+	  c_id int(11) NOT NULL,
+	  c_d_id int(11) NOT NULL,
+	  c_w_id int(11) NOT NULL,
+	  c_first varchar(16) DEFAULT NULL,
+	  c_last varchar(16) DEFAULT NULL,
+	  c_credit char(2) DEFAULT NULL,
+	  c_discount decimal(4,4) DEFAULT NULL,
+	  PRIMARY KEY (c_w_id,c_d_id,c_id),
+	  KEY idx_customer (c_w_id,c_d_id,c_last,c_first)
+	)`)
+	tk.MustExec(`CREATE TABLE warehouse (
+	  w_id int(11) NOT NULL,
+	  w_tax decimal(4,4) DEFAULT NULL,
+	  PRIMARY KEY (w_id)
+	)`)
+	tk.MustExec(`prepare s1 from 'SELECT /*+ TIDB_INLJ(customer,warehouse) */ c_discount, c_last, c_credit, w_tax FROM customer, warehouse WHERE w_id = ? AND c_w_id = w_id AND c_d_id = ? AND c_id = ?'`)
+	tk.MustExec(`set @a=936,@b=7,@c=158`)
+	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use IndexJoin
+		`Projection_6 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
+		`└─IndexJoin_14 1.00 root  inner join, inner:TableReader_10, outer key:test.customer.c_w_id, inner key:test.warehouse.w_id, equal cond:eq(test.customer.c_w_id, test.warehouse.w_id)`,
+		`  ├─Selection_36(Build) 1.00 root  eq(test.customer.c_d_id, 7), eq(test.customer.c_id, 158), eq(test.customer.c_w_id, 936)`,
+		`  │ └─IndexLookUp_35 1.00 root  `,
+		`  │   ├─IndexRangeScan_33(Build) 1.00 cop[tikv] table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) range:[936 7 158,936 7 158], keep order:false, stats:pseudo`,
+		`  │   └─TableRowIDScan_34(Probe) 1.00 cop[tikv] table:customer keep order:false, stats:pseudo`,
+		`  └─TableReader_10(Probe) 0.00 root  data:Selection_9`,
+		`    └─Selection_9 0.00 cop[tikv]  eq(test.warehouse.w_id, 936)`,
+		`      └─TableRangeScan_8 1.00 cop[tikv] table:warehouse range: decided by [test.customer.c_w_id], keep order:false, stats:pseudo`))
+	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
+
+	tk.MustExec(`CREATE TABLE order_line (
+	  ol_o_id int(11) NOT NULL,
+	  ol_d_id int(11) NOT NULL,
+	  ol_w_id int(11) NOT NULL,
+	  ol_number int(11) NOT NULL,
+	  ol_i_id int(11) NOT NULL,
+	  PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number))`)
+	tk.MustExec(`CREATE TABLE stock (
+	  s_i_id int(11) NOT NULL,
+	  s_w_id int(11) NOT NULL,
+	  s_quantity int(11) DEFAULT NULL,
+	  PRIMARY KEY (s_w_id,s_i_id))`)
+	tk.MustExec(`prepare s1 from 'SELECT /*+ TIDB_INLJ(order_line,stock) */ COUNT(DISTINCT (s_i_id)) stock_count FROM order_line, stock  WHERE ol_w_id = ? AND ol_d_id = ? AND ol_o_id < ? AND ol_o_id >= ? - 20 AND s_w_id = ? AND s_i_id = ol_i_id AND s_quantity < ?'`)
+	tk.MustExec(`set @a=391,@b=1,@c=3058,@d=18`)
+	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use index-join
+		`StreamAgg_9 1.00 root  funcs:count(distinct test.stock.s_i_id)->Column#11`,
+		`└─IndexJoin_14 0.03 root  inner join, inner:IndexLookUp_13, outer key:test.order_line.ol_i_id, inner key:test.stock.s_i_id, equal cond:eq(test.order_line.ol_i_id, test.stock.s_i_id)`,
+		`  ├─Selection_30(Build) 0.03 root  eq(test.order_line.ol_d_id, 1), eq(test.order_line.ol_w_id, 391), ge(test.order_line.ol_o_id, 3038), lt(test.order_line.ol_o_id, 3058)`,
+		`  │ └─IndexLookUp_29 0.03 root  `,
+		`  │   ├─IndexRangeScan_27(Build) 0.03 cop[tikv] table:order_line, index:PRIMARY(ol_w_id, ol_d_id, ol_o_id, ol_number) range:[391 1 3038,391 1 3058), keep order:false, stats:pseudo`,
+		`  │   └─TableRowIDScan_28(Probe) 0.03 cop[tikv] table:order_line keep order:false, stats:pseudo`,
+		`  └─IndexLookUp_13(Probe) 1.00 root  `,
+		`    ├─IndexRangeScan_10(Build) 1.00 cop[tikv] table:stock, index:PRIMARY(s_w_id, s_i_id) range: decided by [eq(test.stock.s_i_id, test.order_line.ol_i_id) eq(test.stock.s_w_id, 391)], keep order:false, stats:pseudo`,
+		`    └─Selection_12(Probe) 1.00 cop[tikv]  lt(test.stock.s_quantity, 18)`,
+		`      └─TableRowIDScan_11 1.00 cop[tikv] table:stock keep order:false, stats:pseudo`))
+	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
+}
+
 func (s *testSerialSuite) TestIssue28087And28162(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
