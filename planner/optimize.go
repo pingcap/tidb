@@ -17,6 +17,7 @@ package planner
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/table/temptable"
 	"math"
 	"runtime/trace"
 	"strings"
@@ -89,7 +90,10 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 		}
 		if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
 			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
-				return domain.GetDomain(sctx).InfoSchema()
+				if vars.LocalTemporaryTables != nil {
+					is := domain.GetDomain(sctx).InfoSchema()
+					return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is)
+				}
 			}
 		}
 	}
