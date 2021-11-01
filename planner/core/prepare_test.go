@@ -925,6 +925,139 @@ func (s *testPlanSerialSuite) TestIssue28254(c *C) {
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
 }
 
+<<<<<<< HEAD
+=======
+func (s *testPlanSerialSuite) TestIssue28867(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`CREATE TABLE t1 (c_int int, c_str varchar(40), PRIMARY KEY (c_int, c_str))`)
+	tk.MustExec(`CREATE TABLE t2 (c_str varchar(40), PRIMARY KEY (c_str))`)
+	tk.MustExec(`insert into t1 values (1, '1')`)
+	tk.MustExec(`insert into t2 values ('1')`)
+
+	tk.MustExec(`prepare stmt from 'select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 on t1.c_str <= t2.c_str where t1.c_int in (?,?)'`)
+	tk.MustExec(`set @a=10, @b=20`)
+	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows())
+	tk.MustExec(`set @a=1, @b=2`)
+	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("1 1 1"))
+
+	// test case for IndexJoin + PlanCache
+	tk.MustExec(`drop table t1, t2`)
+	tk.MustExec(`create table t1 (a int, b int, c int, index idxab(a, b, c))`)
+	tk.MustExec(`create table t2 (a int, b int)`)
+
+	tk.MustExec(`prepare stmt from 'select /*+ INL_JOIN(t1,t2) */ * from t1, t2 where t1.a=t2.a and t1.b=?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute stmt using @a`)
+	tk.MustExec(`execute stmt using @a`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec(`prepare stmt from 'select /*+ INL_JOIN(t1,t2) */ * from t1, t2 where t1.a=t2.a and t1.c=?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute stmt using @a`)
+	tk.MustExec(`execute stmt using @a`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func (s *testPlanSerialSuite) TestIssue28828(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("CREATE TABLE t (" +
+		"id bigint(20) NOT NULL," +
+		"audit_id bigint(20) NOT NULL," +
+		"PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */," +
+		"KEY index_audit_id (audit_id)" +
+		");")
+	tk.MustExec("insert into t values(1,9941971237863475), (2,9941971237863476), (3, 0);")
+	tk.MustExec("prepare stmt from 'select * from t where audit_id=?';")
+	tk.MustExec("set @a='9941971237863475', @b=9941971237863475, @c='xayh7vrWVNqZtzlJmdJQUwAHnkI8Ec', @d='0.0', @e='0.1', @f = '9941971237863476';")
+
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1 9941971237863475"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("1 9941971237863475"))
+	// When the type of parameters have been changed, the plan cache can not be used.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("3 0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @d;").Check(testkit.Rows("3 0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @e;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @d;").Check(testkit.Rows("3 0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @f;").Check(testkit.Rows("2 9941971237863476"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("prepare stmt from 'select count(*) from t where audit_id in (?, ?, ?, ?, ?)';")
+	tk.MustQuery("execute stmt using @a, @b, @c, @d, @e;").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @f, @b, @c, @d, @e;").Check(testkit.Rows("3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
+
+func (s *testPlanSerialSuite) TestIssue28920(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		c.Assert(store.Close(), IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists UK_GCOL_VIRTUAL_18928`)
+	tk.MustExec(`
+	CREATE TABLE UK_GCOL_VIRTUAL_18928 (
+	  COL102 bigint(20) DEFAULT NULL,
+	  COL103 bigint(20) DEFAULT NULL,
+	  COL1 bigint(20) GENERATED ALWAYS AS (COL102 & 10) VIRTUAL,
+	  COL2 varchar(20) DEFAULT NULL,
+	  COL4 datetime DEFAULT NULL,
+	  COL3 bigint(20) DEFAULT NULL,
+	  COL5 float DEFAULT NULL,
+	  UNIQUE KEY UK_COL1 (COL1))`)
+	tk.MustExec(`insert into UK_GCOL_VIRTUAL_18928(col102,col2) values("-5175976006730879891", "屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖")`)
+	tk.MustExec(`prepare stmt from 'SELECT * FROM UK_GCOL_VIRTUAL_18928 WHERE col1 < ? AND col2 != ?'`)
+	tk.MustExec(`set @a=10, @b="aa"`)
+	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("-5175976006730879891 <nil> 8 屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖 <nil> <nil> <nil>"))
+}
+
+>>>>>>> da6252e9a... planner: fix the issue that some IndexJoin cannot use plan-cache (#29238)
 func (s *testPlanSerialSuite) TestIssue18066(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()

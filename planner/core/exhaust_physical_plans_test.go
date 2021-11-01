@@ -25,6 +25,11 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/util/ranger"
+	"github.com/stretchr/testify/require"
+>>>>>>> da6252e9a... planner: fix the issue that some IndexJoin cannot use plan-cache (#29238)
 )
 
 func (s *testUnitTestSuit) rewriteSimpleExpr(str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
@@ -248,6 +253,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		c.Assert(err, IsNil)
 		joinNode.OtherConditions = others
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
+<<<<<<< HEAD
 		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys)
 		c.Assert(err, IsNil)
 		c.Assert(fmt.Sprintf("%v", helper.chosenAccess), Equals, tt.accesses)
@@ -255,5 +261,17 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		c.Assert(fmt.Sprintf("%v", helper.idxOff2KeyOff), Equals, tt.idxOff2KeyOff)
 		c.Assert(fmt.Sprintf("%v", helper.chosenRemained), Equals, tt.remained)
 		c.Assert(fmt.Sprintf("%v", helper.lastColManager), Equals, tt.compareFilters)
+=======
+		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys, false)
+		if helper.chosenRanges == nil {
+			helper.chosenRanges = ranger.Ranges{}
+		}
+		require.NoError(t, err)
+		require.Equal(t, tt.accesses, fmt.Sprintf("%v", helper.chosenAccess))
+		require.Equal(t, tt.ranges, fmt.Sprintf("%v", helper.chosenRanges.Range()), "test case: ", i)
+		require.Equal(t, tt.idxOff2KeyOff, fmt.Sprintf("%v", helper.idxOff2KeyOff))
+		require.Equal(t, tt.remained, fmt.Sprintf("%v", helper.chosenRemained))
+		require.Equal(t, tt.compareFilters, fmt.Sprintf("%v", helper.lastColManager))
+>>>>>>> da6252e9a... planner: fix the issue that some IndexJoin cannot use plan-cache (#29238)
 	}
 }

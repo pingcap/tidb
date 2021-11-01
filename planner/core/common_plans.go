@@ -546,6 +546,33 @@ func (e *Execute) rebuildRange(p Plan) error {
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
 	switch x := p.(type) {
+<<<<<<< HEAD
+=======
+	case *PhysicalIndexHashJoin:
+		return e.rebuildRange(&x.PhysicalIndexJoin)
+	case *PhysicalIndexMergeJoin:
+		return e.rebuildRange(&x.PhysicalIndexJoin)
+	case *PhysicalIndexJoin:
+		if err := x.Ranges.Rebuild(); err != nil {
+			return err
+		}
+		for _, child := range x.Children() {
+			err = e.rebuildRange(child)
+			if err != nil {
+				return err
+			}
+		}
+	case *PhysicalTableScan:
+		err = e.buildRangeForTableScan(sctx, x)
+		if err != nil {
+			return err
+		}
+	case *PhysicalIndexScan:
+		err = e.buildRangeForIndexScan(sctx, x)
+		if err != nil {
+			return err
+		}
+>>>>>>> da6252e9a... planner: fix the issue that some IndexJoin cannot use plan-cache (#29238)
 	case *PhysicalTableReader:
 		ts := x.TablePlans[0].(*PhysicalTableScan)
 		if ts.Table.IsCommonHandle {

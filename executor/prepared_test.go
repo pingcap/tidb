@@ -405,6 +405,466 @@ func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+func (s *testPrepareSuite) TestPlanCacheOperators(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+
+	type ExecCase struct {
+		Parameters []string
+		UseCache   bool
+	}
+	type PrepCase struct {
+		PrepStmt  string
+		ExecCases []ExecCase
+	}
+
+	cases := []PrepCase{
+		{"use test", nil},
+
+		// cases for TableReader on PK
+		{"create table t (a int, b int, primary key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select a from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select a from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select a from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexReader on UK
+		{"create table t (a int, b int, unique key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select a from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select a from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select a from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexReader on Index
+		{"create table t (a int, b int, key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select a from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select a from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select a from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexLookUp on UK
+		{"create table t (a int, b int, unique key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select * from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select * from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select * from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for IndexLookUp on Index
+		{"create table t (a int, b int, key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select * from t where a=?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select * from t where a in (?,?,?)", []ExecCase{
+			{[]string{"1", "1", "1"}, false},
+			{[]string{"2", "3", "4"}, true},
+			{[]string{"3", "5", "7"}, true},
+		}},
+		{"select * from t where a>? and a<?", []ExecCase{
+			{[]string{"5", "1"}, false},
+			{[]string{"1", "4"}, true},
+			{[]string{"3", "9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for HashJoin
+		{"create table t (a int, b int, key(a))", nil},
+		{"insert into t values (1,1), (2,2), (3,3), (4,4), (5,5), (6,null)", nil},
+		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ HASH_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
+			{[]string{"1", "10"}, false},
+			{[]string{"3", "5"}, true},
+			{[]string{"5", "3"}, true},
+		}},
+
+		// cases for MergeJoin
+		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ MERGE_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
+			{[]string{"1", "10"}, false},
+			{[]string{"3", "5"}, true},
+			{[]string{"5", "3"}, true},
+		}},
+
+		// cases for IndexJoin
+		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t2.b>?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, true},
+			{[]string{"5"}, true},
+		}},
+		{"select /*+ INL_JOIN(t1, t2) */ * from t t1, t t2 where t1.a=t2.a and t1.b>? and t2.b<?", []ExecCase{
+			{[]string{"1", "10"}, false},
+			{[]string{"3", "5"}, true},
+			{[]string{"5", "3"}, true},
+		}},
+
+		// cases for NestedLoopJoin (Apply)
+		{"select * from t t1 where t1.b>? and t1.a > (select min(t2.a) from t t2 where t2.b < t1.b)", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, false}, // plans with sub-queries cannot be cached, but the result must be correct
+			{[]string{"5"}, false},
+		}},
+		{"select * from t t1 where t1.a > (select min(t2.a) from t t2 where t2.b < t1.b+?)", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"3"}, false},
+			{[]string{"5"}, false},
+		}},
+		{"select * from t t1 where t1.b>? and t1.a > (select min(t2.a) from t t2 where t2.b < t1.b+?)", []ExecCase{
+			{[]string{"1", "1"}, false},
+			{[]string{"3", "2"}, false},
+			{[]string{"5", "3"}, false},
+		}},
+		{"drop table t", nil},
+
+		// cases for Window
+		{"create table t (name varchar(50), y int, sale decimal(14,2))", nil},
+		{"insert into t values ('Bob',2016,2.4), ('Bob',2017,3.2), ('Bob',2018,2.1), ('Alice',2016,1.4), ('Alice',2017,2), ('Alice',2018,3.3), ('John',2016,4), ('John',2017,2.1), ('John',2018,5)", nil},
+		{"select *, sum(sale) over (partition by y order by sale) total from t where sale>? order by y", []ExecCase{
+			{[]string{"0.1"}, false},
+			{[]string{"0.5"}, true},
+			{[]string{"1.5"}, true},
+			{[]string{"3.5"}, true},
+		}},
+		{"select *, sum(sale) over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
+			{[]string{"0.1"}, false},
+			{[]string{"0.5"}, true},
+			{[]string{"1.5"}, true},
+			{[]string{"3.5"}, true},
+		}},
+		{"select *, rank() over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
+			{[]string{"0.1"}, false},
+			{[]string{"0.5"}, true},
+			{[]string{"1.5"}, true},
+			{[]string{"3.5"}, true},
+		}},
+		{"select *, first_value(sale) over (partition by y order by sale+? rows 2 preceding) total from t order by y", []ExecCase{
+			{[]string{"0.1"}, false},
+			{[]string{"0.5"}, true},
+			{[]string{"1.5"}, true},
+			{[]string{"3.5"}, true},
+		}},
+		{"select *, first_value(sale) over (partition by y order by sale rows ? preceding) total from t order by y", []ExecCase{
+			{[]string{"1"}, false}, // window plans with parameters in frame cannot be cached
+			{[]string{"2"}, false},
+			{[]string{"3"}, false},
+			{[]string{"4"}, false},
+		}},
+		{"drop table t", nil},
+
+		// cases for Limit
+		{"create table t (a int)", nil},
+		{"insert into t values (1), (1), (2), (2), (3), (4), (5), (6), (7), (8), (9), (0), (0)", nil},
+		{"select * from t limit ?", []ExecCase{
+			{[]string{"20"}, false},
+			{[]string{"30"}, false},
+		}},
+		{"select * from t limit 40, ?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, false},
+		}},
+		{"select * from t limit ?, 10", []ExecCase{
+			{[]string{"20"}, false},
+			{[]string{"30"}, false},
+		}},
+		{"select * from t limit ?, ?", []ExecCase{
+			{[]string{"20", "20"}, false},
+			{[]string{"20", "40"}, false},
+		}},
+		{"select * from t where a<? limit 20", []ExecCase{
+			{[]string{"2"}, false},
+			{[]string{"5"}, true},
+			{[]string{"9"}, true},
+		}},
+		{"drop table t", nil},
+
+		// cases for order
+		{"create table t (a int, b int)", nil},
+		{"insert into t values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)", nil},
+		{"select * from t order by ?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, false},
+		}},
+		{"select * from t order by b+?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select * from t order by mod(a, ?)", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+		{"select * from t where b>? order by mod(a, 3)", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, true},
+			{[]string{"3"}, true},
+		}},
+
+		// cases for topN
+		{"select * from t order by b limit ?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, false},
+		}},
+		{"select * from t order by b limit 10, ?", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, false},
+		}},
+		{"select * from t order by ? limit 10", []ExecCase{
+			{[]string{"1"}, false},
+			{[]string{"2"}, false},
+		}},
+		{"select * from t order by ? limit ?", []ExecCase{
+			{[]string{"1", "10"}, false},
+			{[]string{"2", "20"}, false},
+		}},
+	}
+
+	for _, prepCase := range cases {
+		isQuery := strings.Contains(prepCase.PrepStmt, "select")
+		if !isQuery {
+			tk.MustExec(prepCase.PrepStmt)
+			continue
+		}
+
+		tk.MustExec(fmt.Sprintf(`prepare stmt from '%v'`, prepCase.PrepStmt))
+		for _, execCase := range prepCase.ExecCases {
+			// set all parameters
+			usingStmt := ""
+			if len(execCase.Parameters) > 0 {
+				setStmt := "set "
+				usingStmt = "using "
+				for i, parameter := range execCase.Parameters {
+					if i > 0 {
+						setStmt += ", "
+						usingStmt += ", "
+					}
+					setStmt += fmt.Sprintf("@x%v=%v", i, parameter)
+					usingStmt += fmt.Sprintf("@x%v", i)
+				}
+				tk.MustExec(setStmt)
+			}
+
+			// execute this statement and check whether it uses a cached plan
+			results := tk.MustQuery("execute stmt " + usingStmt).Sort().Rows()
+			useCache := "0"
+			if execCase.UseCache {
+				useCache = "1"
+			}
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(useCache))
+
+			// check whether the result is correct
+			tmp := strings.Split(prepCase.PrepStmt, "?")
+			c.Assert(len(tmp), Equals, len(execCase.Parameters)+1)
+			query := ""
+			for i := range tmp {
+				query += tmp[i]
+				if i < len(execCase.Parameters) {
+					query += execCase.Parameters[i]
+				}
+			}
+			tk.MustQuery(query).Sort().Check(results)
+		}
+	}
+}
+
+func (s *testSerialSuite) TestIssue28782(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("prepare stmt from 'SELECT IF(?, 1, 0);';")
+	tk.MustExec("set @a=1, @b=null, @c=0")
+
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+}
+
+func (s *testSerialSuite) TestIssue29101(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+
+	tk.MustExec(`use test`)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec(`CREATE TABLE customer (
+	  c_id int(11) NOT NULL,
+	  c_d_id int(11) NOT NULL,
+	  c_w_id int(11) NOT NULL,
+	  c_first varchar(16) DEFAULT NULL,
+	  c_last varchar(16) DEFAULT NULL,
+	  c_credit char(2) DEFAULT NULL,
+	  c_discount decimal(4,4) DEFAULT NULL,
+	  PRIMARY KEY (c_w_id,c_d_id,c_id),
+	  KEY idx_customer (c_w_id,c_d_id,c_last,c_first)
+	)`)
+	tk.MustExec(`CREATE TABLE warehouse (
+	  w_id int(11) NOT NULL,
+	  w_tax decimal(4,4) DEFAULT NULL,
+	  PRIMARY KEY (w_id)
+	)`)
+	tk.MustExec(`prepare s1 from 'SELECT /*+ TIDB_INLJ(customer,warehouse) */ c_discount, c_last, c_credit, w_tax FROM customer, warehouse WHERE w_id = ? AND c_w_id = w_id AND c_d_id = ? AND c_id = ?'`)
+	tk.MustExec(`set @a=936,@b=7,@c=158`)
+	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use IndexJoin
+		`Projection_6 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
+		`└─IndexJoin_14 1.00 root  inner join, inner:TableReader_10, outer key:test.customer.c_w_id, inner key:test.warehouse.w_id, equal cond:eq(test.customer.c_w_id, test.warehouse.w_id)`,
+		`  ├─Selection_36(Build) 1.00 root  eq(test.customer.c_d_id, 7), eq(test.customer.c_id, 158), eq(test.customer.c_w_id, 936)`,
+		`  │ └─IndexLookUp_35 1.00 root  `,
+		`  │   ├─IndexRangeScan_33(Build) 1.00 cop[tikv] table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) range:[936 7 158,936 7 158], keep order:false, stats:pseudo`,
+		`  │   └─TableRowIDScan_34(Probe) 1.00 cop[tikv] table:customer keep order:false, stats:pseudo`,
+		`  └─TableReader_10(Probe) 0.00 root  data:Selection_9`,
+		`    └─Selection_9 0.00 cop[tikv]  eq(test.warehouse.w_id, 936)`,
+		`      └─TableRangeScan_8 1.00 cop[tikv] table:warehouse range: decided by [test.customer.c_w_id], keep order:false, stats:pseudo`))
+	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
+
+	tk.MustExec(`CREATE TABLE order_line (
+	  ol_o_id int(11) NOT NULL,
+	  ol_d_id int(11) NOT NULL,
+	  ol_w_id int(11) NOT NULL,
+	  ol_number int(11) NOT NULL,
+	  ol_i_id int(11) NOT NULL,
+	  PRIMARY KEY (ol_w_id,ol_d_id,ol_o_id,ol_number))`)
+	tk.MustExec(`CREATE TABLE stock (
+	  s_i_id int(11) NOT NULL,
+	  s_w_id int(11) NOT NULL,
+	  s_quantity int(11) DEFAULT NULL,
+	  PRIMARY KEY (s_w_id,s_i_id))`)
+	tk.MustExec(`prepare s1 from 'SELECT /*+ TIDB_INLJ(order_line,stock) */ COUNT(DISTINCT (s_i_id)) stock_count FROM order_line, stock  WHERE ol_w_id = ? AND ol_d_id = ? AND ol_o_id < ? AND ol_o_id >= ? - 20 AND s_w_id = ? AND s_i_id = ol_i_id AND s_quantity < ?'`)
+	tk.MustExec(`set @a=391,@b=1,@c=3058,@d=18`)
+	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use index-join
+		`StreamAgg_9 1.00 root  funcs:count(distinct test.stock.s_i_id)->Column#11`,
+		`└─IndexJoin_14 0.03 root  inner join, inner:IndexLookUp_13, outer key:test.order_line.ol_i_id, inner key:test.stock.s_i_id, equal cond:eq(test.order_line.ol_i_id, test.stock.s_i_id)`,
+		`  ├─Selection_30(Build) 0.03 root  eq(test.order_line.ol_d_id, 1), eq(test.order_line.ol_w_id, 391), ge(test.order_line.ol_o_id, 3038), lt(test.order_line.ol_o_id, 3058)`,
+		`  │ └─IndexLookUp_29 0.03 root  `,
+		`  │   ├─IndexRangeScan_27(Build) 0.03 cop[tikv] table:order_line, index:PRIMARY(ol_w_id, ol_d_id, ol_o_id, ol_number) range:[391 1 3038,391 1 3058), keep order:false, stats:pseudo`,
+		`  │   └─TableRowIDScan_28(Probe) 0.03 cop[tikv] table:order_line keep order:false, stats:pseudo`,
+		`  └─IndexLookUp_13(Probe) 1.00 root  `,
+		`    ├─IndexRangeScan_10(Build) 1.00 cop[tikv] table:stock, index:PRIMARY(s_w_id, s_i_id) range: decided by [eq(test.stock.s_i_id, test.order_line.ol_i_id) eq(test.stock.s_w_id, 391)], keep order:false, stats:pseudo`,
+		`    └─Selection_12(Probe) 1.00 cop[tikv]  lt(test.stock.s_quantity, 18)`,
+		`      └─TableRowIDScan_11 1.00 cop[tikv] table:stock keep order:false, stats:pseudo`))
+	tk.MustExec(`execute s1 using @a,@b,@c,@c,@a,@d`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
+}
+
+>>>>>>> da6252e9a... planner: fix the issue that some IndexJoin cannot use plan-cache (#29238)
 func (s *testSerialSuite) TestIssue28087And28162(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
