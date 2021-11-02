@@ -1236,6 +1236,93 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 
 var checksumManagerKey struct{}
 
+<<<<<<< HEAD
+=======
+const (
+	pauseGCTTLForDupeRes      = time.Hour
+	pauseGCIntervalForDupeRes = time.Minute
+)
+
+func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
+	tlsOpt := rc.tls.ToPDSecurityOption()
+	pdCli, err := pd.NewClientWithContext(ctx, []string{rc.cfg.TiDB.PdAddr}, tlsOpt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer pdCli.Close()
+
+	serviceID := "lightning-duplicate-resolution-" + uuid.New().String()
+	ttl := int64(pauseGCTTLForDupeRes / time.Second)
+
+	var (
+		safePoint uint64
+		paused    bool
+	)
+	// Try to get the minimum safe point across all services as our GC safe point.
+	for i := 0; i < 10; i++ {
+		if i > 0 {
+			time.Sleep(time.Second * 3)
+		}
+		minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, 1)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		newMinSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, minSafePoint)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if newMinSafePoint <= minSafePoint {
+			safePoint = minSafePoint
+			paused = true
+			break
+		}
+		log.L().Warn(
+			"Failed to register GC safe point because the current minimum safe point is newer"+
+				" than what we assume, will retry newMinSafePoint next time",
+			zap.Uint64("minSafePoint", minSafePoint),
+			zap.Uint64("newMinSafePoint", newMinSafePoint),
+		)
+	}
+	if !paused {
+		return nil, errors.New("failed to pause GC for duplicate resolution after all retries")
+	}
+
+	exitCh := make(chan struct{})
+	go func(safePoint uint64) {
+		defer close(exitCh)
+		ticker := time.NewTicker(pauseGCIntervalForDupeRes)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
+				if err != nil {
+					log.L().Warn("Failed to register GC safe point", zap.Error(err))
+					continue
+				}
+				if minSafePoint > safePoint {
+					log.L().Warn("The current minimum safe point is newer than what we hold, duplicate records are at"+
+						"risk of being GC and not detectable",
+						zap.Uint64("safePoint", safePoint),
+						zap.Uint64("minSafePoint", minSafePoint),
+					)
+					safePoint = minSafePoint
+				}
+			case <-ctx.Done():
+				stopCtx, cancelFunc := context.WithTimeout(context.Background(), time.Second*5)
+				if _, err := pdCli.UpdateServiceGCSafePoint(stopCtx, serviceID, 0, safePoint); err != nil {
+					log.L().Warn("Failed to reset safe point ttl to zero", zap.Error(err))
+				}
+				// just make compiler happy
+				cancelFunc()
+				return
+			}
+		}
+	}(safePoint)
+	return exitCh, nil
+}
+
+>>>>>>> dc2d5a4f4... lightning: fix duplicate check panic (#29338)
 func (rc *Controller) restoreTables(ctx context.Context) error {
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
 	if rc.tableWorkers == nil {

@@ -1347,9 +1347,15 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			sstMetasChan:       make(chan metaOrFlush),
 			tableInfo:          cfg.TableInfo,
 			duplicateDetection: local.duplicateDetection,
+			duplicateDB:        local.duplicateDB,
 			errorMgr:           local.errorMgr,
 		}
 		engineFile.sstIngester = dbSSTIngester{e: engineFile}
+		keyAdapter := KeyAdapter(noopKeyAdapter{})
+		if local.duplicateDetection {
+			keyAdapter = duplicateKeyAdapter{}
+		}
+		engineFile.keyAdapter = keyAdapter
 		if err = engineFile.loadEngineMeta(); err != nil {
 			return err
 		}
@@ -2087,7 +2093,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	return nil
 }
 
-func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (hasDupe bool, err error) {
+func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
 	if local.duplicateDB == nil {
 		return false, nil
 	}
@@ -2102,7 +2108,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 		return false, err
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
-	duplicateManager, err := NewDuplicateManager(local, ts)
+	duplicateManager, err := NewDuplicateManager(local, ts, opts)
 	if err != nil {
 		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
@@ -2113,7 +2119,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 	return hasDupe, nil
 }
 
-func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
+func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	log.L().Info("Begin collect remote duplicate keys", zap.String("table", tableName))
 	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
@@ -2121,7 +2127,7 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
 
-	duplicateManager, err := NewDuplicateManager(local, ts)
+	duplicateManager, err := NewDuplicateManager(local, ts, opts)
 	if err != nil {
 		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
