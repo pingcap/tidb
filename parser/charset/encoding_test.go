@@ -110,10 +110,10 @@ func TestStringValidatorUTF8(t *testing.T) {
 	require.Equal(t, 0, v.Validate(invalid))
 	// Test charset "utf8" without checking mb4 value.
 	v = charset.StringValidatorUTF8{IsUTF8MB4: false, CheckMB4ValueInUTF8: false}
-	require.Equal(t, -1, "qwerty")
-	require.Equal(t, -1, "qwÊrty")
-	require.Equal(t, -1, "qwÊ合法字符串")
-	require.Equal(t, -1, "😂")
+	require.Equal(t, -1, v.Validate("qwerty"))
+	require.Equal(t, -1, v.Validate("qwÊrty"))
+	require.Equal(t, -1, v.Validate("qwÊ合法字符串"))
+	require.Equal(t, -1, v.Validate("😂"))
 	require.Equal(t, 0, v.Validate(invalid))
 	// Test charset "utf8" with checking mb4 value.
 	v = charset.StringValidatorUTF8{IsUTF8MB4: false, CheckMB4ValueInUTF8: true}
