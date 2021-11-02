@@ -1280,7 +1280,7 @@ func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD label rule")
+		return 0, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
@@ -1318,7 +1318,7 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD region label")
+		return 0, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
@@ -1475,9 +1475,15 @@ func onAlterCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		return ver, nil
 	}
+
 	if tbInfo.TempTableType != model.TempTableNone {
 		return ver, errors.Trace(ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache"))
 	}
+
+	if tbInfo.Partition != nil {
+		return ver, errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("partition mode"))
+	}
+
 	switch tbInfo.TableCacheStatusType {
 	case model.TableCacheStatusDisable:
 		// disable -> switching

@@ -660,7 +660,7 @@ var defaultConf = Config{
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          false,
-		Capacity:         100,
+		Capacity:         1000,
 		MemoryGuardRatio: 0.1,
 	},
 	OpenTracing: OpenTracing{
