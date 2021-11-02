@@ -136,7 +136,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 		var gtidSet string
 		err = db.QueryRowContext(context.Background(), "SELECT @@global.gtid_binlog_pos").Scan(&gtidSet)
 		if err != nil {
-			tctx.L().Error("fail to get gtid for mariaDB", zap.Error(err))
+			tctx.L().Warn("fail to get gtid for mariaDB", zap.Error(err))
 		}
 
 		if logFile != "" {

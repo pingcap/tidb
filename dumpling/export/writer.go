@@ -74,7 +74,7 @@ func (w *Writer) run(taskStream <-chan Task) error {
 	for {
 		select {
 		case <-w.tctx.Done():
-			w.tctx.L().Warn("context has been done, the writer will exit",
+			w.tctx.L().Info("context has been done, the writer will exit",
 				zap.Int64("writer ID", w.id))
 			return nil
 		case task, ok := <-taskStream:
@@ -227,7 +227,7 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 		}
 	}
 	if !somethingIsWritten {
-		tctx.L().Warn("no data written in table chunk",
+		tctx.L().Info("no data written in table chunk",
 			zap.String("database", meta.DatabaseName()),
 			zap.String("table", meta.TableName()),
 			zap.Int("chunkIdx", curChkIdx))
