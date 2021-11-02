@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -2315,7 +2316,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int, statsOptions *mod
 					if statsOptions.SampleRate > 0 {
 						sampleRateLimit := math.Float64frombits(analyzeOptionLimit[ast.AnalyzeOptSampleRate])
 						if statsOptions.SampleRate > sampleRateLimit {
-							return nil, errors.Errorf("value of analyze option %s should not be larger than %d", ast.AnalyzeOptSampleRate, sampleRateLimit)
+							return nil, errors.Errorf("value of analyze option %s should not be larger than %s", ast.AnalyzeOptionString[ast.AnalyzeOptSampleRate], strconv.FormatFloat(sampleRateLimit, 'f', -1, 64))
 						}
 						valToSet = math.Float64bits(statsOptions.SampleRate)
 					}
