@@ -1101,6 +1101,40 @@ func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
+func (s *testPlanSerialSuite) TestIssue29303(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+
+	tk.MustExec(`set tidb_enable_clustered_index=on`)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists PK_MULTI_COL_360`)
+	tk.MustExec(`CREATE TABLE PK_MULTI_COL_360 (
+	  COL1 blob NOT NULL,
+	  COL2 char(1) NOT NULL,
+	  PRIMARY KEY (COL1(5),COL2) /*T![clustered_index] CLUSTERED */)`)
+	tk.MustExec(`INSERT INTO PK_MULTI_COL_360 VALUES 	('�', '龂')`)
+	tk.MustExec(`prepare stmt from 'SELECT/*+ INL_JOIN(t1, t2) */ * FROM PK_MULTI_COL_360 t1 JOIN PK_MULTI_COL_360 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN ? AND ? AND t1.col2 BETWEEN ? AND ?'`)
+	tk.MustExec(`set @a="捲", @b="颽", @c="睭", @d="詼"`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows())
+	tk.MustExec(`set @a="龂", @b="龂", @c="龂", @d="龂"`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("� 龂 � 龂"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func (s *testPlanSerialSuite) TestIssue28942(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
