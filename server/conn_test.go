@@ -750,68 +750,6 @@ func testGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) 
 	return tbl
 }
 
-func TestTiFlashErrorMsgWhenNotFallback(t *testing.T) {
-	t.Parallel()
-
-	store, clean := testkit.CreateMockStore(t,
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockCluster := c.(*unistore.Cluster)
-			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
-			store := c.AllocID()
-			peer := c.AllocID()
-			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
-			mockCluster.AddPeer(region1, store, peer)
-		}),
-		mockstore.WithStoreType(mockstore.EmbedUnistore),
-	)
-	defer clean()
-
-	cc := &clientConn{
-		alloc:      arena.NewAllocator(1024),
-		chunkAlloc: chunk.NewAllocator(),
-		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
-		},
-	}
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	cc.ctx = &TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)}
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int not null primary key, b int not null)")
-	tk.MustExec("alter table t set tiflash replica 1")
-	tb := testGetTableByName(t, tk.Session(), "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-	require.NoError(t, err)
-
-	dml := "insert into t values"
-	for i := 0; i < 50; i++ {
-		dml += fmt.Sprintf("(%v, 0)", i)
-		if i != 49 {
-			dml += ","
-		}
-	}
-	tk.MustExec(dml)
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("50"))
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/ReduceCopNextMaxBackoff"))
-	}()
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "return(true)"))
-
-	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
-	tk.MustExec("set @@tidb_allow_mpp=ON")
-	tk.MustExec("set @@tidb_enforce_mpp=ON")
-	tk.MustExec("set @@tidb_isolation_read_engines='tiflash,tidb'")
-	ctx := context.Background()
-	err = cc.handleQuery(ctx, "select count(*) from t")
-	require.Error(t, err)
-	require.NotEqual(t, err.Error(), tikverr.ErrTiFlashServerTimeout.Error())
-}
-
 func TestTiFlashFallback(t *testing.T) {
 	t.Parallel()
 
@@ -921,6 +859,16 @@ func TestTiFlashFallback(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/establishMppConnectionErr", "return(true)"))
 	testFallbackWork(t, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/establishMppConnectionErr"))
+
+	// When fallback is not set, TiFlash mpp will return the original error message
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "return(true)"))
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
+	tk.MustExec("set @@tidb_allow_mpp=ON")
+	tk.MustExec("set @@tidb_enforce_mpp=ON")
+	tk.MustExec("set @@tidb_isolation_read_engines='tiflash,tidb'")
+	err = cc.handleQuery(ctx, "select count(*) from t")
+	require.Error(t, err)
+	require.NotEqual(t, err.Error(), tikverr.ErrTiFlashServerTimeout.Error())
 }
 
 func testFallbackWork(t *testing.T, tk *testkit.TestKit, cc *clientConn, sql string) {
