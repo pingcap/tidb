@@ -1448,7 +1448,7 @@ const (
 func (do *Domain) NotifyUpdatePrivilege() error {
 	// If skip-grant-table is configured, do not flush privileges.
 	// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
-	// Call dom.PrivilegeHandle().Update would panic.
+	// the call to do.PrivilegeHandle().Update would panic.
 	if config.GetGlobalConfig().Security.SkipGrantTable {
 		return nil
 	}
