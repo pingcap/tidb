@@ -23,11 +23,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-	"github.com/pingcap/parser/terror"
-=======
 	"github.com/pingcap/failpoint"
->>>>>>> d53f9f55a... executor,distsql: fix analyze version 2 memory leak (#28729)
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
