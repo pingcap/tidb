@@ -462,8 +462,8 @@ func TestGrantOnNonExistTable(t *testing.T) {
 	tk.MustExec("use test")
 	_, err := tk.Exec("select * from nonexist")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
-	// GRANT ON non-existent table success, see issue #28533
-	tk.MustExec("grant Select,Insert on nonexist to 'genius'")
+	_, err = tk.Exec("grant Select,Insert on nonexist to 'genius'")
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
 
 	tk.MustExec("create table if not exists xx (id int)")
 	// Case sensitive
@@ -474,6 +474,44 @@ func TestGrantOnNonExistTable(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Exec("grant Select,Update on test.xx to 'genius'")
 	require.NoError(t, err)
+
+	// issue #29268
+	tk.MustExec("CREATE DATABASE d29268")
+	defer tk.MustExec("DROP DATABASE IF EXISTS d29268")
+	tk.MustExec("USE d29268")
+	tk.MustExec("CREATE USER u29268")
+	defer tk.MustExec("DROP USER u29268")
+
+	// without create privilege
+	err = tk.ExecToErr("GRANT SELECT ON t29268 TO u29268")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+	err = tk.ExecToErr("GRANT DROP, INSERT ON t29268 TO u29268")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+	err = tk.ExecToErr("GRANT UPDATE, CREATE VIEW, SHOW VIEW ON t29268 TO u29268")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+	err = tk.ExecToErr("GRANT DELETE, REFERENCES, ALTER ON t29268 TO u29268")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotExists))
+
+	// with create privilege
+	tk.MustExec("GRANT CREATE ON t29268 TO u29268")
+	tk.MustExec("GRANT CREATE, SELECT ON t29268 TO u29268")
+	tk.MustExec("GRANT CREATE, DROP, INSERT ON t29268 TO u29268")
+
+	// check privilege
+	tk.Session().Auth(&auth.UserIdentity{Username: "u29268", Hostname: "localhost"}, nil, nil)
+	tk.MustExec("USE d29268")
+	tk.MustExec("CREATE TABLE t29268 (c1 int)")
+	tk.MustExec("INSERT INTO t29268 VALUES (1), (2)")
+	tk.MustQuery("SELECT c1 FROM t29268").Check(testkit.Rows("1", "2"))
+	tk.MustExec("DROP TABLE t29268")
+
+	// check grant all
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil)
+	tk.MustExec("GRANT ALL ON t29268 TO u29268")
 }
 
 func TestIssue22721(t *testing.T) {

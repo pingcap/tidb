@@ -387,7 +387,7 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.MustExec(dropUserSQL)
 
 	// Test alter user.
-	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123';`
+	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123', 'test4'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
 	alterUserSQL := `ALTER USER 'test1'@'localhost' IDENTIFIED BY '111';`
 	tk.MustExec(alterUserSQL)
@@ -399,6 +399,10 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("222")))
+	alterUserSQL = `ALTER USER 'test4'@'localhost' IDENTIFIED WITH 'auth_socket';`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`SELECT plugin FROM mysql.User WHERE User="test4" and Host="localhost"`)
+	result.Check(testkit.Rows("auth_socket"))
 
 	alterUserSQL = `ALTER USER IF EXISTS 'test2'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '1';`
 	tk.MustExec(alterUserSQL)
@@ -497,6 +501,10 @@ func (s *testSuite7) TestUser(c *C) {
 	querySQL = `select user,host from mysql.user where user = 'userD';`
 	tk.MustQuery(querySQL).Check(testkit.Rows("userD demo.com"))
 
+	createUserSQL = `create user foo@localhost identified with 'foobar';`
+	_, err = tk.Exec(createUserSQL)
+	c.Check(terror.ErrorEqual(err, executor.ErrPluginIsNotLoaded), IsTrue, Commentf("err %v", err))
+
 	tk.MustExec(`create user joan;`)
 	tk.MustExec(`create user sally;`)
 	tk.MustExec(`create role engineering;`)
@@ -529,6 +537,11 @@ func (s *testSuite3) TestSetPwd(c *C) {
 	tk.MustExec(`SET PASSWORD FOR 'testpwd'@'localhost' = 'password';`)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("password")))
+
+	tk.MustExec(`CREATE USER 'testpwdsock'@'localhost' IDENTIFIED WITH 'auth_socket';`)
+	tk.MustExec(`SET PASSWORD FOR 'testpwdsock'@'localhost' = 'password';`)
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Note 1699 SET PASSWORD has no significance for user 'testpwdsock'@'localhost' as authentication plugin does not support it."))
 
 	// set password
 	setPwdSQL := `SET PASSWORD = 'pwd'`

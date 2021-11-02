@@ -2065,9 +2065,10 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
 				errCode:           1365, // div by zero
 			},
 			{
-				stmt:            "CREATE TABLE test_client_errors2 (a int primary key, b int primary key)",
-				incrementErrors: true,
-				errCode:         1068, // multiple pkeys
+				stmt:              "CREATE TABLE test_client_errors2 (a int primary key, b int primary key)",
+				incrementWarnings: true,
+				incrementErrors:   true,
+				errCode:           1068, // multiple pkeys
 			},
 			{
 				stmt:            "gibberish",
