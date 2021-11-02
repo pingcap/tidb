@@ -598,7 +598,7 @@ func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.Sour
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
 		charsetConvertor, err := mydump.NewCharsetConvertor(rc.cfg.Mydumper.DataCharacterSet, rc.cfg.Mydumper.DataInvalidCharReplace)
 		if err != nil {
-			return nil, 0, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
