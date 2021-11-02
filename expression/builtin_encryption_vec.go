@@ -283,11 +283,11 @@ func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 
-		decodeStr, err := bufEnc.Encode(encodedBuf, []byte(buf.GetString(i)))
+		decodeStr, err := bufEnc.Encode(encodedBuf, buf.GetBytes(i))
 		if err != nil {
 			return err
 		}
-		passwordStr, err := buf1Enc.Encode(encodedBuf, []byte(buf1.GetString(i)))
+		passwordStr, err := buf1Enc.Encode(encodedBuf, buf1.GetBytes(i))
 		if err != nil {
 			return err
 		}
