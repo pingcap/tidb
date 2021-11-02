@@ -433,12 +433,8 @@ func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		cryptBytes := buf.GetBytes(i)
-		dBytes, err := enc.Encode(dBytes, cryptBytes)
-		if err == nil {
-			_, err = digest.Write(dBytes)
-		} else {
-			_, err = digest.Write(cryptBytes)
-		}
+		dBytes, _ := enc.Encode(dBytes, cryptBytes)
+		_, err = digest.Write(dBytes)
 		if err != nil {
 			return err
 		}

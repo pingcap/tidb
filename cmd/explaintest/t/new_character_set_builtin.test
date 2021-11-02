@@ -63,6 +63,8 @@ drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
 insert into t values ('一二三', '一二三', '一二三');
 select md5(a), md5(b), md5(c) from t;
+select md5(convert('ㅂ123' using gbk)), md5('ㅂ123');
 set @@tidb_enable_vectorized_expression = true;
 select md5(a), md5(b), md5(c) from t;
+select md5(convert('ㅂ123' using gbk)), md5('ㅂ123');
 set @@tidb_enable_vectorized_expression = false;

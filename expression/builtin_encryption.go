@@ -628,11 +628,7 @@ func (b *builtinMD5Sig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	var sum [16]byte
 	dBytes, err := charset.NewEncoding(b.args[0].GetType().Charset).Encode(nil, []byte(arg))
-	if err == nil {
-		sum = md5.Sum(dBytes) // #nosec G401
-	} else {
-		sum = md5.Sum([]byte(arg)) // #nosec G401
-	}
+	sum = md5.Sum(dBytes) // #nosec G401
 	hexStr := fmt.Sprintf("%x", sum)
 	return hexStr, false, nil
 }
