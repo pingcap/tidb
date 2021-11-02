@@ -192,6 +192,7 @@ func createColumnPermutation(columns []string, ignoreColumns []string, tableInfo
 func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
+		tr.logger.Error("fail to restoreEngines because indexengine is nil")
 		return errors.Errorf("table %v index engine checkpoint not found", tr.tableName)
 	}
 	// If there is an index engine only, it indicates no data needs to restore.

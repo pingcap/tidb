@@ -6640,8 +6640,13 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	if t.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
 		return nil
 	}
+
 	if t.Meta().TempTableType != model.TempTableNone {
-		return ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache")
+		return errors.Trace(ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache"))
+	}
+
+	if t.Meta().Partition != nil {
+		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("partition mode"))
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
