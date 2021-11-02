@@ -556,16 +556,16 @@ func (b *builtinPasswordSig) evalString(row chunk.Row) (d string, isNull bool, e
 		return "", false, nil
 	}
 
+	dBytes, err := charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(pass)
+	if err != nil {
+		return "", false, err
+	}
+
 	// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 	// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
 
-	dBytes, err := charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(pass)
-	if err == nil {
-		return auth.EncodePassword(dBytes), false, nil
-	}
-
-	return auth.EncodePassword(pass), false, nil
+	return auth.EncodePassword(dBytes), false, nil
 }
 
 type randomBytesFunctionClass struct {

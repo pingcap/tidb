@@ -726,16 +726,16 @@ func (b *builtinPasswordSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 
+		dBytes, err := enc.Encode(dBytes, passBytes)
+		if err != nil {
+			return err
+		}
+
 		// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 		// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
 
-		dBytes, err := enc.Encode(dBytes, passBytes)
-		if err == nil {
-			result.AppendString(auth.EncodePasswordBytes(dBytes))
-		} else {
-			result.AppendString(auth.EncodePasswordBytes(passBytes))
-		}
+		result.AppendString(auth.EncodePasswordBytes(dBytes))
 	}
 	return nil
 }
