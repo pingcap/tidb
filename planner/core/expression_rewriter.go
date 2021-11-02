@@ -1450,12 +1450,12 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
-				if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{c}) {
+				if expression.MaybeOverOptimized4PlanCache(er.sctx.GetSessionVars().StmtCtx, []expression.Expression{c}) {
 					if c.GetType().EvalType() == types.ETString {
 						// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
 						// here and skip this refine operation in all other cases for safety.
 						er.sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
-						expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
+						expression.RemoveMutableConst([]expression.Expression{c})
 					} else {
 						continue
 					}

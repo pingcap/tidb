@@ -1368,7 +1368,7 @@ func (mr *mutableIndexJoinRange) Rebuild() error {
 
 func (ijHelper *indexJoinBuildHelper) createMutableIndexJoinRange(notKeyEqAndIn []expression.Expression, ranges []*ranger.Range, path *util.AccessPath, innerKeys, outerKeys []*expression.Column) ranger.MutableRanges {
 	// if the plan-cache is enabled and these ranges depend on some parameters, we have to rebuild these ranges after changing parameters
-	if expression.MaybeOverOptimized4PlanCache(ijHelper.join.ctx, notKeyEqAndIn) {
+	if expression.MaybeOverOptimized4PlanCache(ijHelper.join.ctx.GetSessionVars().StmtCtx, notKeyEqAndIn) {
 		// assume that path, innerKeys and outerKeys will not be modified in the follow-up process
 		return &mutableIndexJoinRange{
 			ranges:        ranges,

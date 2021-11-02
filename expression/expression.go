@@ -790,7 +790,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
-	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
+	if MaybeOverOptimized4PlanCache(ctx.GetSessionVars().StmtCtx, []Expression{expr}) {
 		return expr
 	}
 	return evaluateExprWithNull(ctx, schema, expr)
@@ -1278,6 +1278,11 @@ func PushDownExprsWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression
 	for _, expr := range exprs {
 		if canExprPushDown(expr, pc, storeType, canEnumPush) {
 			pushed = append(pushed, expr)
+			// When the expression can be pushed down, we need to keep those
+			// expressions that will affect the plan cache.
+			if MaybeOverOptimized4PlanCache(sc, []Expression{expr}) {
+				remained = append(remained, expr)
+			}
 		} else {
 			remained = append(remained, expr)
 		}

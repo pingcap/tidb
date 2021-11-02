@@ -17,6 +17,7 @@ package expression
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"math"
 	"strconv"
 	"strings"
@@ -918,21 +919,21 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // 2. Whether the statement can be cached.
 // 3. Whether the expressions contain a lazy constant.
 // TODO: Do more careful check here.
-func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bool {
+func MaybeOverOptimized4PlanCache(sc *stmtctx.StatementContext, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
-	if !ctx.GetSessionVars().StmtCtx.UseCache {
+	if !sc.UseCache {
 		return false
 	}
-	if ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
+	if sc.MaybeOverOptimized4PlanCache {
 		// If the current statement can not be cached. We should remove the mutable constant.
-		RemoveMutableConst(ctx, exprs)
+		RemoveMutableConst(exprs)
 		return false
 	}
-	return containMutableConst(ctx, exprs)
+	return containMutableConst(exprs)
 }
 
 // containMutableConst checks if the expressions contain a lazy constant.
-func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
+func containMutableConst(exprs []Expression) bool {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
@@ -940,7 +941,7 @@ func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 				return true
 			}
 		case *ScalarFunction:
-			if containMutableConst(ctx, v.GetArgs()) {
+			if containMutableConst(v.GetArgs()) {
 				return true
 			}
 		}
@@ -949,14 +950,14 @@ func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 }
 
 // RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
-func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) {
+func RemoveMutableConst(exprs []Expression) {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
 			v.ParamMarker = nil
 			v.DeferredExpr = nil
 		case *ScalarFunction:
-			RemoveMutableConst(ctx, v.GetArgs())
+			RemoveMutableConst(v.GetArgs())
 		}
 	}
 }
