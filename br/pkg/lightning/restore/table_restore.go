@@ -716,14 +716,12 @@ func (tr *TableRestore) postProcess(
 
 		// 4.5. do duplicate detection.
 		hasDupe := false
-		if rc.cfg.TikvImporter.DuplicateDetection {
+		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			var err error
 			hasLocalDupe, err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
-				if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgUnsafeNoop {
-					return false, err
-				}
+				return false, err
 			} else {
 				hasDupe = hasLocalDupe
 			}
@@ -738,13 +736,11 @@ func (tr *TableRestore) postProcess(
 			return true, nil
 		}
 
-		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateDetection {
+		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName)
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
-				if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgUnsafeNoop {
-					return false, e
-				}
+				return false, e
 			} else {
 				hasDupe = hasDupe || hasRemoteDupe
 			}
