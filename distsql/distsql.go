@@ -134,9 +134,13 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 func SelectWithPaging(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
 	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int, rootPlanID int) (SelectResult, error) {
 	pagingSR := &pagingResult{
-		label: "dag-paging",
+		label:      "dag-paging",
+		ctx:        sctx,
+		kvReq:      kvReq,
+		fieldTypes: fieldTypes,
+		fb:         fb,
 	}
-	if err := pagingSR.firstPage(kvReq); err != nil {
+	if err := pagingSR.firstPage(); err != nil {
 		return nil, err
 	}
 	sr, err := Select(ctx, sctx, kvReq, fieldTypes, fb)

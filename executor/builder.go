@@ -3367,9 +3367,9 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if err != nil {
 		return nil, err
 	}
-	enablePaging := false
+	indexPaging := false
 	if !indexStreaming {
-		enablePaging = b.ctx.GetSessionVars().EnablePaging
+		indexPaging = b.ctx.GetSessionVars().EnablePaging
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	startTS, err := b.getSnapshotTS()
@@ -3388,7 +3388,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		columns:           ts.Columns,
 		indexStreaming:    indexStreaming,
 		tableStreaming:    tableStreaming,
-		enablePaging:      enablePaging,
+		indexPaging:       indexPaging,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
 		corColInTblSide:   b.corColInDistPlan(v.TablePlans),

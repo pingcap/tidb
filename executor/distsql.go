@@ -360,7 +360,7 @@ type IndexLookUpExecutor struct {
 	indexStreaming bool
 	tableStreaming bool
 
-	enablePaging bool
+	indexPaging bool
 
 	corColInIdxSide bool
 	corColInTblSide bool
@@ -584,7 +584,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				worker.syncErr(err)
 				break
 			}
-			result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
+			var result distsql.SelectResult
+			if e.indexPaging {
+				result, err = distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
+			} else {
+				result, err = distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
+			}
 			if err != nil {
 				worker.syncErr(err)
 				break
