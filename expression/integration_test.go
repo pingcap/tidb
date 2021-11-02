@@ -10186,36 +10186,6 @@ func (s *testIntegrationSuite) TestIssue27610(c *C) {
 		Check(testkit.Rows())
 }
 
-<<<<<<< HEAD
-=======
-func (s *testIntegrationSuite) TestLastInsertId(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test;`)
-	tk.MustExec(`drop table if exists lastinsertid;`)
-	tk.MustExec(`create table lastinsertid (id int not null primary key auto_increment);`)
-	tk.MustQuery("SELECT @@last_insert_id;").Check(testkit.Rows("0"))
-	tk.MustExec(`INSERT INTO lastinsertid VALUES (NULL);`)
-	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("1 1"))
-	tk.MustExec(`INSERT INTO lastinsertid VALUES (NULL);`)
-	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("2 2"))
-	tk.MustExec(`INSERT INTO lastinsertid VALUES (NULL);`)
-	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
-}
-
-func (s *testIntegrationSuite) TestIdentity(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test;`)
-	tk.MustExec(`drop table if exists identity;`)
-	tk.MustExec(`create table identity (id int not null primary key auto_increment);`)
-	tk.MustQuery("SELECT @@identity;").Check(testkit.Rows("0"))
-	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
-	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("1 1"))
-	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
-	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("2 2"))
-	tk.MustExec(`INSERT INTO identity VALUES (NULL);`)
-	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
-}
-
 func (s *testIntegrationSuite) TestIssue28804(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -10239,7 +10209,6 @@ PARTITION p20210909 VALUES LESS THAN (1631203200)
 	tk.MustQuery("SELECT cast(floor(hour(ts) / 4) as char) as win_start FROM perf_offline_day partition (p20210907, p20210908) GROUP BY win_start;").Check(testkit.Rows("3"))
 }
 
->>>>>>> a18977a93... expression: fix a bug caused by cast function signature wrong in aggregation push down (#28805)
 func (s *testIntegrationSuite) TestIssue28643(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
