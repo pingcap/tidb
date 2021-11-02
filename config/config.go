@@ -574,7 +574,7 @@ var defaultConf = Config{
 	Host:                         DefHost,
 	AdvertiseAddress:             "",
 	Port:                         DefPort,
-	Socket:                       "/tmp/tidb.sock",
+	Socket:                       "/tmp/tidb-{Port}.sock",
 	Cors:                         "",
 	Store:                        "unistore",
 	Path:                         "/tmp/tidb",
