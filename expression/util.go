@@ -17,7 +17,6 @@ package expression
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"math"
 	"strconv"
 	"strings"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
