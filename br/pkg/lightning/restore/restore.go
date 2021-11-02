@@ -1327,9 +1327,12 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 					safePoint = minSafePoint
 				}
 			case <-ctx.Done():
-				if _, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, 0, safePoint); err != nil {
+				stopCtx, cancelFunc := context.WithTimeout(context.Background(), time.Second*5)
+				if _, err := pdCli.UpdateServiceGCSafePoint(stopCtx, serviceID, 0, safePoint); err != nil {
 					log.L().Warn("Failed to reset safe point ttl to zero", zap.Error(err))
 				}
+				// just make compiler happy
+				cancelFunc()
 				return
 			}
 		}
