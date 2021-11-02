@@ -393,7 +393,7 @@ func TestGlobalBinding(t *testing.T) {
 
 		rs, err := tk.Exec("show global bindings")
 		require.Nil(t, err)
-		chk := rs.NewChunk()
+		chk := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), chk)
 		require.Nil(t, err)
 		require.Equal(t, 1, chk.NumRows())
@@ -447,7 +447,7 @@ func TestGlobalBinding(t *testing.T) {
 
 		rs, err = tk.Exec("show global bindings")
 		require.Nil(t, err)
-		chk = rs.NewChunk()
+		chk = rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), chk)
 		require.Nil(t, err)
 		require.Equal(t, 0, chk.NumRows())

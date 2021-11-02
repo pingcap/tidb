@@ -86,11 +86,7 @@ func (r *recordSet) Next(_ context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (r *recordSet) NewChunkFromAllocator(chunk.Allocator) *chunk.Chunk {
-	return r.NewChunk()
-}
-
-func (r *recordSet) NewChunk() *chunk.Chunk {
+func (r *recordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
 	fields := make([]*types.FieldType, 0, len(r.fields))
 	for _, field := range r.fields {
 		fields = append(fields, &field.Column.FieldType)
@@ -107,7 +103,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.Reco
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong), Version1)
 	ctx := context.Background()
 	for {
-		req := records.NewChunk()
+		req := records.NewChunk(nil)
 		err := records.Next(ctx, req)
 		if err != nil {
 			return 0, nil, errors.Trace(err)

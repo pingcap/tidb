@@ -1820,7 +1820,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	if err != nil {
 		return "", errors.Trace(err)
