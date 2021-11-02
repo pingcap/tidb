@@ -131,6 +131,26 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	}, nil
 }
 
+func SelectWithPaging(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int, rootPlanID int) (SelectResult, error) {
+	pagingSR := &pagingResult{
+		label: "dag-paging",
+	}
+	if err := pagingSR.firstPage(kvReq); err != nil {
+		return nil, err
+	}
+	sr, err := Select(ctx, sctx, kvReq, fieldTypes, fb)
+	if err != nil {
+		return nil, err
+	}
+	if r, ok := sr.(*selectResult); !ok {
+		return nil, errors.New("unexpected result type")
+	} else {
+		pagingSR.sr = r
+	}
+	return sr, err
+}
+
 // SelectWithRuntimeStats sends a DAG request, returns SelectResult.
 // The difference from Select is that SelectWithRuntimeStats will set copPlanIDs into selectResult,
 // which can help selectResult to collect runtime stats.
