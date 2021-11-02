@@ -17,17 +17,17 @@ package local
 import (
 	"bytes"
 	"context"
-	"fmt"
 
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/br/pkg/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/util/codec"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
 )
 
 type pebbleIter struct {
@@ -87,7 +87,6 @@ func (d *duplicateIter) Last() bool {
 }
 
 func (d *duplicateIter) fill() {
-	fmt.Printf("key adaptor: %v, err: %v, key: %v, val: %v\n", d.keyAdapter, d.iter.Error(), d.iter.Key(), d.iter.Value())
 	d.curKey, _, _, d.err = d.keyAdapter.Decode(d.curKey[:0], d.iter.Key())
 	d.curRawKey = append(d.curRawKey[:0], d.iter.Key()...)
 	d.curVal = append(d.curVal[:0], d.iter.Value()...)
