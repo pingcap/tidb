@@ -275,11 +275,10 @@ func FindNextCharacterLength(label string) func([]byte) int {
 
 var encodingNextCharacterLength = map[string]func([]byte) int{
 	// https://en.wikipedia.org/wiki/GBK_(character_encoding)#Layout_diagram
-	"gbk":   characterLengthGBK,
-	"utf-8": characterLengthUTF8,
-	"binary": func(bs []byte) int {
-		return 1
-	},
+	"gbk":          characterLengthGBK,
+	"utf-8":        characterLengthUTF8,
+	"binary":       characterLengthOne,
+	"windows-1252": characterLengthOne,
 }
 
 func characterLengthGBK(bs []byte) int {
@@ -301,6 +300,10 @@ func characterLengthUTF8(bs []byte) int {
 	return 4
 }
 
+func characterLengthOne(_ []byte) int {
+	return 1
+}
+
 var _ StringValidator = StringValidatorASCII{}
 var _ StringValidator = StringValidatorUTF8{}
 var _ StringValidator = StringValidatorOther{}
@@ -308,6 +311,7 @@ var _ StringValidator = StringValidatorOther{}
 // StringValidator is used to check if a string is valid in the specific charset.
 type StringValidator interface {
 	Validate(str string) (invalidPos int)
+	Truncate(str string) string
 }
 
 // StringValidatorASCII checks whether a string is valid ASCII string.
@@ -322,6 +326,13 @@ func (s StringValidatorASCII) Validate(str string) (invalidPos int) {
 		}
 	}
 	return -1
+}
+
+// Truncate implement the interface StringValidator.
+func (s StringValidatorASCII) Truncate(str string) string {
+	enc := NewEncoding("ascii")
+	truncated := enc.EncodeInternal(nil, []byte(str))
+	return string(truncated)
 }
 
 // StringValidatorUTF8 checks whether a string is valid UTF8 string.
@@ -355,6 +366,22 @@ func (s StringValidatorUTF8) Validate(str string) (invalidPos int) {
 	return -1
 }
 
+// Truncate implement the interface StringValidator.
+func (s StringValidatorUTF8) Truncate(str string) string {
+	r := make([]byte, 0, len(str))
+	for i, w := 0, 0; i < len(str); i += w {
+		rv, width := utf8.DecodeRuneInString(str[i:])
+		w = width
+		if (rv == utf8.RuneError && !strings.HasPrefix(str[i:], string(utf8.RuneError))) ||
+			width > 3 && !s.IsUTF8MB4 {
+			r = append(r, '?')
+		} else {
+			r = append(r, str[i:i+w]...)
+		}
+	}
+	return string(r)
+}
+
 // StringValidatorOther checks whether a string is valid string in given charset.
 type StringValidatorOther struct {
 	Charset string
@@ -368,4 +395,11 @@ func (s StringValidatorOther) Validate(str string) (invalidPos int) {
 		return -1
 	}
 	return enc.IsValid([]byte(str))
+}
+
+// Truncate implement the interface StringValidator.
+func (s StringValidatorOther) Truncate(str string) string {
+	enc := NewEncoding(s.Charset)
+	truncated := enc.EncodeInternal(nil, []byte(str))
+	return string(truncated)
 }

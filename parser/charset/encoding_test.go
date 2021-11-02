@@ -92,41 +92,40 @@ func TestEncoding(t *testing.T) {
 	}
 }
 
-func (s *testEncodingSuite) TestValidatorASCII(c *C) {
+func TestStringValidatorASCII(t *testing.T) {
 	v := charset.StringValidatorASCII{}
-	c.Assert(v.Validate("qwerty"), Equals, -1)
-	c.Assert(v.Validate("qwÊrty"), Equals, 2)
-	c.Assert(v.Validate("中文"), Equals, 0)
+	require.Equal(t, -1, v.Validate("qwerty"))
+	require.Equal(t, 2, v.Validate("qwÊrty"))
+	require.Equal(t, 0, v.Validate("中文"))
 }
 
-func (s *testEncodingSuite) TestValidatorUTF8(c *C) {
+func TestStringValidatorUTF8(t *testing.T) {
 	// Test charset "utf8mb4".
 	v := charset.StringValidatorUTF8{IsUTF8MB4: true}
-	c.Assert(v.Validate("qwerty"), Equals, -1)
-	c.Assert(v.Validate("qwÊrty"), Equals, -1)
-	c.Assert(v.Validate("qwÊ合法字符串"), Equals, -1)
-	c.Assert(v.Validate("😂"), Equals, -1)
+	require.Equal(t, -1, v.Validate("qwerty"))
+	require.Equal(t, -1, v.Validate("qwÊrty"))
+	require.Equal(t, -1, v.Validate("qwÊ合法字符串"))
+	require.Equal(t, -1, v.Validate("😂"))
 	invalid := string([]byte{0xff, 0xfe, 0xfd})
-	c.Assert(v.Validate(invalid), Equals, 0)
+	require.Equal(t, 0, v.Validate(invalid))
 	// Test charset "utf8" without checking mb4 value.
 	v = charset.StringValidatorUTF8{IsUTF8MB4: false, CheckMB4ValueInUTF8: false}
-	c.Assert(v.Validate("qwerty"), Equals, -1)
-	c.Assert(v.Validate("qwÊrty"), Equals, -1)
-	c.Assert(v.Validate("qwÊ合法字符串"), Equals, -1)
-	c.Assert(v.Validate("qwÊ合法字符串"), Equals, -1)
-	c.Assert(v.Validate("😂"), Equals, -1)
-	c.Assert(v.Validate(invalid), Equals, 0)
+	require.Equal(t, -1, "qwerty")
+	require.Equal(t, -1, "qwÊrty")
+	require.Equal(t, -1, "qwÊ合法字符串")
+	require.Equal(t, -1, "😂")
+	require.Equal(t, 0, v.Validate(invalid))
 	// Test charset "utf8" with checking mb4 value.
 	v = charset.StringValidatorUTF8{IsUTF8MB4: false, CheckMB4ValueInUTF8: true}
-	c.Assert(v.Validate("😂"), Equals, 0) // 4-bytes character is invalid.
-	c.Assert(v.Validate(invalid), Equals, 0)
+	require.Equal(t, 0, v.Validate("😂")) // 4-bytes character is invalid.
+	require.Equal(t, 0, v.Validate(invalid))
 }
 
-func (s *testEncodingSuite) TestValidatorGBK(c *C) {
+func TestStringValidatorGBK(t *testing.T) {
 	v := charset.StringValidatorOther{Charset: "gbk"}
-	c.Assert(v.Validate("asdf"), Equals, -1)
-	c.Assert(v.Validate("中文"), Equals, -1)
-	c.Assert(v.Validate("À"), Equals, 0)
-	c.Assert(v.Validate("asdfÀ"), Equals, 4)
-	c.Assert(v.Validate("中文À"), Equals, 6)
+	require.Equal(t, -1, v.Validate("asdf"))
+	require.Equal(t, -1, v.Validate("中文"))
+	require.Equal(t, 0, v.Validate("À"))
+	require.Equal(t, 4, v.Validate("asdfÀ"))
+	require.Equal(t, 6, v.Validate("中文À"))
 }

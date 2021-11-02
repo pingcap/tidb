@@ -20,11 +20,6 @@ package table
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
-	"time"
-	"unicode"
-
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
@@ -41,6 +36,10 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
 )
 
 // Column provides meta data describing a table column.
@@ -170,9 +169,8 @@ func truncateTrailingSpaces(v *types.Datum) {
 	v.SetString(str, v.Collation())
 }
 
-func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, str string, i int) (types.Datum, error) {
+func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, str string, i int) error {
 	sc := ctx.GetSessionVars().StmtCtx
-
 	var strval strings.Builder
 	for j := 0; j < 6; j++ {
 		if len(str) > (i + j) {
@@ -186,14 +184,11 @@ func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, str 
 	if len(str) > i+6 {
 		strval.WriteString(`...`)
 	}
-
 	// TODO: Add 'at row %d'
 	err := ErrTruncatedWrongValueForField.FastGen("Incorrect string value '%s' for column '%s'", strval.String(), col.Name)
 	logutil.BgLogger().Error("incorrect string value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
-	// Truncate to valid utf8 string.
-	truncateVal := types.NewStringDatum(str[:i])
 	err = sc.HandleTruncate(err)
-	return truncateVal, err
+	return err
 }
 
 func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted types.Datum, str string, tmIsInvalid bool) (types.Datum, bool, error) {
@@ -321,7 +316,8 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	if v := makeStringValidator(ctx, col); v != nil {
 		str := casted.GetString()
 		if invalidPos := v.Validate(str); invalidPos >= 0 {
-			casted, err = handleWrongCharsetValue(ctx, col, str, invalidPos)
+			casted = types.NewStringDatum(v.Truncate(str))
+			err = handleWrongCharsetValue(ctx, col, str, invalidPos)
 		}
 	}
 	if forceIgnoreTruncate {

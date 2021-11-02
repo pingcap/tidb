@@ -157,9 +157,8 @@ func (e *Encoding) DecodeString(src string) (string, error) {
 	return string(bs), err
 }
 
-
 // IsValid checks whether src(utf8) bytes can be encode into a string with given charset.
-// Return -1 if it decodes successfully.
+// Return -1 if it encodes successfully.
 func (e *Encoding) IsValid(src []byte) (invalidPos int) {
 	dec := e.enc.NewEncoder()
 	dest := [4]byte{}
