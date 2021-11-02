@@ -254,8 +254,6 @@ func newSession(options *SessionOptions) *session {
 	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
-	// some buildin functions like "rpadFunctionClass" depends on this variable
-	_ = vars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatInt(int64(variable.MaxOfMaxAllowedPacket), 10))
 	vars.SQLMode = sqlMode
 	if options.SysVars != nil {
 		for k, v := range options.SysVars {

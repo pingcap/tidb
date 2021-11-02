@@ -366,7 +366,7 @@ func NewRestoreControllerWithPauser(
 			}
 		}
 
-		backend, err = local.NewLocalBackend(ctx, tls, cfg, g, maxOpenFiles, errorMgr)
+		backend, err = local.NewLocalBackend(ctx, tls, cfg, g, maxOpenFiles, errorMgr, nil)
 		if err != nil {
 			return nil, errors.Annotate(err, "build local backend failed")
 		}

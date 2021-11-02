@@ -717,8 +717,12 @@ func (tr *TableRestore) postProcess(
 		// 4.5. do duplicate detection.
 		hasDupe := false
 		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+			opts := &kv.SessionOptions{
+				SQLMode: rc.cfg.TiDB.SQLMode,
+				SysVars: rc.sysVars,
+			}
 			var err error
-			hasLocalDupe, err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName)
+			hasLocalDupe, err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
 				return false, err
@@ -737,7 +741,11 @@ func (tr *TableRestore) postProcess(
 		}
 
 		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName)
+			opts := &kv.SessionOptions{
+				SQLMode: rc.cfg.TiDB.SQLMode,
+				SysVars: rc.sysVars,
+			}
+			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
 				return false, e
