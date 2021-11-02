@@ -119,14 +119,14 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	chk1, _ := initBuildChunk(numRows)
 
 	hCtx := &hashContext{
-		allTypes:  colTypes,
+		hashTypes: colTypes,
 		keyColIdx: []int{1, 2},
 	}
 	hCtx.hasNull = make([]bool, numRows)
 	for i := 0; i < numRows; i++ {
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
-	rowContainer := newHashRowContainer(sctx, 0, hCtx)
+	rowContainer := newHashRowContainer(sctx, 0, hCtx, hCtx.hashTypes)
 	copiedRC = rowContainer.ShallowCopy()
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(memory.LabelForBuildSideResult)
@@ -150,7 +150,7 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	probeChk, probeColType := initProbeChunk(2)
 	probeRow := probeChk.GetRow(1)
 	probeCtx := &hashContext{
-		allTypes:  probeColType,
+		hashTypes: probeColType,
 		keyColIdx: []int{1, 2},
 	}
 	probeCtx.hasNull = make([]bool, 1)
