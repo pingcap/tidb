@@ -1347,6 +1347,7 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			sstMetasChan:       make(chan metaOrFlush),
 			tableInfo:          cfg.TableInfo,
 			duplicateDetection: local.duplicateDetection,
+			duplicateDB:        local.duplicateDB,
 			errorMgr:           local.errorMgr,
 		}
 		engineFile.sstIngester = dbSSTIngester{e: engineFile}
