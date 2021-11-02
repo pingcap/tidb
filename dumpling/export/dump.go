@@ -1115,7 +1115,7 @@ func tidbGetSnapshot(d *Dumper) error {
 		conn, err := pool.Conn(tctx)
 		if err != nil {
 			tctx.L().Warn("fail to open connection to get snapshot from TiDB", log.ShortError(err))
-			// for consistency snapshot, we must get a snapshot here, or we will dump inconsistent data
+			// for consistency snapshot, we must get a snapshot here, or we will dump inconsistent data, but for other consistency we can ignore this error.
 			if !snapshotConsistency {
 				err = nil
 			}
@@ -1125,7 +1125,7 @@ func tidbGetSnapshot(d *Dumper) error {
 		_ = conn.Close()
 		if err != nil {
 			tctx.L().Warn("fail to get snapshot from TiDB", log.ShortError(err))
-			// for consistency snapshot, we must get a snapshot here, or we will dump inconsistent data
+			// for consistency snapshot, we must get a snapshot here, or we will dump inconsistent data, but for other consistency we can ignore this error.
 			if !snapshotConsistency {
 				err = nil
 			}
