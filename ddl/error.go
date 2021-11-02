@@ -235,6 +235,8 @@ var (
 	ErrColumnTypeUnsupportedNextValue = dbterror.ClassDDL.NewStd(mysql.ErrColumnTypeUnsupportedNextValue)
 	// ErrAddColumnWithSequenceAsDefault is returned when the new added column with sequence's nextval as it's default value.
 	ErrAddColumnWithSequenceAsDefault = dbterror.ClassDDL.NewStd(mysql.ErrAddColumnWithSequenceAsDefault)
+	// ErrUnsupportedExpressionIndex is returned when create an expression index without allow-expression-index.
+	ErrUnsupportedExpressionIndex = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "creating expression index containing unsafe functions without allow-expression-index in config"), nil))
 	// ErrPartitionExchangePartTable is returned when exchange table partition with another table is partitioned.
 	ErrPartitionExchangePartTable = dbterror.ClassDDL.NewStd(mysql.ErrPartitionExchangePartTable)
 	// ErrTablesDifferentMetadata is returned when exchanges tables is not compatible.
@@ -265,6 +267,9 @@ var (
 	// ErrPlacementPolicyInUse is returned when placement policy is in use in drop/alter.
 	ErrPlacementPolicyInUse = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyInUse)
 
+	// ErrPlacementDisabled  is returned when tidb_enable_alter_placement = 0
+	ErrPlacementDisabled = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Alter Placement Rule is disabled, please set 'tidb_enable_alter_placement' if you need to enable it", nil))
+
 	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
 	ErrMultipleDefConstInListPart = dbterror.ClassDDL.NewStd(mysql.ErrMultipleDefConstInListPart)
 
@@ -288,7 +293,8 @@ var (
 
 	// ErrOptOnTemporaryTable returns when exec unsupported opt at temporary mode
 	ErrOptOnTemporaryTable = dbterror.ClassDDL.NewStd(mysql.ErrOptOnTemporaryTable)
-
+	// ErrOptOnCacheTable returns when exec unsupported opt at cache mode
+	ErrOptOnCacheTable                  = dbterror.ClassDDL.NewStd(mysql.ErrOptOnCacheTable)
 	errUnsupportedOnCommitPreserve      = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support ON COMMIT PRESERVE ROWS for now", nil))
 	errUnsupportedClusteredSecondaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil))
 
