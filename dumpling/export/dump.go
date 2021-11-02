@@ -1223,6 +1223,11 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 		tctx.L().Debug("no need to build region info because database is not TiDB 3.x")
 		return nil
 	}
+	// for TiDB v3.0+, the original selectTiDBTableRegionFunc will always fail,
+	// because TiDB v3.0 doesn't have `tidb_decode_key` function nor `DB_NAME`,`TABLE_NAME` columns in `INFORMATION_SCHEMA.TIKV_REGION_STATUS`.
+	// reference: https://github.com/pingcap/tidb/blob/c497d5c/dumpling/export/dump.go#L775
+	// To avoid this function continuously returning errors and confusing users because we fail to init this function at first,
+	// selectTiDBTableRegionFunc is set to always return an ignorable error at first.
 	d.selectTiDBTableRegionFunc = func(_ *tcontext.Context, _ *sql.Conn, meta TableMeta) (pkFields []string, pkVals [][]string, err error) {
 		return nil, nil, errors.Annotatef(emptyHandleValsErr, "table: `%s`.`%s`", escapeString(meta.DatabaseName()), escapeString(meta.TableName()))
 	}

@@ -1015,6 +1015,12 @@ func detectEstimateRows(tctx *tcontext.Context, db *sql.Conn, query string, fiel
 			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
+	err = rows.Err()
+	if err != nil {
+		tctx.L().Info("rows meet some error during the query when estimate rows",
+			zap.String("query", query), log.ShortError(err))
+		return 0
+	}
 	addr := make([]interface{}, len(columns))
 	oneRow := make([]sql.NullString, len(columns))
 	fieldIndex := -1
@@ -1044,13 +1050,6 @@ found:
 		return 0
 	}
 
-	_ = rows.Close()
-	err = rows.Err()
-	if err != nil {
-		tctx.L().Info("rows meet some error during the query when estimate rows",
-			zap.String("query", query), log.ShortError(err))
-		return 0
-	}
 	return uint64(estRows)
 }
 
