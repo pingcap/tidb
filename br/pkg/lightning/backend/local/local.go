@@ -1350,6 +1350,11 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			errorMgr:           local.errorMgr,
 		}
 		engineFile.sstIngester = dbSSTIngester{e: engineFile}
+		keyAdapter := KeyAdapter(noopKeyAdapter{})
+		if local.duplicateDetection {
+			keyAdapter = duplicateKeyAdapter{}
+		}
+		engineFile.keyAdapter = keyAdapter
 		if err = engineFile.loadEngineMeta(); err != nil {
 			return err
 		}
