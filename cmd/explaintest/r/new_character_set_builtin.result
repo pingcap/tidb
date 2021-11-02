@@ -136,14 +136,8 @@ insert into t values ('一二三', '一二三', '一二三');
 select md5(a), md5(b), md5(c) from t;
 md5(a)	md5(b)	md5(c)
 8093a32450075324682d01456d6e3919	a45d4af7b243e7f393fa09bed72ac73e	aae0117857fe54811a5239275dd81133
-select md5(convert('ㅂ123' using gbk)), md5('ㅂ123');
-md5(convert('ㅂ123' using gbk))	md5('ㅂ123')
-f597acb0169949bb197f4b26354c0f65	0e85d0f68c104b65a15d727e26705596
 set @@tidb_enable_vectorized_expression = true;
 select md5(a), md5(b), md5(c) from t;
 md5(a)	md5(b)	md5(c)
 8093a32450075324682d01456d6e3919	a45d4af7b243e7f393fa09bed72ac73e	aae0117857fe54811a5239275dd81133
-select md5(convert('ㅂ123' using gbk)), md5('ㅂ123');
-md5(convert('ㅂ123' using gbk))	md5('ㅂ123')
-f597acb0169949bb197f4b26354c0f65	0e85d0f68c104b65a15d727e26705596
 set @@tidb_enable_vectorized_expression = false;

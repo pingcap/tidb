@@ -340,7 +340,7 @@ func TestMD5Hash(t *testing.T) {
 		{"一二三", "8093a32450075324682d01456d6e3919", "", false, false},
 		{"一二三", "a45d4af7b243e7f393fa09bed72ac73e", "gbk", false, false},
 		{"ㅂ123", "0e85d0f68c104b65a15d727e26705596", "", false, false},
-		{"ㅂ123", "f597acb0169949bb197f4b26354c0f65", "gbk", false, false},
+		{"ㅂ123", "", "gbk", false, true},
 		{nil, "", "", true, false},
 	}
 	for _, c := range cases {
