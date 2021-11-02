@@ -16,9 +16,10 @@ package ddl
 
 import (
 	"context"
+	"reflect"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -27,29 +28,20 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testSchemaSuite{})
-
-type testSchemaSuite struct{}
-
-func (s *testSchemaSuite) SetUpSuite(c *C) {
-}
-
-func (s *testSchemaSuite) TearDownSuite(c *C) {
-}
-
-func testSchemaInfo(c *C, d *ddl, name string) *model.DBInfo {
+func testSchemaInfo(t *testing.T, d *ddl, name string) *model.DBInfo {
 	dbInfo := &model.DBInfo{
 		Name: model.NewCIStr(name),
 	}
 	genIDs, err := d.genGlobalIDs(1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	dbInfo.ID = genIDs[0]
 	return dbInfo
 }
 
-func testCreateSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
+func testCreateSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
@@ -57,11 +49,11 @@ func testCreateSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo
 		Args:       []interface{}{dbInfo},
 	}
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	v := getSchemaVer(c, ctx)
+	v := getSchemaVer(t, ctx)
 	dbInfo.State = model.StatePublic
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
 	dbInfo.State = model.StateNone
 	return job
 }
@@ -74,17 +66,17 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 	}
 }
 
-func testDropSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
+func testDropSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := buildDropSchemaJob(dbInfo)
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	ver := getSchemaVer(c, ctx)
+	require.NoError(t, err)
+	ver := getSchemaVer(t, ctx)
 	return job, ver
 }
 
-func isDDLJobDone(c *C, t *meta.Meta) bool {
-	job, err := t.GetDDLJobByIdx(0)
-	c.Assert(err, IsNil)
+func isDDLJobDone(t *testing.T, trans *meta.Meta) bool {
+	job, err := trans.GetDDLJobByIdx(0)
+	require.NoError(t, err)
 	if job == nil {
 		return true
 	}
@@ -93,29 +85,31 @@ func isDDLJobDone(c *C, t *meta.Meta) bool {
 	return false
 }
 
-func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.SchemaState) {
+func testCheckSchemaState(t *testing.T, d *ddl, dbInfo *model.DBInfo, state model.SchemaState) {
 	isDropped := true
 
 	for {
 		err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
-			info, err := t.GetDatabase(dbInfo.ID)
-			c.Assert(err, IsNil)
+			trans := meta.NewMeta(txn)
+			info, err := trans.GetDatabase(dbInfo.ID)
+			require.NoError(t, err)
 
 			if state == model.StateNone {
-				isDropped = isDDLJobDone(c, t)
+				isDropped = isDDLJobDone(t, trans)
 				if !isDropped {
 					return nil
 				}
-				c.Assert(info, IsNil)
+				require.Nil(t, info)
 				return nil
 			}
 
-			c.Assert(info.Name, DeepEquals, dbInfo.Name)
-			c.Assert(info.State, Equals, state)
+			if !reflect.DeepEqual(info.Name, dbInfo.Name) {
+				t.FailNow()
+			}
+			require.Equal(t, info.State, state)
 			return nil
 		})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		if isDropped {
 			break
@@ -123,57 +117,57 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 	}
 }
 
-func (s *testSchemaSuite) TestSchema(c *C) {
-	store := testCreateStore(c, "test_schema")
+func TestSchema(t *testing.T) {
+	store := testCreateStore(t, "test_schema")
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	d := testNewDDLAndStart(
 		context.Background(),
-		c,
+		t,
 		WithStore(store),
 		WithLease(testLease),
 	)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	ctx := testNewContext(d)
-	dbInfo := testSchemaInfo(c, d, "test_schema")
+	dbInfo := testSchemaInfo(t, d, "test_schema")
 
 	// create a database.
-	job := testCreateSchema(c, ctx, d, dbInfo)
-	testCheckSchemaState(c, d, dbInfo, model.StatePublic)
-	testCheckJobDone(c, d, job, true)
+	job := testCreateSchema(t, ctx, d, dbInfo)
+	testCheckSchemaState(t, d, dbInfo, model.StatePublic)
+	testCheckJobDone(t, d, job, true)
 
 	/*** to drop the schema with two tables. ***/
 	// create table t with 100 records.
-	tblInfo1 := testTableInfo(c, d, "t", 3)
-	tJob1 := testCreateTable(c, ctx, d, dbInfo, tblInfo1)
-	testCheckTableState(c, d, dbInfo, tblInfo1, model.StatePublic)
-	testCheckJobDone(c, d, tJob1, true)
-	tbl1 := testGetTable(c, d, dbInfo.ID, tblInfo1.ID)
+	tblInfo1 := testTableInfo(t, d, "t", 3)
+	tJob1 := testCreateTable(t, ctx, d, dbInfo, tblInfo1)
+	testCheckTableState(t, d, dbInfo, tblInfo1, model.StatePublic)
+	testCheckJobDone(t, d, tJob1, true)
+	tbl1 := testGetTable(t, d, dbInfo.ID, tblInfo1.ID)
 	for i := 1; i <= 100; i++ {
 		_, err := tbl1.AddRecord(ctx, types.MakeDatums(i, i, i))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 	// create table t1 with 1034 records.
-	tblInfo2 := testTableInfo(c, d, "t1", 3)
-	tJob2 := testCreateTable(c, ctx, d, dbInfo, tblInfo2)
-	testCheckTableState(c, d, dbInfo, tblInfo2, model.StatePublic)
-	testCheckJobDone(c, d, tJob2, true)
-	tbl2 := testGetTable(c, d, dbInfo.ID, tblInfo2.ID)
+	tblInfo2 := testTableInfo(t, d, "t1", 3)
+	tJob2 := testCreateTable(t, ctx, d, dbInfo, tblInfo2)
+	testCheckTableState(t, d, dbInfo, tblInfo2, model.StatePublic)
+	testCheckJobDone(t, d, tJob2, true)
+	tbl2 := testGetTable(t, d, dbInfo.ID, tblInfo2.ID)
 	for i := 1; i <= 1034; i++ {
 		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
-	job, v := testDropSchema(c, ctx, d, dbInfo)
-	testCheckSchemaState(c, d, dbInfo, model.StateNone)
+	job, v := testDropSchema(t, ctx, d, dbInfo)
+	testCheckSchemaState(t, d, dbInfo, model.StateNone)
 	ids := make(map[int64]struct{})
 	ids[tblInfo1.ID] = struct{}{}
 	ids[tblInfo2.ID] = struct{}{}
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo, tblIDs: ids})
 
 	// Drop a non-existent database.
 	job = &model.Job{
@@ -182,64 +176,64 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := d.doDDLJob(ctx, job)
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), IsTrue, Commentf("err %v", err))
+	require.True(t, terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), "err %v", err)
 
 	// Drop a database without a table.
-	dbInfo1 := testSchemaInfo(c, d, "test1")
-	job = testCreateSchema(c, ctx, d, dbInfo1)
-	testCheckSchemaState(c, d, dbInfo1, model.StatePublic)
-	testCheckJobDone(c, d, job, true)
-	job, _ = testDropSchema(c, ctx, d, dbInfo1)
-	testCheckSchemaState(c, d, dbInfo1, model.StateNone)
-	testCheckJobDone(c, d, job, false)
+	dbInfo1 := testSchemaInfo(t, d, "test1")
+	job = testCreateSchema(t, ctx, d, dbInfo1)
+	testCheckSchemaState(t, d, dbInfo1, model.StatePublic)
+	testCheckJobDone(t, d, job, true)
+	job, _ = testDropSchema(t, ctx, d, dbInfo1)
+	testCheckSchemaState(t, d, dbInfo1, model.StateNone)
+	testCheckJobDone(t, d, job, false)
 }
 
-func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
-	store := testCreateStore(c, "test_schema_wait")
+func TestSchemaWaitJob(t *testing.T) {
+	store := testCreateStore(t, "test_schema_wait")
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	d1 := testNewDDLAndStart(
 		context.Background(),
-		c,
+		t,
 		WithStore(store),
 		WithLease(testLease),
 	)
 	defer func() {
 		err := d1.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(t, d1, true)
 
 	d2 := testNewDDLAndStart(
 		context.Background(),
-		c,
+		t,
 		WithStore(store),
 		WithLease(testLease*4),
 	)
 	defer func() {
 		err := d2.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	ctx := testNewContext(d2)
 
 	// d2 must not be owner.
 	d2.ownerManager.RetireOwner()
 
-	dbInfo := testSchemaInfo(c, d2, "test_schema")
-	testCreateSchema(c, ctx, d2, dbInfo)
-	testCheckSchemaState(c, d2, dbInfo, model.StatePublic)
+	dbInfo := testSchemaInfo(t, d2, "test_schema")
+	testCreateSchema(t, ctx, d2, dbInfo)
+	testCheckSchemaState(t, d2, dbInfo, model.StatePublic)
 
 	// d2 must not be owner.
-	c.Assert(d2.ownerManager.IsOwner(), IsFalse)
+	require.False(t, d2.ownerManager.IsOwner())
 
 	genIDs, err := d2.genGlobalIDs(1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	schemaID := genIDs[0]
-	doDDLJobErr(c, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, ctx, d2)
+	doDDLJobErr(t, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, ctx, d2)
 }
 
 func testGetSchemaInfoWithError(d *ddl, schemaID int64) (*model.DBInfo, error) {

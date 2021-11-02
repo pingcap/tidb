@@ -16,9 +16,9 @@ package ddl
 
 import (
 	"context"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -27,68 +27,70 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testIndexChangeSuite{})
-
-type testIndexChangeSuite struct {
+type indexChangeSuite struct {
 	store  kv.Storage
 	dbInfo *model.DBInfo
 }
 
-func (s *testIndexChangeSuite) SetUpSuite(c *C) {
-	s.store = testCreateStore(c, "test_index_change")
+func createIndexChangeSuite(t *testing.T) (s *indexChangeSuite, clean func()) {
+	s = new(indexChangeSuite)
+	s.store = testCreateStore(t, "test_index_change")
 	d := testNewDDLAndStart(
 		context.Background(),
-		c,
+		t,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
-	s.dbInfo = testSchemaInfo(c, d, "test_index_change")
-	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
+	s.dbInfo = testSchemaInfo(t, d, "test_index_change")
+	testCreateSchema(t, testNewContext(d), d, s.dbInfo)
+	clean = func() {
+		s.store.Close()
+	}
+	return
 }
 
-func (s *testIndexChangeSuite) TearDownSuite(c *C) {
-	s.store.Close()
-}
-
-func (s *testIndexChangeSuite) TestIndexChange(c *C) {
+func TestIndexChange(t *testing.T) {
+	s, clean := createIndexChangeSuite(t)
+	defer clean()
 	d := testNewDDLAndStart(
 		context.Background(),
-		c,
+		t,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	// create table t (c1 int primary key, c2 int);
-	tblInfo := testTableInfo(c, d, "t", 2)
+	tblInfo := testTableInfo(t, d, "t", 2)
 	tblInfo.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	tblInfo.PKIsHandle = true
 	ctx := testNewContext(d)
 	err := ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	testCreateTable(t, ctx, d, s.dbInfo, tblInfo)
+	originTable := testGetTable(t, d, s.dbInfo.ID, tblInfo.ID)
 
 	// insert t values (1, 1), (2, 2), (3, 3)
 	_, err = originTable.AddRecord(ctx, types.MakeDatums(1, 1))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = originTable.AddRecord(ctx, types.MakeDatums(2, 2))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = originTable.AddRecord(ctx, types.MakeDatums(3, 3))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	tc := &TestDDLCallback{}
 	// set up hook
@@ -139,7 +141,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		}
 	}
 	d.SetHook(tc)
-	testCreateIndex(c, ctx, d, s.dbInfo, originTable.Meta(), false, "c2", "c2")
+	testCreateIndex(t, ctx, d, s.dbInfo, originTable.Meta(), false, "c2", "c2")
 	// We need to make sure onJobUpdated is called in the first hook.
 	// After testCreateIndex(), onJobUpdated() may not be called when job.state is Sync.
 	// If we skip this check, prevState may wrongly set to StatePublic.
@@ -149,10 +151,10 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	c.Check(checkErr, IsNil)
+	require.NoError(t, checkErr)
 	txn, err = ctx.Txn(true)
-	c.Assert(err, IsNil)
-	c.Assert(txn.Commit(context.Background()), IsNil)
+	require.NoError(t, err)
+	require.Nil(t, txn.Commit(context.Background()))
 	prevState = model.StateNone
 	var noneTable table.Table
 	tc.onJobUpdated = func(job *model.Job) {
@@ -191,8 +193,8 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			}
 		}
 	}
-	testDropIndex(c, ctx, d, s.dbInfo, publicTable.Meta(), "c2")
-	c.Check(checkErr, IsNil)
+	testDropIndex(t, ctx, d, s.dbInfo, publicTable.Meta(), "c2")
+	require.NoError(t, checkErr)
 }
 
 func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interface{}, handle int64, exists bool) error {
@@ -214,7 +216,7 @@ func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interf
 	return nil
 }
 
-func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context, delOnlyTbl, writeOnlyTbl table.Table) error {
+func (s *indexChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context, delOnlyTbl, writeOnlyTbl table.Table) error {
 	// DeleteOnlyTable: insert t values (4, 4);
 	err := ctx.NewTxn(context.Background())
 	if err != nil {
@@ -287,7 +289,7 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context,
 	return nil
 }
 
-func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, writeTbl, publicTbl table.Table) error {
+func (s *indexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, writeTbl, publicTbl table.Table) error {
 	// WriteOnlyTable: insert t values (6, 6)
 	err := ctx.NewTxn(context.Background())
 	if err != nil {
@@ -361,7 +363,7 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, wr
 	return txn.Commit(context.Background())
 }
 
-func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx sessionctx.Context, publicTbl, writeTbl table.Table) error {
+func (s *indexChangeSuite) checkDropWriteOnly(d *ddl, ctx sessionctx.Context, publicTbl, writeTbl table.Table) error {
 	// WriteOnlyTable insert t values (8, 8)
 	err := ctx.NewTxn(context.Background())
 	if err != nil {
@@ -405,7 +407,7 @@ func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx sessionctx.Context
 	return txn.Commit(context.Background())
 }
 
-func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx sessionctx.Context, writeTbl, delTbl table.Table) error {
+func (s *indexChangeSuite) checkDropDeleteOnly(d *ddl, ctx sessionctx.Context, writeTbl, delTbl table.Table) error {
 	// WriteOnlyTable insert t values (9, 9)
 	err := ctx.NewTxn(context.Background())
 	if err != nil {

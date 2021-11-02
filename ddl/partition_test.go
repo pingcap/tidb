@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = SerialSuites(&testPartitionSuite{})
@@ -31,39 +33,39 @@ type testPartitionSuite struct {
 	store kv.Storage
 }
 
-func (s *testPartitionSuite) SetUpSuite(c *C) {
-	s.store = testCreateStore(c, "test_store")
+func (s *testPartitionSuite) SetUpSuite(t *testing.T) {
+	s.store = testCreateStore(t, "test_store")
 }
 
-func (s *testPartitionSuite) TearDownSuite(c *C) {
+func (s *testPartitionSuite) TearDownSuite(t *testing.T) {
 	err := s.store.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testPartitionSuite) TestDropAndTruncatePartition(c *C) {
+func (s *testPartitionSuite) TestDropAndTruncatePartition(t *testing.T) {
 	d := testNewDDLAndStart(
 		context.Background(),
-		c,
+		t,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
-	dbInfo := testSchemaInfo(c, d, "test_partition")
-	testCreateSchema(c, testNewContext(d), d, dbInfo)
+	dbInfo := testSchemaInfo(t, d, "test_partition")
+	testCreateSchema(t, testNewContext(d), d, dbInfo)
 	// generate 5 partition in tableInfo.
-	tblInfo, partIDs := buildTableInfoWithPartition(c, d)
+	tblInfo, partIDs := buildTableInfoWithPartition(t, d)
 	ctx := testNewContext(d)
-	testCreateTable(c, ctx, d, dbInfo, tblInfo)
+	testCreateTable(t, ctx, d, dbInfo, tblInfo)
 
-	testDropPartition(c, ctx, d, dbInfo, tblInfo, []string{"p0", "p1"})
+	testDropPartition(t, ctx, d, dbInfo, tblInfo, []string{"p0", "p1"})
 
-	testTruncatePartition(c, ctx, d, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]})
+	testTruncatePartition(t, ctx, d, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]})
 }
 
-func buildTableInfoWithPartition(c *C, d *ddl) (*model.TableInfo, []int64) {
+func buildTableInfoWithPartition(t *testing.T, d *ddl) (*model.TableInfo, []int64) {
 	tbl := &model.TableInfo{
 		Name: model.NewCIStr("t"),
 	}
@@ -75,14 +77,14 @@ func buildTableInfoWithPartition(c *C, d *ddl) (*model.TableInfo, []int64) {
 		ID:        allocateColumnID(tbl),
 	}
 	genIDs, err := d.genGlobalIDs(1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tbl.ID = genIDs[0]
 	tbl.Columns = []*model.ColumnInfo{col}
 	tbl.Charset = "utf8"
 	tbl.Collate = "utf8_bin"
 
 	partIDs, err := d.genGlobalIDs(5)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	partInfo := &model.PartitionInfo{
 		Type:   model.PartitionTypeRange,
 		Expr:   tbl.Columns[0].Name.L,
@@ -129,12 +131,12 @@ func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partN
 	}
 }
 
-func testDropPartition(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
+func testDropPartition(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
 	job := buildDropPartitionJob(dbInfo, tblInfo, partNames)
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	require.NoError(t, err)
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -148,11 +150,11 @@ func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, p
 	}
 }
 
-func testTruncatePartition(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64) *model.Job {
+func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64) *model.Job {
 	job := buildTruncatePartitionJob(dbInfo, tblInfo, pids)
 	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	require.NoError(t, err)
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }

@@ -117,7 +117,7 @@ func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 	tc.BaseCallback.OnWatched(ctx)
 }
 
-func (s *testDDLSuite) TestCallback(c *C) {
+func (tc *TestDDLCallback) TestCallback(c *C) {
 	cb := &BaseCallback{}
 	c.Assert(cb.OnChanged(nil), IsNil)
 	cb.OnJobRunBefore(nil)

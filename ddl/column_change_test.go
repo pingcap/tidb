@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -36,62 +36,65 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testColumnChangeSuite{})
-
-type testColumnChangeSuite struct {
+type columnChangeSuite struct {
 	store  kv.Storage
 	dbInfo *model.DBInfo
 }
 
-func (s *testColumnChangeSuite) SetUpSuite(c *C) {
+func createColumnChangeSuite(t *testing.T) (s *columnChangeSuite, clean func()) {
+	s = new(columnChangeSuite)
 	SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
-	s.store = testCreateStore(c, "test_column_change")
+	s.store = testCreateStore(t, "test_column_change")
 	d := testNewDDLAndStart(
 		context.Background(),
-		c,
+		t,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
-	s.dbInfo = testSchemaInfo(c, d, "test_index_change")
-	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
+	s.dbInfo = testSchemaInfo(t, d, "test_index_change")
+	testCreateSchema(t, testNewContext(d), d, s.dbInfo)
+
+	clean = func() {
+		s.store.Close()
+	}
+	return
 }
 
-func (s *testColumnChangeSuite) TearDownSuite(c *C) {
-	s.store.Close()
-}
-
-func (s *testColumnChangeSuite) TestColumnChange(c *C) {
+func TestColumnChange(t *testing.T) {
+	s, clean := createColumnChangeSuite(t)
+	defer clean()
 	d := testNewDDLAndStart(
 		context.Background(),
-		c,
+		t,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	// create table t (c1 int, c2 int);
-	tblInfo := testTableInfo(c, d, "t", 2)
+	tblInfo := testTableInfo(t, d, "t", 2)
 	ctx := testNewContext(d)
 	err := ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	require.NoError(t, err)
+	testCreateTable(t, ctx, d, s.dbInfo, tblInfo)
 	// insert t values (1, 2);
-	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	originTable := testGetTable(t, d, s.dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
 	h, err := originTable.AddRecord(ctx, row)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	var mu sync.Mutex
 	tc := &TestDDLCallback{}
@@ -152,31 +155,33 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	}
 	d.SetHook(tc)
 	defaultValue := int64(3)
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
-	c.Assert(checkErr, IsNil)
-	testCheckJobDone(c, d, job, true)
+	job := testCreateColumn(t, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
+	require.NoError(t, checkErr)
+	testCheckJobDone(t, d, job, true)
 	mu.Lock()
 	tb := publicTable
 	mu.Unlock()
-	s.testColumnDrop(c, ctx, d, tb)
-	s.testAddColumnNoDefault(c, ctx, d, tblInfo)
+	s.testColumnDrop(t, ctx, d, tb)
+	s.testAddColumnNoDefault(t, ctx, d, tblInfo)
 }
 
-func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C) {
+func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
+	s, clean := createColumnChangeSuite(t)
+	defer clean()
 	d := testNewDDLAndStart(
 		context.Background(),
-		c,
+		t,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
 	defer func() {
 		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	ids, err := d.genGlobalIDs(1)
 	tableID := ids[0]
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	colInfo := &model.ColumnInfo{
 		Name:      model.NewCIStr("a"),
 		Offset:    0,
@@ -191,7 +196,7 @@ func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C)
 	}
 	colInfo.ID = allocateColumnID(tblInfo)
 	ctx := testNewContext(d)
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCreateTable(t, ctx, d, s.dbInfo, tblInfo)
 
 	tc := &TestDDLCallback{}
 	var errCount int32 = 3
@@ -217,10 +222,10 @@ func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C)
 		Args:       []interface{}{colInfo, colInfo.Name, ast.ColumnPosition{}, 0, newAutoRandomBits},
 	}
 	err = d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	c.Assert(errCount == 0, IsTrue)
-	c.Assert(genAutoRandErr, IsNil)
-	testCheckJobDone(c, d, job, true)
+	require.NoError(t, err)
+	require.True(t, errCount == 0)
+	require.NoError(t, genAutoRandErr)
+	testCheckJobDone(t, d, job, true)
 	var newTbInfo *model.TableInfo
 	err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -231,11 +236,13 @@ func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C)
 		}
 		return nil
 	})
-	c.Assert(err, IsNil)
-	c.Assert(newTbInfo.AutoRandomBits, Equals, newAutoRandomBits)
+	require.NoError(t, err)
+	require.Equal(t, newTbInfo.AutoRandomBits, newAutoRandomBits)
 }
 
-func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo) {
+func (s *columnChangeSuite) testAddColumnNoDefault(t *testing.T, ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo) {
+	s, clean := createColumnChangeSuite(t)
+	defer clean()
 	tc := &TestDDLCallback{}
 	// set up hook
 	prevState := model.StateNone
@@ -278,12 +285,14 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Cont
 		}
 	}
 	d.SetHook(tc)
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
-	c.Assert(checkErr, IsNil)
-	testCheckJobDone(c, d, job, true)
+	job := testCreateColumn(t, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
+	require.NoError(t, checkErr)
+	testCheckJobDone(t, d, job, true)
 }
 
-func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *ddl, tbl table.Table) {
+func (s *columnChangeSuite) testColumnDrop(t *testing.T, ctx sessionctx.Context, d *ddl, tbl table.Table) {
+	s, clean := createColumnChangeSuite(t)
+	defer clean()
 	dropCol := tbl.Cols()[2]
 	tc := &TestDDLCallback{}
 	// set up hook
@@ -305,8 +314,8 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *
 		}
 	}
 	d.SetHook(tc)
-	c.Assert(checkErr, IsNil)
-	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
+	require.NoError(t, checkErr)
+	testDropColumn(t, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }
 
 func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
@@ -331,7 +340,7 @@ func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle
 	return handle, true, nil
 }
 
-func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
+func (s *columnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
 	// WriteOnlyTable: insert t values (2, 3)
 	err := ctx.NewTxn(context.Background())
 	if err != nil {
@@ -405,7 +414,7 @@ func touchedSlice(t table.Table) []bool {
 	return touched
 }
 
-func (s *testColumnChangeSuite) checkAddPublic(sctx sessionctx.Context, d *ddl, writeOnlyTable, publicTable table.Table) error {
+func (s *columnChangeSuite) checkAddPublic(sctx sessionctx.Context, d *ddl, writeOnlyTable, publicTable table.Table) error {
 	ctx := context.TODO()
 	// publicTable Insert t values (4, 4, 4)
 	err := sctx.NewTxn(ctx)
