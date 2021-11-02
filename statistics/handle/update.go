@@ -700,7 +700,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 			tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
 			var rows []chunk.Row
 			for {
-				req := rc.NewChunk()
+				req := rc.NewChunk(nil)
 				iter := chunk.NewIterator4Chunk(req)
 				err := rc.Next(context.TODO(), req)
 				if err != nil {

@@ -832,7 +832,7 @@ type PhysicalIndexJoin struct {
 	innerTask task
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
-	Ranges []*ranger.Range
+	Ranges ranger.MutableRanges
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
 	// IdxColLens stores the length of each index column.
