@@ -50,6 +50,9 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	if builder.ReadReplicaScope == "" {
 		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}
+	if builder.StoreType != kv.TiKV {
+		builder.IsStaleness = false
+	}
 	if builder.ReplicaRead.IsClosestRead() && builder.ReadReplicaScope != kv.GlobalReplicaScope {
 		builder.MatchStoreLabels = []*metapb.StoreLabel{
 			{
