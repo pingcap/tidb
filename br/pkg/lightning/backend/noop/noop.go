@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/parser/model"
@@ -142,12 +143,16 @@ func (b noopBackend) LocalWriter(context.Context, *backend.LocalWriterConfig, uu
 	return noopWriter{}, nil
 }
 
-func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
+func (b noopBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
+func (b noopBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
 	panic("Unsupported Operation")
+}
+
+func (b noopBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
+	return nil
 }
 
 type noopEncoder struct{}

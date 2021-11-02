@@ -827,7 +827,7 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int64) error {
 	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
 	// feedback for partition is not ready.
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0, false)
+	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0, false, false)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
@@ -997,9 +997,9 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
-			sqlWithIdx := sql + "index %n"
+			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
-			escaped, err := sqlexec.EscapeSQL(sql, params...)
+			escaped, err := sqlexec.EscapeSQL(sqlWithIdx, paramsWithIdx...)
 			if err != nil {
 				return false
 			}
@@ -1084,7 +1084,11 @@ func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
-		logutil.BgLogger().Error("[stats] auto analyze failed", zap.String("sql", sql), zap.Duration("cost_time", dur), zap.Error(err))
+		escaped, err1 := sqlexec.EscapeSQL(sql, params...)
+		if err1 != nil {
+			escaped = ""
+		}
+		logutil.BgLogger().Error("[stats] auto analyze failed", zap.String("sql", escaped), zap.Duration("cost_time", dur), zap.Error(err))
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
 		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
@@ -1235,7 +1239,10 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	if !ok {
 		return nil
 	}
-	tablePseudo := t.Pseudo || t.IsOutdated()
+	tablePseudo := t.Pseudo
+	if h.mu.ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() {
+		tablePseudo = t.Pseudo || t.IsOutdated()
+	}
 	if !tablePseudo {
 		return nil
 	}

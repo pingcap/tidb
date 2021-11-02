@@ -1406,7 +1406,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	tableInfo := table.Meta()
-	dbInfo, _ := p.ensureInfoSchema().SchemaByName(tn.Schema)
+	dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {

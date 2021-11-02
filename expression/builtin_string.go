@@ -222,6 +222,15 @@ func (b *builtinLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+
+	argTp := b.args[0].GetType()
+	if !types.IsBinaryStr(argTp) {
+		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
+		if err == nil {
+			return int64(len(dBytes)), false, nil
+		}
+	}
+
 	return int64(len([]byte(val))), false, nil
 }
 
@@ -262,6 +271,13 @@ func (b *builtinASCIISig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	if len(val) == 0 {
 		return 0, false, nil
+	}
+	argTp := b.args[0].GetType()
+	if !types.IsBinaryStr(argTp) {
+		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
+		if err == nil {
+			return int64(dBytes[0]), false, nil
+		}
 	}
 	return int64(val[0]), false, nil
 }
@@ -1102,6 +1118,13 @@ func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, errUnknownCharacterSet.GenWithStackByArgs(transcodingName)
 	}
+	// convert function should always derive to CoercibilityImplicit
+	bf.SetCoercibility(CoercibilityImplicit)
+	if bf.tp.Charset == charset.CharsetASCII {
+		bf.SetRepertoire(ASCII)
+	} else {
+		bf.SetRepertoire(UNICODE)
+	}
 	// Result will be a binary string if converts charset to BINARY.
 	// See https://dev.mysql.com/doc/refman/5.7/en/charset-binary-set.html
 	if types.IsBinaryStr(bf.tp) {
@@ -1143,9 +1166,24 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	if encoding == nil {
 		return "", true, errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
 	}
+	// if expr is binary string and convert meet error, we should return NULL.
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		target, _, err := transform.String(encoding.NewEncoder(), expr)
+		if err != nil {
+			return "", true, err
+		}
 
-	target, _, err := transform.String(encoding.NewDecoder(), expr)
-	return target, err != nil, err
+		// we should convert target into utf8 internal.
+		exprInternal, _, _ := transform.String(encoding.NewDecoder(), target)
+		return exprInternal, false, nil
+	}
+	if types.IsBinaryStr(b.tp) {
+		enc := charset.NewEncoding(b.args[0].GetType().Charset)
+		expr, err = enc.EncodeString(expr)
+		return expr, false, err
+	}
+	enc := charset.NewEncoding(b.tp.Charset)
+	return string(enc.EncodeInternal(nil, []byte(expr))), false, nil
 }
 
 type substringFunctionClass struct {
@@ -3589,6 +3627,12 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
+	}
+	argTp := b.args[0].GetType()
+	if !types.IsBinaryStr(argTp) {
+		if encodedStr, err := charset.NewEncoding(argTp.Charset).EncodeString(str); err == nil {
+			str = encodedStr
+		}
 	}
 	needEncodeLen := base64NeededEncodedLength(len(str))
 	if needEncodeLen == -1 {

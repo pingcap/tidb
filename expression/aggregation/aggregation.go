@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -214,6 +215,11 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
 func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
+	for _, arg := range aggFunc.Args {
+		if arg.GetType().Tp == mysql.TypeDuration {
+			return false
+		}
+	}
 	switch aggFunc.Name {
 	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncApproxCountDistinct, ast.AggFuncGroupConcat:
 		return true
