@@ -75,6 +75,9 @@ type Lightning struct {
 }
 
 func initEnv(cfg *config.GlobalConfig) error {
+	if cfg.App.Config.File == "" {
+		return nil
+	}
 	return log.InitLogger(&cfg.App.Config, cfg.TiDB.LogLevel)
 }
 

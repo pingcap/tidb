@@ -149,19 +149,35 @@ func (s *testSuite5) TestShowWarningsForExprPushdown(c *C) {
 	tk.MustExec("use test")
 	testSQL := `create table if not exists show_warnings_expr_pushdown (a int, value date)`
 	tk.MustExec(testSQL)
-	tk.MustExec("explain select * from show_warnings_expr_pushdown where date_add(value, interval 1 day) = '2020-01-01'")
+
+	// create tiflash replica
+	{
+		is := domain.GetDomain(tk.Se).InfoSchema()
+		db, exists := is.SchemaByName(model.NewCIStr("test"))
+		c.Assert(exists, IsTrue)
+		for _, tblInfo := range db.Tables {
+			if tblInfo.Name.L == "show_warnings_expr_pushdown" {
+				tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+					Count:     1,
+					Available: true,
+				}
+			}
+		}
+	}
+	tk.MustExec("set tidb_allow_mpp=0")
+	tk.MustExec("explain select * from show_warnings_expr_pushdown t where md5(value) = '2020-01-01'")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt, return type: datetime(6)) can not be pushed to tikv"))
-	tk.MustExec("explain select max(date_add(value, interval 1 day)) from show_warnings_expr_pushdown group by a")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now."))
+	tk.MustExec("explain select max(md5(value)) from show_warnings_expr_pushdown group by a")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt, return type: datetime(6)) can not be pushed to tikv", "Warning|1105|Aggregation can not be pushed to tikv because arguments of AggFunc `max` contains unsupported exprs"))
-	tk.MustExec("explain select max(a) from show_warnings_expr_pushdown group by date_add(value, interval 1 day)")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because arguments of AggFunc `max` contains unsupported exprs"))
+	tk.MustExec("explain select max(a) from show_warnings_expr_pushdown group by md5(value)")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'date_add'(signature: AddDateDatetimeInt, return type: datetime(6)) can not be pushed to tikv", "Warning|1105|Aggregation can not be pushed to tikv because groupByItems contain unsupported exprs"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"))
 	tk.MustExec("set tidb_opt_distinct_agg_push_down=0")
 	tk.MustExec("explain select max(distinct a) from show_warnings_expr_pushdown group by value")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Aggregation can not be pushed to storage layer in non-mpp mode because it contains agg function with distinct"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+	// tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Aggregation can not be pushed to storage layer in non-mpp mode because it contains agg function with distinct"))
 }
 
 func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
@@ -956,7 +972,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
-func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
+func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	defer tk.MustExec(`DROP TABLE IF EXISTS t`)
@@ -998,6 +1014,9 @@ func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
 			"/*T![placement] PLACEMENT POLICY=`x` */",
 	))
+
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec(`DROP PLACEMENT POLICY if exists x`)
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {

@@ -117,3 +117,7 @@ func (c *pdClient) SplitRegions(ctx context.Context, splitKeys [][]byte, opts ..
 func (c *pdClient) GetRegionFromMember(ctx context.Context, key []byte, memberURLs []string) (*pd.Region, error) {
 	return nil, nil
 }
+
+func (c *pdClient) UpdateOption(option pd.DynamicOption, value interface{}) error {
+	return nil
+}

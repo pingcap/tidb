@@ -487,12 +487,22 @@ func TestDeriveCollation(t *testing.T) {
 			&ExprCollation{CoercibilityNumeric, ASCII, charset.CharsetBin, charset.CollationBin},
 		},
 		{
-			[]string{ast.Format},
+			[]string{ast.Format, ast.SHA2},
 			[]Expression{
 				newColInt(CoercibilityNumeric),
 				newColInt(CoercibilityNumeric),
 			},
 			[]types.EvalType{types.ETInt, types.ETInt},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityCoercible, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{ast.Space, ast.ToBase64, ast.UUID, ast.Hex, ast.MD5, ast.SHA},
+			[]Expression{
+				newColInt(CoercibilityNumeric),
+			},
+			[]types.EvalType{types.ETInt},
 			types.ETString,
 			false,
 			&ExprCollation{CoercibilityCoercible, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
@@ -520,7 +530,7 @@ func TestDeriveCollation(t *testing.T) {
 			nil,
 		},
 		{
-			[]string{ast.Bin, ast.FromBase64, ast.Hex, ast.Oct, ast.Space, ast.ToBase64, ast.Unhex, ast.WeightString},
+			[]string{ast.Bin, ast.FromBase64, ast.Oct, ast.Unhex, ast.WeightString},
 			[]Expression{
 				newColString(charset.CharsetLatin1, charset.CollationLatin1),
 			},
