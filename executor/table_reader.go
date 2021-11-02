@@ -180,7 +180,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
 	// cached table and temporary table are similar
-	if (e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone) || e.ctx.GetSessionVars().StmtCtx.CacheTableInfo.IsReadCacheTable {
+	if (e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone) || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
 		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
 		if err != nil {
 			return err
@@ -263,7 +263,7 @@ func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID in
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	if (e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone) || e.ctx.GetSessionVars().StmtCtx.CacheTableInfo.IsReadCacheTable {
+	if (e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone) || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
 		return nil
 	}
 

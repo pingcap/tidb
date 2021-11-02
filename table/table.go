@@ -261,7 +261,7 @@ type CachedTable interface {
 	// IsReadFromCache Check if the cache table is readable
 	IsReadFromCache(ts uint64) bool
 
-	// UpdateLockForRead If the read conditions of the cache are not met, the lock information needs to be updated. At the same time,
-	// reload data from the original table
+	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
+	// you need to update the lock information and read the data from the original table
 	UpdateLockForRead(ctx sessionctx.Context, ts uint64) error
 }

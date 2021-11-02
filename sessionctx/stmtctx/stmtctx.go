@@ -88,10 +88,6 @@ type StatementContext struct {
 	MaybeOverOptimized4PlanCache bool
 	IgnoreExplainIDSuffix        bool
 	IsStaleness                  bool
-	CacheTableInfo               struct {
-		IsReadCacheTable bool
-		TableID          int64
-	}
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -176,6 +172,8 @@ type StatementContext struct {
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
+	// cacheTables is used to store cache table id and corresponding information whether it is readable
+	cacheTablesCondMap map[int64]bool
 
 	// cache is used to reduce object allocation.
 	cache struct {
@@ -327,10 +325,15 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHint = hint
 }
 
-// InitCacheTableInfo initializes the sc.acheTableInfo.
-func (sc *StatementContext) InitCacheTableInfo(tblID int64, cond bool) {
-	sc.CacheTableInfo.TableID = tblID
-	sc.CacheTableInfo.IsReadCacheTable = cond
+// GetOrStoreCacheTableCondMap gets the read cond of the given key if it exists, otherwise stores the value.
+func (sc *StatementContext) GetOrStoreCacheTableCondMap(tblID int64, cond bool) bool {
+	if sc.cacheTablesCondMap == nil {
+		sc.cacheTablesCondMap = make(map[int64]bool)
+	}
+	if _, ok := sc.cacheTablesCondMap[tblID]; !ok {
+		sc.cacheTablesCondMap[tblID] = cond
+	}
+	return sc.cacheTablesCondMap[tblID]
 }
 
 // TableEntry presents table in db.
