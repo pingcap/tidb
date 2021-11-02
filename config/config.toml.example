@@ -145,6 +145,10 @@ format = "text"
 # Enable annotating logs with the full stack error message, if not set, it will be defaulted to false.
 # enable-error-stack = false
 
+# Sampling to rate limit the same message on the same log level per second (initial = number of messages before sampling, thereafter = sample ever Nth message).
+# Will use some additional memory for sampling counts.
+# sampling = { initial = 100, thereafter = 10 }
+
 # Whether to enable slow query log.
 enable-slow-log = true
 
