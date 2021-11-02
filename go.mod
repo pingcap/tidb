@@ -45,7 +45,7 @@ require (
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20210831093107-2f6cb8008145
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
-	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63
+	github.com/pingcap/errors v0.11.5-0.20211009033009-93128226aaa3
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20211011060348-d957056f1551
@@ -65,7 +65,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20211029104011-2fd3841894de
+	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20211101035952-9ec50224bea6
 	github.com/tikv/pd v1.1.0-beta.0.20211029083450-e65f0c55b6ae
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible

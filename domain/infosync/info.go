@@ -25,6 +25,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -512,25 +513,28 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	}
 }
 
-type topologyInfo struct {
+// TopologyInfo is the topology info
+type TopologyInfo struct {
 	ServerVersionInfo
+	IP             string            `json:"ip"`
 	StatusPort     uint              `json:"status_port"`
 	DeployPath     string            `json:"deploy_path"`
 	StartTimestamp int64             `json:"start_timestamp"`
 	Labels         map[string]string `json:"labels"`
 }
 
-func (is *InfoSyncer) getTopologyInfo() topologyInfo {
+func (is *InfoSyncer) getTopologyInfo() TopologyInfo {
 	s, err := os.Executable()
 	if err != nil {
 		s = ""
 	}
 	dir := path.Dir(s)
-	return topologyInfo{
+	return TopologyInfo{
 		ServerVersionInfo: ServerVersionInfo{
 			Version: mysql.TiDBReleaseVersion,
 			GitHash: is.info.ServerVersionInfo.GitHash,
 		},
+		IP:             is.info.IP,
 		StatusPort:     is.info.StatusPort,
 		DeployPath:     dir,
 		StartTimestamp: is.info.StartTimestamp,
@@ -641,6 +645,27 @@ func (is *InfoSyncer) Restart(ctx context.Context) error {
 // RestartTopology restart the topology syncer with new session leaseID and store server info to etcd again.
 func (is *InfoSyncer) RestartTopology(ctx context.Context) error {
 	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+}
+
+// GetAllTiDBTopology gets all tidb topology
+func (is *InfoSyncer) GetAllTiDBTopology(ctx context.Context) ([]*TopologyInfo, error) {
+	topos := make([]*TopologyInfo, 0)
+	response, err := is.etcdCli.Get(ctx, TopologyInformationPath, clientv3.WithPrefix())
+	if err != nil {
+		return nil, err
+	}
+	for _, kv := range response.Kvs {
+		if !strings.HasSuffix(string(kv.Key), "/info") {
+			continue
+		}
+		var topo *TopologyInfo
+		err = json.Unmarshal(kv.Value, &topo)
+		if err != nil {
+			return nil, err
+		}
+		topos = append(topos, topo)
+	}
+	return topos, nil
 }
 
 // newSessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.

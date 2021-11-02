@@ -89,7 +89,4 @@ type MPPClient interface {
 type MPPBuildTasksRequest struct {
 	KeyRanges []KeyRange
 	StartTS   uint64
-
-	BalanceWithContinuity        bool
-	BalanceContinuousRegionCount int64
 }
