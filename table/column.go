@@ -20,6 +20,11 @@ package table
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
@@ -36,10 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
-	"strconv"
-	"strings"
-	"time"
-	"unicode"
 )
 
 // Column provides meta data describing a table column.

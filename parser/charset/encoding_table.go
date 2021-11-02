@@ -330,9 +330,17 @@ func (s StringValidatorASCII) Validate(str string) (invalidPos int) {
 
 // Truncate implement the interface StringValidator.
 func (s StringValidatorASCII) Truncate(str string) string {
-	enc := NewEncoding("ascii")
-	truncated := enc.EncodeInternal(nil, []byte(str))
-	return string(truncated)
+	strBytes := Slice(str)
+	r := make([]byte, 0, len(str))
+	for i, w := 0, 0; i < len(str); i += w {
+		w = characterLengthUTF8(strBytes[i:])
+		if w > 1 || (w == 1 && str[i] > go_unicode.MaxASCII) {
+			r = append(r, '?')
+		} else {
+			r = append(r, str[i:i+w]...)
+		}
+	}
+	return string(r)
 }
 
 // StringValidatorUTF8 checks whether a string is valid UTF8 string.
