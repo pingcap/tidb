@@ -151,6 +151,30 @@ func TestToInt64(t *testing.T) {
 	testDatumToInt64(t, v, int64(3))
 }
 
+func TestToUint32(t *testing.T) {
+	t.Parallel()
+
+	sc := new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+
+	// test overflow
+	var datum = NewUintDatum(5000000000)
+	ft := NewFieldType(mysql.TypeLong)
+	ft.Flag |= mysql.UnsignedFlag
+	converted, err := datum.ConvertTo(sc, ft)
+	require.Error(t, err)
+	require.Equal(t, KindUint64, converted.Kind())
+	require.Equal(t, uint64(4294967295), converted.GetUint64())
+
+	datum.SetUint64(12345)
+	ft = NewFieldType(mysql.TypeLong)
+	ft.Flag |= mysql.UnsignedFlag
+	converted, err = datum.ConvertTo(sc, ft)
+	require.NoError(t, err)
+	require.Equal(t, KindUint64, converted.Kind())
+	require.Equal(t, uint64(12345), converted.GetUint64())
+}
+
 func TestToFloat32(t *testing.T) {
 	t.Parallel()
 	ft := NewFieldType(mysql.TypeFloat)
