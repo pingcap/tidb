@@ -1,14 +1,16 @@
--- test for builtin function hex(), length() and ascii()
+-- test for builtin function hex(), length(), ascii(), octet_length()
 drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
 insert into t values ('一二三', '一二三', '一二三');
 select hex(a), hex(b), hex(c) from t;
 select length(a), length(b), length(c) from t;
 select ascii(a), ascii(b), ascii(c) from t;
+select octet_length(a), octet_length(b), octet_length(c) from t;
 set @@tidb_enable_vectorized_expression = true;
 select hex(a), hex(b), hex(c) from t;
 select length(a), length(b), length(c) from t;
 select ascii(a), ascii(b), ascii(c) from t;
+select octet_length(a), octet_length(b), octet_length(c) from t;
 set @@tidb_enable_vectorized_expression = false;
 
 -- test for builtin function upper() and lower()
