@@ -10,6 +10,9 @@ length(a)	length(b)	length(c)
 select ascii(a), ascii(b), ascii(c) from t;
 ascii(a)	ascii(b)	ascii(c)
 228	210	228
+select octet_length(a), octet_length(b), octet_length(c) from t;
+octet_length(a)	octet_length(b)	octet_length(c)
+9	6	20
 set @@tidb_enable_vectorized_expression = true;
 select hex(a), hex(b), hex(c) from t;
 hex(a)	hex(b)	hex(c)
@@ -20,6 +23,9 @@ length(a)	length(b)	length(c)
 select ascii(a), ascii(b), ascii(c) from t;
 ascii(a)	ascii(b)	ascii(c)
 228	210	228
+select octet_length(a), octet_length(b), octet_length(c) from t;
+octet_length(a)	octet_length(b)	octet_length(c)
+9	6	20
 set @@tidb_enable_vectorized_expression = false;
 drop table if exists t;
 create table t (a char(100) charset utf8mb4, b char(100) charset gbk);
