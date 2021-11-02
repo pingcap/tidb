@@ -356,6 +356,17 @@ func BuildBackupRangeAndSchema(
 	return ranges, backupSchemas, nil
 }
 
+func skipUnsupportedDDLJob(job *model.Job) bool {
+	switch job.Type {
+	// Beacuse TiDB V5.3.0 support TableAttributes and TablePartitionAttributes.
+	// Incremental Backup need skip these DDLs to be compatible with previous br versions.
+	case model.ActionAlterTableAttributes, model.ActionAlterTablePartitionAttributes:
+		return true
+	}
+
+	return false
+}
+
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
 func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastBackupTS, backupTS uint64) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
@@ -388,6 +399,10 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 
 	count := 0
 	for _, job := range allJobs {
+		if skipUnsupportedDDLJob(job) {
+			continue
+		}
+
 		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
 			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion) {
 			jobBytes, err := json.Marshal(job)
