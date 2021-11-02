@@ -15,8 +15,8 @@
 package dbterror
 
 import (
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/terror"
 )
 
 // ErrClass represents a class of errors.

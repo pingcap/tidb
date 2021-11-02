@@ -57,6 +57,10 @@ func ParseBackend(rawURL string, options *BackendOptions) (*backuppb.StorageBack
 		local := &backuppb.Local{Path: u.Path}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Local{Local: local}}, nil
 
+	case "hdfs":
+		hdfs := &backuppb.HDFS{Remote: rawURL}
+		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Hdfs{Hdfs: hdfs}}, nil
+
 	case "noop":
 		noop := &backuppb.Noop{}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Noop{Noop: noop}}, nil

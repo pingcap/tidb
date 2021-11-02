@@ -22,11 +22,11 @@ import (
 	"sync"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -2862,7 +2862,6 @@ func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
 	c.Assert(err, NotNil)
 
 	// Cover the temporary table.
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	for val := range []int{0, 1} {
 		tk.MustExec("set tidb_constraint_check_in_place = ?", val)
 

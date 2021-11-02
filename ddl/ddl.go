@@ -29,9 +29,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
@@ -40,6 +37,9 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -569,7 +569,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	i := 0
 	for {
 		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
-			d.cancel()
+			_ = d.Stop()
 		})
 
 		select {

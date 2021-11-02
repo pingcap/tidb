@@ -24,12 +24,12 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -167,6 +167,207 @@ func (s *testPrepareSerialSuite) TestPrepareCacheIndexScan(c *C) {
 	tk.MustQuery("execute stmt1 using @a, @b").Check(testkit.Rows("1 3", "1 3"))
 }
 
+// dtype: tinyint, unsigned, float, decimal, year
+// rtype: null, valid, out-of-range, invalid, str, exists
+func randValue(tk *testkit.TestKit, tbl, col, dtype, rtype string) string {
+	if rtype == "" {
+		rtypes := []string{"null", "valid", "out-of-range", "invalid", "str", "exists"}
+		rtype = rtypes[rand.Intn(len(rtypes))]
+	}
+	if rtype == "null" {
+		return "null"
+	}
+	if rtype == "exists" {
+		res := tk.MustQuery(fmt.Sprintf("select %v from %v limit 1", col, tbl)).Rows()[0][0].(string)
+		if res == "<nil>" {
+			res = "null"
+		}
+		return res
+	}
+	switch dtype {
+	case "tinyint":
+		switch rtype {
+		case "valid":
+			return fmt.Sprintf("%v", -128+rand.Intn(256))
+		case "out-of-range":
+			return fmt.Sprintf("%v", 128+rand.Intn(1024))
+		case "invalid":
+			return "'invalid-tinyint'"
+		case "str":
+			return fmt.Sprintf("'%v'", -128+rand.Intn(256))
+		}
+	case "unsigned":
+		switch rtype {
+		case "valid":
+			return fmt.Sprintf("%v", rand.Intn(4294967295))
+		case "out-of-range":
+			return fmt.Sprintf("-%v", rand.Intn(4294967295))
+		case "invalid":
+			return "'invalid-unsigned-int'"
+		case "str":
+			return fmt.Sprintf("'%v'", rand.Intn(4294967295))
+		}
+	case "float":
+		switch rtype {
+		case "valid":
+			return fmt.Sprintf("%v%.4fE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
+		case "out-of-range":
+			return fmt.Sprintf("%v%.4fE%v", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(100)+38)
+		case "invalid":
+			return "'invalid-float'"
+		case "str":
+			return fmt.Sprintf("'%v%.4fE%v'", []string{"+", "-"}[rand.Intn(2)], rand.Float32(), rand.Intn(38))
+		}
+	case "decimal": // (10,2)
+		switch rtype {
+		case "valid":
+			return fmt.Sprintf("%v%v.%v", []string{"+", "-"}[rand.Intn(2)], rand.Intn(99999999), rand.Intn(100))
+		case "out-of-range":
+			switch rand.Intn(2) {
+			case 0:
+				return fmt.Sprintf("%v%v.%v", []string{"+", "-"}[rand.Intn(2)], rand.Intn(99999999), rand.Intn(100000)+100000)
+			case 1:
+				return fmt.Sprintf("%v%v.%v", []string{"+", "-"}[rand.Intn(2)], rand.Intn(99999999)+99999999+1, rand.Intn(100))
+			}
+		case "invalid":
+			return "'invalid-decimal'"
+		case "str":
+			return fmt.Sprintf("'%v%v.%v'", []string{"+", "-"}[rand.Intn(2)], rand.Intn(99999999), rand.Intn(100))
+		}
+	case "year":
+		switch rtype {
+		case "valid":
+			return fmt.Sprintf("%v", 1901+rand.Intn(2155-1901))
+		case "out-of-range":
+			return fmt.Sprintf("%v", 2156+rand.Intn(2155-1901))
+		case "invalid":
+			return "'invalid-year'"
+		case "str":
+			return fmt.Sprintf("'%v'", 1901+rand.Intn(2155-1901))
+		}
+	}
+	return "'invalid-type-" + dtype + "'"
+}
+
+func (s *testPrepareSerialSuite) TestPrepareCacheChangingParamType(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t_tinyint, t_unsigned, t_float, t_decimal, t_year`)
+	tk.MustExec(`create table t_tinyint (a tinyint, b tinyint, key(a))`)
+	tk.MustExec(`create table t_unsigned (a int unsigned, b int unsigned, key(a))`)
+	tk.MustExec(`create table t_float(a float, b float, key(a))`)
+	tk.MustExec(`create table t_decimal(a decimal(10,2), b decimal(10,2), key(a))`)
+	tk.MustExec(`create table t_year(a year, b year, key(a))`)
+	for _, dtype := range []string{"tinyint", "unsigned", "float", "decimal", "year"} {
+		tbl := "t_" + dtype
+		for i := 0; i < 10; i++ {
+			tk.MustExec(fmt.Sprintf("insert into %v values (%v, %v)", tbl, randValue(nil, "", "", dtype, "valid"), randValue(nil, "", "", dtype, "valid")))
+		}
+		tk.MustExec(fmt.Sprintf("insert into %v values (null, null)", tbl))
+		tk.MustExec(fmt.Sprintf("insert into %v values (%v, null)", tbl, randValue(nil, "", "", dtype, "valid")))
+		tk.MustExec(fmt.Sprintf("insert into %v values (null, %v)", tbl, randValue(nil, "", "", dtype, "valid")))
+
+		for round := 0; round < 10; round++ {
+			tk.MustExec(fmt.Sprintf(`prepare s1 from 'select * from %v where a=?'`, tbl))
+			tk.MustExec(fmt.Sprintf(`prepare s2 from 'select * from %v where b=?'`, tbl))
+			tk.MustExec(fmt.Sprintf(`prepare s3 from 'select * from %v where a in (?, ?, ?)'`, tbl))
+			tk.MustExec(fmt.Sprintf(`prepare s4 from 'select * from %v where b in (?, ?, ?)'`, tbl))
+			tk.MustExec(fmt.Sprintf(`prepare s5 from 'select * from %v where a>?'`, tbl))
+			tk.MustExec(fmt.Sprintf(`prepare s6 from 'select * from %v where b>?'`, tbl))
+			tk.MustExec(fmt.Sprintf(`prepare s7 from 'select * from %v where a>? and b>?'`, tbl))
+
+			for query := 0; query < 10; query++ {
+				a1, a2, a3 := randValue(tk, tbl, "a", dtype, ""), randValue(tk, tbl, "a", dtype, ""), randValue(tk, tbl, "a", dtype, "")
+				b1, b2, b3 := randValue(tk, tbl, "b", dtype, ""), randValue(tk, tbl, "b", dtype, ""), randValue(tk, tbl, "b", dtype, "")
+				tk.MustExec(fmt.Sprintf(`set @a1=%v,@a2=%v,@a3=%v`, a1, a2, a3))
+				tk.MustExec(fmt.Sprintf(`set @b1=%v,@b2=%v,@b3=%v`, b1, b2, b3))
+
+				compareResult := func(sql1, sql2 string) {
+					raw, err := tk.Exec(sql1)
+					if err != nil {
+						err := tk.ExecToErr(sql2)
+						c.Assert(err, NotNil)
+						return
+					}
+					rs := tk.ResultSetToResult(raw, Commentf("sql1:%s, sql2:%v", sql1, sql2))
+					rs.Sort().Check(tk.MustQuery(sql2).Sort().Rows())
+				}
+
+				compareResult(`execute s1 using @a1`, fmt.Sprintf(`select * from %v where a=%v`, tbl, a1))
+				compareResult(`execute s2 using @b1`, fmt.Sprintf(`select * from %v where b=%v`, tbl, b1))
+				compareResult(`execute s3 using @a1,@a2,@a3`, fmt.Sprintf(`select * from %v where a in (%v,%v,%v)`, tbl, a1, a2, a3))
+				compareResult(`execute s4 using @b1,@b2,@b3`, fmt.Sprintf(`select * from %v where b in (%v,%v,%v)`, tbl, b1, b2, b3))
+				compareResult(`execute s5 using @a1`, fmt.Sprintf(`select * from %v where a>%v`, tbl, a1))
+				compareResult(`execute s6 using @b1`, fmt.Sprintf(`select * from %v where b>%v`, tbl, b1))
+				compareResult(`execute s7 using @a1,@b1`, fmt.Sprintf(`select * from %v where a>%v and b>%v`, tbl, a1, b1))
+			}
+		}
+	}
+}
+
+func (s *testPrepareSerialSuite) TestPrepareCacheChangeCharsetCollation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a varchar(64))`)
+	tk.MustExec(`set character_set_connection=utf8`)
+
+	tk.MustExec(`prepare s from 'select * from t where a=?'`)
+	tk.MustExec(`set @x='a'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustExec(`set @x='b'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`set character_set_connection=latin1`)
+	tk.MustExec(`set @x='c'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // cannot reuse the previous plan since the charset is changed
+	tk.MustExec(`set @x='d'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`set collation_connection=binary`)
+	tk.MustExec(`set @x='e'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // cannot reuse the previous plan since the collation is changed
+	tk.MustExec(`set @x='f'`)
+	tk.MustExec(`execute s using @x`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -191,7 +392,7 @@ func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
 	tk.MustExec("prepare sel1 from 'select id, c1 from t1 where c1 < now(3)'")
 
 	sql1 := "execute sel1"
-	expectedPattern := `IndexReader\(Index\(t1.idx1\)\[\[-inf,[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]:[0-5][0-9].[0-9][0-9][0-9]\)\]\)`
+	expectedPattern := `IndexReader\(Index\(t1.idx1\)\[\[-inf,[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]:[0-5][0-9].[0-9][0-9][0-9]\)\]\)->Sel\(\[lt\(test.t1.c1, now\(3\)\)\]\)`
 
 	var cnt [2]float64
 	var planStr [2]string
@@ -343,6 +544,48 @@ func (s *testPrepareSerialSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) 
 		LEFT JOIN t1 pp ON pp.id = t3.preceding_id
 	GROUP BY t1.id ;'`)
 	tk.MustQuery("execute stmt").Sort().Check(testkit.Rows("partner1", "partner2", "partner3", "partner4"))
+}
+
+func (s *testPrepareSerialSuite) TestPrepareCachePointGetInsert(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1 (a int, b int, primary key(a))")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
+
+	tk.MustExec("create table t2 (a int, b int, primary key(a))")
+	tk.MustExec(`prepare stmt1 from "insert into t2 select * from t1 where a=?"`)
+
+	tk.MustExec("set @a=1")
+	tk.MustExec("execute stmt1 using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 1"))
+
+	tk.MustExec("set @a=2")
+	tk.MustExec("execute stmt1 using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 1", "2 2"))
+
+	tk.MustExec("set @a=3")
+	tk.MustExec("execute stmt1 using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2 order by a").Check(testkit.Rows("1 1", "2 2", "3 3"))
 }
 
 // nolint:unused
@@ -858,6 +1101,40 @@ func (s *testPlanSerialSuite) TestPlanCacheHitInfo(c *C) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
+func (s *testPlanSerialSuite) TestIssue28942(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists IDT_MULTI15853STROBJSTROBJ`)
+	tk.MustExec(`
+	CREATE TABLE IDT_MULTI15853STROBJSTROBJ (
+	  COL1 enum('aa','bb','cc') DEFAULT NULL,
+	  COL2 mediumint(41) DEFAULT NULL,
+	  KEY U_M_COL4 (COL1,COL2)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustExec(`insert into IDT_MULTI15853STROBJSTROBJ values("aa", 1)`)
+	tk.MustExec(`prepare stmt from 'SELECT * FROM IDT_MULTI15853STROBJSTROBJ WHERE col1 = ? AND col1 != ?'`)
+	tk.MustExec(`set @a="mm", @b="aa"`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // empty result
+	tk.MustExec(`set @a="aa", @b="aa"`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // empty result
+}
+
 func (s *testPlanSerialSuite) TestPlanCacheUnsignedHandleOverflow(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -890,6 +1167,169 @@ func (s *testPlanSerialSuite) TestPlanCacheUnsignedHandleOverflow(c *C) {
 	tk.MustExec("set @p = 18446744073709551615")
 	tk.MustQuery("execute stmt using @p").Check(testkit.Rows("18446744073709551615"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func (s *testPlanSerialSuite) TestIssue28254(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists PK_GCOL_STORED9816")
+	tk.MustExec("CREATE TABLE `PK_GCOL_STORED9816` (`COL102` decimal(55,0) DEFAULT NULL)")
+	tk.MustExec("insert into PK_GCOL_STORED9816 values(9710290195629059011)")
+	tk.MustExec("prepare stmt from 'select count(*) from PK_GCOL_STORED9816 where col102 > ?'")
+	tk.MustExec("set @a=9860178624005968368")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("0"))
+	tk.MustExec("set @a=-7235178122860450591")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
+	tk.MustExec("set @a=9860178624005968368")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("0"))
+	tk.MustExec("set @a=-7235178122860450591")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
+}
+
+func (s *testPlanSerialSuite) TestIssue28867(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`CREATE TABLE t1 (c_int int, c_str varchar(40), PRIMARY KEY (c_int, c_str))`)
+	tk.MustExec(`CREATE TABLE t2 (c_str varchar(40), PRIMARY KEY (c_str))`)
+	tk.MustExec(`insert into t1 values (1, '1')`)
+	tk.MustExec(`insert into t2 values ('1')`)
+
+	tk.MustExec(`prepare stmt from 'select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 on t1.c_str <= t2.c_str where t1.c_int in (?,?)'`)
+	tk.MustExec(`set @a=10, @b=20`)
+	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows())
+	tk.MustExec(`set @a=1, @b=2`)
+	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("1 1 1"))
+
+	// test case for IndexJoin + PlanCache
+	tk.MustExec(`drop table t1, t2`)
+	tk.MustExec(`create table t1 (a int, b int, c int, index idxab(a, b, c))`)
+	tk.MustExec(`create table t2 (a int, b int)`)
+
+	tk.MustExec(`prepare stmt from 'select /*+ INL_JOIN(t1,t2) */ * from t1, t2 where t1.a=t2.a and t1.b=?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute stmt using @a`)
+	tk.MustExec(`execute stmt using @a`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec(`prepare stmt from 'select /*+ INL_JOIN(t1,t2) */ * from t1, t2 where t1.a=t2.a and t1.c=?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute stmt using @a`)
+	tk.MustExec(`execute stmt using @a`)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func (s *testPlanSerialSuite) TestIssue28828(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("CREATE TABLE t (" +
+		"id bigint(20) NOT NULL," +
+		"audit_id bigint(20) NOT NULL," +
+		"PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */," +
+		"KEY index_audit_id (audit_id)" +
+		");")
+	tk.MustExec("insert into t values(1,9941971237863475), (2,9941971237863476), (3, 0);")
+	tk.MustExec("prepare stmt from 'select * from t where audit_id=?';")
+	tk.MustExec("set @a='9941971237863475', @b=9941971237863475, @c='xayh7vrWVNqZtzlJmdJQUwAHnkI8Ec', @d='0.0', @e='0.1', @f = '9941971237863476';")
+
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1 9941971237863475"))
+	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("1 9941971237863475"))
+	// When the type of parameters have been changed, the plan cache can not be used.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @c;").Check(testkit.Rows("3 0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @d;").Check(testkit.Rows("3 0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @e;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @d;").Check(testkit.Rows("3 0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @f;").Check(testkit.Rows("2 9941971237863476"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("prepare stmt from 'select count(*) from t where audit_id in (?, ?, ?, ?, ?)';")
+	tk.MustQuery("execute stmt using @a, @b, @c, @d, @e;").Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @f, @b, @c, @d, @e;").Check(testkit.Rows("3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
+
+func (s *testPlanSerialSuite) TestIssue28920(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		c.Assert(store.Close(), IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists UK_GCOL_VIRTUAL_18928`)
+	tk.MustExec(`
+	CREATE TABLE UK_GCOL_VIRTUAL_18928 (
+	  COL102 bigint(20) DEFAULT NULL,
+	  COL103 bigint(20) DEFAULT NULL,
+	  COL1 bigint(20) GENERATED ALWAYS AS (COL102 & 10) VIRTUAL,
+	  COL2 varchar(20) DEFAULT NULL,
+	  COL4 datetime DEFAULT NULL,
+	  COL3 bigint(20) DEFAULT NULL,
+	  COL5 float DEFAULT NULL,
+	  UNIQUE KEY UK_COL1 (COL1))`)
+	tk.MustExec(`insert into UK_GCOL_VIRTUAL_18928(col102,col2) values("-5175976006730879891", "屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖")`)
+	tk.MustExec(`prepare stmt from 'SELECT * FROM UK_GCOL_VIRTUAL_18928 WHERE col1 < ? AND col2 != ?'`)
+	tk.MustExec(`set @a=10, @b="aa"`)
+	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("-5175976006730879891 <nil> 8 屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖 <nil> <nil> <nil>"))
 }
 
 func (s *testPlanSerialSuite) TestIssue18066(c *C) {
@@ -1102,74 +1542,94 @@ func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
 	tk.MustExec("insert into t0 values('0000','7777',1)")
 	tk.MustExec("prepare s0 from 'select * from t0 where c1=? and c2>=? and c2<=?'")
 	tk.MustExec("set @a0='0000', @b0='9999'")
-	// TableDual plan would be built, we should not cache it.
+	// TableDual is forbidden for plan-cache, a TableReader be built and cached.
 	tk.MustQuery("execute s0 using @a0, @b0, @a0").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous TableDual plan.
 	tk.MustQuery("execute s0 using @a0, @a0, @b0").Check(testkit.Rows("0000 7777 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec("create table t1(c1 varchar(20), c2 varchar(20), c3 bigint(20), primary key(c1, c2))")
 	tk.MustExec("insert into t1 values('0000','7777',1)")
 	tk.MustExec("prepare s1 from 'select * from t1 where c1=? and c2>=? and c2<=?'")
 	tk.MustExec("set @a1='0000', @b1='9999'")
-	// PointGet plan would be built, we should not cache it.
+	// IndexLookup plan would be built, we should cache it.
 	tk.MustQuery("execute s1 using @a1, @b1, @b1").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous PointGet plan.
 	tk.MustQuery("execute s1 using @a1, @a1, @b1").Check(testkit.Rows("0000 7777 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec("create table t2(c1 bigint(20) primary key, c2 varchar(20))")
 	tk.MustExec("insert into t2 values(1,'7777')")
 	tk.MustExec("prepare s2 from 'select * from t2 where c1>=? and c1<=?'")
 	tk.MustExec("set @a2=0, @b2=9")
-	// PointGet plan would be built, we should not cache it.
+	// TableReader plan would be built, we should cache it.
 	tk.MustQuery("execute s2 using @a2, @a2").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous PointGet plan.
 	tk.MustQuery("execute s2 using @a2, @b2").Check(testkit.Rows("1 7777"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec("create table t3(c1 int, c2 int, c3 int, unique key(c1), key(c2))")
 	tk.MustExec("insert into t3 values(2,1,1)")
 	tk.MustExec("prepare s3 from 'select /*+ use_index_merge(t3) */ * from t3 where (c1 >= ? and c1 <= ?) or c2 > 1'")
 	tk.MustExec("set @a3=1,@b3=3")
-	// PointGet partial plan would be built, we should not cache it.
+	// TableReader plan would be built, we should cache it.
 	tk.MustQuery("execute s3 using @a3,@a3").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous IndexMerge with partial PointGet plan.
 	tk.MustQuery("execute s3 using @a3,@b3").Check(testkit.Rows("2 1 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec("prepare s3 from 'select /*+ use_index_merge(t3) */ * from t3 where (c1 >= ? and c1 <= ?) or c2 > 1'")
 	tk.MustExec("set @a3=1,@b3=3")
-	// TableDual partial plan would be built, we should not cache it.
+	// TableReader plan would be built, we should cache it.
 	tk.MustQuery("execute s3 using @b3,@a3").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous IndexMerge with partial TableDual plan.
 	tk.MustQuery("execute s3 using @a3,@b3").Check(testkit.Rows("2 1 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec("create table t4(c1 int primary key, c2 int, c3 int, key(c2))")
 	tk.MustExec("insert into t4 values(2,1,1)")
 	tk.MustExec("prepare s4 from 'select /*+ use_index_merge(t4) */ * from t4 where (c1 >= ? and c1 <= ?) or c2 > 1'")
 	tk.MustExec("set @a4=1,@b4=3")
-	// PointGet partial plan would be built, we should not cache it.
 	tk.MustQuery("execute s4 using @a4,@a4").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous IndexMerge with partial PointGet plan.
 	tk.MustQuery("execute s4 using @a4,@b4").Check(testkit.Rows("2 1 1"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec("prepare s4 from 'select /*+ use_index_merge(t4) */ * from t4 where (c1 >= ? and c1 <= ?) or c2 > 1'")
 	tk.MustExec("set @a4=1,@b4=3")
-	// TableDual partial plan would be built, we should not cache it.
 	tk.MustQuery("execute s4 using @b4,@a4").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	// Must not reuse the previous IndexMerge with partial TableDual plan.
 	tk.MustQuery("execute s4 using @a4,@b4").Check(testkit.Rows("2 1 1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func (s *testPrepareSuite) TestIssue26873(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		c.Assert(store.Close(), IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t(a int primary key, b int, c int)")
+	tk.MustExec("prepare stmt from 'select * from t where a = 2 or a = ?'")
+	tk.MustExec("set @p = 3")
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func (s *testPlanSerialSuite) TestIssue23671(c *C) {
@@ -1199,7 +1659,38 @@ func (s *testPlanSerialSuite) TestIssue23671(c *C) {
 	tk.MustQuery("execute s1 using @a, @b, @c").Check(testkit.Rows("1 1"))
 	tk.MustExec("set @a=1, @b=1, @c=10")
 	tk.MustQuery("execute s1 using @a, @b, @c").Check(testkit.Rows("1 1", "2 2"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func (s *testPrepareSerialSuite) TestIssue28246(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists PK_AUTO_RANDOM9111;")
+	tk.MustExec("CREATE TABLE `PK_AUTO_RANDOM9111` (   `COL1` bigint(45) NOT NULL  ,   `COL2` varchar(20) DEFAULT NULL,   `COL4` datetime DEFAULT NULL,   `COL3` bigint(20) DEFAULT NULL,   `COL5` float DEFAULT NULL,   PRIMARY KEY (`COL1`)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into PK_AUTO_RANDOM9111(col1) values (-9223372036854775808), (9223372036854775807);")
+	tk.MustExec("set @a=9223372036854775807, @b=1")
+	tk.MustExec(`prepare stmt from 'select min(col1) from PK_AUTO_RANDOM9111 where col1 > ?;';`)
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("9223372036854775807"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
 func (s *testPlanSerialSuite) TestPartitionTable(c *C) {

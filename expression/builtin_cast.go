@@ -28,10 +28,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -1898,6 +1898,9 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	tp.Flen, tp.Decimal = expr.GetType().Flen, expr.GetType().Decimal
 	if expr.GetType().EvalType() == types.ETInt {
 		tp.Flen = mysql.MaxIntWidth
+	}
+	if tp.Flen == types.UnspecifiedLength || tp.Flen > mysql.MaxDecimalWidth {
+		tp.Flen = mysql.MaxDecimalWidth
 	}
 	types.SetBinChsClnFlag(tp)
 	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag

@@ -29,7 +29,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"

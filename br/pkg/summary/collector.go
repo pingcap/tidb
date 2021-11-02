@@ -209,7 +209,7 @@ func (tc *logCollector) Summary(name string) {
 				logFields = append(logFields, zap.String("Result", "Nothing to bakcup"))
 			} else {
 				logFields = append(logFields,
-					zap.String(BackupDataSize, units.HumanSize(float64(data))))
+					zap.String(logKeyFor(BackupDataSize), units.HumanSize(float64(data))))
 			}
 			continue
 		}
@@ -218,7 +218,7 @@ func (tc *logCollector) Summary(name string) {
 				logFields = append(logFields, zap.String("Result", "Nothing to restore"))
 			} else {
 				logFields = append(logFields,
-					zap.String(RestoreDataSize, units.HumanSize(float64(data))))
+					zap.String(logKeyFor(RestoreDataSize), units.HumanSize(float64(data))))
 			}
 			continue
 		}

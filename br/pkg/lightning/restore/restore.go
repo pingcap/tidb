@@ -25,11 +25,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/parser/model"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -53,7 +55,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/collate"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -111,6 +115,11 @@ const (
 
 	compactionLowerThreshold = 512 * units.MiB
 	compactionUpperThreshold = 32 * units.GiB
+)
+
+var (
+	minTiKVVersionForDuplicateResolution = *semver.New("5.2.0")
+	maxTiKVVersionForDuplicateResolution = version.NextMajorVersion()
 )
 
 // DeliverPauser is a shared pauser to pause progress to (*chunkRestore).encodeLoop
@@ -329,7 +338,7 @@ func NewRestoreControllerWithPauser(
 			return nil, errors.Annotate(err, "open importer backend failed")
 		}
 	case config.BackendTiDB:
-		db, err := DBFromConfig(cfg.TiDB)
+		db, err := g.GetDB()
 		if err != nil {
 			return nil, errors.Annotate(err, "open tidb backend failed")
 		}
@@ -346,8 +355,18 @@ func NewRestoreControllerWithPauser(
 			maxOpenFiles = math.MaxInt32
 		}
 
-		backend, err = local.NewLocalBackend(ctx, tls, cfg.TiDB.PdAddr, &cfg.TikvImporter,
-			cfg.Checkpoint.Enable, g, maxOpenFiles, errorMgr)
+		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+			if err := tikv.CheckTiKVVersion(ctx, tls, cfg.TiDB.PdAddr, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
+				if berrors.Is(err, berrors.ErrVersionMismatch) {
+					log.L().Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
+					cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
+				} else {
+					return nil, errors.Annotate(err, "check TiKV version for duplicate resolution failed")
+				}
+			}
+		}
+
+		backend, err = local.NewLocalBackend(ctx, tls, cfg, g, maxOpenFiles, errorMgr)
 		if err != nil {
 			return nil, errors.Annotate(err, "build local backend failed")
 		}
@@ -771,7 +790,12 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 
 	go rc.listenCheckpointUpdates()
 
-	rc.sysVars = ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor())
+	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
+	// override by manually set vars
+	for k, v := range rc.cfg.TiDB.Vars {
+		sysVars[k] = v
+	}
+	rc.sysVars = sysVars
 
 	// Estimate the number of chunks for progress reporting
 	err = rc.estimateChunkCountIntoMetrics(ctx)
@@ -1112,8 +1136,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					f()
 				}
 			}()
-			// tidb backend don't need to switch tikv to import mode
-			if rc.cfg.TikvImporter.Backend != config.BackendTiDB && rc.cfg.Cron.SwitchMode.Duration > 0 {
+			if rc.cfg.Cron.SwitchMode.Duration > 0 {
 				rc.switchToImportMode(ctx)
 			}
 			start := time.Now()
@@ -1233,7 +1256,101 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 
 var checksumManagerKey struct{}
 
+const (
+	pauseGCTTLForDupeRes      = time.Hour
+	pauseGCIntervalForDupeRes = time.Minute
+)
+
+func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
+	tlsOpt := rc.tls.ToPDSecurityOption()
+	pdCli, err := pd.NewClientWithContext(ctx, []string{rc.cfg.TiDB.PdAddr}, tlsOpt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer pdCli.Close()
+
+	serviceID := "lightning-duplicate-resolution-" + uuid.New().String()
+	ttl := int64(pauseGCTTLForDupeRes / time.Second)
+
+	var (
+		safePoint uint64
+		paused    bool
+	)
+	// Try to get the minimum safe point across all services as our GC safe point.
+	for i := 0; i < 10; i++ {
+		if i > 0 {
+			time.Sleep(time.Second * 3)
+		}
+		minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, 1)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		newMinSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, minSafePoint)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if newMinSafePoint <= minSafePoint {
+			safePoint = minSafePoint
+			paused = true
+			break
+		}
+		log.L().Warn(
+			"Failed to register GC safe point because the current minimum safe point is newer"+
+				" than what we assume, will retry newMinSafePoint next time",
+			zap.Uint64("minSafePoint", minSafePoint),
+			zap.Uint64("newMinSafePoint", newMinSafePoint),
+		)
+	}
+	if !paused {
+		return nil, errors.New("failed to pause GC for duplicate resolution after all retries")
+	}
+
+	exitCh := make(chan struct{})
+	go func(safePoint uint64) {
+		defer close(exitCh)
+		ticker := time.NewTicker(pauseGCIntervalForDupeRes)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
+				if err != nil {
+					log.L().Warn("Failed to register GC safe point", zap.Error(err))
+					continue
+				}
+				if minSafePoint > safePoint {
+					log.L().Warn("The current minimum safe point is newer than what we hold, duplicate records are at"+
+						"risk of being GC and not detectable",
+						zap.Uint64("safePoint", safePoint),
+						zap.Uint64("minSafePoint", minSafePoint),
+					)
+					safePoint = minSafePoint
+				}
+			case <-ctx.Done():
+				if _, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, 0, safePoint); err != nil {
+					log.L().Warn("Failed to reset safe point ttl to zero", zap.Error(err))
+				}
+				return
+			}
+		}
+	}(safePoint)
+	return exitCh, nil
+}
+
 func (rc *Controller) restoreTables(ctx context.Context) error {
+	if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+		subCtx, cancel := context.WithCancel(ctx)
+		exitCh, err := rc.keepPauseGCForDupeRes(subCtx)
+		if err != nil {
+			cancel()
+			return errors.Trace(err)
+		}
+		defer func() {
+			cancel()
+			<-exitCh
+		}()
+	}
+
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
 	if rc.tableWorkers == nil {
 		rc.tableWorkers = worker.NewPool(ctx, rc.cfg.App.TableConcurrency, "table")
@@ -1447,17 +1564,6 @@ func (tr *TableRestore) restoreTable(
 			zap.Int("filesCnt", cp.CountChunks()),
 		)
 	} else if cp.Status < checkpoints.CheckpointStatusAllWritten {
-		versionStr, err := rc.tidbGlue.GetSQLExecutor().ObtainStringWithLog(
-			ctx, "SELECT version()", "fetch tidb version", log.L())
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-
-		tidbVersion, err := version.ExtractTiDBVersion(versionStr)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-
 		if err := tr.populateChunks(ctx, rc, cp); err != nil {
 			return false, errors.Trace(err)
 		}
@@ -1469,9 +1575,17 @@ func (tr *TableRestore) restoreTable(
 				rowIDMax = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
 			}
 		}
+		db, _ := rc.tidbGlue.GetDB()
+		versionStr, err := version.FetchVersion(ctx, db)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
 
-		// "show table next_row_id" is only available after v4.0.0
-		if tidbVersion.Major >= 4 && (rc.cfg.TikvImporter.Backend == config.BackendLocal || rc.cfg.TikvImporter.Backend == config.BackendImporter) {
+		versionInfo := version.ParseServerInfo(versionStr)
+
+		// "show table next_row_id" is only available after tidb v4.0.0
+		if versionInfo.ServerVersion.Major >= 4 &&
+			(rc.cfg.TikvImporter.Backend == config.BackendLocal || rc.cfg.TikvImporter.Backend == config.BackendImporter) {
 			// first, insert a new-line into meta table
 			if err = metaMgr.InitTableMeta(ctx); err != nil {
 				return false, err
@@ -1504,12 +1618,12 @@ func (tr *TableRestore) restoreTable(
 		// rebase the allocator so it exceeds the number of rows.
 		if tr.tableInfo.Core.PKIsHandle && tr.tableInfo.Core.ContainsAutoRandomBits() {
 			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
-			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(cp.AllocBase, false); err != nil {
+			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
 				return false, err
 			}
 		} else {
 			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
-			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(cp.AllocBase, false); err != nil {
+			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
 				return false, err
 			}
 		}
@@ -1575,6 +1689,11 @@ func (rc *Controller) switchToNormalMode(ctx context.Context) error {
 }
 
 func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
+	// // tidb backend don't need to switch tikv to import mode
+	if rc.isTiDBBackend() {
+		return
+	}
+
 	// It is fine if we miss some stores which did not switch to Import mode,
 	// since we're running it periodically, so we exclude disconnected stores.
 	// But it is essential all stores be switched back to Normal mode to allow
@@ -1685,6 +1804,10 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 }
 
 func (rc *Controller) setGlobalVariables(ctx context.Context) error {
+	// skip for tidb backend to be compatible with MySQL
+	if rc.isTiDBBackend() {
+		return nil
+	}
 	// set new collation flag base on tidb config
 	enabled := ObtainNewCollationEnabled(ctx, rc.tidbGlue.GetSQLExecutor())
 	// we should enable/disable new collation here since in server mode, tidb config
@@ -1708,15 +1831,16 @@ func (rc *Controller) cleanCheckpoints(ctx context.Context) error {
 	}
 
 	logger := log.With(
-		zap.Bool("keepAfterSuccess", rc.cfg.Checkpoint.KeepAfterSuccess),
+		zap.Stringer("keepAfterSuccess", rc.cfg.Checkpoint.KeepAfterSuccess),
 		zap.Int64("taskID", rc.cfg.TaskID),
 	)
 
 	task := logger.Begin(zap.InfoLevel, "clean checkpoints")
 	var err error
-	if rc.cfg.Checkpoint.KeepAfterSuccess {
+	switch rc.cfg.Checkpoint.KeepAfterSuccess {
+	case config.CheckpointRename:
 		err = rc.checkpointsDB.MoveCheckpoints(ctx, rc.cfg.TaskID)
-	} else {
+	case config.CheckpointRemove:
 		err = rc.checkpointsDB.RemoveCheckpoint(ctx, "all")
 	}
 	task.End(zap.ErrorLevel, err)
@@ -1725,6 +1849,10 @@ func (rc *Controller) cleanCheckpoints(ctx context.Context) error {
 
 func (rc *Controller) isLocalBackend() bool {
 	return rc.cfg.TikvImporter.Backend == config.BackendLocal
+}
+
+func (rc *Controller) isTiDBBackend() bool {
+	return rc.cfg.TikvImporter.Backend == config.BackendTiDB
 }
 
 // preCheckRequirements checks
@@ -1790,13 +1918,13 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 
 	if rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements {
 		fmt.Print(rc.checkTemplate.Output())
-		if !rc.checkTemplate.Success() {
-			if !taskExist && rc.taskMgr != nil {
-				rc.taskMgr.CleanupTask(ctx)
-			}
-			return errors.Errorf("tidb-lightning pre-check failed." +
-				" Please fix the failed check(s) or set --check-requirements=false to skip checks")
+	}
+	if !rc.checkTemplate.Success() {
+		if !taskExist && rc.taskMgr != nil {
+			rc.taskMgr.CleanupTask(ctx)
 		}
+		return errors.Errorf("tidb-lightning check failed."+
+			" Please fix the failed check(s):\n %s", rc.checkTemplate.FailedMsg())
 	}
 	return nil
 }

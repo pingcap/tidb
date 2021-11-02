@@ -41,9 +41,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 )
 
 const defaultWriterSize = 16 * 1024

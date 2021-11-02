@@ -27,10 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -38,6 +34,10 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -340,7 +340,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	// Mock the server is in `write reorg` state.
 	err = testInfo.execSQL(3)
 	c.Assert(err, IsNil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(checkErr, IsNil)
 }
 
 type stateCase struct {
@@ -882,7 +882,7 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 	d.(ddl.DDLForTest).SetHook(callback)
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(checkErr, IsNil)
 	d.(ddl.DDLForTest).SetHook(originalCallback)
 
 	if expectQuery != nil {
@@ -966,7 +966,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	alterTableSQL := `alter table t add index c2(c2)`
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(checkErr, IsNil)
 
 	result, err := s.execQuery(tk, showIndexSQL)
 	c.Assert(err, IsNil)

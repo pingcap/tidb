@@ -20,10 +20,10 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -279,6 +279,10 @@ func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
 		fields = append(fields, &field.Column.FieldType)
 	}
 	return chunk.NewChunkWithCapacity(fields, 1)
+}
+
+func (e *analyzeColumnsExec) NewChunkFromAllocator(_ chunk.Allocator) *chunk.Chunk {
+	return e.NewChunk()
 }
 
 // Close implements the sqlexec.RecordSet Close interface.

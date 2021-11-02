@@ -22,14 +22,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -54,6 +54,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyDropSchema(diff.SchemaID), nil
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
+	case model.ActionModifySchemaDefaultPlacement:
+		return nil, b.applyModifySchemaDefaultPlacement(m, diff)
 	case model.ActionCreatePlacementPolicy:
 		return nil, b.applyCreatePolicy(m, diff)
 	case model.ActionDropPlacementPolicy:
@@ -312,6 +314,23 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.S
 	newDbInfo := b.copySchemaTables(di.Name.L)
 	newDbInfo.Charset = di.Charset
 	newDbInfo.Collate = di.Collate
+	return nil
+}
+
+func (b *Builder) applyModifySchemaDefaultPlacement(m *meta.Meta, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	newDbInfo := b.copySchemaTables(di.Name.L)
+	newDbInfo.PlacementPolicyRef = di.PlacementPolicyRef
+	newDbInfo.DirectPlacementOpts = di.DirectPlacementOpts
 	return nil
 }
 

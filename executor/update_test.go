@@ -19,10 +19,10 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"

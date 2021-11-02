@@ -26,10 +26,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -53,7 +53,7 @@ const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv |
 const (
 	sqlLoadRoleGraph        = "SELECT HIGH_PRIORITY FROM_USER, FROM_HOST, TO_USER, TO_HOST FROM mysql.role_edges"
 	sqlLoadGlobalPrivTable  = "SELECT HIGH_PRIORITY Host,User,Priv FROM mysql.global_priv"
-	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,References_priv,Lock_tables_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv FROM mysql.db ORDER BY host, db, user"
+	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,References_priv,Lock_tables_priv,Create_tmp_table_priv,Event_priv,Create_routine_priv,Alter_routine_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv FROM mysql.db ORDER BY host, db, user"
 	sqlLoadTablePrivTable   = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv FROM mysql.tables_priv"
 	sqlLoadColumnsPrivTable = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Column_name,Timestamp,Column_priv FROM mysql.columns_priv"
 	sqlLoadDefaultRoles     = "SELECT HIGH_PRIORITY HOST, USER, DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER FROM mysql.default_roles"
@@ -1357,7 +1357,7 @@ func privOnColumnsToString(p privOnColumns) string {
 		if idx > 0 {
 			buf.WriteString(", ")
 		}
-		privStr := privToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)
+		privStr := PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)
 		fmt.Fprintf(&buf, "%s(", privStr)
 		for i, col := range v {
 			if i > 0 {
@@ -1395,24 +1395,25 @@ func userPrivToString(privs mysql.PrivilegeType) string {
 	if (privs & ^mysql.GrantPriv) == userTablePrivilegeMask {
 		return mysql.AllPrivilegeLiteral
 	}
-	return privToString(privs, mysql.AllGlobalPrivs, mysql.Priv2Str)
+	return PrivToString(privs, mysql.AllGlobalPrivs, mysql.Priv2Str)
 }
 
 func dbPrivToString(privs mysql.PrivilegeType) string {
 	if (privs & ^mysql.GrantPriv) == dbTablePrivilegeMask {
 		return mysql.AllPrivilegeLiteral
 	}
-	return privToString(privs, mysql.AllDBPrivs, mysql.Priv2SetStr)
+	return PrivToString(privs, mysql.AllDBPrivs, mysql.Priv2SetStr)
 }
 
 func tablePrivToString(privs mysql.PrivilegeType) string {
 	if (privs & ^mysql.GrantPriv) == tablePrivMask {
 		return mysql.AllPrivilegeLiteral
 	}
-	return privToString(privs, mysql.AllTablePrivs, mysql.Priv2Str)
+	return PrivToString(privs, mysql.AllTablePrivs, mysql.Priv2Str)
 }
 
-func privToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allPrivNames map[mysql.PrivilegeType]string) string {
+// PrivToString converts the privileges to string.
+func PrivToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allPrivNames map[mysql.PrivilegeType]string) string {
 	pstrs := make([]string, 0, 20)
 	for _, p := range allPrivs {
 		if priv&p == 0 {

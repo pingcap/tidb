@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"

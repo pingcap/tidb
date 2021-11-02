@@ -26,8 +26,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -36,7 +34,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -393,12 +394,16 @@ func (be *tidbBackend) CleanupEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
+func (be *tidbBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
+func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
 	panic("Unsupported Operation")
+}
+
+func (be *tidbBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
+	return nil
 }
 
 func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64) error {
@@ -415,7 +420,7 @@ rowLoop:
 			switch {
 			case err == nil:
 				continue rowLoop
-			case common.IsRetryableError(err):
+			case utils.IsRetryableError(err):
 				// retry next loop
 			default:
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
@@ -528,7 +533,7 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 					return errors.Trace(err)
 				}
 				// Retry the non-batch insert here if this is not the last retry.
-				if common.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
+				if utils.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
 					continue
 				}
 				firstRow := stmtTask.rows[0]
@@ -558,13 +563,10 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 
 	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {
 		var versionStr string
-		if err = tx.QueryRowContext(ctx, "SELECT version()").Scan(&versionStr); err != nil {
+		if versionStr, err = version.FetchVersion(ctx, tx); err != nil {
 			return err
 		}
-		tidbVersion, err := version.ExtractTiDBVersion(versionStr)
-		if err != nil {
-			return err
-		}
+		serverInfo := version.ParseServerInfo(versionStr)
 
 		rows, e := tx.Query(`
 			SELECT table_name, column_name, column_type, extra
@@ -621,7 +623,7 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 		}
 		// shard_row_id/auto random is only available after tidb v4.0.0
 		// `show table next_row_id` is also not available before tidb v4.0.0
-		if tidbVersion.Major < 4 {
+		if serverInfo.ServerType != version.ServerTypeTiDB || serverInfo.ServerVersion.Major < 4 {
 			return nil
 		}
 
@@ -679,8 +681,7 @@ func (be *tidbBackend) LocalWriter(
 }
 
 type Writer struct {
-	be       *tidbBackend
-	errorMgr *errormanager.ErrorManager
+	be *tidbBackend
 }
 
 func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
@@ -701,7 +702,7 @@ type TableAutoIDInfo struct {
 	Type   string
 }
 
-func FetchTableAutoIDInfos(ctx context.Context, exec common.QueryExecutor, tableName string) ([]*TableAutoIDInfo, error) {
+func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableName string) ([]*TableAutoIDInfo, error) {
 	rows, e := exec.QueryContext(ctx, fmt.Sprintf("SHOW TABLE %s NEXT_ROW_ID", tableName))
 	if e != nil {
 		return nil, errors.Trace(e)

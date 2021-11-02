@@ -17,12 +17,12 @@ package core
 import (
 	"context"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
 )
 
@@ -304,6 +304,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) erro
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && p.schema.Len() > 1 {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			p.names = append(p.names[:i], p.names[i+1:]...)
 			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
 		}
 	}
