@@ -514,6 +514,26 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	return filter.NewTablesFilter(tableNames...), nil
 }
 
+func GetConfTables(tablesList []string) (DatabaseTables, error) {
+	dbTables := DatabaseTables{}
+	var (
+		schema, name string
+		tableType    TableType
+		avgRowLength uint64
+	)
+	tableType = TableTypeBase
+	avgRowLength = 0
+	dbTables[schema] = make([]*TableInfo, 0)
+	for _, name = range tablesList {
+		parts := strings.SplitN(name, ".", 2)
+		if len(parts) < 2 {
+			return nil, errors.Errorf("--tables-list only accepts qualified table names, but `%s` lacks a dot", name)
+		}
+		dbTables[schema] = append(dbTables[schema], &TableInfo{name, avgRowLength, tableType})
+	}
+	return dbTables, nil
+}
+
 // ParseCompressType parses compressType string to storage.CompressType
 func ParseCompressType(compressType string) (storage.CompressType, error) {
 	switch compressType {
