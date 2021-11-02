@@ -94,14 +94,16 @@ func TestLengthAndOctetLength(t *testing.T) {
 		{"一二三!", "gbk", 7},
 		{"一二三!", "", 10},
 	}
-	for _, c := range tbl {
-		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
-		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.Length, primitiveValsToConstants(ctx, []interface{}{c.input})...)
-		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
-		require.NoError(t, err)
-		require.Equal(t, c.result, d.GetInt64())
+	for _, lengthMethod := range lengthMethods {
+		for _, c := range tbl {
+			err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+			require.NoError(t, err)
+			f, err := newFunctionForTest(ctx, lengthMethod, primitiveValsToConstants(ctx, []interface{}{c.input})...)
+			require.NoError(t, err)
+			d, err := f.Eval(chunk.Row{})
+			require.NoError(t, err)
+			require.Equal(t, c.result, d.GetInt64())
+		}
 	}
 }
 
