@@ -740,7 +740,7 @@ func TestAdminCleanupIndexMore(t *testing.T) {
 		c1 := int64(2*i + 7)
 		c2 := int64(2*i + 8)
 		_, err = indexOpr1.Create(ctx, txn, types.MakeDatums(c1, c2), kv.IntHandle(c1), nil)
-		require.NoError(t, err, fmt.Sprintf("%s", errors.ErrorStack(err)))
+		require.NoError(t, err, errors.ErrorStack(err))
 		_, err = indexOpr2.Create(ctx, txn, types.MakeDatums(c2), kv.IntHandle(c1), nil)
 		require.NoError(t, err)
 	}
