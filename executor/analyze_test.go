@@ -1492,6 +1492,11 @@ func (s *testSuite10) TestAlterOptions(c *C) {
 	c.Assert(tableInfo.StatsOptions, NotNil)
 	c.Assert(tableInfo.StatsOptions.Buckets, Equals, uint64(10))
 
+	// alter table with non-json format
+	err = tk.ExecToErr("alter table t STATS_OPTIONS='buckets=10'")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "should be in json format"), IsTrue)
+
 	// alter table with empty
 	tk.MustExec("alter table t STATS_OPTIONS=''")
 	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema

@@ -6455,10 +6455,6 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 	return errors.Trace(err)
 }
 
-var (
-	errInvalidStatsOptionsFormat = errors.New("Stats options should be in json format")
-)
-
 func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, spec *ast.StatsOptionsSpec) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
@@ -6474,7 +6470,7 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 			var attrs map[string]string
 			err = json.Unmarshal(attrBytes, &attrs)
 			if err != nil {
-				return errors.Wrapf(err, "%w: %s", errInvalidStatsOptionsFormat, spec.StatsOptions)
+				return errors.Wrapf(err, "Stats options should be in json format")
 			}
 			hasBuckets, hasTopn, hasSampleRate, hasColChoice, hasColList := false, false, false, false, false
 			for key, val := range attrs {
