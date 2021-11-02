@@ -23,6 +23,7 @@ import (
 	"net"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -218,8 +219,26 @@ type defaultRandGen struct {
 	*rand.Rand
 }
 
+type lockedSource struct {
+	lk  sync.Mutex
+	src rand.Source
+}
+
+func (r *lockedSource) Int63() (n int64) {
+	r.lk.Lock()
+	n = r.src.Int63()
+	r.lk.Unlock()
+	return
+}
+
+func (r *lockedSource) Seed(seed int64) {
+	r.lk.Lock()
+	r.src.Seed(seed)
+	r.lk.Unlock()
+}
+
 func newDefaultRandGen() *defaultRandGen {
-	return &defaultRandGen{rand.New(rand.NewSource(int64(rand.Uint64())))}
+	return &defaultRandGen{rand.New(&lockedSource{src: rand.NewSource(int64(rand.Uint64()))})}
 }
 
 type defaultGener struct {

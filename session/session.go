@@ -1041,11 +1041,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, alloc chunk.Allocator) ([]chunk.Row, error) {
 	var rows []chunk.Row
 	var req *chunk.Chunk
-	if alloc == nil {
-		req = rs.NewChunk()
-	} else {
-		req = rs.NewChunkFromAllocator(alloc)
-	}
+	req = rs.NewChunk(alloc)
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {
