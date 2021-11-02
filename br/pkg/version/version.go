@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -237,4 +238,73 @@ func NormalizeBackupVersion(version string) *semver.Version {
 		log.Warn("cannot parse backup version", zap.String("version", normalizedVerStr), zap.Error(err))
 	}
 	return ver
+}
+
+// FetchVersion gets the version information from the database server
+func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
+	var versionInfo string
+	const query = "SELECT version();"
+	row := db.QueryRowContext(ctx, query)
+	err := row.Scan(&versionInfo)
+	if err != nil {
+		return "", errors.Annotatef(err, "sql: %s", query)
+	}
+	return versionInfo, nil
+}
+
+type ServerType int
+
+const (
+	// ServerTypeUnknown represents unknown server type
+	ServerTypeUnknown = iota
+	// ServerTypeMySQL represents MySQL server type
+	ServerTypeMySQL
+	// ServerTypeMariaDB represents MariaDB server type
+	ServerTypeMariaDB
+	// ServerTypeTiDB represents TiDB server type
+	ServerTypeTiDB
+)
+
+// ServerInfo is the combination of ServerType and ServerInfo
+type ServerInfo struct {
+	ServerType    ServerType
+	ServerVersion *semver.Version
+}
+
+var (
+	mysqlVersionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	tidbVersionRegex  = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+)
+
+// ParseServerInfo parses exported server type and version info from version string
+func ParseServerInfo(src string) ServerInfo {
+	lowerCase := strings.ToLower(src)
+	serverInfo := ServerInfo{}
+	switch {
+	case strings.Contains(lowerCase, "tidb"):
+		serverInfo.ServerType = ServerTypeTiDB
+	case strings.Contains(lowerCase, "mariadb"):
+		serverInfo.ServerType = ServerTypeMariaDB
+	case mysqlVersionRegex.MatchString(lowerCase):
+		serverInfo.ServerType = ServerTypeMySQL
+	default:
+		serverInfo.ServerType = ServerTypeUnknown
+	}
+
+	var versionStr string
+	if serverInfo.ServerType == ServerTypeTiDB {
+		versionStr = tidbVersionRegex.FindString(src)[1:]
+		versionStr = strings.TrimPrefix(versionStr, "v")
+	} else {
+		versionStr = mysqlVersionRegex.FindString(src)
+	}
+
+	var err error
+	serverInfo.ServerVersion, err = semver.NewVersion(versionStr)
+	if err != nil {
+		log.L().Warn("fail to parse version",
+			zap.String("version", versionStr))
+	}
+
+	return serverInfo
 }

@@ -19,10 +19,9 @@ import (
 	"math/rand"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 )
@@ -110,8 +109,8 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinInfoFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinInfoCases)
+func TestVectorizedBuiltinInfoFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinInfoCases)
 }
 
 func BenchmarkVectorizedBuiltinInfoFunc(b *testing.B) {

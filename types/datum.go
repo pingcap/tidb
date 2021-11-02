@@ -25,10 +25,10 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
@@ -2066,7 +2066,11 @@ func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		strs = append(strs, str)
+		if datum.Kind() == KindString {
+			strs = append(strs, fmt.Sprintf("%q", str))
+		} else {
+			strs = append(strs, str)
+		}
 	}
 	size := len(datums)
 	if size > 1 {

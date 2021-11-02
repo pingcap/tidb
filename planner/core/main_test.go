@@ -15,17 +15,37 @@
 package core
 
 import (
+	"flag"
 	"testing"
 
+	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
 
+var testDataMap = make(testdata.BookKeeper, 1)
+
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
+
+	flag.Parse()
+
+	testDataMap.LoadTestSuiteData("testdata", "integration_partition_suite")
+
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	goleak.VerifyTestMain(m, opts...)
+
+	callback := func(i int) int {
+		testDataMap.GenerateOutputIfNeeded()
+		return i
+	}
+
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func GetIntegrationPartitionSuiteData() testdata.TestData {
+	return testDataMap["integration_partition_suite"]
 }

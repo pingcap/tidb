@@ -24,8 +24,8 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -959,7 +959,9 @@ func peek(b []byte) (length int, err error) {
 		return 0, errors.Trace(err)
 	}
 	length += l
-	if length > originLength {
+	if length < 0 {
+		return 0, errors.New("invalid encoded key")
+	} else if length > originLength {
 		return 0, errors.Errorf("invalid encoded key, "+
 			"expected length: %d, actual length: %d", length, originLength)
 	}

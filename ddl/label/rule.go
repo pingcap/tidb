@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"gopkg.in/yaml.v2"

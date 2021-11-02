@@ -280,5 +280,64 @@
         ]
       }
     ]
+  },
+  {
+    "name": "TestParameterPushDown",
+    "cases": [
+      {
+        "SQL": "prepare s1 from 'select a from t use index(a) where a+0>?'; -- IndexReader + pushed-down Selection with parameters"
+      },
+      {
+        "SQL": "execute s1 using @x1"
+      },
+      {
+        "SQL": "execute s1 using @x5"
+      },
+      {
+        "SQL": "prepare s1 from 'select * from t where b>?'; -- TableReader + pushed-down Selection with parameters"
+      },
+      {
+        "SQL": "execute s1 using @x1"
+      },
+      {
+        "SQL": "execute s1 using @x5"
+      },
+      {
+        "SQL": "prepare s1 from 'select * from t use index(a) where a+0>? and b>?'; -- IndexLookup + pushed-down Selection with parameters"
+      },
+      {
+        "SQL": "execute s1 using @x1,@x1"
+      },
+      {
+        "SQL": "execute s1 using @x5,@x5"
+      },
+      {
+        "SQL": "prepare s1 from 'select * from t limit ?'; -- pushed-down Limit with parameters"
+      },
+      {
+        "SQL": "execute s1 using @x10"
+      },
+      {
+        "SQL": "execute s1 using @x20"
+      },
+      {
+        "SQL": "prepare s1 from 'select * from t order by b limit ?'; -- pushed-down TopN with parameters"
+      },
+      {
+        "SQL": "execute s1 using @x1"
+      },
+      {
+        "SQL": "execute s1 using @x5"
+      },
+      {
+        "SQL": "prepare s1 from 'select b, sum(c+?) from t group by b'; -- pushed-down Agg with parameters"
+      },
+      {
+        "SQL": "execute s1 using @x1"
+      },
+      {
+        "SQL": "execute s1 using @x5"
+      }
+    ]
   }
 ]

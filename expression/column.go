@@ -20,8 +20,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -657,6 +658,17 @@ func (col *Column) Coercibility() Coercibility {
 		col.SetCoercibility(deriveCoercibilityForColumn(col))
 	}
 	return col.collationInfo.Coercibility()
+}
+
+// Repertoire returns the repertoire value which is used to check collations.
+func (col *Column) Repertoire() Repertoire {
+	if col.RetType.EvalType() != types.ETString {
+		return ASCII
+	}
+	if col.RetType.Charset == charset.CharsetASCII {
+		return ASCII
+	}
+	return UNICODE
 }
 
 // SortColumns sort columns based on UniqueID.

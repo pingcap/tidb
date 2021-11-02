@@ -16,6 +16,7 @@
 package linux
 
 import (
+	"net"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -52,4 +53,24 @@ func SetAffinity(cpus []int) error {
 		cpuSet.Set(c)
 	}
 	return unix.SchedSetaffinity(unix.Getpid(), &cpuSet)
+}
+
+// GetSockUID gets the uid of the other end of the UNIX domain socket
+func GetSockUID(uc net.UnixConn) (uid uint32, err error) {
+	raw, err := uc.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+
+	var cred *unix.Ucred
+	err = raw.Control(func(fd uintptr) {
+		cred, err = unix.GetsockoptUcred(int(fd),
+			unix.SOL_SOCKET,
+			unix.SO_PEERCRED)
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return cred.Uid, nil
 }
