@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
@@ -246,6 +247,7 @@ func TestBuildKeyInfo(t *testing.T) {
 	p := parser.New()
 	ctx := plannercore.MockContext()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	// case 1: primary key has constant constraint
 	stmt1, err := p.ParseOneStmt("select a from t where a = 10", "", "")

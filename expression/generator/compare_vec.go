@@ -296,7 +296,6 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vectorized() 
 const builtinCompareVecTestHeader = `import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
@@ -315,12 +314,12 @@ var builtinCompareVecTestFuncTail = `	},
 
 var builtinCompareVecTestTail = `}
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinCompareEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecGeneratedBuiltinCompareCases)
+func TestVectorizedGeneratedBuiltinCompareEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecGeneratedBuiltinCompareCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinCompareFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecGeneratedBuiltinCompareCases)
+func TestVectorizedGeneratedBuiltinCompareFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecGeneratedBuiltinCompareCases)
 }
 
 func BenchmarkVectorizedGeneratedBuiltinCompareEvalOneVec(b *testing.B) {

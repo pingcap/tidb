@@ -28,6 +28,11 @@ on:
       - '!br/tests/**'
       - '!br/docker/**'
 
+# See: https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#concurrency.
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest

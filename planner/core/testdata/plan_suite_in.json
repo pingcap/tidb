@@ -740,5 +740,11 @@
       // Make sure row_count(tikv_selection) == row_count(index_lookup) and row_count(index_lookup) > row_count(tidb_selection)
       "select * from t2 use index(idx_a) where a > 1 and b > 1 and c > 1"
     ]
+  },
+  {
+    "name": "TestIssue28316",
+    "cases": [
+        "select * from t where t.a < 3 and t.a < 3"
+    ]
   }
 ]

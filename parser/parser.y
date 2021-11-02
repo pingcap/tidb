@@ -298,6 +298,10 @@ import (
 	any                   "ANY"
 	ascii                 "ASCII"
 	attributes            "ATTRIBUTES"
+	statsOptions          "STATS_OPTIONS"
+	statsSampleRate       "STATS_SAMPLE_RATE"
+	statsColChoice        "STATS_COL_CHOICE"
+	statsColList          "STATS_COL_LIST"
 	autoIdCache           "AUTO_ID_CACHE"
 	autoIncrement         "AUTO_INCREMENT"
 	autoRandom            "AUTO_RANDOM"
@@ -1313,6 +1317,7 @@ import (
 	PlacementSpecList                      "Placement rules specifications"
 	AttributesOpt                          "Attributes options"
 	PredicateColumnsOpt                    "predicate columns option"
+	StatsOptionsOpt                        "Stats options"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1706,6 +1711,16 @@ AttributesOpt:
 		$$ = &ast.AttributesSpec{Default: false, Attributes: $3}
 	}
 
+StatsOptionsOpt:
+	"STATS_OPTIONS" EqOpt "DEFAULT"
+	{
+		$$ = &ast.StatsOptionsSpec{Default: true}
+	}
+|	"STATS_OPTIONS" EqOpt stringLit
+	{
+		$$ = &ast.StatsOptionsSpec{Default: false, StatsOptions: $3}
+	}
+
 AlterTablePartitionOpt:
 	PartitionOpt
 	{
@@ -1886,6 +1901,13 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:             ast.AlterTableAttributes,
 			AttributesSpec: $1.(*ast.AttributesSpec),
+		}
+	}
+|	StatsOptionsOpt
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:               ast.AlterTableStatsOptions,
+			StatsOptionsSpec: $1.(*ast.StatsOptionsSpec),
 		}
 	}
 |	"ALTER" "PARTITION" Identifier PlacementSpecList %prec lowerThanComma
@@ -5808,6 +5830,10 @@ UnReservedKeyword:
 |	"ADVISE"
 |	"ASCII"
 |	"ATTRIBUTES"
+|	"STATS_OPTIONS"
+|	"STATS_SAMPLE_RATE"
+|	"STATS_COL_CHOICE"
+|	"STATS_COL_LIST"
 |	"AUTO_ID_CACHE"
 |	"AUTO_INCREMENT"
 |	"AFTER"
@@ -11271,6 +11297,26 @@ TableOption:
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsSamplePages, Default: true}
 		yylex.AppendError(yylex.Errorf("The STATS_SAMPLE_PAGES is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
+	}
+|	"STATS_BUCKETS" EqOpt LengthNum
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsBuckets, UintValue: $3.(uint64)}
+	}
+|	"STATS_TOPN" EqOpt LengthNum
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsTopN, UintValue: $3.(uint64)}
+	}
+|	"STATS_SAMPLE_RATE" EqOpt NumLiteral
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsSampleRate, Value: ast.NewValueExpr($3, "", "")}
+	}
+|	"STATS_COL_CHOICE" EqOpt stringLit
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsColsChoice, StrValue: $3}
+	}
+|	"STATS_COL_LIST" EqOpt stringLit
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsColList, StrValue: $3}
 	}
 |	"SHARD_ROW_ID_BITS" EqOpt LengthNum
 	{
