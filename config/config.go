@@ -319,6 +319,8 @@ type Log struct {
 	EnableErrorStack nullableBool `toml:"enable-error-stack" json:"enable-error-stack"`
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
+	// Sampler config (per second) for rate limiting the log
+	Sampling *zap.SamplingConfig `toml:"sampling" json:"sampling"`
 
 	EnableSlowLog       bool   `toml:"enable-slow-log" json:"enable-slow-log"`
 	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
@@ -984,7 +986,9 @@ var TableLockDelayClean = func() uint64 {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(), func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() })
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(),
+		func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() },
+		func(config *zaplog.Config) { config.Sampling = l.Sampling })
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.
