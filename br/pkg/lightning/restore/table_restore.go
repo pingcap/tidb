@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"go.uber.org/multierr"
@@ -718,7 +719,7 @@ func (tr *TableRestore) postProcess(
 		hasDupe := false
 		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			opts := &kv.SessionOptions{
-				SQLMode: rc.cfg.TiDB.SQLMode,
+				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
 			var err error
@@ -742,7 +743,7 @@ func (tr *TableRestore) postProcess(
 
 		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			opts := &kv.SessionOptions{
-				SQLMode: rc.cfg.TiDB.SQLMode,
+				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
 			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
