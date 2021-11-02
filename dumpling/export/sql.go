@@ -13,13 +13,13 @@ import (
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
-
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
+
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
-	"go.uber.org/zap"
 )
 
 const (

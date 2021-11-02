@@ -19,6 +19,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
+	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/dumpling/cli"
@@ -27,9 +31,6 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	pd "github.com/tikv/pd/client"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 var openDBFunc = sql.Open

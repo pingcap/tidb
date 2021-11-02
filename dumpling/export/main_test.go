@@ -19,10 +19,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
+
+	"github.com/pingcap/tidb/dumpling/log"
 )
 
 var appLogger log.Logger

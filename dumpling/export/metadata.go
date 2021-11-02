@@ -11,9 +11,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"go.uber.org/zap"
 )
 
 type globalMetadata struct {
