@@ -791,22 +791,35 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 }
 
 func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
+	if !config.TableLockEnabled() {
+		noopFuncsMode := e.ctx.GetSessionVars().NoopFuncsMode
+		err := ErrFuncNotEnabled.GenWithStackByArgs("Lock tables", "enable-table-lock")
+		if noopFuncsMode == variable.OffInt {
+			return err
+		} else if noopFuncsMode == variable.WarnInt {
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+		return nil
+	}
+
 	for _, tb := range s.TableLocks {
 		if _, ok := e.getLocalTemporaryTable(tb.Table.Schema, tb.Table.Name); ok {
 			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("LOCK TABLES")
 		}
 	}
 
-	if !config.TableLockEnabled() {
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Lock tables works only when enable-table-lock is set in config file"))
-		return nil
-	}
 	return domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
 }
 
 func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 	if !config.TableLockEnabled() {
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Unlock tables works only when enable-table-lock is set in config file"))
+		noopFuncsMode := e.ctx.GetSessionVars().NoopFuncsMode
+		err := ErrFuncNotEnabled.GenWithStackByArgs("Unlock tables", "enable-table-lock")
+		if noopFuncsMode == variable.OffInt {
+			return err
+		} else if noopFuncsMode == variable.WarnInt {
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
 		return nil
 	}
 	lockedTables := e.ctx.GetAllTableLocks()
