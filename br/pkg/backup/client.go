@@ -358,7 +358,7 @@ func BuildBackupRangeAndSchema(
 
 func skipUnsupportedDDLJob(job *model.Job) bool {
 	switch job.Type {
-	// Beacuse TiDB V5.3.0 support TableAttributes and TablePartitionAttributes.
+	// Because TiDB V5.3.0 supports TableAttributes and TablePartitionAttributes.
 	// Incremental Backup need skip these DDLs to be compatible with previous br versions.
 	case model.ActionAlterTableAttributes, model.ActionAlterTablePartitionAttributes:
 		return true
