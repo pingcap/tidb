@@ -132,7 +132,13 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 				ctx.WriteName(columnName.Name.O)
 			}
 		}
-	} else if len(n.ColumnNames) > 0 {
+	}
+	switch n.ColumnChoice {
+	case model.AllColumns:
+		ctx.WriteKeyWord(" ALL COLUMNS")
+	case model.PredicateColumns:
+		ctx.WriteKeyWord(" PREDICATE COLUMNS")
+	case model.ColumnList:
 		ctx.WriteKeyWord(" COLUMNS ")
 		for i, columnName := range n.ColumnNames {
 			if i != 0 {
@@ -140,8 +146,6 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteName(columnName.Name.O)
 		}
-	} else if n.PredicateColumns {
-		ctx.WriteKeyWord(" PREDICATE COLUMNS")
 	}
 	if n.IndexFlag {
 		ctx.WriteKeyWord(" INDEX")

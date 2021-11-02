@@ -1316,7 +1316,7 @@ import (
 	PlacementSpec                          "Placement rules specification"
 	PlacementSpecList                      "Placement rules specifications"
 	AttributesOpt                          "Attributes options"
-	PredicateColumnsOpt                    "predicate columns option"
+	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
 
 %type	<ident>
@@ -2771,7 +2771,7 @@ AnalyzeTableStmt:
 AllColumnsOrPredicateColumnsOpt:
 	/* empty */
 	{
-		$$ = model.AllColumns
+		$$ = model.DefaultChoice
 	}
 |	"ALL" "COLUMNS"
 	{
