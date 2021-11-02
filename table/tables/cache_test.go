@@ -42,11 +42,11 @@ func TestCacheTableBasicScan(t *testing.T) {
 		))
 		// Test for join two cache table
 		tk.MustExec("drop table if exists join_t1, join_t2, join_t3")
-		tk.MustExec("create table join_t1  (id int primary key auto_increment)")
+		tk.MustExec("create table join_t1  (id int)")
 		tk.MustExec("insert into join_t1 values(1)")
 		tk.MustExec("alter table join_t1 cache")
 		tk.MustExec("select *from join_t1")
-		tk.MustExec("create table join_t2  (id int primary key auto_increment)")
+		tk.MustExec("create table join_t2  (id int)")
 		tk.MustExec("insert into join_t2 values(2)")
 		tk.MustExec("alter table join_t2 cache")
 		tk.MustExec("select *from join_t2")

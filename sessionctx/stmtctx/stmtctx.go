@@ -172,8 +172,8 @@ type StatementContext struct {
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
-	// cacheTables is used to store cache table id and corresponding information whether it is readable
-	cacheTablesCondMap map[int64]bool
+	// cachedTables is used to store cache table id when it satisfies the cache read condition
+	cachedTables map[int64]bool
 
 	// cache is used to reduce object allocation.
 	cache struct {
@@ -325,15 +325,25 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHint = hint
 }
 
-// GetOrStoreCacheTableCondMap gets the read cond of the given key if it exists, otherwise stores the value.
-func (sc *StatementContext) GetOrStoreCacheTableCondMap(tblID int64, cond bool) bool {
-	if sc.cacheTablesCondMap == nil {
-		sc.cacheTablesCondMap = make(map[int64]bool)
+// StoreCacheTableReadCondition stores the read condition of the given key.
+func (sc *StatementContext) StoreCacheTableReadCondition(tblID int64, cond bool) {
+	if sc.cachedTables == nil {
+		sc.cachedTables = make(map[int64]bool)
 	}
-	if _, ok := sc.cacheTablesCondMap[tblID]; !ok {
-		sc.cacheTablesCondMap[tblID] = cond
+	if cond {
+		sc.cachedTables[tblID] = cond
 	}
-	return sc.cacheTablesCondMap[tblID]
+}
+
+// GetCacheTableReadCondition gets the read condition of the given key if it exists
+func (sc *StatementContext) GetCacheTableReadCondition(tblID int64) bool {
+	if sc.cachedTables == nil {
+		sc.cachedTables = make(map[int64]bool)
+	}
+	if _, ok := sc.cachedTables[tblID]; !ok {
+		return false
+	}
+	return sc.cachedTables[tblID]
 }
 
 // TableEntry presents table in db.

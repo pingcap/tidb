@@ -264,7 +264,7 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 }
 func isReadFromCache(tbl table.Table, stmt *stmtctx.StatementContext) bool {
 	if tbl != nil && tbl.Meta() != nil && tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
-		return stmt.GetOrStoreCacheTableCondMap(tbl.Meta().ID, false)
+		return stmt.GetCacheTableReadCondition(tbl.Meta().ID)
 	}
 	return false
 }
