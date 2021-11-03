@@ -433,7 +433,7 @@ func GetPrimaryKeyColumns(db *sql.Conn, database, table string) ([]string, error
 	return cols, nil
 }
 
-// priority:
+// getNumericIndex picks up indices according to the following priority:
 // primary key > unique key with the smallest count > key with the max cardinality
 // primary key with multi cols is before unique key with single col because we will sort result by primary keys
 func getNumericIndex(db *sql.Conn, meta TableMeta) (string, error) {
