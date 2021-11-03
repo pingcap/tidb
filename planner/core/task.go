@@ -1564,7 +1564,7 @@ func BuildFinalModeAggregation(
 				// 1. add all args to partial.GroupByItems
 				foundInGroupBy := false
 				for j, gbyExpr := range partial.GroupByItems {
-					if gbyExpr.Equal(sctx, distinctArg) && gbyExpr.GetType().Equal(distinctArg.GetType()) && gbyExpr.ExplainInfo() == distinctArg.ExplainInfo() {
+					if gbyExpr.Equal(sctx, distinctArg) && gbyExpr.GetType().Equal(distinctArg.GetType()) {
 						// if exactly the same, then can avoid it.
 						foundInGroupBy = true
 						ret = partialGbySchema.Columns[j]
@@ -1585,7 +1585,6 @@ func BuildFinalModeAggregation(
 					if !onlyAddFirstRow {
 						partial.GroupByItems = append(partial.GroupByItems, distinctArg)
 						partialGbySchema.Append(gbyCol)
-
 						ret = gbyCol
 					}
 					// 3. add firstrow() if needed
