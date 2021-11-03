@@ -363,6 +363,7 @@ func getMemIter(tblID int64, ctx sessionctx.Context, iter kv.Iterator, rg kv.Key
 	cond := ctx.GetSessionVars().StmtCtx.GetCacheTableReadCondition(tblID)
 	if cond {
 		tbl, ok := domain.GetDomain(ctx).InfoSchema().TableByID(tblID)
+		ctx.GetInfoSchema().SchemaMetaVersion()
 		if !ok {
 			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(ctx.GetSessionVars().CurrentDB, tbl.Meta().Name)
 		}
