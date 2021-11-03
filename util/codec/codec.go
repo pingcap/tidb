@@ -663,10 +663,10 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 
 // HashChunkRow writes the encoded values to w.
 // If two rows are logically equal, it will generate the same bytes.
-func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int, buf []byte) (err error) {
+func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, hashTypes []*types.FieldType, colIdx []int, buf []byte) (err error) {
 	var b []byte
 	for i, idx := range colIdx {
-		buf[0], b, err = encodeHashChunkRowIdx(sc, row, allTypes[i], idx)
+		buf[0], b, err = encodeHashChunkRowIdx(sc, row, hashTypes[i], idx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -685,39 +685,19 @@ func HashChunkRow(sc *stmtctx.StatementContext, w io.Writer, row chunk.Row, allT
 // EqualChunkRow returns a boolean reporting whether row1 and row2
 // with their types and column index are logically equal.
 func EqualChunkRow(sc *stmtctx.StatementContext,
-	row1 chunk.Row, allTypes1 []*types.FieldType, colIdx1 []int,
-	row2 chunk.Row, allTypes2 []*types.FieldType, colIdx2 []int,
+	row1 chunk.Row, hashTypes1 []*types.FieldType, colIdx1 []int,
+	row2 chunk.Row, hashTypes2 []*types.FieldType, colIdx2 []int,
 ) (bool, error) {
-	for i := range colIdx1 {
-		idx1, idx2 := colIdx1[i], colIdx2[i]
-		flag1, b1, err := encodeHashChunkRowIdx(sc, row1, allTypes1[idx1], idx1)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		flag2, b2, err := encodeHashChunkRowIdx(sc, row2, allTypes2[idx2], idx2)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if !(flag1 == flag2 && bytes.Equal(b1, b2)) {
-			return false, nil
-		}
+	if len(colIdx1) != len(colIdx2) {
+		return false, errors.Errorf("Internal error: Hash columns count mismatch, col1: %d, col2: %d", len(colIdx1), len(colIdx2))
 	}
-	return true, nil
-}
-
-// EqualChunkRowWithColTypes returns a boolean reporting whether row1 and row2
-// with their types and column index are logically equal.
-func EqualChunkRowWithColTypes(sc *stmtctx.StatementContext,
-	row1 chunk.Row, allTypes1 []*types.FieldType, colIdx1 []int,
-	row2 chunk.Row, allTypes2 []*types.FieldType, colIdx2 []int,
-) (bool, error) {
 	for i := range colIdx1 {
 		idx1, idx2 := colIdx1[i], colIdx2[i]
-		flag1, b1, err := encodeHashChunkRowIdx(sc, row1, allTypes1[i], idx1)
+		flag1, b1, err := encodeHashChunkRowIdx(sc, row1, hashTypes1[i], idx1)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		flag2, b2, err := encodeHashChunkRowIdx(sc, row2, allTypes2[i], idx2)
+		flag2, b2, err := encodeHashChunkRowIdx(sc, row2, hashTypes2[i], idx2)
 		if err != nil {
 			return false, errors.Trace(err)
 		}

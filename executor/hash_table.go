@@ -137,7 +137,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 
 // matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
 func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx *hashContext) (ok bool, err error) {
-	return codec.EqualChunkRowWithColTypes(c.sc,
+	return codec.EqualChunkRow(c.sc,
 		buildRow, c.hCtx.hashTypes, c.hCtx.keyColIdx,
 		probeRow, probeHCtx.hashTypes, probeHCtx.keyColIdx)
 }
