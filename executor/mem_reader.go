@@ -17,9 +17,7 @@ package executor
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -360,14 +358,9 @@ func getMemIter(tblID int64, ctx sessionctx.Context, iter kv.Iterator, rg kv.Key
 		}
 		snapCacheIter = snapIter
 	}
-	cond := ctx.GetSessionVars().StmtCtx.GetCacheTableReadCondition(tblID)
+	cond, buffer := ctx.GetSessionVars().StmtCtx.GetCacheTable(tblID)
 	if cond {
-		tbl, ok := domain.GetDomain(ctx).InfoSchema().TableByID(tblID)
-		ctx.GetInfoSchema().SchemaMetaVersion()
-		if !ok {
-			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(ctx.GetSessionVars().CurrentDB, tbl.Meta().Name)
-		}
-		cacheIter, err := tbl.(table.CachedTable).GetMemCache().Iter(rg.StartKey, rg.EndKey)
+		cacheIter, err := (*buffer).Load().(kv.MemBuffer).Iter(rg.StartKey, rg.EndKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

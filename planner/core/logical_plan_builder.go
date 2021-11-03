@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -4144,7 +4145,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		result = us
 	}
 	// If a table is a cache table, it is judged whether it satisfies the conditions of read cache.
-	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable && b.ctx.GetSessionVars().SnapshotTS == 0 && !b.ctx.GetSessionVars().StmtCtx.IsStaleness {
 		cachedTable := tbl.(table.CachedTable)
 		txn, err := b.ctx.Txn(true)
 		if err != nil {
@@ -4153,8 +4154,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// Use the txn of the transaction to determine whether the cache can be read.
 		// About read lock and read condition feature. will add in the next pr.
 		cond := cachedTable.IsReadFromCache(txn.StartTS())
-		b.ctx.GetSessionVars().StmtCtx.StoreCacheTableReadCondition(tbl.Meta().ID, cond)
 		if cond {
+			var buffer atomic.Value
+			buffer.Store(cachedTable.GetMemCache())
+			b.ctx.GetSessionVars().StmtCtx.StoreCacheTable(tbl.Meta().ID, buffer)
 			us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 			us.SetChildren(ds)
 			result = us

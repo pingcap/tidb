@@ -407,10 +407,20 @@ func (b *builtinDecodeSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
+	dataTp := b.args[0].GetType()
+	dataStr, err = charset.NewEncoding(dataTp.Charset).EncodeString(dataStr)
+	if err != nil {
+		return "", false, err
+	}
 
 	passwordStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
+	}
+	passwordTp := b.args[1].GetType()
+	passwordStr, err = charset.NewEncoding(passwordTp.Charset).EncodeString(passwordStr)
+	if err != nil {
+		return "", false, err
 	}
 
 	decodeStr, err := encrypt.SQLDecode(dataStr, passwordStr)
@@ -470,10 +480,20 @@ func (b *builtinEncodeSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
+	decodeTp := b.args[0].GetType()
+	decodeStr, err = charset.NewEncoding(decodeTp.Charset).EncodeString(decodeStr)
+	if err != nil {
+		return "", false, err
+	}
 
 	passwordStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
+	}
+	passwordTp := b.args[1].GetType()
+	passwordStr, err = charset.NewEncoding(passwordTp.Charset).EncodeString(passwordStr)
+	if err != nil {
+		return "", false, err
 	}
 
 	dataStr, err := encrypt.SQLEncode(decodeStr, passwordStr)

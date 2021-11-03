@@ -175,8 +175,11 @@ type StatementContext struct {
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
-	// cachedTables is used to store cache table id when it satisfies the cache read condition
-	cachedTables map[int64]bool
+	// cachedTables is used to store cache table id and a pointer to cache data when it satisfies the cache read condition
+	cachedTables []struct {
+		id        int64
+		memBuffer *atomic.Value
+	}
 
 	// cache is used to reduce object allocation.
 	cache struct {
@@ -328,25 +331,28 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHint = hint
 }
 
-// StoreCacheTableReadCondition stores the read condition of the given key.
-func (sc *StatementContext) StoreCacheTableReadCondition(tblID int64, cond bool) {
-	if sc.cachedTables == nil {
-		sc.cachedTables = make(map[int64]bool)
+// StoreCacheTable stores the read condition and a point to cache data of the given key.
+func (sc *StatementContext) StoreCacheTable(tblID int64, buffer atomic.Value) {
+	for _, data := range sc.cachedTables {
+		if data.id == tblID {
+			data.memBuffer = &buffer
+		}
+		return
 	}
-	if cond {
-		sc.cachedTables[tblID] = cond
-	}
+	sc.cachedTables = append(sc.cachedTables, struct {
+		id        int64
+		memBuffer *atomic.Value
+	}{id: tblID, memBuffer: &buffer})
 }
 
-// GetCacheTableReadCondition gets the read condition of the given key if it exists
-func (sc *StatementContext) GetCacheTableReadCondition(tblID int64) bool {
-	if sc.cachedTables == nil {
-		sc.cachedTables = make(map[int64]bool)
+// GetCacheTable gets the read condition and a point to cache data of the given key if it exists
+func (sc *StatementContext) GetCacheTable(tblID int64) (bool, *atomic.Value) {
+	for _, data := range sc.cachedTables {
+		if data.id == tblID {
+			return true, data.memBuffer
+		}
 	}
-	if _, ok := sc.cachedTables[tblID]; !ok {
-		return false
-	}
-	return sc.cachedTables[tblID]
+	return false, nil
 }
 
 // TableEntry presents table in db.
