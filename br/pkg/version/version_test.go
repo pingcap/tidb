@@ -247,20 +247,20 @@ func TestExtractTiDBVersion(t *testing.T) {
 func TestCheckVersion(t *testing.T) {
 	t.Parallel()
 
-	err := CheckVersion("TiDB", *semver.New("2.3.5"), *semver.New("2.1.0"), *semver.New("3.0.0"))
+	err := CheckVersion("TiNB", *semver.New("2.3.5"), *semver.New("2.1.0"), *semver.New("3.0.0"))
 	require.NoError(t, err)
 
-	err = CheckVersion("TiDB", *semver.New("2.1.0"), *semver.New("2.3.5"), *semver.New("3.0.0"))
+	err = CheckVersion("TiNB", *semver.New("2.1.0"), *semver.New("2.3.5"), *semver.New("3.0.0"))
 	require.Error(t, err)
-	require.Regexp(t, "TiDB version too old.*", err.Error())
+	require.Regexp(t, "TiNB version too old.*", err.Error())
 
-	err = CheckVersion("TiDB", *semver.New("3.1.0"), *semver.New("2.3.5"), *semver.New("3.0.0"))
+	err = CheckVersion("TiNB", *semver.New("3.1.0"), *semver.New("2.3.5"), *semver.New("3.0.0"))
 	require.Error(t, err)
-	require.Regexp(t, "TiDB version too new.*", err.Error())
+	require.Regexp(t, "TiNB version too new.*", err.Error())
 
-	err = CheckVersion("TiDB", *semver.New("3.0.0-beta"), *semver.New("2.3.5"), *semver.New("3.0.0"))
+	err = CheckVersion("TiNB", *semver.New("3.0.0-beta"), *semver.New("2.3.5"), *semver.New("3.0.0"))
 	require.Error(t, err)
-	require.Regexp(t, "TiDB version too new.*", err.Error())
+	require.Regexp(t, "TiNB version too new.*", err.Error())
 }
 
 func versionEqualCheck(source *semver.Version, target *semver.Version) (result bool) {
@@ -290,7 +290,7 @@ func TestNormalizeBackupVersion(t *testing.T) {
 		target, _ := semver.NewVersion(testCase.target)
 		source := NormalizeBackupVersion(testCase.source)
 		result := versionEqualCheck(source, target)
-		require.Equal(t, true, result)
+		require.Truef(t, result, "source=%v, target=%v", source, target)
 	}
 }
 
@@ -331,7 +331,7 @@ func TestDetectServerInfo(t *testing.T) {
 		} else {
 			require.True(t, info.ServerVersion.Equal(*expectVer))
 		}
-		require.Nil(t, mock.ExpectationsWereMet(), cmt)
+		require.NoError(t, mock.ExpectationsWereMet(), cmt)
 	}
 }
 func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
