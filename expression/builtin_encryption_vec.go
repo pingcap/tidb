@@ -212,8 +212,8 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	bufTp := b.args[0].GetType()
-	bufEnc := charset.NewEncoding(bufTp.Charset)
+	dataTp := b.args[0].GetType()
+	dataEnc := charset.NewEncoding(dataTp.Charset)
 
 	buf1, err1 := b.bufAllocator.get()
 	if err1 != nil {
@@ -223,19 +223,19 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	buf1Tp := b.args[1].GetType()
-	buf1Enc := charset.NewEncoding(buf1Tp.Charset)
+	passwordTp := b.args[1].GetType()
+	passwordEnc := charset.NewEncoding(passwordTp.Charset)
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		dataStr, err := bufEnc.EncodeString(buf.GetString(i))
+		dataStr, err := dataEnc.EncodeString(buf.GetString(i))
 		if err != nil {
 			return err
 		}
-		passwordStr, err := buf1Enc.EncodeString(buf1.GetString(i))
+		passwordStr, err := passwordEnc.EncodeString(buf1.GetString(i))
 		if err != nil {
 			return err
 		}
@@ -266,14 +266,14 @@ func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err1 != nil {
 		return err1
 	}
-	bufTp := b.args[0].GetType()
-	bufEnc := charset.NewEncoding(bufTp.Charset)
+	dataTp := b.args[0].GetType()
+	dataEnc := charset.NewEncoding(dataTp.Charset)
 	defer b.bufAllocator.put(buf1)
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	buf1Tp := b.args[1].GetType()
-	buf1Enc := charset.NewEncoding(buf1Tp.Charset)
+	passwordTp := b.args[1].GetType()
+	passwordEnc := charset.NewEncoding(passwordTp.Charset)
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
@@ -281,11 +281,11 @@ func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 
-		decodeStr, err := bufEnc.EncodeString(buf.GetString(i))
+		decodeStr, err := dataEnc.EncodeString(buf.GetString(i))
 		if err != nil {
 			return err
 		}
-		passwordStr, err := buf1Enc.EncodeString(buf1.GetString(i))
+		passwordStr, err := passwordEnc.EncodeString(buf1.GetString(i))
 		if err != nil {
 			return err
 		}
