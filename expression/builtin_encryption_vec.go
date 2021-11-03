@@ -226,7 +226,6 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	buf1Tp := b.args[1].GetType()
 	buf1Enc := charset.NewEncoding(buf1Tp.Charset)
 	result.ReserveString(n)
-	var encodedBuf []byte
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
