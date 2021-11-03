@@ -95,7 +95,7 @@ func TestSQLEncode(t *testing.T) {
 		if test.origin != nil {
 			result, err := charset.NewEncoding(test.chs).EncodeString(test.origin.(string))
 			require.NoError(t, err)
-			require.Equal(t, types.NewCollationStringDatum(result, test.chs, 1), d)
+			require.Equal(t, types.NewCollationStringDatum(result, test.chs), d)
 		} else {
 			result := types.NewDatum(test.origin)
 			require.Equal(t, result.GetBytes(), d.GetBytes())
