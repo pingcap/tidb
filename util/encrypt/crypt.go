@@ -120,32 +120,12 @@ func SQLDecode(str string, password string) (string, error) {
 	return string(strByte), nil
 }
 
-// SQLDecodeBuf Function to handle the decode() function
-func SQLDecodeBuf(strByte []byte, passwdByte []byte) (string, error) {
-	var sc sqlCrypt
-
-	sc.init(passwdByte, len(passwdByte))
-	sc.decode(strByte, len(strByte))
-
-	return string(strByte), nil
-}
-
 // SQLEncode Function to handle the encode() function
 func SQLEncode(cryptStr string, password string) (string, error) {
 	var sc sqlCrypt
 
 	cryptStrByte := []byte(cryptStr)
 	passwdByte := []byte(password)
-
-	sc.init(passwdByte, len(passwdByte))
-	sc.encode(cryptStrByte, len(cryptStrByte))
-
-	return string(cryptStrByte), nil
-}
-
-// SQLEncodeBuf Function to handle the encode() function
-func SQLEncodeBuf(cryptStrByte []byte, passwdByte []byte) (string, error) {
-	var sc sqlCrypt
 
 	sc.init(passwdByte, len(passwdByte))
 	sc.encode(cryptStrByte, len(cryptStrByte))

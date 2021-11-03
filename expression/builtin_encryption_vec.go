@@ -226,21 +226,20 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	buf1Tp := b.args[1].GetType()
 	buf1Enc := charset.NewEncoding(buf1Tp.Charset)
 	result.ReserveString(n)
-	var encodedBuf []byte
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		dataStr, err := bufEnc.Encode(encodedBuf, buf.GetBytes(i))
+		dataStr, err := bufEnc.EncodeString(buf.GetString(i))
 		if err != nil {
 			return err
 		}
-		passwordStr, err := buf1Enc.Encode(encodedBuf, buf1.GetBytes(i))
+		passwordStr, err := buf1Enc.EncodeString(buf1.GetString(i))
 		if err != nil {
 			return err
 		}
-		decodeStr, err := encrypt.SQLDecodeBuf(dataStr, passwordStr)
+		decodeStr, err := encrypt.SQLDecode(dataStr, passwordStr)
 		if err != nil {
 			return err
 		}
@@ -276,22 +275,21 @@ func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	buf1Tp := b.args[1].GetType()
 	buf1Enc := charset.NewEncoding(buf1Tp.Charset)
 	result.ReserveString(n)
-	var encodedBuf []byte
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 
-		decodeStr, err := bufEnc.Encode(encodedBuf, buf.GetBytes(i))
+		decodeStr, err := bufEnc.EncodeString(buf.GetString(i))
 		if err != nil {
 			return err
 		}
-		passwordStr, err := buf1Enc.Encode(encodedBuf, buf1.GetBytes(i))
+		passwordStr, err := buf1Enc.EncodeString(buf1.GetString(i))
 		if err != nil {
 			return err
 		}
-		dataStr, err := encrypt.SQLEncodeBuf(decodeStr, passwordStr)
+		dataStr, err := encrypt.SQLEncode(decodeStr, passwordStr)
 		if err != nil {
 			return err
 		}
