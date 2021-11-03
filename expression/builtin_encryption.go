@@ -417,7 +417,7 @@ func (b *builtinDecodeSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
-	passwordTp := b.args[0].GetType()
+	passwordTp := b.args[1].GetType()
 	passwordBuf, err := charset.NewEncoding(passwordTp.Charset).EncodeString(passwordStr)
 	if err != nil {
 		return "", true, err
