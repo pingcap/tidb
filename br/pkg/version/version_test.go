@@ -266,16 +266,10 @@ func TestCheckVersion(t *testing.T) {
 func versionEqualCheck(source *semver.Version, target *semver.Version) (result bool) {
 
 	if source == nil || target == nil {
-		if target == source {
-			return true
-		}
-		return false
+		return target == source
 	}
 
-	if source.Equal(*target) {
-		return true
-	}
-	return false
+	return source.Equal(*target)
 }
 
 func TestNormalizeBackupVersion(t *testing.T) {
