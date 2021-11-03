@@ -770,7 +770,12 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 
 	go rc.listenCheckpointUpdates()
 
-	rc.sysVars = ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
+	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
+	// override by manually set vars
+	for k, v := range rc.cfg.TiDB.Vars {
+		sysVars[k] = v
+	}
+	rc.sysVars = sysVars
 
 	// Estimate the number of chunks for progress reporting
 	err = rc.estimateChunkCountIntoMetrics(ctx)

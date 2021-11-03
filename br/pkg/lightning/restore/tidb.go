@@ -83,7 +83,6 @@ func isUnknownSystemVariableErr(err error) bool {
 }
 
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
-
 	param := common.MySQLConnectParam{
 		Host:             dsn.Host,
 		Port:             dsn.Port,
@@ -209,7 +208,7 @@ func createDatabaseIfNotExistStmt(dbName string) string {
 }
 
 func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
-	stmts, _, err := p.Parse(createTable, "", "")
+	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {
 		return []string{}, err
 	}

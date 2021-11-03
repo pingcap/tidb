@@ -554,7 +554,7 @@ func EvalColDefaultExpr(ctx sessionctx.Context, col *model.ColumnInfo, defaultEx
 func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultValue string) (types.Datum, error) {
 	var defaultExpr ast.ExprNode
 	expr := fmt.Sprintf("select %s", defaultValue)
-	stmts, _, err := parser.New().Parse(expr, "", "")
+	stmts, _, err := parser.New().ParseSQL(expr)
 	if err == nil {
 		defaultExpr = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	}

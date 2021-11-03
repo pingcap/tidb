@@ -117,19 +117,18 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return nil
 		}
 	}
-	charset, collation := vars.GetCharsetInfo()
 	var (
 		stmts []ast.StmtNode
 		err   error
 	)
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
-		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, charset, collation)
+		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, vars.GetParseParams()...)
 	} else {
 		p := parser.New()
 		p.SetParserConfig(vars.BuildParserConfig())
 		var warns []error
-		stmts, warns, err = p.Parse(e.sqlText, charset, collation)
+		stmts, warns, err = p.ParseSQL(e.sqlText, vars.GetParseParams()...)
 		for _, warn := range warns {
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 		}

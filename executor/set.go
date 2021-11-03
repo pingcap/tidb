@@ -107,6 +107,9 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
+		if variable.IsRemovedSysVar(name) {
+			return nil // removed vars permit parse-but-ignore
+		}
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	if v.IsGlobal {

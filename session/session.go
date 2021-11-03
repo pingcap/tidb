@@ -1164,7 +1164,7 @@ func (s *session) GetTiDBTableValue(name string) (string, error) {
 
 var _ sqlexec.SQLParser = &session{}
 
-func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
+func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1175,7 +1175,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	defer parserPool.Put(p)
 	p.SetSQLMode(s.sessionVars.SQLMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
-	tmp, warn, err := p.Parse(sql, charset, collation)
+	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
 	if len(tmp) == 1 {
 		s.cache[0] = tmp[0]
@@ -1326,9 +1326,8 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
-	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 	parseStartTime := time.Now()
-	stmts, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	stmts, warns, err := s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	if err != nil {
 		s.rollbackOnError(ctx)
 
@@ -1379,11 +1378,10 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		// Charsets from clients may give chance injections.
 		// Refer to https://stackoverflow.com/questions/5741187/sql-injection-that-gets-around-mysql-real-escape-string/12118602.
 		parseStartTime = time.Now()
-		stmts, warns, err = s.ParseSQL(ctx, sql, mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation)
+		stmts, warns, err = s.ParseSQL(ctx, sql)
 	} else {
-		charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 		parseStartTime = time.Now()
-		stmts, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
+		stmts, warns, err = s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	}
 	if len(stmts) != 1 {
 		err = errors.New("run multiple statements internally is not supported")

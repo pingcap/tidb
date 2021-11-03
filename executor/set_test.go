@@ -26,6 +26,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -397,23 +398,24 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect cte_max_recursion_depth value: '-1'"))
 	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("0"))
 
-	// test for tidb_slow_log_masking
-	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
-	tk.MustExec("set global tidb_slow_log_masking = 1")
-	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_slow_log_masking = 0")
-	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
-	tk.MustExec("set session tidb_slow_log_masking = 0")
-	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
-	tk.MustExec("set session tidb_slow_log_masking = 1")
-	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
+	// test for tidb_redact_log
+	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_redact_log = 1")
+	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_redact_log = 0")
+	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_redact_log = 0")
+	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_redact_log = 1")
+	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("1"))
+
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = -120")
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '?'")) // redacted because of tidb_slow_log_masking = 1 above
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '?'")) // redacted because of tidb_redact_log = 1 above
 	tk.MustQuery("select @@session.tidb_dml_batch_size").Check(testkit.Rows("0"))
-	tk.MustExec("set session tidb_slow_log_masking = 0")
+	tk.MustExec("set session tidb_redact_log = 0")
 	tk.MustExec("set session tidb_dml_batch_size = -120")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '-120'")) // without redaction
 
@@ -1325,6 +1327,23 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustQuery("select @@global.read_only;").Check(testkit.Rows("1"))
 	_, err = tk.Exec("set global read_only = abc")
 	c.Assert(err, NotNil)
+
+}
+
+func (s *testSuite5) TestRemovedSysVars(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// test for tidb_enable_noop_functions
+	// In SET context, it just noops:
+	tk.MustExec(`SET tidb_enable_global_temporary_table = 1`)
+	tk.MustExec(`SET tidb_slow_log_masking = 1`)
+	tk.MustExec(`SET GLOBAL tidb_enable_global_temporary_table = 1`)
+	tk.MustExec(`SET GLOBAL tidb_slow_log_masking = 1`)
+
+	// In SELECT context it returns a specifc error
+	// (to avoid presenting dummy data)
+	tk.MustGetErrCode("SELECT @@tidb_slow_log_masking", errno.ErrVariableNoLongerSupported)
+	tk.MustGetErrCode("SELECT @@tidb_enable_global_temporary_table", errno.ErrVariableNoLongerSupported)
 
 }
 

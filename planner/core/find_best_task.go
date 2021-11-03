@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -976,6 +975,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	cop.idxMergePartPlans = scans
 	cop.cst = totalCost
 	task = cop.convertToRootTask(ds.ctx)
+	ds.addSelection4PlanCache(task.(*rootTask), ds.tableStats.ScaleByExpectCnt(totalRowCount), prop)
 	return task, nil
 }
 
@@ -1175,6 +1175,17 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.C
 	return handleCol, true
 }
 
+// addSelection4PlanCache adds an extra safeguard selection upon this root task for safety.
+// When reusing cached plans and rebuilding range for them, the range builder may return an loose range after parameters change.
+func (ds *DataSource) addSelection4PlanCache(task *rootTask, stats *property.StatsInfo, prop *property.PhysicalProperty) {
+	if !ds.ctx.GetSessionVars().StmtCtx.UseCache || ds.ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
+		return
+	}
+	sel := PhysicalSelection{Conditions: ds.pushedDownConds}.Init(ds.ctx, stats, ds.blockOffset, prop)
+	sel.SetChildren(task.p)
+	task.p = sel
+}
+
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
 	if !candidate.path.IsSingleScan {
@@ -1254,6 +1265,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	is.addPushedDownSelection(cop, ds, path, finalStats)
 	if prop.TaskTp == property.RootTaskType {
 		task = task.convertToRootTask(ds.ctx)
+		ds.addSelection4PlanCache(task.(*rootTask), finalStats, prop)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
@@ -1347,16 +1359,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *util.AccessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
-
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
-	if len(tableConds) > 0 {
-		// If we have table conditions, we should keep the addition filter conditions
-		// from the path's access conditions to the table filter not the index filter.
-		// The reason is when the index is the prefix index, it will get the wrong results.
-		tableConds = keepAccessCondsAsFilter4PlanCache(is.ctx, path.AccessConds, tableConds)
-	} else {
-		indexConds = keepAccessCondsAsFilter4PlanCache(is.ctx, path.AccessConds, indexConds)
-	}
 
 	var newRootConds []expression.Expression
 	indexConds, newRootConds = expression.PushDownExprs(is.ctx.GetSessionVars().StmtCtx, indexConds, is.ctx.GetClient(), kv.TiKV)
@@ -1642,30 +1645,6 @@ func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, thr
 	return nil, corr
 }
 
-// keepAccessCondsAsFilter4PlanCache is used to keep the access conditions as
-// filter conditions when the following conditions are met:
-// 1. Access conditions contains the lazy constant, see the MaybeOverOptimized4PlanCache
-// function for more details.
-// For example: if we have an table schema like `t(col1 int, col2 int, key idx(col1)),
-// and a prepare stmt like 'select col1 from t where (col1 between $a and $b or col1 < $c) and col2 < 1;`.
-// The normal plan will be `IndexReader -> Selection[col2 < 1] -> IndexRangeScan`
-// when `$a < $b`, the conditions related to col1 in `Selection` will be eliminated.
-// But when the `$a > $b`, we will get `IndexReader -> Selection[col2 < 1] -> IndexFullScan`.
-// And the result will be wrong without conditions related to col1 in `Selection`.
-// So we need to keep the `accessConditions` in `DataSource` to `Selection` when
-// the `accessConditions` in `DataSource` contains the lazy constant. After use
-// this function the `Selection` will be `((col1 > $a and col1 < $b) or col1 < $c))
-// and col2 < 1`.
-func keepAccessCondsAsFilter4PlanCache(ctx sessionctx.Context, accessConds []expression.Expression, filterConds []expression.Expression) []expression.Expression {
-	if expression.MaybeOverOptimized4PlanCache(ctx, accessConds) {
-		additionFilterConds := make([]expression.Expression, len(accessConds))
-		copy(additionFilterConds, accessConds)
-		filterConds = append(filterConds, additionFilterConds...)
-		filterConds = expression.RemoveDupExprs(ctx, filterConds)
-	}
-	return filterConds
-}
-
 // GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
 func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
 	ds := s.Source
@@ -1784,6 +1763,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}
 	if prop.TaskTp == property.RootTaskType {
 		task = task.convertToRootTask(ds.ctx)
+		ds.addSelection4PlanCache(task.(*rootTask), ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
@@ -1994,7 +1974,6 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats
 
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
-	ts.filterCondition = keepAccessCondsAsFilter4PlanCache(ts.ctx, ts.AccessCondition, ts.filterCondition)
 	var newRootConds []expression.Expression
 	ts.filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, ts.filterCondition, ts.ctx.GetClient(), ts.StoreType)
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)

@@ -222,6 +222,15 @@ func (b *builtinLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+
+	argTp := b.args[0].GetType()
+	if !types.IsBinaryStr(argTp) {
+		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
+		if err == nil {
+			return int64(len(dBytes)), false, nil
+		}
+	}
+
 	return int64(len([]byte(val))), false, nil
 }
 

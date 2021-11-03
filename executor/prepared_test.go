@@ -646,10 +646,10 @@ func (s *testSerialSuite) TestIssue28064(c *C) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	rows.Check(testkit.Rows("IndexLookUp_8 0.00 root  ",
-		"├─Selection_7(Build) 0.00 cop[tikv]  eq(test.t28064.a, 123), eq(test.t28064.b, 234), eq(test.t28064.c, 345)",
-		"│ └─IndexRangeScan_5 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+	rows.Check(testkit.Rows("Selection_8 0.00 root  eq(test.t28064.a, 123), eq(test.t28064.b, 234), eq(test.t28064.c, 345)",
+		"└─IndexLookUp_7 0.00 root  ",
+		"  ├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
 
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
 	rows = tk.MustQuery("select @@last_plan_from_cache")
@@ -657,8 +657,8 @@ func (s *testSerialSuite) TestIssue28064(c *C) {
 
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	rows.Check(testkit.Rows("IndexLookUp_8 0.00 root  ",
-		"├─Selection_7(Build) 0.00 cop[tikv]  eq(test.t28064.a, 123), eq(test.t28064.b, 234), eq(test.t28064.c, 345)",
-		"│ └─IndexRangeScan_5 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+	rows.Check(testkit.Rows("Selection_8 0.00 root  eq(test.t28064.a, 123), eq(test.t28064.b, 234), eq(test.t28064.c, 345)",
+		"└─IndexLookUp_7 0.00 root  ",
+		"  ├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
 }

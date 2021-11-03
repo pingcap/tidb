@@ -35,11 +35,8 @@ import (
 const secondsPerYear = 60 * 60 * 24 * 365
 
 // SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
-// Max worker count is maxDDLReorgWorkerCount.
+// Sysvar validation enforces the range to already be correct.
 func SetDDLReorgWorkerCounter(cnt int32) {
-	if cnt > maxDDLReorgWorkerCount {
-		cnt = maxDDLReorgWorkerCount
-	}
 	atomic.StoreInt32(&ddlReorgWorkerCounter, cnt)
 }
 
@@ -49,14 +46,8 @@ func GetDDLReorgWorkerCounter() int32 {
 }
 
 // SetDDLReorgBatchSize sets ddlReorgBatchSize size.
-// Max batch size is MaxDDLReorgBatchSize.
+// Sysvar validation enforces the range to already be correct.
 func SetDDLReorgBatchSize(cnt int32) {
-	if cnt > MaxDDLReorgBatchSize {
-		cnt = MaxDDLReorgBatchSize
-	}
-	if cnt < MinDDLReorgBatchSize {
-		cnt = MinDDLReorgBatchSize
-	}
 	atomic.StoreInt32(&ddlReorgBatchSize, cnt)
 }
 

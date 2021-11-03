@@ -496,24 +496,6 @@ func TestVarsutil(t *testing.T) {
 	require.Regexp(t, ".*Truncated incorrect tidb_analyze_version value", warn.Err.Error())
 }
 
-func TestSetOverflowBehave(t *testing.T) {
-	ddRegWorker := maxDDLReorgWorkerCount + 1
-	SetDDLReorgWorkerCounter(ddRegWorker)
-	require.Equal(t, GetDDLReorgWorkerCounter(), maxDDLReorgWorkerCount)
-
-	ddlReorgBatchSize := MaxDDLReorgBatchSize + 1
-	SetDDLReorgBatchSize(ddlReorgBatchSize)
-	require.Equal(t, GetDDLReorgBatchSize(), MaxDDLReorgBatchSize)
-	ddlReorgBatchSize = MinDDLReorgBatchSize - 1
-	SetDDLReorgBatchSize(ddlReorgBatchSize)
-	require.Equal(t, GetDDLReorgBatchSize(), MinDDLReorgBatchSize)
-
-	val := tidbOptInt64("a", 1)
-	require.Equal(t, int64(1), val)
-	val2 := tidbOptFloat64("b", 1.2)
-	require.Equal(t, 1.2, val2)
-}
-
 func TestValidate(t *testing.T) {
 	v := NewSessionVars()
 	v.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()

@@ -61,6 +61,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_extended")
 	tk.MustExec("delete from mysql.stats_fm_sketch")
 	tk.MustExec("delete from mysql.schema_index_usage")
+	tk.MustExec("delete from mysql.column_stats_usage")
 	do.StatsHandle().Clear()
 }
 
