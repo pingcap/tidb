@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -940,7 +941,26 @@ backupLoop:
 	return nil
 }
 
+// gRPC communication cancelled with connection closing
+const (
+	gRPC_Cancel = "the client connection is closing"
+)
+
 // isRetryableError represents whether we should retry reset grpc connection.
 func isRetryableError(err error) bool {
-	return status.Code(err) == codes.Unavailable
+
+	if status.Code(err) == codes.Unavailable {
+		return true
+	}
+
+	// At least, there are two possible cancel() call,
+	// one from backup range, another from gRPC, here we retry when gRPC cancel with connection closing
+	if status.Code(err) == codes.Canceled {
+		if s, ok := status.FromError(err); ok {
+			if strings.Contains(s.Message(), gRPC_Cancel) {
+				return true
+			}
+		}
+	}
+	return false
 }

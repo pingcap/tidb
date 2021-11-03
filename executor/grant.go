@@ -77,9 +77,20 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		dbNameStr := model.NewCIStr(dbName)
 		schema := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
 		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName))
-		// Allow GRANT on non-existent table, see issue #28533
-		if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-			return err
+		// Allow GRANT on non-existent table with at least create privilege, see issue #28533 #29268
+		if err != nil {
+			allowed := false
+			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				for _, p := range e.Privs {
+					if p.Priv == mysql.AllPriv || p.Priv&mysql.CreatePriv > 0 {
+						allowed = true
+						break
+					}
+				}
+			}
+			if !allowed {
+				return err
+			}
 		}
 		// Note the table name compare is case sensitive here.
 		if tbl != nil && tbl.Meta().Name.String() != e.Level.TableName {
@@ -796,7 +807,7 @@ func getRowsAndFields(ctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row
 
 func getRowFromRecordSet(ctx context.Context, se sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {

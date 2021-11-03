@@ -17,7 +17,6 @@ package expression
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
@@ -141,8 +140,8 @@ var vecBuiltinJSONCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testVectorizeSuite2) TestVectorizedBuiltinJSONFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinJSONCases)
+func TestVectorizedBuiltinJSONFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinJSONCases)
 }
 
 func BenchmarkVectorizedBuiltinJSONFunc(b *testing.B) {
