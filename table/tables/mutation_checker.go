@@ -499,7 +499,7 @@ func CheckTxnConsistency(txn kv.Transaction) error {
 	indexInsertionCount := 0
 	rowInsertionCount := 0
 	f := func(k kv.Key, v []byte) error {
-		if rowcodec.IsRowKey(k)  {
+		if rowcodec.IsRowKey(k) {
 			if len(v) > 0 {
 				rowInsertionCount += 1
 			}
@@ -513,7 +513,7 @@ func CheckTxnConsistency(txn kv.Transaction) error {
 	if err := kv.WalkMemBuffer(memBuffer, f); err != nil {
 		return errors.Trace(err)
 	}
-	if rowInsertionCount % indexInsertionCount != 0 {
+	if indexInsertionCount%rowInsertionCount != 0 {
 		return errors.Errorf("inconsistent index insertion count %d and row insertion count %d", indexInsertionCount, rowInsertionCount)
 	}
 	return nil
