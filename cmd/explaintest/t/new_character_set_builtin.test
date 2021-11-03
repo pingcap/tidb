@@ -57,3 +57,12 @@ select hex(convert('ㅂ' using gbk)), convert('ㅂ' using gbk);
 select convert(a using binary) from t;
 select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
 select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
+
+-- test for builtin function md5()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(a), md5(b), md5(c) from t;
+set @@tidb_enable_vectorized_expression = true;
+select md5(a), md5(b), md5(c) from t;
+set @@tidb_enable_vectorized_expression = false;

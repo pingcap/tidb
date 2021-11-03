@@ -324,19 +324,28 @@ func TestMD5Hash(t *testing.T) {
 	cases := []struct {
 		args     interface{}
 		expected string
+		charset  string
 		isNil    bool
 		getErr   bool
 	}{
-		{"", "d41d8cd98f00b204e9800998ecf8427e", false, false},
-		{"a", "0cc175b9c0f1b6a831c399e269772661", false, false},
-		{"ab", "187ef4436122d1cc2f40dc2b92f0eba0", false, false},
-		{"abc", "900150983cd24fb0d6963f7d28e17f72", false, false},
-		{123, "202cb962ac59075b964b07152d234b70", false, false},
-		{"123", "202cb962ac59075b964b07152d234b70", false, false},
-		{123.123, "46ddc40585caa8abc07c460b3485781e", false, false},
-		{nil, "", true, false},
+		{"", "d41d8cd98f00b204e9800998ecf8427e", "", false, false},
+		{"a", "0cc175b9c0f1b6a831c399e269772661", "", false, false},
+		{"ab", "187ef4436122d1cc2f40dc2b92f0eba0", "", false, false},
+		{"abc", "900150983cd24fb0d6963f7d28e17f72", "", false, false},
+		{"abc", "900150983cd24fb0d6963f7d28e17f72", "gbk", false, false},
+		{123, "202cb962ac59075b964b07152d234b70", "", false, false},
+		{"123", "202cb962ac59075b964b07152d234b70", "", false, false},
+		{"123", "202cb962ac59075b964b07152d234b70", "gbk", false, false},
+		{123.123, "46ddc40585caa8abc07c460b3485781e", "", false, false},
+		{"一二三", "8093a32450075324682d01456d6e3919", "", false, false},
+		{"一二三", "a45d4af7b243e7f393fa09bed72ac73e", "gbk", false, false},
+		{"ㅂ123", "0e85d0f68c104b65a15d727e26705596", "", false, false},
+		{"ㅂ123", "", "gbk", false, true},
+		{nil, "", "", true, false},
 	}
 	for _, c := range cases {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.charset)
+		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.MD5, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
