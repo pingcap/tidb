@@ -1,11 +1,11 @@
-# Proposal: Support Table and Partition Attributes
+# Proposal: Table Attributes
 
 - Author(s): [rleungx](https://github.com/rleungx)
 - Tracking Issue: https://github.com/tikv/pd/issues/3839
 
 ## Background
 
-Recently, we have encountered such a case that the scattered region of a table/partition is merged before inserting the data. We cannot prevent it from happening right now since we are not able to control the scheduling behavior at the table/partition level. However, it will sometimes lead to a serious hotspot problem. Under this circumstance, we are going to support the attributes for the table/partition so that we can handle this case. And we have designed a new mapping mechanism to establish a relationship between tables/partitions and regions which allows the user to specify the attributes to instruct the scheduling of PD. To make use of this feature to manage the table/partition level scheduling easily, we plan to introduce a new syntax in SQL.
+Recently, we have encountered such a case that the scattered region of a table/partition is merged before inserting the data. We cannot prevent it from happening right now since we are not able to control the scheduling behavior at the table/partition level. However, it will sometimes lead to a serious hot spot problem. Under this circumstance, we are going to support the attributes for the table/partition so that we can handle this case. And we have designed a new mapping mechanism to establish a relationship between tables/partitions and regions which allows the user to specify the attributes to instruct the scheduling of PD. To make use of this feature to manage the table/partition level scheduling easily, we plan to introduce a new syntax in SQL.
 
 ## Proposal
 
