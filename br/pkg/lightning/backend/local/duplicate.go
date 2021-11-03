@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -74,6 +73,7 @@ type DuplicateManager struct {
 	ts                uint64
 	keyAdapter        KeyAdapter
 	remoteWorkerPool  *utils.WorkerPool
+	opts              *kv.SessionOptions
 }
 
 type pendingIndexHandles struct {
@@ -184,7 +184,7 @@ func physicalTableIDs(tableInfo *model.TableInfo) []int64 {
 //
 // This object provides methods to collect and decode duplicated KV pairs into row data. The results
 // are stored into the errorMgr.
-func NewDuplicateManager(local *local, ts uint64) (*DuplicateManager, error) {
+func NewDuplicateManager(local *local, ts uint64, opts *kv.SessionOptions) (*DuplicateManager, error) {
 	return &DuplicateManager{
 		errorMgr:          local.errorMgr,
 		tls:               local.tls,
@@ -196,6 +196,7 @@ func NewDuplicateManager(local *local, ts uint64) (*DuplicateManager, error) {
 		connPool:          common.NewGRPCConns(),
 		// TODO: not sure what is the correct concurrency value.
 		remoteWorkerPool: utils.NewWorkerPool(uint(local.tcpConcurrency), "duplicates"),
+		opts:             opts,
 	}, nil
 }
 
@@ -218,9 +219,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(
 	}
 
 	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
-	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &kv.SessionOptions{
-		SQLMode: mysql.ModeStrictAllTables,
-	})
+	decoder, err := kv.NewTableKVDecoder(tbl, tableName, manager.opts)
 	if err != nil {
 		return false, err
 	}
@@ -457,9 +456,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 	db *pebble.DB,
 ) (bool, error) {
 	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
-	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &kv.SessionOptions{
-		SQLMode: mysql.ModeStrictAllTables,
-	})
+	decoder, err := kv.NewTableKVDecoder(tbl, tableName, manager.opts)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
