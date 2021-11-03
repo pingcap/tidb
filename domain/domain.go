@@ -1367,7 +1367,18 @@ const (
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
+<<<<<<< HEAD
 func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
+=======
+func (do *Domain) NotifyUpdatePrivilege() error {
+	// If skip-grant-table is configured, do not flush privileges.
+	// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
+	// the call to do.PrivilegeHandle().Update would panic.
+	if config.GetGlobalConfig().Security.SkipGrantTable {
+		return nil
+	}
+
+>>>>>>> dc67b57c5... *: fix nil pointer panic of some operations when skip-grant-table is true (#29358)
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), privilegeKey, "")

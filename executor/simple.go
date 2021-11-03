@@ -1495,6 +1495,7 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 			return errors.New("FLUSH TABLES WITH READ LOCK is not supported.  Please use @@tidb_snapshot")
 		}
 	case ast.FlushPrivileges:
+<<<<<<< HEAD
 		// If skip-grant-table is configured, do not flush privileges.
 		// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
 		// Call dom.PrivilegeHandle().Update would panic.
@@ -1502,6 +1503,8 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 			return nil
 		}
 
+=======
+>>>>>>> dc67b57c5... *: fix nil pointer panic of some operations when skip-grant-table is true (#29358)
 		dom := domain.GetDomain(e.ctx)
 		sysSessionPool := dom.SysSessionPool()
 		ctx, err := sysSessionPool.Get()
