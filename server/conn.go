@@ -1864,20 +1864,20 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		case *plannercore.Delete:
 			deleteStmt := stmt.(*ast.DeleteStmt)
 			if pp, ok := x.SelectPlan.(*plannercore.PointGetPlan); ok {
-                if pp.PartitionInfo != nil {
-                    continue
-                }
-                if pp.IndexInfo != nil {
-                    executor.ResetDeleteStmtCtx(sc, deleteStmt)
-                    idxKey, err1 := executor.EncodeUniqueIndexKey(cc.ctx, pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
-                    if err1 != nil {
-                        return nil, err1
-                    }
-                    idxKeys = append(idxKeys, idxKey)
-                } else {
-                    rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
-                }
-            }
+				if pp.PartitionInfo != nil {
+					continue
+				}
+				if pp.IndexInfo != nil {
+					executor.ResetDeleteStmtCtx(sc, deleteStmt)
+					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.ctx, pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
+					if err1 != nil {
+						return nil, err1
+					}
+					idxKeys = append(idxKeys, idxKey)
+				} else {
+					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
+				}
+			}
 		}
 	}
 	if len(idxKeys) == 0 && len(rowKeys) == 0 {
