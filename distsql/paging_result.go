@@ -6,6 +6,10 @@ import (
 	"sort"
 	"time"
 
+	"go.uber.org/zap"
+
+	"github.com/pingcap/tidb/util/logutil"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -63,6 +67,7 @@ func (p *pagingResult) firstPage() error {
 }
 
 func (p *pagingResult) nextPage(ctx context.Context) {
+	p.currPageLoaded = 0
 	if p.currPageSize < endPageSize {
 		p.currPageSize *= 2
 	}
@@ -119,14 +124,16 @@ func (p *pagingResult) nextPage(ctx context.Context) {
 
 // NextRaw gets the next raw result.
 func (p *pagingResult) NextRaw(ctx context.Context) ([]byte, error) {
-	if p.err != nil {
-		return nil, p.err
-	}
-	data, err := p.sr.NextRaw(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
+	//if p.err != nil {
+	//	return nil, p.err
+	//}
+	//data, err := p.sr.NextRaw(ctx)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//return data, nil
+	// TODO: support NextRaw
+	return nil, errors.New("NextRaw is not supported")
 }
 
 func (p *pagingResult) next(ctx context.Context, chk *chunk.Chunk) error {
@@ -155,6 +162,7 @@ func (p *pagingResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return p.err
 	}
 	chk.Reset()
+	loadedRows := 0
 	for !chk.IsFull() {
 		err := p.next(ctx, chk)
 		if err != nil {
@@ -162,9 +170,18 @@ func (p *pagingResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		if p.sr.selectResp == nil {
 			p.sr.Close()
-			p.currPageLoaded += uint64(chk.NumRows())
+			p.currPageLoaded += uint64(chk.NumRows() - loadedRows)
 			if p.currPageLoaded == p.currPageSize {
+				loadedRows = chk.NumRows()
 				p.nextPage(ctx)
+			} else {
+				logutil.Logger(ctx).Info("MYLOG break",
+					zap.Bool("is full", chk.IsFull()),
+					zap.Uint64("curr", p.currPageLoaded),
+					zap.Uint64("page size", p.currPageSize),
+					zap.Int("chk rows", chk.NumRows()),
+					zap.Int("loaded rows", loadedRows))
+				break
 			}
 		}
 	}
