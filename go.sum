@@ -516,6 +516,8 @@ github.com/montanaflynn/stats v0.5.0 h1:2EkzeTSqBB4V4bJwWrt5gIIrZmpJBcoIRGS2kWLg
 github.com/montanaflynn/stats v0.5.0/go.mod h1:wL8QJuTMNUDYhXwkmfOly8iTdp5TEcJFWZD2D7SIkUc=
 github.com/mornyx/client-go/v2 v2.0.0-alpha.0.20211103080439-0fd80ab7ad6b h1:tLroB6kHOxRh0YzfhX5HxstBMid7LMIQkHA6yJ4v1yA=
 github.com/mornyx/client-go/v2 v2.0.0-alpha.0.20211103080439-0fd80ab7ad6b/go.mod h1:iiwtsCxcbNLK5i9VRYGvdcihgHXTKy2ukWjoaJsrphg=
+github.com/mornyx/client-go/v2 v2.0.0-alpha.0.20211103092641-62da74981b7d h1:4jnqxqzaiTROVntBwIpgiapyYTZIovSCA+LSzp7juwU=
+github.com/mornyx/client-go/v2 v2.0.0-alpha.0.20211103092641-62da74981b7d/go.mod h1:iiwtsCxcbNLK5i9VRYGvdcihgHXTKy2ukWjoaJsrphg=
 github.com/moul/http2curl v1.0.0/go.mod h1:8UbvGypXm98wA/IqH45anm5Y2Z6ep6O31QGOAZ3H0fQ=
 github.com/mwitkow/go-conntrack v0.0.0-20161129095857-cc309e4a2223/go.mod h1:qRWi+5nqEBWmkhHvq77mSJWrCKwh8bxhgT7d/eI7P4U=
 github.com/nats-io/nats.go v1.8.1/go.mod h1:BrFz9vVn0fU3AcH9Vn4Kd7W0NpJ651tD5omQ3M8LwxM=

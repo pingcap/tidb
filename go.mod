@@ -104,4 +104,4 @@ replace github.com/pingcap/tidb/parser => ./parser
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
 // TODO: remove
-replace github.com/tikv/client-go/v2 => github.com/mornyx/client-go/v2 v2.0.0-alpha.0.20211103080439-0fd80ab7ad6b
+replace github.com/tikv/client-go/v2 => github.com/mornyx/client-go/v2 v2.0.0-alpha.0.20211103092641-62da74981b7d
