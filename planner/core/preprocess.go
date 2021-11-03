@@ -299,6 +299,21 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		for _, cte := range node.CTEs {
 			p.withName[cte.Name.L] = struct{}{}
 		}
+	case *ast.BeginStmt:
+		// If the begin statement was like following:
+		// start transaction read only as of timestamp ....
+		// then we need set StmtCtx.IsStaleness as true in order to avoid take tso in PrepareTSFuture.
+		if node.AsOf != nil {
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+			p.IsStaleness = true
+		} else if p.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS() > 0 {
+			// If the begin statement was like following:
+			// set transaction read only as of timestamp ...
+			// begin
+			// then we need set StmtCtx.IsStaleness as true in order to avoid take tso in PrepareTSFuture.
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+			p.IsStaleness = true
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}

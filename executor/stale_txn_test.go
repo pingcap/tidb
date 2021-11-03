@@ -1217,24 +1217,28 @@ func (s *testStaleTxnSerialSuite) TestStaleReadNoExtraTSORequest(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`), IsNil)
 	tk.MustQuery("select * from t as of timestamp NOW() - INTERVAL 2 SECOND")
 	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
+
 	// set and statement stale read
 	tk.MustExec("set transaction read only as of timestamp NOW() - INTERVAL 2 SECOND")
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`), IsNil)
 	tk.MustQuery("select * from t")
 	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
+
 	// stale read transaction
-	tk.MustExec("start transaction read only as of timestamp NOW() - INTERVAL 2 SECOND")
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`), IsNil)
+	tk.MustExec("start transaction read only as of timestamp NOW() - INTERVAL 2 SECOND")
 	tk.MustQuery("select * from t")
-	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
 	tk.MustExec("commit")
+	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
+
 	// set and stale read transaction
 	tk.MustExec("set transaction read only as of timestamp NOW() - INTERVAL 2 SECOND")
-	tk.MustExec("begin")
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`), IsNil)
+	tk.MustExec("begin")
 	tk.MustQuery("select * from t")
-	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
 	tk.MustExec("commit")
+	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
+
 	// use tidb_read_staleness
 	tk.MustExec(`set @@tidb_read_staleness='-1'`)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`), IsNil)
