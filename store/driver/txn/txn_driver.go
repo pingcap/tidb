@@ -221,8 +221,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
-	case kv.ResourceGroupTag:
-		txn.KVTxn.SetResourceGroupTag(val.([]byte))
+	case kv.ResourceGroupTagFactory:
+		txn.KVTxn.SetResourceGroupTagFactory(val.(func([]byte) []byte))
 	case kv.KVFilter:
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
 	case kv.SnapInterceptor:

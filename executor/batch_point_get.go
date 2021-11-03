@@ -20,8 +20,6 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/pingcap/tipb/go-tipb"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -277,7 +275,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		// Fetch all handles.
-		setResourceGroupTagForSnapshot(e.ctx.GetSessionVars().StmtCtx, e.snapshot, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex)
 		handleVals, err = batchGetter.BatchGet(ctx, toFetchIndexKeys)
 		if err != nil {
 			return err
@@ -417,7 +414,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 	}
 	// Fetch all values.
-	setResourceGroupTagForSnapshot(e.ctx.GetSessionVars().StmtCtx, e.snapshot, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow)
 	values, err = batchGetter.BatchGet(ctx, keys)
 	if err != nil {
 		return err

@@ -285,6 +285,11 @@ func (sc *StatementContext) GetResourceGroupTag(label tipb.ResourceGroupTagLabel
 	return newTag
 }
 
+// GetResourceGroupTagByFirstKey gets the resource group of the statement based on the content of first key.
+func (sc *StatementContext) GetResourceGroupTagByFirstKey(firstKey []byte) []byte {
+	return sc.GetResourceGroupTag(resourcegrouptag.GetResourceGroupLabelByKey(firstKey))
+}
+
 // SetPlanDigest sets the normalized plan and plan digest.
 func (sc *StatementContext) SetPlanDigest(normalized string, planDigest *parser.Digest) {
 	if planDigest != nil {

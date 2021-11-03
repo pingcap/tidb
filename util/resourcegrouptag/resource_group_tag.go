@@ -17,6 +17,7 @@ package resourcegrouptag
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -51,4 +52,16 @@ func DecodeResourceGroupTag(data []byte) (sqlDigest []byte, err error) {
 		return nil, errors.Errorf("invalid resource group tag data %x", data)
 	}
 	return tag.SqlDigest, nil
+}
+
+// GetResourceGroupLabelByKey determines the label of the resource group based on the content of the key.
+func GetResourceGroupLabelByKey(key []byte) tipb.ResourceGroupTagLabel {
+	_, _, isRow, err := tablecodec.DecodeKeyHead(key)
+	if err != nil {
+		return tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown
+	}
+	if isRow {
+		return tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow
+	}
+	return tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex
 }
