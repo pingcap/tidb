@@ -554,7 +554,7 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 	coverAll := len(idx.Info.Columns) == usedColsLen
 	// In this case, the row count is at most 1.
 	if idx.Info.Unique && coverAll {
-		return 1.0 / float64(idx.TotalRowCount()), nil
+		return 1.0 / idx.TotalRowCount(), nil
 	}
 	val := types.NewBytesDatum(bytes)
 	if idx.outOfRange(val) {
@@ -669,9 +669,9 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity = selectivity * count / float64(idx.TotalRowCount())
+			selectivity = selectivity * count / idx.TotalRowCount()
 		}
-		totalCount += selectivity * float64(idx.TotalRowCount())
+		totalCount += selectivity * idx.TotalRowCount()
 	}
 	if totalCount > idx.TotalRowCount() {
 		totalCount = idx.TotalRowCount()

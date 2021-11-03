@@ -160,7 +160,6 @@ func fetchMode(ctx context.Context, cfg *config.Config, tls *common.TLS) error {
 	)
 }
 
-
 func checkpointErrorIgnore(ctx context.Context, cfg *config.Config, tableName string) error {
 	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
@@ -350,4 +349,3 @@ func importEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engi
 	}
 	return errors.Trace(ce.Import(ctx, regionSplitSize))
 }
-

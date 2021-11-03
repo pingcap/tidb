@@ -25,3 +25,4 @@ stats-lease = "0"
 
 [experimental]
 enable-new-charset = true
+allow-expression-index = true
