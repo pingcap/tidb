@@ -942,7 +942,7 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 		// init_connect does not care about the results,
 		// but they need to be drained because of lazy loading.
 		if rs != nil {
-			req := rs.NewChunk()
+			req := rs.NewChunk(nil)
 			for {
 				if err = rs.Next(ctx, req); err != nil {
 					return err
@@ -1681,6 +1681,23 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 	return nil
 }
 
+func (cc *clientConn) handlePlanReplayerLoad(ctx context.Context, planReplayerLoadInfo *executor.PlanReplayerLoadInfo) error {
+	if cc.capability&mysql.ClientLocalFiles == 0 {
+		return errNotAllowedCommand
+	}
+	if planReplayerLoadInfo == nil {
+		return errors.New("plan replayer load: info is empty")
+	}
+	data, err := cc.getDataFromPath(ctx, planReplayerLoadInfo.Path)
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	return planReplayerLoadInfo.Update(data)
+}
+
 func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
@@ -1960,6 +1977,15 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 		}
 	}
 
+	planReplayerLoad := cc.ctx.Value(executor.PlanReplayerLoadVarKey)
+	if planReplayerLoad != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.PlanReplayerLoadVarKey, nil)
+		if err := cc.handlePlanReplayerLoad(ctx, planReplayerLoad.(*executor.PlanReplayerLoadInfo)); err != nil {
+			return handled, err
+		}
+	}
+
 	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
 }
 
@@ -2054,7 +2080,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 // The first return value indicates whether error occurs at the first call of ResultSet.Next.
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) (bool, error) {
 	data := cc.alloc.AllocWithLen(4, 1024)
-	req := rs.NewChunkFromAllocator(cc.chunkAlloc)
+	req := rs.NewChunk(cc.chunkAlloc)
 	gotColumnInfo := false
 	firstNext := true
 	var stmtDetail *execdetails.StmtExecDetails
@@ -2126,7 +2152,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
 
-	req := rs.NewChunkFromAllocator(cc.chunkAlloc)
+	req := rs.NewChunk(cc.chunkAlloc)
 	// if fetchedRows is not enough, getting data from recordSet.
 	for len(fetchedRows) < fetchSize {
 		// Here server.tidbResultSet implements Next method.
