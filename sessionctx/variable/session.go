@@ -925,10 +925,7 @@ type SessionVars struct {
 	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
 	CTEMaxRecursionDepth int
 
-	// The temporary table size threshold
-	// In MySQL, when a temporary table exceed this size, it spills to disk.
-	// In TiDB, as we do not support spill to disk for now, an error is reported.
-	// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_tmp_table_size
+	// The temporary table size threshold, which is different from MySQL. See https://github.com/pingcap/tidb/issues/28691.
 	TMPTableSize int64
 
 	// EnableStableResultMode if stabilize query results.
@@ -958,11 +955,6 @@ type SessionVars struct {
 		curr int8
 		data [2]stmtctx.StatementContext
 	}
-
-	// EnableMPPBalanceWithContinuousRegion indicates whether MPP balance logic will take account of region's continuity in TiFlash.
-	EnableMPPBalanceWithContinuousRegion bool
-	// EnableMPPBalanceWithContinuousRegionCount indicates the continuous region count that balance logic assigns to a TiFlash instance each time.
-	EnableMPPBalanceWithContinuousRegionCount int64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1192,7 +1184,7 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
-		TMPTableSize:                DefTMPTableSize,
+		TMPTableSize:                DefTiDBTmpTableMaxSize,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 		EnablePlacementChecks:       DefEnablePlacementCheck,

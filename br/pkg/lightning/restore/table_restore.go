@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"go.uber.org/multierr"
@@ -192,6 +193,7 @@ func createColumnPermutation(columns []string, ignoreColumns []string, tableInfo
 func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
+		tr.logger.Error("fail to restoreEngines because indexengine is nil")
 		return errors.Errorf("table %v index engine checkpoint not found", tr.tableName)
 	}
 	// If there is an index engine only, it indicates no data needs to restore.
@@ -715,14 +717,16 @@ func (tr *TableRestore) postProcess(
 
 		// 4.5. do duplicate detection.
 		hasDupe := false
-		if rc.cfg.TikvImporter.DuplicateDetection {
+		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+			opts := &kv.SessionOptions{
+				SQLMode: mysql.ModeStrictAllTables,
+				SysVars: rc.sysVars,
+			}
 			var err error
-			hasLocalDupe, err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName)
+			hasLocalDupe, err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
-				if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgUnsafeNoop {
-					return false, err
-				}
+				return false, err
 			} else {
 				hasDupe = hasLocalDupe
 			}
@@ -737,13 +741,15 @@ func (tr *TableRestore) postProcess(
 			return true, nil
 		}
 
-		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateDetection {
-			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName)
+		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+			opts := &kv.SessionOptions{
+				SQLMode: mysql.ModeStrictAllTables,
+				SysVars: rc.sysVars,
+			}
+			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
-				if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgUnsafeNoop {
-					return false, e
-				}
+				return false, e
 			} else {
 				hasDupe = hasDupe || hasRemoteDupe
 			}

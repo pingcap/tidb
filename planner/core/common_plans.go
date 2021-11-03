@@ -365,7 +365,8 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
 	preparedObj *CachedPrepareStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, preparedObj.VisitInfos); err != nil {
+		visitInfo := VisitInfo4PrivCheck(is, preparedObj.PreparedAst.Stmt, preparedObj.VisitInfos)
+		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
 			return err
 		}
 	}
@@ -547,6 +548,20 @@ func (e *Execute) rebuildRange(p Plan) error {
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
 	switch x := p.(type) {
+	case *PhysicalIndexHashJoin:
+		return e.rebuildRange(&x.PhysicalIndexJoin)
+	case *PhysicalIndexMergeJoin:
+		return e.rebuildRange(&x.PhysicalIndexJoin)
+	case *PhysicalIndexJoin:
+		if err := x.Ranges.Rebuild(); err != nil {
+			return err
+		}
+		for _, child := range x.Children() {
+			err = e.rebuildRange(child)
+			if err != nil {
+				return err
+			}
+		}
 	case *PhysicalTableScan:
 		err = e.buildRangeForTableScan(sctx, x)
 		if err != nil {
@@ -720,6 +735,9 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 			if err != nil {
 				return err
 			}
+			if len(res.AccessConds) != len(ts.AccessCondition) {
+				return errors.New("rebuild range for cached plan failed")
+			}
 			ts.Ranges = res.Ranges
 		} else {
 			ts.Ranges = ranger.FullRange()
@@ -751,6 +769,9 @@ func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIn
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens)
 	if err != nil {
 		return err
+	}
+	if len(res.AccessConds) != len(is.AccessCondition) {
+		return errors.New("rebuild range for cached plan failed")
 	}
 	is.Ranges = res.Ranges
 	return
@@ -965,8 +986,8 @@ type LoadStats struct {
 	Path string
 }
 
-// PlanReplayerSingle represents a plan replayer plan.
-type PlanReplayerSingle struct {
+// PlanReplayer represents a plan replayer plan.
+type PlanReplayer struct {
 	baseSchemaProducer
 	ExecStmt ast.StmtNode
 	Analyze  bool
