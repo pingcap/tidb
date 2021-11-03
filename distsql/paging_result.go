@@ -6,12 +6,11 @@ import (
 	"sort"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
-
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -130,20 +129,43 @@ func (p *pagingResult) NextRaw(ctx context.Context) ([]byte, error) {
 	return data, nil
 }
 
+func (p *pagingResult) next(ctx context.Context, chk *chunk.Chunk) error {
+	if p.sr.selectResp == nil || p.sr.respChkIdx == len(p.sr.selectResp.Chunks) {
+		err := p.sr.fetchResp(ctx)
+		if err != nil {
+			return err
+		}
+		if p.sr.selectResp == nil {
+			return nil
+		}
+	}
+	// TODO(Shenghui Wu): add metrics
+	switch p.sr.selectResp.GetEncodeType() {
+	case tipb.EncodeType_TypeDefault:
+		return p.sr.readFromDefault(ctx, chk)
+	case tipb.EncodeType_TypeChunk:
+		return p.sr.readFromChunk(ctx, chk)
+	}
+	return errors.Errorf("unsupported encode type:%v", p.sr.encodeType)
+}
+
 // Next reads the data into chunk.
 func (p *pagingResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if p.err != nil {
 		return p.err
 	}
-	err := p.sr.Next(ctx, chk)
-	if err != nil {
-		return err
-	}
-	if p.sr.selectResp == nil {
-		p.sr.Close()
-		p.currPageLoaded += uint64(chk.NumRows())
-		if p.currPageLoaded == p.currPageSize {
-			p.nextPage(ctx)
+	chk.Reset()
+	for !chk.IsFull() {
+		err := p.next(ctx, chk)
+		if err != nil {
+			return err
+		}
+		if p.sr.selectResp == nil {
+			p.sr.Close()
+			p.currPageLoaded += uint64(chk.NumRows())
+			if p.currPageLoaded == p.currPageSize {
+				p.nextPage(ctx)
+			}
 		}
 	}
 	return nil
