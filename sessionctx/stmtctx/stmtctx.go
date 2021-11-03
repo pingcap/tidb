@@ -274,8 +274,8 @@ func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *pars
 	return sc.planNormalized, sc.planDigest
 }
 
-// GetResourceGroupTag gets the resource group of the statement.
-func (sc *StatementContext) GetResourceGroupTag(label tipb.ResourceGroupTagLabel) []byte {
+// GetResourceGroupTagByLabel gets the resource group of the statement based on the label.
+func (sc *StatementContext) GetResourceGroupTagByLabel(label tipb.ResourceGroupTagLabel) []byte {
 	tag, ok := sc.resourceGroupTags.Load(label)
 	if ok {
 		return tag.([]byte)
@@ -291,7 +291,7 @@ func (sc *StatementContext) GetResourceGroupTag(label tipb.ResourceGroupTagLabel
 
 // GetResourceGroupTagByFirstKey gets the resource group of the statement based on the content of first key.
 func (sc *StatementContext) GetResourceGroupTagByFirstKey(firstKey []byte) []byte {
-	return sc.GetResourceGroupTag(resourcegrouptag.GetResourceGroupLabelByKey(firstKey))
+	return sc.GetResourceGroupTagByLabel(resourcegrouptag.GetResourceGroupLabelByKey(firstKey))
 }
 
 // SetPlanDigest sets the normalized plan and plan digest.

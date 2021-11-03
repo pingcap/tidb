@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"github.com/tikv/client-go/v2/util"
 )
 
 // UpdateExec represents a new update executor.
@@ -274,7 +275,9 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		if variable.TopSQLEnabled() {
 			txn, err := e.ctx.Txn(true)
 			if err == nil {
-				txn.SetOption(kv.ResourceGroupTagFactory, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagByFirstKey)
+				txn.SetOption(kv.ResourceGroupTagFactory, func(params util.ResourceGroupTagParams) []byte {
+					return e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagByFirstKey(params.FirstKey)
+				})
 			}
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {

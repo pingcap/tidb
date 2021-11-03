@@ -8828,7 +8828,9 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 			c.Assert(planDigest.String(), Equals, expectPlanDigest.String())
 			if len(ca.tagLabels) > 0 {
 				c.Assert(tagLabel, Equals, ca.tagLabels[0])
-				ca.tagLabels = ca.tagLabels[1:] // next label
+				if len(ca.tagLabels) > 1 {
+					ca.tagLabels = ca.tagLabels[1:] // next label
+				}
 			}
 			checkCnt++
 		}

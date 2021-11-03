@@ -92,14 +92,14 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 	}
 }
 
-func TestGetResourceGroupTag(t *testing.T) {
+func TestGetResourceGroupTagByLabel(t *testing.T) {
 	ctx := stmtctx.StatementContext{OriginalSQL: "SELECT * FROM t"}
-	tagRow := ctx.GetResourceGroupTag(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow)
-	tagIndex := ctx.GetResourceGroupTag(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex)
-	tagUnknown := ctx.GetResourceGroupTag(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
-	tagRow2 := ctx.GetResourceGroupTag(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow)
-	tagIndex2 := ctx.GetResourceGroupTag(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex)
-	tagUnknown2 := ctx.GetResourceGroupTag(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
+	tagRow := ctx.GetResourceGroupTagByLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow)
+	tagIndex := ctx.GetResourceGroupTagByLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex)
+	tagUnknown := ctx.GetResourceGroupTagByLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
+	tagRow2 := ctx.GetResourceGroupTagByLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow)
+	tagIndex2 := ctx.GetResourceGroupTagByLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex)
+	tagUnknown2 := ctx.GetResourceGroupTagByLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
 	require.NotEmpty(t, tagRow)
 	require.NotEmpty(t, tagIndex)
 	require.NotEmpty(t, tagUnknown)
