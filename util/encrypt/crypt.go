@@ -142,13 +142,3 @@ func SQLEncode(cryptStr string, password string) (string, error) {
 
 	return string(cryptStrByte), nil
 }
-
-// SQLEncodeBuf Function to handle the encode() function
-func SQLEncodeBuf(cryptStrByte []byte, passwdByte []byte) (string, error) {
-	var sc sqlCrypt
-
-	sc.init(passwdByte, len(passwdByte))
-	sc.encode(cryptStrByte, len(cryptStrByte))
-
-	return string(cryptStrByte), nil
-}
