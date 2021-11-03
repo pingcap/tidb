@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
@@ -332,6 +333,11 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 			zap.Int("staging handler", int(txn.stagingHandle)),
 			zap.Stack("something must be wrong"))
 		return errors.Trace(kv.ErrInvalidTxn)
+	}
+
+	// add an enablement check
+	if err := tables.CheckTxnConsistency(txn); err != nil {
+		return errors.Trace(err)
 	}
 
 	txn.mu.Lock()
