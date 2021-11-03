@@ -476,9 +476,14 @@ func (store *MVCCStore) CheckTxnStatus(reqCtx *requestCtx,
 		err = store.dbWriter.Write(batch)
 		return TxnStatus{0, kvrpcpb.Action_LockNotExistRollback, nil}, nil
 	}
+	var lockTS uint64
+	if lock != nil {
+		lockTS = lock.StartTS
+	}
 	return TxnStatus{0, kvrpcpb.Action_NoAction, nil}, &ErrTxnNotFound{
 		PrimaryKey: req.PrimaryKey,
 		StartTS:    req.LockTs,
+		LockTS:     lockTS,
 	}
 }
 

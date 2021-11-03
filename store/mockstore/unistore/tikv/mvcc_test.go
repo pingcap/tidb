@@ -603,6 +603,11 @@ func TestCheckTxnStatus(t *testing.T) {
 	currentTs := uint64(5)
 
 	// Try to check a not exist thing.
+	resTTL, resCommitTs, action, err = CheckTxnStatus(pk, startTs, callerStartTs, currentTs, false, store)
+	require.Equal(t, uint64(0), resTTL)
+	require.Equal(t, uint64(0), resCommitTs)
+	require.Equal(t, err.(*ErrTxnNotFound).LockTS, uint64(0))
+
 	resTTL, resCommitTs, action, err = CheckTxnStatus(pk, startTs, callerStartTs, currentTs, true, store)
 	require.Equal(t, uint64(0), resTTL)
 	require.Equal(t, uint64(0), resCommitTs)
@@ -619,6 +624,13 @@ func TestCheckTxnStatus(t *testing.T) {
 	// Prewrite a large txn
 	startTs = 2
 	MustPrewriteOptimistic(pk, pk, val, startTs, lockTTL, minCommitTs, store)
+
+	// Try to check a mismatching primary lock
+	resTTL, resCommitTs, action, err = CheckTxnStatus(pk, 3, callerStartTs, currentTs, false, store)
+	require.Equal(t, uint64(0), resTTL)
+	require.Equal(t, uint64(0), resCommitTs)
+	require.Equal(t, err.(*ErrTxnNotFound).LockTS, startTs)
+
 	resTTL, resCommitTs, action, err = CheckTxnStatus(pk, startTs, callerStartTs, currentTs, true, store)
 	require.Equal(t, lockTTL, resTTL)
 	require.Equal(t, uint64(0), resCommitTs)

@@ -1039,6 +1039,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 			TxnNotFound: &kvrpcpb.TxnNotFound{
 				StartTs:    x.StartTS,
 				PrimaryKey: x.PrimaryKey,
+				LockTs:     x.LockTS,
 			},
 		}
 	default:

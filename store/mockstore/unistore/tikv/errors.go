@@ -127,6 +127,7 @@ func (e *ErrCommitExpire) Error() string {
 type ErrTxnNotFound struct {
 	StartTS    uint64
 	PrimaryKey []byte
+	LockTS     uint64
 }
 
 func (e *ErrTxnNotFound) Error() string {
