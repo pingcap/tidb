@@ -83,14 +83,14 @@ hex(convert('ㅂ' using gbk))	convert('ㅂ' using gbk)
 3F	?
 select convert(a using binary), convert(convert(a using gbk) using binary) from t;
 convert(a using binary)	convert(convert(a using gbk) using binary)
-中文	����
-啊	��
+中文	����
+啊	��
 a	a
 1	1
 ㅂ	?
 select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
 convert(convert('中文' using gbk) using binary)	convert('中文' using binary)
-����	中文
+����	中文
 select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
 convert(convert('ㅂ' using gbk) using binary)	convert('ㅂ' using binary)
 ?	ㅂ
@@ -126,7 +126,7 @@ a
 ㅂ
 select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
 convert(convert('中文' using gbk) using binary)	convert('中文' using binary)
-����	中文
+����	中文
 select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
 convert(convert('ㅂ' using gbk) using binary)	convert('ㅂ' using binary)
 ?	ㅂ
@@ -144,22 +144,11 @@ set @@tidb_enable_vectorized_expression = false;
 drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
 insert into t values ('一二三', '一二三', '一二三');
-select decode(encode(a,"monty"),"monty") = a, md5(decode(encode(b,"monty"),"monty")) = md5(b), decode(encode(c,"monty"),"monty") = c from t;
-decode(encode(a,"monty"),"monty") = a	md5(decode(encode(b,"monty"),"monty")) = md5(b)	decode(encode(c,"monty"),"monty") = c
-1	1	1
+select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
+md5(compress(a))	md5(compress(b))	md5(compress(c))
+2198d4d3b06a6cba3f9275c7e364105c	5e587a14393aecf0629bb29dbd6b4379	905068487b6220f70bb71a48323826be
 set @@tidb_enable_vectorized_expression = true;
-select decode(encode(a,"monty"),"monty") = a, md5(decode(encode(b,"monty"),"monty")) = md5(b), decode(encode(c,"monty"),"monty") = c from t;
-decode(encode(a,"monty"),"monty") = a	md5(decode(encode(b,"monty"),"monty")) = md5(b)	decode(encode(c,"monty"),"monty") = c
-1	1	1
-set @@tidb_enable_vectorized_expression = false;
-drop table if exists t;
-create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
-insert into t values ('一二三', '一二三', '一二三');
-select password(a), password(b), password(c) from t;
-password(a)	password(b)	password(c)
-*D13577D198CA3F0AF5C548195065991E0E3EE665	*A669F2B2DD49E2463FE62D8F72DDF4F858687EA5	*9FC0B2ABDF3EC9895E852B15BE432EE0EA0C26BA
-set @@tidb_enable_vectorized_expression = true;
-select password(a), password(b), password(c) from t;
-password(a)	password(b)	password(c)
-*D13577D198CA3F0AF5C548195065991E0E3EE665	*A669F2B2DD49E2463FE62D8F72DDF4F858687EA5	*9FC0B2ABDF3EC9895E852B15BE432EE0EA0C26BA
+select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
+md5(compress(a))	md5(compress(b))	md5(compress(c))
+2198d4d3b06a6cba3f9275c7e364105c	bd7a7c844b231ef2b06ad6b50ff2b599	905068487b6220f70bb71a48323826be
 set @@tidb_enable_vectorized_expression = false;

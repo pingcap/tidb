@@ -584,6 +584,9 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
+	bufTp := b.args[0].GetType()
+	bufEnc := charset.NewEncoding(bufTp.Charset)
+	var encodedBuf []byte
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
@@ -599,7 +602,12 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			result.AppendString("")
 		}
 
-		compressed, err := deflate(hack.Slice(str))
+		strSlice, err := bufEnc.Encode(encodedBuf, hack.Slice(str))
+		if err != nil {
+			return err
+		}
+
+		compressed, err := deflate(strSlice)
 		if err != nil {
 			result.AppendNull()
 			continue
