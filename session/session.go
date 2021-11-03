@@ -1041,11 +1041,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, alloc chunk.Allocator) ([]chunk.Row, error) {
 	var rows []chunk.Row
 	var req *chunk.Chunk
-	if alloc == nil {
-		req = rs.NewChunk()
-	} else {
-		req = rs.NewChunkFromAllocator(alloc)
-	}
+	req = rs.NewChunk(alloc)
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {
@@ -1612,10 +1608,20 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	}
 	errMsg := "only support read-only statement during read-only staleness transactions"
 	node := stmtNode.(ast.Node)
-	switch node.(type) {
+	switch v := node.(type) {
 	case *ast.SplitRegionStmt:
 		return nil
-	case *ast.SelectStmt, *ast.ExplainStmt, *ast.DoStmt, *ast.ShowStmt, *ast.SetOprStmt, *ast.ExecuteStmt, *ast.SetOprSelectList:
+	case *ast.SelectStmt:
+		// select lock statement needs start a transaction which will be conflict to stale read,
+		// we forbid select lock statement in stale read for now.
+		if v.LockInfo != nil {
+			return errors.New("select lock hasn't been supported in stale read yet")
+		}
+		if !planner.IsReadOnly(stmtNode, vars) {
+			return errors.New(errMsg)
+		}
+		return nil
+	case *ast.ExplainStmt, *ast.DoStmt, *ast.ShowStmt, *ast.SetOprStmt, *ast.ExecuteStmt, *ast.SetOprSelectList:
 		if !planner.IsReadOnly(stmtNode, vars) {
 			return errors.New(errMsg)
 		}
@@ -1634,6 +1640,7 @@ var querySpecialKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
 	executor.IndexAdviseVarKey,
+	executor.PlanReplayerLoadVarKey,
 }
 
 func (s *session) hasQuerySpecial() bool {
@@ -2781,6 +2788,14 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 		return
 	}
 	if !s.txn.validOrPending() {
+		if s.GetSessionVars().StmtCtx.IsStaleness {
+			// Do nothing when StmtCtx.IsStaleness is true
+			// we don't need to request tso for stale read
+			return
+		}
+		failpoint.Inject("assertTSONotRequest", func() {
+			panic("tso shouldn't be requested")
+		})
 		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)

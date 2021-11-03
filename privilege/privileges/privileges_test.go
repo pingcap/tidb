@@ -26,6 +26,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
@@ -2618,6 +2620,7 @@ func TestInformationSchemaPlacmentRulesPrivileges(t *testing.T) {
 	}()
 	tk.MustExec("CREATE DATABASE placement_rule_db")
 	tk.MustExec("USE placement_rule_db")
+	tk.Session().GetSessionVars().EnableAlterPlacement = true
 	tk.MustExec(`CREATE TABLE placement_rule_table_se (a int) PRIMARY_REGION="se" REGIONS="se,nl"`)
 	tk.MustExec(`CREATE TABLE placement_rule_table_nl (a int) PRIMARY_REGION="nl" REGIONS="se,nl"`)
 	tk.MustQuery(`SELECT * FROM information_schema.placement_rules WHERE SCHEMA_NAME = "placement_rule_db"`).Sort().Check(testkit.Rows(
@@ -2665,7 +2668,7 @@ func TestGrantCreateTmpTables(t *testing.T) {
 	tk.MustExec("CREATE TABLE create_tmp_table_table (a int)")
 	tk.MustExec("GRANT CREATE TEMPORARY TABLES on create_tmp_table_db.* to u1")
 	tk.MustExec("GRANT CREATE TEMPORARY TABLES on *.* to u1")
-	// Must set a session user to avoid null pointer dereferencing
+	// Must set a session user to avoid null pointer dereference
 	tk.Session().Auth(&auth.UserIdentity{
 		Username: "root",
 		Hostname: "localhost",
@@ -2675,6 +2678,164 @@ func TestGrantCreateTmpTables(t *testing.T) {
 		`GRANT CREATE TEMPORARY TABLES ON create_tmp_table_db.* TO 'u1'@'%'`))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE create_tmp_table_db")
+}
+
+func TestCreateTmpTablesPriv(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	createStmt := "CREATE TEMPORARY TABLE test.tmp(id int)"
+	dropStmt := "DROP TEMPORARY TABLE IF EXISTS test.tmp"
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(dropStmt)
+	tk.MustExec("CREATE TABLE test.t(id int primary key)")
+	tk.MustExec("CREATE SEQUENCE test.tmp")
+	tk.MustExec("CREATE USER vcreate, vcreate_tmp, vcreate_tmp_all")
+	tk.MustExec("GRANT CREATE, USAGE ON test.* TO vcreate")
+	tk.MustExec("GRANT CREATE TEMPORARY TABLES, USAGE ON test.* TO vcreate_tmp")
+	tk.MustExec("GRANT CREATE TEMPORARY TABLES, USAGE ON *.* TO vcreate_tmp_all")
+
+	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate", Hostname: "localhost"}, nil, nil)
+	err := tk.ExecToErr(createStmt)
+	require.EqualError(t, err, "[planner:1044]Access denied for user 'vcreate'@'%' to database 'test'")
+	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate_tmp", Hostname: "localhost"}, nil, nil)
+	tk.MustExec(createStmt)
+	tk.MustExec(dropStmt)
+	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate_tmp_all", Hostname: "localhost"}, nil, nil)
+	// TODO: issue #29280 to be fixed.
+	//err = tk.ExecToErr(createStmt)
+	//require.EqualError(t, err, "[planner:1044]Access denied for user 'vcreate_tmp_all'@'%' to database 'test'")
+
+	tests := []struct {
+		sql     string
+		errcode int
+	}{
+		{
+			sql: "create temporary table tmp(id int primary key)",
+		},
+		{
+			sql: "insert into tmp value(1)",
+		},
+		{
+			sql: "insert into tmp value(1) on duplicate key update id=1",
+		},
+		{
+			sql: "replace tmp values(1)",
+		},
+		{
+			sql:     "insert into tmp select * from t",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql: "update tmp set id=1 where id=1",
+		},
+		{
+			sql:     "update tmp t1, t t2 set t1.id=t2.id where t1.id=t2.id",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql: "delete from tmp where id=1",
+		},
+		{
+			sql:     "delete t1 from tmp t1 join t t2 where t1.id=t2.id",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql: "select * from tmp where id=1",
+		},
+		{
+			sql: "select * from tmp where id in (1,2)",
+		},
+		{
+			sql: "select * from tmp",
+		},
+		{
+			sql:     "select * from tmp join t where tmp.id=t.id",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql:     "(select * from tmp) union (select * from t)",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql:     "create temporary table tmp1 like t",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql:     "create table tmp(id int primary key)",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql:     "create table t(id int primary key)",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql: "analyze table tmp",
+		},
+		{
+			sql:     "analyze table tmp, t",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql: "show create table tmp",
+		},
+		// TODO: issue #29281 to be fixed.
+		//{
+		//	sql: "show create table t",
+		//	errcode: mysql.ErrTableaccessDenied,
+		//},
+		{
+			sql:     "drop sequence tmp",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql:     "alter table tmp add column c1 char(10)",
+			errcode: errno.ErrUnsupportedDDLOperation,
+		},
+		{
+			sql: "truncate table tmp",
+		},
+		{
+			sql:     "drop temporary table t",
+			errcode: mysql.ErrBadTable,
+		},
+		{
+			sql:     "drop table t",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql:     "drop table t, tmp",
+			errcode: mysql.ErrTableaccessDenied,
+		},
+		{
+			sql: "drop temporary table tmp",
+		},
+	}
+
+	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate_tmp", Hostname: "localhost"}, nil, nil)
+	tk.MustExec("use test")
+	tk.MustExec(dropStmt)
+	for _, test := range tests {
+		if test.errcode == 0 {
+			tk.MustExec(test.sql)
+		} else {
+			tk.MustGetErrCode(test.sql, test.errcode)
+		}
+	}
+
+	// TODO: issue #29282 to be fixed.
+	//for i, test := range tests {
+	//	preparedStmt := fmt.Sprintf("prepare stmt%d from '%s'", i, test.sql)
+	//	executeStmt := fmt.Sprintf("execute stmt%d", i)
+	//	tk.MustExec(preparedStmt)
+	//	if test.errcode == 0 {
+	//		tk.MustExec(executeStmt)
+	//	} else {
+	//		tk.MustGetErrCode(executeStmt, test.errcode)
+	//	}
+	//}
 }
 
 func TestRevokeSecondSyntax(t *testing.T) {
@@ -2767,4 +2928,45 @@ func TestIssue28675(t *testing.T) {
 	tk.MustQuery("select privileges from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("select,update"))
 	require.Equal(t, 1, len(tk.MustQuery("desc test.v").Rows()))
 	require.Equal(t, 1, len(tk.MustQuery("explain test.v").Rows()))
+}
+
+func TestSkipGrantTable(t *testing.T) {
+	save := config.GetGlobalConfig()
+	config.UpdateGlobal(func(c *config.Config) { c.Security.SkipGrantTable = true })
+	defer config.StoreGlobalConfig(save)
+
+	store, clean := newStore(t)
+	defer clean()
+
+	// Issue 29317
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE USER 'test1'@'%';`)
+	tk.MustExec(`GRANT BACKUP_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTORE_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RELOAD ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SHUTDOWN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_STATUS_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_CONNECTION_ADMIN, CONNECTION_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT PROCESS ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SHUTDOWN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SELECT, INSERT, UPDATE, DELETE ON mysql.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SELECT ON information_schema.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SELECT ON performance_schema.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* TO root;`)
+	tk.MustExec(`revoke SHUTDOWN on *.* from root;`)
+	tk.MustExec(`revoke CONFIG on *.* from root;`)
+
+	tk.MustExec(`CREATE USER 'test2'@'%' IDENTIFIED BY '12345';`)
+	tk.MustExec(`GRANT PROCESS, CONFIG ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT SHOW DATABASES ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT DASHBOARD_CLIENT ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_STATUS_ADMIN ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN ON *.* TO 'test2'@'%';`)
 }
