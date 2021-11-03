@@ -49,7 +49,7 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.R
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob), Version1)
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
-	req := records.NewChunk()
+	req := records.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	for {
 		err := records.Next(ctx, req)

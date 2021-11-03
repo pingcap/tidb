@@ -1956,6 +1956,16 @@ func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type StatsOptionType int
+
+const (
+	StatsOptionBuckets StatsOptionType = 0x5000 + iota
+	StatsOptionTopN
+	StatsOptionColsChoice
+	StatsOptionColList
+	StatsOptionSampleRate
+)
+
 // TableOptionType is the type for TableOption
 type TableOptionType int
 
@@ -2008,6 +2018,11 @@ const (
 	TableOptionPlacementFollowerConstraints = TableOptionType(PlacementOptionFollowerConstraints)
 	TableOptionPlacementVoterConstraints    = TableOptionType(PlacementOptionVoterConstraints)
 	TableOptionPlacementPolicy              = TableOptionType(PlacementOptionPolicy)
+	TableOptionStatsBuckets                 = TableOptionType(StatsOptionBuckets)
+	TableOptionStatsTopN                    = TableOptionType(StatsOptionTopN)
+	TableOptionStatsColsChoice              = TableOptionType(StatsOptionColsChoice)
+	TableOptionStatsColList                 = TableOptionType(StatsOptionColList)
+	TableOptionStatsSampleRate              = TableOptionType(StatsOptionSampleRate)
 )
 
 // RowFormat types
@@ -2052,6 +2067,7 @@ type TableOption struct {
 	StrValue   string
 	UintValue  uint64
 	BoolValue  bool
+	Value      ValueExpr
 	TableNames []*TableName
 }
 
@@ -2280,6 +2296,46 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			StrValue:  n.StrValue,
 		}
 		return placementOpt.Restore(ctx)
+	case TableOptionStatsBuckets:
+		ctx.WriteKeyWord("STATS_BUCKETS ")
+		ctx.WritePlain("= ")
+		if n.Default {
+			ctx.WriteKeyWord("DEFAULT")
+		} else {
+			ctx.WritePlainf("%d", n.UintValue)
+		}
+	case TableOptionStatsTopN:
+		ctx.WriteKeyWord("STATS_TOPN ")
+		ctx.WritePlain("= ")
+		if n.Default {
+			ctx.WriteKeyWord("DEFAULT")
+		} else {
+			ctx.WritePlainf("%d", n.UintValue)
+		}
+	case TableOptionStatsSampleRate:
+		ctx.WriteKeyWord("STATS_SAMPLE_RATE ")
+		ctx.WritePlain("= ")
+		if n.Default {
+			ctx.WriteKeyWord("DEFAULT")
+		} else {
+			ctx.WritePlainf("%v", n.Value.GetValue())
+		}
+	case TableOptionStatsColsChoice:
+		ctx.WriteKeyWord("STATS_COL_CHOICE ")
+		ctx.WritePlain("= ")
+		if n.Default {
+			ctx.WriteKeyWord("DEFAULT")
+		} else {
+			ctx.WriteString(n.StrValue)
+		}
+	case TableOptionStatsColList:
+		ctx.WriteKeyWord("STATS_COL_LIST ")
+		ctx.WritePlain("= ")
+		if n.Default {
+			ctx.WriteKeyWord("DEFAULT")
+		} else {
+			ctx.WriteString(n.StrValue)
+		}
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
@@ -2465,6 +2521,7 @@ const (
 	AlterTableAttributes
 	AlterTableCache
 	AlterTableNoCache
+	AlterTableStatsOptions
 )
 
 // LockType is the type for AlterTableSpec.
@@ -2537,34 +2594,35 @@ type AlterTableSpec struct {
 	NoWriteToBinlog bool
 	OnAllPartitions bool
 
-	Tp              AlterTableType
-	Name            string
-	IndexName       model.CIStr
-	Constraint      *Constraint
-	Options         []*TableOption
-	OrderByList     []*AlterOrderItem
-	NewTable        *TableName
-	NewColumns      []*ColumnDef
-	NewConstraints  []*Constraint
-	OldColumnName   *ColumnName
-	NewColumnName   *ColumnName
-	Position        *ColumnPosition
-	LockType        LockType
-	Algorithm       AlgorithmType
-	Comment         string
-	FromKey         model.CIStr
-	ToKey           model.CIStr
-	Partition       *PartitionOptions
-	PartitionNames  []model.CIStr
-	PartDefinitions []*PartitionDefinition
-	WithValidation  bool
-	Num             uint64
-	Visibility      IndexVisibility
-	TiFlashReplica  *TiFlashReplicaSpec
-	PlacementSpecs  []*PlacementSpec
-	Writeable       bool
-	Statistics      *StatisticsSpec
-	AttributesSpec  *AttributesSpec
+	Tp               AlterTableType
+	Name             string
+	IndexName        model.CIStr
+	Constraint       *Constraint
+	Options          []*TableOption
+	OrderByList      []*AlterOrderItem
+	NewTable         *TableName
+	NewColumns       []*ColumnDef
+	NewConstraints   []*Constraint
+	OldColumnName    *ColumnName
+	NewColumnName    *ColumnName
+	Position         *ColumnPosition
+	LockType         LockType
+	Algorithm        AlgorithmType
+	Comment          string
+	FromKey          model.CIStr
+	ToKey            model.CIStr
+	Partition        *PartitionOptions
+	PartitionNames   []model.CIStr
+	PartDefinitions  []*PartitionDefinition
+	WithValidation   bool
+	Num              uint64
+	Visibility       IndexVisibility
+	TiFlashReplica   *TiFlashReplicaSpec
+	PlacementSpecs   []*PlacementSpec
+	Writeable        bool
+	Statistics       *StatisticsSpec
+	AttributesSpec   *AttributesSpec
+	StatsOptionsSpec *StatsOptionsSpec
 }
 
 type TiFlashReplicaSpec struct {
@@ -3100,6 +3158,12 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CACHE")
 	case AlterTableNoCache:
 		ctx.WriteKeyWord("NOCACHE")
+	case AlterTableStatsOptions:
+		spec := n.StatsOptionsSpec
+		if err := spec.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.StatsOptionsSpec")
+		}
+
 	default:
 		// TODO: not support
 		ctx.WritePlainf(" /* AlterTableType(%d) is not supported */ ", n.Tp)
@@ -3946,6 +4010,33 @@ func (n *AttributesSpec) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AttributesSpec)
+	return v.Leave(n)
+}
+
+type StatsOptionsSpec struct {
+	node
+
+	StatsOptions string
+	Default      bool
+}
+
+func (n *StatsOptionsSpec) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("STATS_OPTIONS")
+	ctx.WritePlain("=")
+	if n.Default {
+		ctx.WriteKeyWord("DEFAULT")
+		return nil
+	}
+	ctx.WriteString(n.StatsOptions)
+	return nil
+}
+
+func (n *StatsOptionsSpec) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*StatsOptionsSpec)
 	return v.Leave(n)
 }
 
