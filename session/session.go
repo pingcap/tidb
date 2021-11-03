@@ -546,9 +546,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
-	s.txn.SetOption(kv.ResourceGroupTagFactory, func(params tikvutil.ResourceGroupTagParams) []byte {
+	s.txn.SetOption(kv.ResourceGroupTagFactory, tikvutil.ResourceGroupTagFactory(func(params tikvutil.ResourceGroupTagParams) []byte {
 		return sessVars.StmtCtx.GetResourceGroupTagByFirstKey(params.FirstKey)
-	})
+	}))
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
 	if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
 		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions

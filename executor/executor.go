@@ -1897,8 +1897,8 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 
 func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 	if snapshot != nil && variable.TopSQLEnabled() {
-		snapshot.SetOption(kv.ResourceGroupTagFactory, func(params tikvutil.ResourceGroupTagParams) []byte {
+		snapshot.SetOption(kv.ResourceGroupTagFactory, tikvutil.ResourceGroupTagFactory(func(params tikvutil.ResourceGroupTagParams) []byte {
 			return sc.GetResourceGroupTagByFirstKey(params.FirstKey)
-		})
+		}))
 	}
 }

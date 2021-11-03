@@ -223,7 +223,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.MatchStoreLabels:
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTagFactory:
-		txn.KVTxn.SetResourceGroupTagFactory(val.(func(params util.ResourceGroupTagParams) []byte))
+		txn.KVTxn.SetResourceGroupTagFactory(val.(util.ResourceGroupTagFactory))
 	case kv.KVFilter:
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
 	case kv.SnapInterceptor:

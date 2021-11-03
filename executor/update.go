@@ -275,9 +275,9 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		if variable.TopSQLEnabled() {
 			txn, err := e.ctx.Txn(true)
 			if err == nil {
-				txn.SetOption(kv.ResourceGroupTagFactory, func(params util.ResourceGroupTagParams) []byte {
+				txn.SetOption(kv.ResourceGroupTagFactory, util.ResourceGroupTagFactory(func(params util.ResourceGroupTagParams) []byte {
 					return e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagByFirstKey(params.FirstKey)
-				})
+				}))
 			}
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
