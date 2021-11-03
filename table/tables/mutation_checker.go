@@ -489,3 +489,32 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 	}
 	return nil
 }
+
+func CheckTxnConsistency(txn kv.Transaction) error {
+	memBuffer := txn.GetMemBuffer()
+	if memBuffer == nil {
+		return nil
+	}
+
+	indexInsertionCount := 0
+	rowInsertionCount := 0
+	f := func(k kv.Key, v []byte) error {
+		if rowcodec.IsRowKey(k)  {
+			if len(v) > 0 {
+				rowInsertionCount += 1
+			}
+		} else {
+			if len(v) > 0 {
+				indexInsertionCount += 1
+			}
+		}
+		return nil
+	}
+	if err := kv.WalkMemBuffer(memBuffer, f); err != nil {
+		return errors.Trace(err)
+	}
+	if rowInsertionCount % indexInsertionCount != 0 {
+		return errors.Errorf("inconsistent index insertion count %d and row insertion count %d", indexInsertionCount, rowInsertionCount)
+	}
+	return nil
+}

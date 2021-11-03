@@ -584,6 +584,9 @@ const (
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// TiDBEnableMutationChecker indicates whether to check data consistency for mutations
+	TiDBEnableMutationChecker = "tidb_enable_mutation_checker"
 )
 
 // TiDB vars that have only global scope
@@ -745,6 +748,7 @@ const (
 	DefTMPTableSize                       = 16777216
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBEnableOrderedResultMode        = false
+	DefTiDBEnableMutationChecker          = false
 )
 
 // Process global variables.
