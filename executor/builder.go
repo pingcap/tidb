@@ -1247,14 +1247,12 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	executorCountHashJoinExec.Inc()
 
-	leftExecTypes := retTypes(leftExec)
-	leftTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys))
+	leftExecTypes, rightExecTypes := retTypes(leftExec), retTypes(rightExec)
+	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys))
 	for i, col := range v.LeftJoinKeys {
 		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
 		leftTypes[i].Flag = col.RetType.Flag
 	}
-	rightExecTypes := retTypes(rightExec)
-	rightTypes := make([]*types.FieldType, 0, len(v.RightJoinKeys))
 	for i, col := range v.RightJoinKeys {
 		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
 		rightTypes[i].Flag = col.RetType.Flag
@@ -1263,10 +1261,8 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	// consider collations
 	for i := range v.EqualConditions {
 		chs, coll := v.EqualConditions[i].CharsetAndCollation(e.ctx)
-		bt := leftTypes[i]
-		bt.Charset, bt.Collate = chs, coll
-		pt := rightTypes[i]
-		pt.Charset, pt.Collate = chs, coll
+		leftTypes[i].Charset, leftTypes[i].Collate = chs, coll
+		rightTypes[i].Charset, rightTypes[i].Collate = chs, coll
 	}
 	if leftIsBuildSide {
 		e.buildTypes, e.probeTypes = leftTypes, rightTypes
