@@ -93,6 +93,18 @@ func TestResourceGroupTagEncodingPB(t *testing.T) {
 	require.Nil(t, tag.PlanDigest)
 }
 
+func TestGetResourceGroupLabelByKey(t *testing.T) {
+	var label tipb.ResourceGroupTagLabel
+	// tablecodec.EncodeRowKey(0, []byte{})
+	label = GetResourceGroupLabelByKey([]byte{116, 128, 0, 0, 0, 0, 0, 0, 0, 95, 114})
+	require.Equal(t, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow, label)
+	// tablecodec.EncodeIndexSeekKey(0, 0, []byte{}))
+	label = GetResourceGroupLabelByKey([]byte{116, 128, 0, 0, 0, 0, 0, 0, 0, 95, 105, 128, 0, 0, 0, 0, 0, 0, 0})
+	require.Equal(t, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex, label)
+	label = GetResourceGroupLabelByKey([]byte(""))
+	require.Equal(t, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown, label)
+}
+
 func genRandHex(length int) []byte {
 	const chars = "0123456789abcdef"
 	res := make([]byte, length)
