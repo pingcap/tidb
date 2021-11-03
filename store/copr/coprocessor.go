@@ -127,7 +127,10 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	}
 	it.open(ctx, enabledRateLimitAction)
-	return it
+	if req.Streaming {
+		return it
+	}
+	return CopIterator{it}
 }
 
 // copTask contains a related Region and KeyRange for a kv.Request.
@@ -271,6 +274,16 @@ type copIterator struct {
 	resolvedLocks util.TSSet
 
 	actionOnExceed *rateLimitAction
+
+	respRanges []*coprocessor.KeyRange
+}
+
+type CopIterator struct {
+	*copIterator
+}
+
+func (c *CopIterator) GetRespRanges() []*coprocessor.KeyRange {
+	return c.respRanges
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -575,6 +588,9 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				it.sendRate.PutToken()
 			})
 			return it.Next(ctx)
+		}
+		if resp.pbResp.Range != nil {
+			it.respRanges = append(it.respRanges, resp.pbResp.Range)
 		}
 	} else {
 		for {
@@ -1045,7 +1061,7 @@ func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRang
 	return buildCopTasks(bo, worker.store.GetRegionCache(), remainedRanges, worker.req, task.eventCb)
 }
 
-// calculateRemain splits the input ranges into two, and take one of them according to desc flag.
+// CalculateRemain splits the input ranges into two, and take one of them according to desc flag.
 // It's used in streaming API, to calculate which range is consumed and what needs to be retry.
 // For example:
 // ranges: [r1 --> r2) [r3 --> r4)

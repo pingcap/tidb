@@ -585,6 +585,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				break
 			}
 			var result distsql.SelectResult
+			logutil.Logger(ctx).Info("MYLOG before send dag req", zap.Bool("indexPaging", e.indexPaging))
 			if e.indexPaging {
 				result, err = distsql.SelectWithPaging(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
 			} else {

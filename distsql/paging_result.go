@@ -3,6 +3,8 @@ package distsql
 import (
 	"context"
 	"fmt"
+	"sort"
+	"time"
 
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -15,7 +17,7 @@ import (
 )
 
 const (
-	startPagingSize uint64 = 32
+	startPagingSize uint64 = 2
 	endPageSize            = startPagingSize * 128
 )
 
@@ -31,10 +33,13 @@ type pagingResult struct {
 	currPageSize   uint64
 	currPageLoaded uint64
 	err            error
+	start          time.Time
 }
 
 func (p *pagingResult) firstPage() error {
+	p.start = time.Now()
 	p.currPageSize = startPagingSize
+	p.dag = &tipb.DAGRequest{}
 	err := p.dag.Unmarshal(p.kvReq.Data)
 	if err != nil {
 		return err
@@ -69,6 +74,33 @@ func (p *pagingResult) nextPage(ctx context.Context) {
 		e.Limit.Limit = p.currPageSize
 	}
 	p.kvReq.Data, p.err = p.dag.Marshal()
+	for _, respRange := range p.sr.respRanges {
+		var key []byte
+		if p.kvReq.Desc {
+			key = respRange.Start
+		} else {
+			key = respRange.End
+		}
+		i := sort.Search(len(p.kvReq.KeyRanges), func(i int) bool {
+			return p.kvReq.KeyRanges[i].StartKey.Cmp(key)+
+				p.kvReq.KeyRanges[i].EndKey.Cmp(key) == 0
+		})
+		if p.kvReq.Desc {
+			p.kvReq.KeyRanges[i].EndKey = key
+			if i < len(p.kvReq.KeyRanges)-1 {
+				p.kvReq.KeyRanges = p.kvReq.KeyRanges[:i+1]
+			}
+		} else {
+			p.kvReq.KeyRanges[i].StartKey = key
+			if i > 0 {
+				p.kvReq.KeyRanges = p.kvReq.KeyRanges[i-1:]
+			}
+		}
+
+		if len(p.kvReq.KeyRanges) == 0 {
+			return
+		}
+	}
 	if p.err != nil {
 		return
 	}
@@ -87,11 +119,15 @@ func (p *pagingResult) nextPage(ctx context.Context) {
 }
 
 // NextRaw gets the next raw result.
-func (p *pagingResult) NextRaw(context.Context) ([]byte, error) {
+func (p *pagingResult) NextRaw(ctx context.Context) ([]byte, error) {
 	if p.err != nil {
 		return nil, p.err
 	}
-	return nil, nil
+	data, err := p.sr.NextRaw(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 // Next reads the data into chunk.
