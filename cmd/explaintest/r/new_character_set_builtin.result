@@ -1,6 +1,6 @@
 drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
-insert into t values ('一二三', '一二三', '一二三');
+insert into t values ('ä¸€äºŒä¸‰', 'ä¸€äºŒä¸‰', 'ä¸€äºŒä¸‰');
 select hex(a), hex(b), hex(c) from t;
 hex(a)	hex(b)	hex(c)
 E4B880E4BA8CE4B889	D2BBB6FEC8FD	E4B880E4BA8CE4B8890000000000000000000000
@@ -29,24 +29,24 @@ octet_length(a)	octet_length(b)	octet_length(c)
 set @@tidb_enable_vectorized_expression = false;
 drop table if exists t;
 create table t (a char(100) charset utf8mb4, b char(100) charset gbk);
-insert into t values ('àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ', 'àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ');
+insert into t values ('Ã Ã¡Ã¨Ã©ÃªÃ¬Ã­Ã²Ã³Ã¹ÃºÃ¼ÄÄ“Ä›Ä«Å„ÅˆÅÅ«ÇŽÇÇ’Ç”Ç–Ç˜ÇšÇœâ…ªâ…«', 'Ã Ã¡Ã¨Ã©ÃªÃ¬Ã­Ã²Ã³Ã¹ÃºÃ¼ÄÄ“Ä›Ä«Å„ÅˆÅÅ«ÇŽÇÇ’Ç”Ç–Ç˜ÇšÇœâ…ªâ…«');
 select upper(a), upper(b) from t;
 upper(a)	upper(b)
-ÀÁÈÉÊÌÍÒÓÙÚÜĀĒĚĪŃŇŌŪǍǏǑǓǕǗǙǛⅪⅫ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
+Ã€ÃÃˆÃ‰ÃŠÃŒÃÃ’Ã“Ã™ÃšÃœÄ€Ä’ÄšÄªÅƒÅ‡ÅŒÅªÇÇÇ‘Ç“Ç•Ç—Ç™Ç›â…ªâ…«	Ã Ã¡Ã¨Ã©ÃªÃ¬Ã­Ã²Ã³Ã¹ÃºÃ¼ÄÄ“Ä›Ä«Å„ÅˆÅÅ«ÇŽÇÇ’Ç”Ç–Ç˜ÇšÇœâ…ªâ…«
 select lower(a), lower(b) from t;
 lower(a)	lower(b)
-àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅺⅻ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
+Ã Ã¡Ã¨Ã©ÃªÃ¬Ã­Ã²Ã³Ã¹ÃºÃ¼ÄÄ“Ä›Ä«Å„ÅˆÅÅ«ÇŽÇÇ’Ç”Ç–Ç˜ÇšÇœâ…ºâ…»	Ã Ã¡Ã¨Ã©ÃªÃ¬Ã­Ã²Ã³Ã¹ÃºÃ¼ÄÄ“Ä›Ä«Å„ÅˆÅÅ«ÇŽÇÇ’Ç”Ç–Ç˜ÇšÇœâ…ªâ…«
 set @@tidb_enable_vectorized_expression = true;
 select upper(a), upper(b) from t;
 upper(a)	upper(b)
-ÀÁÈÉÊÌÍÒÓÙÚÜĀĒĚĪŃŇŌŪǍǏǑǓǕǗǙǛⅪⅫ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
+Ã€ÃÃˆÃ‰ÃŠÃŒÃÃ’Ã“Ã™ÃšÃœÄ€Ä’ÄšÄªÅƒÅ‡ÅŒÅªÇÇÇ‘Ç“Ç•Ç—Ç™Ç›â…ªâ…«	Ã Ã¡Ã¨Ã©ÃªÃ¬Ã­Ã²Ã³Ã¹ÃºÃ¼ÄÄ“Ä›Ä«Å„ÅˆÅÅ«ÇŽÇÇ’Ç”Ç–Ç˜ÇšÇœâ…ªâ…«
 select lower(a), lower(b) from t;
 lower(a)	lower(b)
-àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅺⅻ	àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ
+Ã Ã¡Ã¨Ã©ÃªÃ¬Ã­Ã²Ã³Ã¹ÃºÃ¼ÄÄ“Ä›Ä«Å„ÅˆÅÅ«ÇŽÇÇ’Ç”Ç–Ç˜ÇšÇœâ…ºâ…»	Ã Ã¡Ã¨Ã©ÃªÃ¬Ã­Ã²Ã³Ã¹ÃºÃ¼ÄÄ“Ä›Ä«Å„ÅˆÅÅ«ÇŽÇÇ’Ç”Ç–Ç˜ÇšÇœâ…ªâ…«
 set @@tidb_enable_vectorized_expression = false;
 drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
-insert into t values ('一二三', '一二三', '一二三');
+insert into t values ('ä¸€äºŒä¸‰', 'ä¸€äºŒä¸‰', 'ä¸€äºŒä¸‰');
 select to_base64(a), to_base64(b), to_base64(c) from t;
 to_base64(a)	to_base64(b)	to_base64(c)
 5LiA5LqM5LiJ	0ru2/sj9	5LiA5LqM5LiJAAAAAAAAAAAAAAA=
@@ -57,82 +57,82 @@ to_base64(a)	to_base64(b)	to_base64(c)
 set @@tidb_enable_vectorized_expression = false;
 drop table if exists t;
 create table t(a char(10));
-insert into t values ('中文'), ('啊'), ('a'), ('1'), ('ㅂ');
+insert into t values ('ä¸­æ–‡'), ('å•Š'), ('a'), ('1'), ('ã…‚');
 set @@tidb_enable_vectorized_expression = true;
 select hex(convert(a using gbk)), convert(a using gbk) from t;
 hex(convert(a using gbk))	convert(a using gbk)
-D6D0CEC4	中文
-B0A1	啊
+D6D0CEC4	ä¸­æ–‡
+B0A1	å•Š
 61	a
 31	1
 3F	?
-select hex(convert('中文' using gbk)), convert('中文' using gbk);
-hex(convert('中文' using gbk))	convert('中文' using gbk)
-D6D0CEC4	中文
-select hex(convert('啊' using gbk)), convert('啊' using gbk);
-hex(convert('啊' using gbk))	convert('啊' using gbk)
-B0A1	啊
+select hex(convert('ä¸­æ–‡' using gbk)), convert('ä¸­æ–‡' using gbk);
+hex(convert('ä¸­æ–‡' using gbk))	convert('ä¸­æ–‡' using gbk)
+D6D0CEC4	ä¸­æ–‡
+select hex(convert('å•Š' using gbk)), convert('å•Š' using gbk);
+hex(convert('å•Š' using gbk))	convert('å•Š' using gbk)
+B0A1	å•Š
 select hex(convert('a' using gbk)), convert('a' using gbk);
 hex(convert('a' using gbk))	convert('a' using gbk)
 61	a
 select hex(convert('1' using gbk)), convert('1' using gbk);
 hex(convert('1' using gbk))	convert('1' using gbk)
 31	1
-select hex(convert('ㅂ' using gbk)), convert('ㅂ' using gbk);
-hex(convert('ㅂ' using gbk))	convert('ㅂ' using gbk)
+select hex(convert('ã…‚' using gbk)), convert('ã…‚' using gbk);
+hex(convert('ã…‚' using gbk))	convert('ã…‚' using gbk)
 3F	?
 select convert(a using binary), convert(convert(a using gbk) using binary) from t;
 convert(a using binary)	convert(convert(a using gbk) using binary)
-中文	����
-啊	��
+ä¸­æ–‡	ÖÐÎÄ
+å•Š	°¡
 a	a
 1	1
-ㅂ	?
-select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
-convert(convert('中文' using gbk) using binary)	convert('中文' using binary)
-����	中文
-select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
-convert(convert('ㅂ' using gbk) using binary)	convert('ㅂ' using binary)
-?	ㅂ
+ã…‚	?
+select convert(convert('ä¸­æ–‡' using gbk) using binary), convert('ä¸­æ–‡' using binary);
+convert(convert('ä¸­æ–‡' using gbk) using binary)	convert('ä¸­æ–‡' using binary)
+ÖÐÎÄ	ä¸­æ–‡
+select convert(convert('ã…‚' using gbk) using binary), convert('ã…‚' using binary);
+convert(convert('ã…‚' using gbk) using binary)	convert('ã…‚' using binary)
+?	ã…‚
 set @@tidb_enable_vectorized_expression = false;
 select hex(convert(a using gbk)), convert(a using gbk) from t;
 hex(convert(a using gbk))	convert(a using gbk)
-D6D0CEC4	中文
-B0A1	啊
+D6D0CEC4	ä¸­æ–‡
+B0A1	å•Š
 61	a
 31	1
 3F	?
-select hex(convert('中文' using gbk)), convert('中文' using gbk);
-hex(convert('中文' using gbk))	convert('中文' using gbk)
-D6D0CEC4	中文
-select hex(convert('啊' using gbk)), convert('啊' using gbk);
-hex(convert('啊' using gbk))	convert('啊' using gbk)
-B0A1	啊
+select hex(convert('ä¸­æ–‡' using gbk)), convert('ä¸­æ–‡' using gbk);
+hex(convert('ä¸­æ–‡' using gbk))	convert('ä¸­æ–‡' using gbk)
+D6D0CEC4	ä¸­æ–‡
+select hex(convert('å•Š' using gbk)), convert('å•Š' using gbk);
+hex(convert('å•Š' using gbk))	convert('å•Š' using gbk)
+B0A1	å•Š
 select hex(convert('a' using gbk)), convert('a' using gbk);
 hex(convert('a' using gbk))	convert('a' using gbk)
 61	a
 select hex(convert('1' using gbk)), convert('1' using gbk);
 hex(convert('1' using gbk))	convert('1' using gbk)
 31	1
-select hex(convert('ㅂ' using gbk)), convert('ㅂ' using gbk);
-hex(convert('ㅂ' using gbk))	convert('ㅂ' using gbk)
+select hex(convert('ã…‚' using gbk)), convert('ã…‚' using gbk);
+hex(convert('ã…‚' using gbk))	convert('ã…‚' using gbk)
 3F	?
 select convert(a using binary) from t;
 convert(a using binary)
-中文
-啊
+ä¸­æ–‡
+å•Š
 a
 1
-ㅂ
-select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
-convert(convert('中文' using gbk) using binary)	convert('中文' using binary)
-����	中文
-select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
-convert(convert('ㅂ' using gbk) using binary)	convert('ㅂ' using binary)
-?	ㅂ
+ã…‚
+select convert(convert('ä¸­æ–‡' using gbk) using binary), convert('ä¸­æ–‡' using binary);
+convert(convert('ä¸­æ–‡' using gbk) using binary)	convert('ä¸­æ–‡' using binary)
+ÖÐÎÄ	ä¸­æ–‡
+select convert(convert('ã…‚' using gbk) using binary), convert('ã…‚' using binary);
+convert(convert('ã…‚' using gbk) using binary)	convert('ã…‚' using binary)
+?	ã…‚
 drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
-insert into t values ('一二三', '一二三', '一二三');
+insert into t values ('ä¸€äºŒä¸‰', 'ä¸€äºŒä¸‰', 'ä¸€äºŒä¸‰');
 select md5(a), md5(b), md5(c) from t;
 md5(a)	md5(b)	md5(c)
 8093a32450075324682d01456d6e3919	8093a32450075324682d01456d6e3919	aae0117857fe54811a5239275dd81133

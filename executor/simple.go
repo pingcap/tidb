@@ -1336,7 +1336,7 @@ func userExistsInternal(sqlExecutor sqlexec.SQLExecutor, name string, host strin
 	if err != nil {
 		return false, err
 	}
-	req := recordSet.NewChunk()
+	req := recordSet.NewChunk(nil)
 	err = recordSet.Next(context.TODO(), req)
 	var rows int = 0
 	if err == nil {

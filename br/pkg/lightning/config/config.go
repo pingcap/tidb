@@ -358,26 +358,22 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 type DuplicateResolutionAlgorithm int
 
 const (
-	// DupeResAlgUnsafeNoop does not perform resolution. This is unsafe as the
-	// table will be left in an inconsistent state.
-	DupeResAlgUnsafeNoop DuplicateResolutionAlgorithm = iota
+	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB.
+	DupeResAlgRecord DuplicateResolutionAlgorithm = iota
 
-	// DupeResAlgDelete deletes all information related to the duplicated rows.
-	// Users need to analyze the lightning_task_info.conflict_error_v1 table to
-	// add back the correct rows.
-	DupeResAlgDelete
+	// DupeResAlgNone doesn't detect duplicate.
+	DupeResAlgNone
 
-	// DupeResAlgKeepAnyOne keeps a single row from the any transitive set of
-	// duplicated rows. The choice is arbitrary.
-	// This algorithm is not implemented yet.
-	DupeResAlgKeepAnyOne
+	// DupeResAlgRemove records all duplicate records like the 'record' algorithm and remove all information related to the
+	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
+	DupeResAlgRemove
 )
 
 func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v interface{}) error {
 	if val, ok := v.(string); ok {
 		return dra.FromStringValue(val)
 	}
-	return errors.Errorf("invalid duplicate-resolution '%v', please choose valid option between ['unsafe-noop', 'delete']", v)
+	return errors.Errorf("invalid duplicate-resolution '%v', please choose valid option between ['record', 'none', 'remove']", v)
 }
 
 func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
@@ -386,12 +382,14 @@ func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
 
 func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
-	case "unsafe-noop":
-		*dra = DupeResAlgUnsafeNoop
-	case "delete":
-		*dra = DupeResAlgDelete
+	case "record":
+		*dra = DupeResAlgRecord
+	case "none":
+		*dra = DupeResAlgNone
+	case "remove":
+		*dra = DupeResAlgRemove
 	default:
-		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['unsafe-noop', 'delete']", s)
+		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['record', 'none', 'remove']", s)
 	}
 	return nil
 }
@@ -406,12 +404,12 @@ func (dra *DuplicateResolutionAlgorithm) UnmarshalJSON(data []byte) error {
 
 func (dra DuplicateResolutionAlgorithm) String() string {
 	switch dra {
-	case DupeResAlgUnsafeNoop:
-		return "unsafe-noop"
-	case DupeResAlgDelete:
-		return "delete"
-	case DupeResAlgKeepAnyOne:
-		return "keep-any-one"
+	case DupeResAlgRecord:
+		return "record"
+	case DupeResAlgNone:
+		return "none"
+	case DupeResAlgRemove:
+		return "remove"
 	default:
 		panic(fmt.Sprintf("invalid duplicate-resolution type '%d'", dra))
 	}
@@ -511,17 +509,15 @@ type FileRouteRule struct {
 }
 
 type TikvImporter struct {
-	Addr               string   `toml:"addr" json:"addr"`
-	Backend            string   `toml:"backend" json:"backend"`
-	OnDuplicate        string   `toml:"on-duplicate" json:"on-duplicate"`
-	MaxKVPairs         int      `toml:"max-kv-pairs" json:"max-kv-pairs"`
-	SendKVPairs        int      `toml:"send-kv-pairs" json:"send-kv-pairs"`
-	RegionSplitSize    ByteSize `toml:"region-split-size" json:"region-split-size"`
-	SortedKVDir        string   `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
-	DiskQuota          ByteSize `toml:"disk-quota" json:"disk-quota"`
-	RangeConcurrency   int      `toml:"range-concurrency" json:"range-concurrency"`
-	DuplicateDetection bool     `toml:"duplicate-detection" json:"duplicate-detection"`
-
+	Addr                string                       `toml:"addr" json:"addr"`
+	Backend             string                       `toml:"backend" json:"backend"`
+	OnDuplicate         string                       `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs          int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	SendKVPairs         int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	RegionSplitSize     ByteSize                     `toml:"region-split-size" json:"region-split-size"`
+	SortedKVDir         string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
+	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
@@ -646,7 +642,7 @@ func NewConfig() *Config {
 			SendKVPairs:         32768,
 			RegionSplitSize:     0,
 			DiskQuota:           ByteSize(math.MaxInt64),
-			DuplicateResolution: DupeResAlgDelete,
+			DuplicateResolution: DupeResAlgRecord,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
@@ -803,7 +799,6 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		cfg.PostRestore.Checksum = OpLevelOff
 		cfg.PostRestore.Analyze = OpLevelOff
 		cfg.PostRestore.Compact = false
-		cfg.TikvImporter.DuplicateDetection = false
 	case BackendImporter, BackendLocal:
 		// RegionConcurrency > NumCPU is meaningless.
 		cpuCount := runtime.NumCPU()
@@ -827,8 +822,8 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		if err := cfg.CheckAndAdjustForLocalBackend(); err != nil {
 			return err
 		}
-	} else if cfg.TikvImporter.DuplicateDetection {
-		return errors.Errorf("invalid config: unsupported backend (%s) for duplicate-detection", cfg.TikvImporter.Backend)
+	} else {
+		cfg.TikvImporter.DuplicateResolution = DupeResAlgNone
 	}
 
 	if cfg.TikvImporter.Backend == BackendTiDB {
