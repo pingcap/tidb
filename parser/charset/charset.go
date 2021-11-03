@@ -16,6 +16,7 @@ package charset
 import (
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -49,6 +50,17 @@ type Collation struct {
 var collationsIDMap = make(map[int]*Collation)
 var collationsNameMap = make(map[string]*Collation)
 var supportedCollations = make([]*Collation, 0, len(supportedCollationNames))
+var registerFinish uint32
+
+// RegisterFinish makes the register of new error panic.
+// The use pattern should be register all the errors during initialization, and then call RegisterFinish.
+func RegisterFinish() {
+	atomic.StoreUint32(&registerFinish, 1)
+}
+
+func frozen() bool {
+	return atomic.LoadUint32(&registerFinish) != 0
+}
 
 // All the supported charsets should be in the following table.
 var charsetInfos = map[string]*Charset{
@@ -464,18 +476,28 @@ var collations = []*Collation{
 // AddCharset adds a new charset.
 // Use only when adding a custom charset to the parser.
 func AddCharset(c *Charset) {
+	if frozen() {
+		panic("add charset after initialized is prohibited")
+	}
 	charsetInfos[c.Name] = c
 }
 
 // RemoveCharset remove a charset.
 // Use only when adding a custom charset to the parser.
 func RemoveCharset(c string) {
+	if frozen() {
+		panic("remove charset after initialized is prohibited")
+	}
 	delete(charsetInfos, c)
 }
 
 // AddCollation adds a new collation.
 // Use only when adding a custom collation to the parser.
 func AddCollation(c *Collation) {
+	if frozen() {
+		panic("add collation after initialized is prohibited")
+	}
+
 	collationsIDMap[c.ID] = c
 	collationsNameMap[c.Name] = c
 
