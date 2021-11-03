@@ -1565,7 +1565,7 @@ func BuildFinalModeAggregation(
 				foundInGroupBy := false
 				for j, gbyExpr := range partial.GroupByItems {
 					if gbyExpr.Equal(sctx, distinctArg) && gbyExpr.GetType().Equal(distinctArg.GetType()) {
-						// if exactly the same, then can avoid it.
+						// if the two expressions exactly the same in terms of data types and collation, then can avoid it.
 						foundInGroupBy = true
 						ret = partialGbySchema.Columns[j]
 						break
