@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/require"
 )
@@ -169,7 +168,7 @@ func TestAESDecrypt(t *testing.T) {
 			require.True(t, str.IsNull())
 			continue
 		}
-		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin, collate.DefaultLen), str)
+		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str)
 	}
 	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
@@ -427,7 +426,7 @@ func TestCompress(t *testing.T) {
 			require.Truef(t, out.IsNull(), "%v", test)
 			continue
 		}
-		require.Equalf(t, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin, collate.DefaultLen), out, "%v", test)
+		require.Equalf(t, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin), out, "%v", test)
 	}
 }
 
@@ -463,7 +462,7 @@ func TestUncompress(t *testing.T) {
 			require.Truef(t, out.IsNull(), "%v", test)
 			continue
 		}
-		require.Equalf(t, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin, collate.DefaultLen), out, "%v", test)
+		require.Equalf(t, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin), out, "%v", test)
 	}
 }
 
