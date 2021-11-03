@@ -556,7 +556,7 @@ func (b *builtinPasswordSig) evalString(row chunk.Row) (d string, isNull bool, e
 		return "", false, nil
 	}
 
-	dBytes, err := charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(pass)
+	dStr, err := charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(pass)
 	if err != nil {
 		return "", false, err
 	}
@@ -565,7 +565,7 @@ func (b *builtinPasswordSig) evalString(row chunk.Row) (d string, isNull bool, e
 	// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
 
-	return auth.EncodePassword(dBytes), false, nil
+	return auth.EncodePassword(dStr), false, nil
 }
 
 type randomBytesFunctionClass struct {
