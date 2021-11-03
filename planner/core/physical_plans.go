@@ -1179,6 +1179,8 @@ type PhysicalUnionScan struct {
 	Conditions []expression.Expression
 
 	HandleCols HandleCols
+
+	CacheTable *table.CacheData
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.

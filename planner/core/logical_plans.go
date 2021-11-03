@@ -514,6 +514,9 @@ type LogicalUnionScan struct {
 	conditions []expression.Expression
 
 	handleCols HandleCols
+
+	// cacheTable not nil means it's reading from cached table.
+	cacheTable *table.CacheData
 }
 
 // DataSource represents a tableScan without condition push down.

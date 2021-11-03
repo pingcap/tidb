@@ -4152,10 +4152,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 		// Use the txn of the transaction to determine whether the cache can be read.
 		// About read lock and read condition feature. will add in the next pr.
-		cond := cachedTable.IsReadFromCache(txn.StartTS())
-		b.ctx.GetSessionVars().StmtCtx.StoreCacheTableReadCondition(tbl.Meta().ID, cond)
-		if cond {
-			us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
+		cacheData := cachedTable.IsReadFromCache(txn.StartTS())
+		// b.ctx.GetSessionVars().StmtCtx.StoreCacheTableReadCondition(tbl.Meta().ID, cond)
+		if cacheData != nil {
+			us := LogicalUnionScan{handleCols: handleCols, cacheTable: cacheData}.Init(b.ctx, b.getSelectOffset())
 			us.SetChildren(ds)
 			result = us
 		} else {

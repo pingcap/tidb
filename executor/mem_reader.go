@@ -94,7 +94,7 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 	}
 
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
-	err := iterTxnMemBuffer(m.table.ID, m.ctx, m.kvRanges, func(key, value []byte) error {
+	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
 		data, err := m.decodeIndexKeyValue(key, value, tps)
 		if err != nil {
 			return err
@@ -203,7 +203,7 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 // TODO: Try to make memXXXReader lazy, There is no need to decode many rows when parent operator only need 1 row.
 func (m *memTableReader) getMemRows() ([][]types.Datum, error) {
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
-	err := iterTxnMemBuffer(m.table.ID, m.ctx, m.kvRanges, func(key, value []byte) error {
+	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
 		row, err := m.decodeRecordKeyValue(key, value)
 		if err != nil {
 			return err
@@ -321,7 +321,7 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 
 type processKVFunc func(key, value []byte) error
 
-func iterTxnMemBuffer(tblID int64, ctx sessionctx.Context, kvRanges []kv.KeyRange, fn processKVFunc) error {
+func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn processKVFunc) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
@@ -329,7 +329,7 @@ func iterTxnMemBuffer(tblID int64, ctx sessionctx.Context, kvRanges []kv.KeyRang
 
 	for _, rg := range kvRanges {
 		iter := txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
-		iter, err = getMemIter(tblID, ctx, iter, rg)
+		iter, err = getMemIter(ctx, iter, rg)
 		if err != nil {
 			return err
 		}
@@ -350,7 +350,7 @@ func iterTxnMemBuffer(tblID int64, ctx sessionctx.Context, kvRanges []kv.KeyRang
 	return nil
 }
 
-func getMemIter(tblID int64, ctx sessionctx.Context, iter kv.Iterator, rg kv.KeyRange) (kv.Iterator, error) {
+func getMemIter(ctx sessionctx.Context, iter kv.Iterator, rg kv.KeyRange) (kv.Iterator, error) {
 	var snapCacheIter kv.Iterator
 	tempTableData := ctx.GetSessionVars().TemporaryTableData
 	if tempTableData != nil {
@@ -360,12 +360,12 @@ func getMemIter(tblID int64, ctx sessionctx.Context, iter kv.Iterator, rg kv.Key
 		}
 		snapCacheIter = snapIter
 	}
-	cond := ctx.GetSessionVars().StmtCtx.GetCacheTableReadCondition(tblID)
-	if cond {
+	if false {
 		tbl, ok := domain.GetDomain(ctx).InfoSchema().TableByID(tblID)
 		if !ok {
 			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(ctx.GetSessionVars().CurrentDB, tbl.Meta().Name)
 		}
+		// TODO: thread safe
 		cacheIter, err := tbl.(table.CachedTable).GetMemCache().Iter(rg.StartKey, rg.EndKey)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -392,7 +392,7 @@ func reverseDatumSlice(rows [][]types.Datum) {
 
 func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 	handles := make([]kv.Handle, 0, m.addedRowsLen)
-	err := iterTxnMemBuffer(m.table.ID, m.ctx, m.kvRanges, func(key, value []byte) error {
+	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
 		handle, err := tablecodec.DecodeIndexHandle(key, value, len(m.index.Columns))
 		if err != nil {
 			return err

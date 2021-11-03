@@ -56,6 +56,9 @@ type UnionScanExec struct {
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
 	// to make sure we can compute the virtual column in right order.
 	virtualColumnIndex []int
+
+	// cacheTable not nil means it's reading from cached table.
+	cacheTable *table.CacheData
 }
 
 // Open implements the Executor Open interface.

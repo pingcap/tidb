@@ -252,16 +252,18 @@ var MockTableFromMeta func(tableInfo *model.TableInfo) Table
 type CachedTable interface {
 	Table
 
-	// LoadDataFromOriginalTable Load data from the original table to the cache
-	LoadDataFromOriginalTable(ctx sessionctx.Context) error
-
 	// GetMemCache Get the MemBuffer used by the cache table
-	GetMemCache() kv.MemBuffer
+	// GetMemCache() kv.MemBuffer
 
 	// IsReadFromCache Check if the cache table is readable
-	IsReadFromCache(ts uint64) bool
+	IsReadFromCache(ts uint64) *CacheData
 
 	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
 	// you need to update the lock information and read the data from the original table
 	UpdateLockForRead(ctx sessionctx.Context, ts uint64) error
+}
+
+type CacheData struct {
+	Lease uint64
+	kv.MemBuffer
 }
