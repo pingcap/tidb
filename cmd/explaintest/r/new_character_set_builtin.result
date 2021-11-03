@@ -130,6 +130,17 @@ convert(convert('中文' using gbk) using binary)	convert('中文' using binary)
 select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
 convert(convert('ㅂ' using gbk) using binary)	convert('ㅂ' using binary)
 ?	ㅂ
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(a), md5(b), md5(c) from t;
+md5(a)	md5(b)	md5(c)
+8093a32450075324682d01456d6e3919	8093a32450075324682d01456d6e3919	aae0117857fe54811a5239275dd81133
+set @@tidb_enable_vectorized_expression = true;
+select md5(a), md5(b), md5(c) from t;
+md5(a)	md5(b)	md5(c)
+8093a32450075324682d01456d6e3919	8093a32450075324682d01456d6e3919	aae0117857fe54811a5239275dd81133
+set @@tidb_enable_vectorized_expression = false;
 set @@block_encryption_mode='aes-128-ecb';
 select hex(aes_decrypt(0xC54279F381B0710E145E94106F03C94C, '123')) as a, hex(aes_decrypt(0x7A747EC6F1906276D036B1F3CE27BAAB, '123')) as b;
 a	b
