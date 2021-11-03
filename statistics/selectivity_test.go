@@ -18,8 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
-	"runtime/pprof"
 	"testing"
 	"time"
 
@@ -38,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -493,45 +490,6 @@ func TestPrimaryKeySelectivity(t *testing.T) {
 	}
 }
 
-func BenchmarkSelectivity(b *testing.B) {
-	domain.RunAutoAnalyze = false
-	store, dom, clean := testkit.CreateMockStoreAndDomain(b)
-	defer clean()
-	testKit := testkit.NewTestKit(b, store)
-	statsTbl, err := prepareSelectivity(testKit, dom)
-	require.NoError(b, err)
-	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
-	sql := "select * from t where " + exprs
-	sctx := testKit.Session().(sessionctx.Context)
-	stmts, err := session.Parse(sctx, sql)
-	require.NoErrorf(b, err, "error %v, for expr %s", err, exprs)
-	require.Len(b, stmts, 1)
-	ret := &plannercore.PreprocessorReturn{}
-	err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-	require.NoErrorf(b, err, "for %s", exprs)
-	p, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, stmts[0], ret.InfoSchema)
-	require.NoErrorf(b, err, "error %v, for building plan, expr %s", err, exprs)
-
-	file, err := os.Create("cpu.profile")
-	require.NoError(b, err)
-	defer func() {
-		err := file.Close()
-		require.NoError(b, err)
-	}()
-	err = pprof.StartCPUProfile(file)
-	require.NoError(b, err)
-
-	b.Run("Selectivity", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			_, _, err := statsTbl.Selectivity(sctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions, nil)
-			require.NoError(b, err)
-		}
-		b.ReportAllocs()
-	})
-	pprof.StopCPUProfile()
-}
-
 func TestStatsVer2(t *testing.T) {
 	t.Parallel()
 	domain.RunAutoAnalyze = false
@@ -723,38 +681,6 @@ func TestSelectivityGreedyAlgo(t *testing.T) {
 	usedSets = statistics.GetUsableSetsByGreedy(nodes)
 	require.Equal(t, 1, len(usedSets))
 	require.Equal(t, int64(1), usedSets[0].ID)
-}
-
-func TestCollationColumnEstimate(t *testing.T) {
-	t.Parallel()
-	domain.RunAutoAnalyze = false
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a varchar(20) collate utf8mb4_general_ci)")
-	tk.MustExec("insert into t values('aaa'), ('bbb'), ('AAA'), ('BBB')")
-	tk.MustExec("set @@session.tidb_analyze_version=2")
-	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	tk.MustExec("analyze table t")
-	tk.MustExec("explain select * from t where a = 'aaa'")
-	require.Nil(t, h.LoadNeededHistograms())
-	var (
-		input  []string
-		output [][]string
-	)
-	statsSuiteData := statistics.GetStatsSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
-		})
-		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
-	}
 }
 
 // TestDNFCondSelectivity tests selectivity calculation with DNF conditions covered by using independence assumption.
