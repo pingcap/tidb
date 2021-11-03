@@ -232,15 +232,15 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 			result.AppendNull()
 			continue
 		}
-		dataStr, err := bufEnc.Encode(encodedBuf, buf.GetBytes(i))
+		dataStr, err := bufEnc.EncodeString(buf.GetString(i))
 		if err != nil {
 			return err
 		}
-		passwordStr, err := buf1Enc.Encode(encodedBuf, buf1.GetBytes(i))
+		passwordStr, err := buf1Enc.EncodeString(buf1.GetString(i))
 		if err != nil {
 			return err
 		}
-		decodeStr, err := encrypt.SQLDecodeBuf(dataStr, passwordStr)
+		decodeStr, err := encrypt.SQLDecode(dataStr, passwordStr)
 		if err != nil {
 			return err
 		}
