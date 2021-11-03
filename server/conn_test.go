@@ -686,7 +686,7 @@ type snapshotCache interface {
 	SnapCacheHitCount() int
 }
 
-func TestPrefetchPointKeys(t *testing.T) {
+func TestPrefetchPointKeys4Update(t *testing.T) {
 	t.Parallel()
 
 	store, clean := testkit.CreateMockStore(t)
@@ -737,6 +737,60 @@ func TestPrefetchPointKeys(t *testing.T) {
 	require.Equal(t, 5, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
+}
+
+func TestPrefetchPointKeys4Delete(t *testing.T) {
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	cc := &clientConn{
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	tk := testkit.NewTestKit(t, store)
+	cc.ctx = &TiDBContext{Session: tk.Session()}
+	ctx := context.Background()
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.MustExec("use test")
+	tk.MustExec("create table prefetch2 (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("insert prefetch2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("delete from prefetch2 where a = 1 and b = 1")
+
+	// enable multi-statement
+	capabilities := cc.ctx.GetSessionVars().ClientCapability
+	capabilities ^= mysql.ClientMultiStatements
+	cc.ctx.SetClientCapability(capabilities)
+	query := "delete from prefetch2 where a = 2 and b = 2;" +
+		"delete from prefetch2 where a = 3 and b = 3;"
+	err := cc.handleQuery(ctx, query)
+	require.NoError(t, err)
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
+	snap := txn.GetSnapshot()
+	require.Equal(t, 4, snap.(snapshotCache).SnapCacheHitCount())
+	tk.MustExec("commit")
+	tk.MustQuery("select * from prefetch2").Check(testkit.Rows("4 4 4", "5 5 5", "6 6 6"))
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("delete from prefetch2 where a = 4 and b = 4")
+	require.Equal(t, 1, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
+	query = "delete from prefetch2 where a = 5 and b = 5;" +
+		"delete from prefetch2 where a = 6 and b = 6;"
+	err = cc.handleQuery(ctx, query)
+	require.NoError(t, err)
+	txn, err = tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
+	require.Equal(t, 5, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from prefetch2").Check(testkit.Rows())
 }
 
 func testGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) table.Table {

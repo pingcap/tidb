@@ -1865,6 +1865,12 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.IgnoreNoPartition = stmt.IgnoreErr
 }
 
+// ResetDeleteStmtCtx resets statement context for DeleteStmt.
+func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt) {
+	sc.InDeleteStmt = true
+	sc.Priority = stmt.Priority
+}
+
 // FillVirtualColumnValue will calculate the virtual column value by evaluating generated
 // expression using rows from a chunk, and then fill this value into the chunk
 func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
