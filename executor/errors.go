@@ -62,6 +62,8 @@ var (
 	ErrDataInConsistentExtraIndex    = dbterror.ClassExecutor.NewStd(mysql.ErrDataInConsistentExtraIndex)
 	ErrDataInConsistentMisMatchIndex = dbterror.ClassExecutor.NewStd(mysql.ErrDataInConsistentMisMatchIndex)
 	ErrNotSupportedWithSem           = dbterror.ClassOptimizer.NewStd(mysql.ErrNotSupportedWithSem)
+	ErrPluginIsNotLoaded             = dbterror.ClassExecutor.NewStd(mysql.ErrPluginIsNotLoaded)
+	ErrSetPasswordAuthPlugin         = dbterror.ClassExecutor.NewStd(mysql.ErrSetPasswordAuthPlugin)
 
 	errUnsupportedFlashbackTmpTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Recover/flashback table is not supported on temporary tables", nil))
 	errTruncateWrongInsertValue     = dbterror.ClassTable.NewStdErr(mysql.ErrTruncatedWrongValue, parser_mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil))

@@ -639,7 +639,6 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 					results[0] = path
 					results = results[:1]
 				}
-				ds.ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 				break
 			}
 		} else {
@@ -665,7 +664,6 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 					results[0] = path
 					results = results[:1]
 				}
-				ds.ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 				break
 			}
 		}

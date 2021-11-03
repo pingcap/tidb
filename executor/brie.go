@@ -235,6 +235,12 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		storage.ExtractQueryParameters(storageURL, &cfg.S3)
 	case "gs", "gcs":
 		storage.ExtractQueryParameters(storageURL, &cfg.GCS)
+	case "hdfs":
+		if sem.IsEnabled() {
+			// Storage is not permitted to be hdfs when SEM is enabled.
+			b.err = ErrNotSupportedWithSem.GenWithStackByArgs("hdfs storage")
+			return nil
+		}
 	case "local", "file", "":
 		if sem.IsEnabled() {
 			// Storage is not permitted to be local when SEM is enabled.
