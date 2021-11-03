@@ -1169,6 +1169,9 @@ func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 	if tableMetaInfo.ShardRowIDBits != 0 {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 	}
+	if tableMetaInfo.DirectPlacementOpts != nil || tableMetaInfo.PlacementPolicyRef != nil {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("placement")
+	}
 
 	return nil
 }
@@ -1403,7 +1406,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	tableInfo := table.Meta()
-	dbInfo, _ := p.ensureInfoSchema().SchemaByName(tn.Schema)
+	dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {

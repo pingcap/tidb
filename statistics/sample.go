@@ -240,7 +240,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 		}
 	}
 	ctx := context.TODO()
-	req := s.RecordSet.NewChunk()
+	req := s.RecordSet.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	for {
 		err := s.RecordSet.Next(ctx, req)

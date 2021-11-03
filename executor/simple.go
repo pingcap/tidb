@@ -789,10 +789,18 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
 			authPlugin = spec.AuthOpt.AuthPlugin
 		}
+
+		switch authPlugin {
+		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthSocket:
+		default:
+			return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+		}
+
+		hostName := strings.ToLower(spec.User.Hostname)
 		if s.IsCreateRole {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, authPlugin, "Y")
+			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin, "Y")
 		} else {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, authPlugin)
+			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, hostName, spec.User.Username, pwd, authPlugin)
 		}
 		users = append(users, spec.User)
 	}
@@ -916,20 +924,28 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			continue
 		}
 
-		authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
-		if err != nil {
-			return err
-		}
-		if spec.AuthOpt != nil {
-			spec.AuthOpt.AuthPlugin = authplugin
-		}
 		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 		if spec.AuthOpt != nil {
+			if spec.AuthOpt.AuthPlugin == "" {
+				authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
+				if err != nil {
+					return err
+				}
+				spec.AuthOpt.AuthPlugin = authplugin
+			}
+			switch spec.AuthOpt.AuthPlugin {
+			case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthSocket, "":
+			default:
+				return ErrPluginIsNotLoaded.GenWithStackByArgs(spec.AuthOpt.AuthPlugin)
+			}
 			pwd, ok := spec.EncodedPassword()
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
 			}
-			stmt, err := exec.ParseWithParams(ctx, `UPDATE %n.%n SET authentication_string=%? WHERE Host=%? and User=%?;`, mysql.SystemDB, mysql.UserTable, pwd, spec.User.Hostname, spec.User.Username)
+			stmt, err := exec.ParseWithParams(ctx,
+				`UPDATE %n.%n SET authentication_string=%?, plugin=%? WHERE Host=%? and User=%?;`,
+				mysql.SystemDB, mysql.UserTable, pwd, spec.AuthOpt.AuthPlugin, spec.User.Hostname, spec.User.Username,
+			)
 			if err != nil {
 				return err
 			}
@@ -1141,7 +1157,7 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, `UPDATE %n.%n SET %n = %?, %n = %? WHERE %n = %? and %n = %?;`,
 		mysql.SystemDB, tableName,
-		usernameColumn, users.NewUser.Username, hostColumn, users.NewUser.Hostname,
+		usernameColumn, users.NewUser.Username, hostColumn, strings.ToLower(users.NewUser.Hostname),
 		usernameColumn, users.OldUser.Username, hostColumn, users.OldUser.Hostname)
 	_, err := sqlExecutor.ExecuteInternal(context.TODO(), sql.String())
 	return err
@@ -1301,7 +1317,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 func userExists(ctx context.Context, sctx sessionctx.Context, name string, host string) (bool, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, host)
+	stmt, err := exec.ParseWithParams(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	if err != nil {
 		return false, err
 	}
@@ -1315,12 +1331,12 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 // use the same internal executor to read within the same transaction, otherwise same as userExists
 func userExistsInternal(sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, error) {
 	sql := new(strings.Builder)
-	sqlexec.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, host)
+	sqlexec.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	recordSet, err := sqlExecutor.ExecuteInternal(context.TODO(), sql.String())
 	if err != nil {
 		return false, err
 	}
-	req := recordSet.NewChunk()
+	req := recordSet.NewChunk(nil)
 	err = recordSet.Next(context.TODO(), req)
 	var rows int = 0
 	if err == nil {
@@ -1372,9 +1388,13 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return err
 	}
 	var pwd string
-	if authplugin == mysql.AuthCachingSha2Password {
+	switch authplugin {
+	case mysql.AuthCachingSha2Password:
 		pwd = auth.NewSha2Password(s.Password)
-	} else {
+	case mysql.AuthSocket:
+		e.ctx.GetSessionVars().StmtCtx.AppendNote(ErrSetPasswordAuthPlugin.GenWithStackByArgs(u, h))
+		pwd = ""
+	default:
 		pwd = auth.EncodePassword(s.Password)
 	}
 

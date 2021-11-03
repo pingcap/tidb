@@ -574,591 +574,577 @@ func TestSimple(t *testing.T) {
 	s := createDDLSuite(t)
 	defer s.teardown(t)
 
-	done := s.runDDL("create table if not exists test_simple (c1 int, c2 int, c3 int)")
-	err := <-done
-	require.NoError(t, err)
+	t.Run("Basic", func(t *testing.T) {
+		done := s.runDDL("create table if not exists test_simple (c1 int, c2 int, c3 int)")
+		err := <-done
+		require.NoError(t, err)
 
-	_, err = s.exec("insert into test_simple values (1, 1, 1)")
-	require.NoError(t, err)
+		_, err = s.exec("insert into test_simple values (1, 1, 1)")
+		require.NoError(t, err)
 
-	rows, err := s.query("select c1 from test_simple limit 1")
-	require.NoError(t, err)
-	matchRows(t, rows, [][]interface{}{{1}})
+		rows, err := s.query("select c1 from test_simple limit 1")
+		require.NoError(t, err)
+		matchRows(t, rows, [][]interface{}{{1}})
 
-	done = s.runDDL("drop table if exists test_simple")
-	err = <-done
-	require.NoError(t, err)
+		done = s.runDDL("drop table if exists test_simple")
+		err = <-done
+		require.NoError(t, err)
+	})
+	t.Run("Mixed", func(t *testing.T) {
+		tests := []struct {
+			name string
+		}{
+			{"test_mixed"},
+			{"test_mixed_common"},
+		}
+
+		for _, test := range tests {
+			tblName := test.name
+			t.Run(test.name, func(t *testing.T) {
+				workerNum := 10
+				rowCount := 10000
+				batch := rowCount / workerNum
+
+				start := time.Now()
+
+				var wg sync.WaitGroup
+				wg.Add(workerNum)
+				for i := 0; i < workerNum; i++ {
+					go func(i int) {
+						defer wg.Done()
+
+						for j := 0; j < batch; j++ {
+							k := batch*i + j
+							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+						}
+					}(i)
+				}
+				wg.Wait()
+
+				end := time.Now()
+				fmt.Printf("[TestSimpleMixed][Insert][Time Cost]%v\n", end.Sub(start))
+
+				start = time.Now()
+
+				rowID := int64(rowCount)
+				defaultValue := int64(-1)
+
+				wg.Add(workerNum)
+				for i := 0; i < workerNum; i++ {
+					go func() {
+						defer wg.Done()
+
+						for j := 0; j < batch; j++ {
+							key := atomic.AddInt64(&rowID, 1)
+							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, key, key))
+							key = int64(randomNum(rowCount))
+							s.mustExec(fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, defaultValue, key))
+							key = int64(randomNum(rowCount))
+							s.mustExec(fmt.Sprintf("delete from %s where c1 = %d", tblName, key))
+						}
+					}()
+				}
+				wg.Wait()
+
+				end = time.Now()
+				fmt.Printf("[TestSimpleMixed][Mixed][Time Cost]%v\n", end.Sub(start))
+
+				ctx := s.ctx
+				err := ctx.NewTxn(goctx.Background())
+				require.NoError(t, err)
+
+				tbl := s.getTable(t, tblName)
+				updateCount := int64(0)
+				insertCount := int64(0)
+				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+					if reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) {
+						insertCount++
+					} else if reflect.DeepEqual(data[1].GetValue(), defaultValue) && data[0].GetInt64() < int64(rowCount) {
+						updateCount++
+					} else {
+						log.Fatal("[TestSimpleMixed fail]invalid row", zap.Any("row", data))
+					}
+
+					return true, nil
+				})
+				require.NoError(t, err)
+
+				deleteCount := atomic.LoadInt64(&rowID) - insertCount - updateCount
+				require.Greater(t, insertCount, int64(0))
+				require.Greater(t, updateCount, int64(0))
+				require.Greater(t, deleteCount, int64(0))
+			})
+		}
+	})
+	t.Run("Inc", func(t *testing.T) {
+		tests := []struct {
+			name string
+		}{
+			{"test_inc"},
+			{"test_inc_common"},
+		}
+
+		for _, test := range tests {
+			tblName := test.name
+			t.Run(test.name, func(t *testing.T) {
+				workerNum := 10
+				rowCount := 1000
+				batch := rowCount / workerNum
+
+				start := time.Now()
+
+				var wg sync.WaitGroup
+				wg.Add(workerNum)
+				for i := 0; i < workerNum; i++ {
+					go func(i int) {
+						defer wg.Done()
+
+						for j := 0; j < batch; j++ {
+							k := batch*i + j
+							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+						}
+					}(i)
+				}
+				wg.Wait()
+
+				end := time.Now()
+				fmt.Printf("[TestSimpleInc][Insert][Time Cost]%v\n", end.Sub(start))
+
+				start = time.Now()
+
+				wg.Add(workerNum)
+				for i := 0; i < workerNum; i++ {
+					go func() {
+						defer wg.Done()
+
+						for j := 0; j < batch; j++ {
+							s.mustExec(fmt.Sprintf("update %s set c2 = c2 + 1 where c1 = 0", tblName))
+						}
+					}()
+				}
+				wg.Wait()
+
+				end = time.Now()
+				fmt.Printf("[TestSimpleInc][Update][Time Cost]%v\n", end.Sub(start))
+
+				ctx := s.ctx
+				err := ctx.NewTxn(goctx.Background())
+				require.NoError(t, err)
+
+				tbl := s.getTable(t, "test_inc")
+				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+					if reflect.DeepEqual(data[0].GetValue(), int64(0)) {
+						if *enableRestart {
+							require.GreaterOrEqual(t, data[1].GetValue(), int64(rowCount))
+						} else {
+							require.Equal(t, int64(rowCount), data[1].GetValue())
+						}
+					} else {
+						require.Equal(t, data[1].GetValue(), data[0].GetValue())
+					}
+
+					return true, nil
+				})
+				require.NoError(t, err)
+			})
+		}
+	})
 }
 
 func TestSimpleInsert(t *testing.T) {
 	s := createDDLSuite(t)
 	defer s.teardown(t)
 
-	tests := []struct {
-		name string
-	}{
-		{"test_insert"},
-		{"test_insert_common"},
-	}
+	t.Run("Basic", func(t *testing.T) {
+		tests := []struct {
+			name string
+		}{
+			{"test_insert"},
+			{"test_insert_common"},
+		}
 
-	for _, test := range tests {
-		tblName := test.name
-		t.Run(test.name, func(t *testing.T) {
-			workerNum := 10
-			rowCount := 10000
-			batch := rowCount / workerNum
+		for _, test := range tests {
+			tblName := test.name
+			t.Run(test.name, func(t *testing.T) {
+				workerNum := 10
+				rowCount := 10000
+				batch := rowCount / workerNum
 
-			start := time.Now()
+				start := time.Now()
 
-			var wg sync.WaitGroup
-			wg.Add(workerNum)
-			for i := 0; i < workerNum; i++ {
-				go func(i int) {
-					defer wg.Done()
+				var wg sync.WaitGroup
+				wg.Add(workerNum)
+				for i := 0; i < workerNum; i++ {
+					go func(i int) {
+						defer wg.Done()
 
-					for j := 0; j < batch; j++ {
-						k := batch*i + j
-						s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-					}
-				}(i)
-			}
-			wg.Wait()
+						for j := 0; j < batch; j++ {
+							k := batch*i + j
+							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+						}
+					}(i)
+				}
+				wg.Wait()
 
-			end := time.Now()
-			fmt.Printf("[TestSimpleInsert][Time Cost]%v\n", end.Sub(start))
+				end := time.Now()
+				fmt.Printf("[TestSimpleInsert][Time Cost]%v\n", end.Sub(start))
 
-			ctx := s.ctx
-			err := ctx.NewTxn(goctx.Background())
-			require.NoError(t, err)
+				ctx := s.ctx
+				err := ctx.NewTxn(goctx.Background())
+				require.NoError(t, err)
 
-			tbl := s.getTable(t, "test_insert")
-			handles := kv.NewHandleMap()
-			err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-				handles.Set(h, struct{}{})
-				require.Equal(t, data[1].GetValue(), data[0].GetValue())
-				return true, nil
+				tbl := s.getTable(t, "test_insert")
+				handles := kv.NewHandleMap()
+				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+					handles.Set(h, struct{}{})
+					require.Equal(t, data[1].GetValue(), data[0].GetValue())
+					return true, nil
+				})
+				require.NoError(t, err)
+				require.Equal(t, rowCount, handles.Len())
 			})
-			require.NoError(t, err)
-			require.Equal(t, rowCount, handles.Len())
-		})
-	}
-}
+		}
+	})
+	t.Run("Conflict", func(t *testing.T) {
+		tests := []struct {
+			name string
+		}{
+			{"test_conflict_insert"},
+			{"test_conflict_insert_common"},
+		}
 
-func TestSimpleConflictInsert(t *testing.T) {
-	s := createDDLSuite(t)
-	defer s.teardown(t)
+		for _, test := range tests {
+			tblName := test.name
+			t.Run(test.name, func(t *testing.T) {
+				var mu sync.Mutex
+				keysMap := make(map[int64]int64)
 
-	tests := []struct {
-		name string
-	}{
-		{"test_conflict_insert"},
-		{"test_conflict_insert_common"},
-	}
+				workerNum := 10
+				rowCount := 10000
+				batch := rowCount / workerNum
 
-	for _, test := range tests {
-		tblName := test.name
-		t.Run(test.name, func(t *testing.T) {
-			var mu sync.Mutex
-			keysMap := make(map[int64]int64)
+				start := time.Now()
 
-			workerNum := 10
-			rowCount := 10000
-			batch := rowCount / workerNum
+				var wg sync.WaitGroup
+				wg.Add(workerNum)
+				for i := 0; i < workerNum; i++ {
+					go func() {
+						defer wg.Done()
 
-			start := time.Now()
+						for j := 0; j < batch; j++ {
+							k := randomNum(rowCount)
+							_, _ = s.exec(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+							mu.Lock()
+							keysMap[int64(k)] = int64(k)
+							mu.Unlock()
+						}
+					}()
+				}
+				wg.Wait()
 
-			var wg sync.WaitGroup
-			wg.Add(workerNum)
-			for i := 0; i < workerNum; i++ {
-				go func() {
-					defer wg.Done()
+				end := time.Now()
+				fmt.Printf("[TestSimpleConflictInsert][Time Cost]%v\n", end.Sub(start))
 
-					for j := 0; j < batch; j++ {
-						k := randomNum(rowCount)
-						_, err := s.exec(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-						require.NoError(t, err)
-						mu.Lock()
-						keysMap[int64(k)] = int64(k)
-						mu.Unlock()
-					}
-				}()
-			}
-			wg.Wait()
+				ctx := s.ctx
+				err := ctx.NewTxn(goctx.Background())
+				require.NoError(t, err)
 
-			end := time.Now()
-			fmt.Printf("[TestSimpleConflictInsert][Time Cost]%v\n", end.Sub(start))
-
-			ctx := s.ctx
-			err := ctx.NewTxn(goctx.Background())
-			require.NoError(t, err)
-
-			tbl := s.getTable(t, tblName)
-			handles := kv.NewHandleMap()
-			err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-				handles.Set(h, struct{}{})
-				require.Contains(t, keysMap, data[0].GetValue())
-				require.Equal(t, data[1].GetValue(), data[0].GetValue())
-				return true, nil
+				tbl := s.getTable(t, tblName)
+				handles := kv.NewHandleMap()
+				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+					handles.Set(h, struct{}{})
+					require.Contains(t, keysMap, data[0].GetValue())
+					require.Equal(t, data[1].GetValue(), data[0].GetValue())
+					return true, nil
+				})
+				require.NoError(t, err)
+				require.Len(t, keysMap, handles.Len())
 			})
-			require.NoError(t, err)
-			require.Len(t, keysMap, handles.Len())
-		})
-	}
+		}
+	})
 }
 
 func TestSimpleUpdate(t *testing.T) {
 	s := createDDLSuite(t)
 	defer s.teardown(t)
 
-	tests := []struct {
-		name string
-	}{
-		{"test_update"},
-		{"test_update_common"},
-	}
+	t.Run("Basic", func(t *testing.T) {
+		tests := []struct {
+			name string
+		}{
+			{"test_update"},
+			{"test_update_common"},
+		}
 
-	for _, test := range tests {
-		tblName := test.name
-		t.Run(test.name, func(t *testing.T) {
-			var mu sync.Mutex
-			keysMap := make(map[int64]int64)
+		for _, test := range tests {
+			tblName := test.name
+			t.Run(test.name, func(t *testing.T) {
+				var mu sync.Mutex
+				keysMap := make(map[int64]int64)
 
-			workerNum := 10
-			rowCount := 10000
-			batch := rowCount / workerNum
+				workerNum := 10
+				rowCount := 10000
+				batch := rowCount / workerNum
 
-			start := time.Now()
+				start := time.Now()
 
-			var wg sync.WaitGroup
-			wg.Add(workerNum)
-			for i := 0; i < workerNum; i++ {
-				go func(i int) {
-					defer wg.Done()
+				var wg sync.WaitGroup
+				wg.Add(workerNum)
+				for i := 0; i < workerNum; i++ {
+					go func(i int) {
+						defer wg.Done()
 
-					for j := 0; j < batch; j++ {
-						k := batch*i + j
-						s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-						v := randomNum(rowCount)
-						s.mustExec(fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, v, k))
-						mu.Lock()
-						keysMap[int64(k)] = int64(v)
-						mu.Unlock()
-					}
-				}(i)
-			}
-			wg.Wait()
-
-			end := time.Now()
-			fmt.Printf("[TestSimpleUpdate][Time Cost]%v\n", end.Sub(start))
-
-			ctx := s.ctx
-			err := ctx.NewTxn(goctx.Background())
-			require.NoError(t, err)
-
-			tbl := s.getTable(t, tblName)
-			handles := kv.NewHandleMap()
-			err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-				handles.Set(h, struct{}{})
-				key := data[0].GetInt64()
-				require.Equal(t, keysMap[key], data[1].GetValue())
-				return true, nil
-			})
-			require.NoError(t, err)
-			require.Equal(t, rowCount, handles.Len())
-		})
-	}
-}
-
-func TestSimpleConflictUpdate(t *testing.T) {
-	s := createDDLSuite(t)
-	defer s.teardown(t)
-
-	tests := []struct {
-		name string
-	}{
-		{"test_conflict_update"},
-		{"test_conflict_update_common"},
-	}
-
-	for _, test := range tests {
-		tblName := test.name
-		t.Run(test.name, func(t *testing.T) {
-			var mu sync.Mutex
-			keysMap := make(map[int64]int64)
-
-			workerNum := 10
-			rowCount := 10000
-			batch := rowCount / workerNum
-
-			start := time.Now()
-
-			var wg sync.WaitGroup
-			wg.Add(workerNum)
-			for i := 0; i < workerNum; i++ {
-				go func(i int) {
-					defer wg.Done()
-
-					for j := 0; j < batch; j++ {
-						k := batch*i + j
-						s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-						mu.Lock()
-						keysMap[int64(k)] = int64(k)
-						mu.Unlock()
-					}
-				}(i)
-			}
-			wg.Wait()
-
-			end := time.Now()
-			fmt.Printf("[TestSimpleConflictUpdate][Insert][Time Cost]%v\n", end.Sub(start))
-
-			start = time.Now()
-
-			defaultValue := int64(-1)
-			wg.Add(workerNum)
-			for i := 0; i < workerNum; i++ {
-				go func() {
-					defer wg.Done()
-
-					for j := 0; j < batch; j++ {
-						k := randomNum(rowCount)
-						s.mustExec(fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, defaultValue, k))
-						mu.Lock()
-						keysMap[int64(k)] = defaultValue
-						mu.Unlock()
-					}
-				}()
-			}
-			wg.Wait()
-
-			end = time.Now()
-			fmt.Printf("[TestSimpleConflictUpdate][Update][Time Cost]%v\n", end.Sub(start))
-
-			ctx := s.ctx
-			err := ctx.NewTxn(goctx.Background())
-			require.NoError(t, err)
-
-			tbl := s.getTable(t, tblName)
-			handles := kv.NewHandleMap()
-			err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-				handles.Set(h, struct{}{})
-				require.Contains(t, keysMap, data[0].GetValue())
-
-				if !reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) && !reflect.DeepEqual(data[1].GetValue(), defaultValue) {
-					log.Fatal("[TestSimpleConflictUpdate fail]Bad row", zap.Any("row", data))
+						for j := 0; j < batch; j++ {
+							k := batch*i + j
+							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+							v := randomNum(rowCount)
+							s.mustExec(fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, v, k))
+							mu.Lock()
+							keysMap[int64(k)] = int64(v)
+							mu.Unlock()
+						}
+					}(i)
 				}
+				wg.Wait()
 
-				return true, nil
+				end := time.Now()
+				fmt.Printf("[TestSimpleUpdate][Time Cost]%v\n", end.Sub(start))
+
+				ctx := s.ctx
+				err := ctx.NewTxn(goctx.Background())
+				require.NoError(t, err)
+
+				tbl := s.getTable(t, tblName)
+				handles := kv.NewHandleMap()
+				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+					handles.Set(h, struct{}{})
+					key := data[0].GetInt64()
+					require.Equal(t, keysMap[key], data[1].GetValue())
+					return true, nil
+				})
+				require.NoError(t, err)
+				require.Equal(t, rowCount, handles.Len())
 			})
-			require.NoError(t, err)
-			require.Equal(t, rowCount, handles.Len())
-		})
-	}
+		}
+	})
+	t.Run("Conflict", func(t *testing.T) {
+		tests := []struct {
+			name string
+		}{
+			{"test_conflict_update"},
+			{"test_conflict_update_common"},
+		}
+
+		for _, test := range tests {
+			tblName := test.name
+			t.Run(test.name, func(t *testing.T) {
+				var mu sync.Mutex
+				keysMap := make(map[int64]int64)
+
+				workerNum := 10
+				rowCount := 10000
+				batch := rowCount / workerNum
+
+				start := time.Now()
+
+				var wg sync.WaitGroup
+				wg.Add(workerNum)
+				for i := 0; i < workerNum; i++ {
+					go func(i int) {
+						defer wg.Done()
+
+						for j := 0; j < batch; j++ {
+							k := batch*i + j
+							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+							mu.Lock()
+							keysMap[int64(k)] = int64(k)
+							mu.Unlock()
+						}
+					}(i)
+				}
+				wg.Wait()
+
+				end := time.Now()
+				fmt.Printf("[TestSimpleConflictUpdate][Insert][Time Cost]%v\n", end.Sub(start))
+
+				start = time.Now()
+
+				defaultValue := int64(-1)
+				wg.Add(workerNum)
+				for i := 0; i < workerNum; i++ {
+					go func() {
+						defer wg.Done()
+
+						for j := 0; j < batch; j++ {
+							k := randomNum(rowCount)
+							s.mustExec(fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, defaultValue, k))
+							mu.Lock()
+							keysMap[int64(k)] = defaultValue
+							mu.Unlock()
+						}
+					}()
+				}
+				wg.Wait()
+
+				end = time.Now()
+				fmt.Printf("[TestSimpleConflictUpdate][Update][Time Cost]%v\n", end.Sub(start))
+
+				ctx := s.ctx
+				err := ctx.NewTxn(goctx.Background())
+				require.NoError(t, err)
+
+				tbl := s.getTable(t, tblName)
+				handles := kv.NewHandleMap()
+				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+					handles.Set(h, struct{}{})
+					require.Contains(t, keysMap, data[0].GetValue())
+
+					if !reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) && !reflect.DeepEqual(data[1].GetValue(), defaultValue) {
+						log.Fatal("[TestSimpleConflictUpdate fail]Bad row", zap.Any("row", data))
+					}
+
+					return true, nil
+				})
+				require.NoError(t, err)
+				require.Equal(t, rowCount, handles.Len())
+			})
+		}
+	})
 }
 
 func TestSimpleDelete(t *testing.T) {
 	s := createDDLSuite(t)
 	defer s.teardown(t)
 
-	tests := []struct {
-		name string
-	}{
-		{"test_delete"},
-		{"test_delete_common"},
-	}
+	t.Run("Basic", func(t *testing.T) {
+		tests := []struct {
+			name string
+		}{
+			{"test_delete"},
+			{"test_delete_common"},
+		}
 
-	for _, test := range tests {
-		tblName := test.name
-		t.Run(test.name, func(t *testing.T) {
+		for _, test := range tests {
+			tblName := test.name
+			t.Run(test.name, func(t *testing.T) {
 
-			workerNum := 10
-			rowCount := 1000
-			batch := rowCount / workerNum
+				workerNum := 10
+				rowCount := 1000
+				batch := rowCount / workerNum
 
-			start := time.Now()
+				start := time.Now()
 
-			var wg sync.WaitGroup
-			wg.Add(workerNum)
-			for i := 0; i < workerNum; i++ {
-				go func(i int) {
-					defer wg.Done()
+				var wg sync.WaitGroup
+				wg.Add(workerNum)
+				for i := 0; i < workerNum; i++ {
+					go func(i int) {
+						defer wg.Done()
 
-					for j := 0; j < batch; j++ {
-						k := batch*i + j
-						s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-						s.mustExec(fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
-					}
-				}(i)
-			}
-			wg.Wait()
-
-			end := time.Now()
-			fmt.Printf("[TestSimpleDelete][Time Cost]%v\n", end.Sub(start))
-
-			ctx := s.ctx
-			err := ctx.NewTxn(goctx.Background())
-			require.NoError(t, err)
-
-			tbl := s.getTable(t, tblName)
-			handles := kv.NewHandleMap()
-			err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-				handles.Set(h, struct{}{})
-				return true, nil
-			})
-			require.NoError(t, err)
-			require.Equal(t, 0, handles.Len())
-		})
-	}
-
-}
-
-func TestSimpleConflictDelete(t *testing.T) {
-	s := createDDLSuite(t)
-	defer s.teardown(t)
-
-	tests := []struct {
-		name string
-	}{
-		{"test_conflict_delete"},
-		{"test_conflict_delete_common"},
-	}
-
-	for _, test := range tests {
-		tblName := test.name
-		t.Run(test.name, func(t *testing.T) {
-
-			var mu sync.Mutex
-			keysMap := make(map[int64]int64)
-
-			workerNum := 10
-			rowCount := 1000
-			batch := rowCount / workerNum
-
-			start := time.Now()
-
-			var wg sync.WaitGroup
-			wg.Add(workerNum)
-			for i := 0; i < workerNum; i++ {
-				go func(i int) {
-					defer wg.Done()
-
-					for j := 0; j < batch; j++ {
-						k := batch*i + j
-						s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-						mu.Lock()
-						keysMap[int64(k)] = int64(k)
-						mu.Unlock()
-					}
-				}(i)
-			}
-			wg.Wait()
-
-			end := time.Now()
-			fmt.Printf("[TestSimpleConflictDelete][Insert][Time Cost]%v\n", end.Sub(start))
-
-			start = time.Now()
-
-			wg.Add(workerNum)
-			for i := 0; i < workerNum; i++ {
-				go func(i int) {
-					defer wg.Done()
-
-					for j := 0; j < batch; j++ {
-						k := randomNum(rowCount)
-						s.mustExec(fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
-						mu.Lock()
-						delete(keysMap, int64(k))
-						mu.Unlock()
-					}
-				}(i)
-			}
-			wg.Wait()
-
-			end = time.Now()
-			fmt.Printf("[TestSimpleConflictDelete][Delete][Time Cost]%v\n", end.Sub(start))
-
-			ctx := s.ctx
-			err := ctx.NewTxn(goctx.Background())
-			require.NoError(t, err)
-
-			tbl := s.getTable(t, tblName)
-			handles := kv.NewHandleMap()
-			err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-				handles.Set(h, struct{}{})
-				require.Contains(t, keysMap, data[0].GetValue())
-				return true, nil
-			})
-			require.NoError(t, err)
-			require.Len(t, keysMap, handles.Len())
-		})
-	}
-}
-
-func TestSimpleMixed(t *testing.T) {
-	s := createDDLSuite(t)
-	defer s.teardown(t)
-
-	tests := []struct {
-		name string
-	}{
-		{"test_mixed"},
-		{"test_mixed_common"},
-	}
-
-	for _, test := range tests {
-		tblName := test.name
-		t.Run(test.name, func(t *testing.T) {
-			workerNum := 10
-			rowCount := 10000
-			batch := rowCount / workerNum
-
-			start := time.Now()
-
-			var wg sync.WaitGroup
-			wg.Add(workerNum)
-			for i := 0; i < workerNum; i++ {
-				go func(i int) {
-					defer wg.Done()
-
-					for j := 0; j < batch; j++ {
-						k := batch*i + j
-						s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-					}
-				}(i)
-			}
-			wg.Wait()
-
-			end := time.Now()
-			fmt.Printf("[TestSimpleMixed][Insert][Time Cost]%v\n", end.Sub(start))
-
-			start = time.Now()
-
-			rowID := int64(rowCount)
-			defaultValue := int64(-1)
-
-			wg.Add(workerNum)
-			for i := 0; i < workerNum; i++ {
-				go func() {
-					defer wg.Done()
-
-					for j := 0; j < batch; j++ {
-						key := atomic.AddInt64(&rowID, 1)
-						s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, key, key))
-						key = int64(randomNum(rowCount))
-						s.mustExec(fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, defaultValue, key))
-						key = int64(randomNum(rowCount))
-						s.mustExec(fmt.Sprintf("delete from %s where c1 = %d", tblName, key))
-					}
-				}()
-			}
-			wg.Wait()
-
-			end = time.Now()
-			fmt.Printf("[TestSimpleMixed][Mixed][Time Cost]%v\n", end.Sub(start))
-
-			ctx := s.ctx
-			err := ctx.NewTxn(goctx.Background())
-			require.NoError(t, err)
-
-			tbl := s.getTable(t, tblName)
-			updateCount := int64(0)
-			insertCount := int64(0)
-			err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-				if reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) {
-					insertCount++
-				} else if reflect.DeepEqual(data[1].GetValue(), defaultValue) && data[0].GetInt64() < int64(rowCount) {
-					updateCount++
-				} else {
-					log.Fatal("[TestSimpleMixed fail]invalid row", zap.Any("row", data))
+						for j := 0; j < batch; j++ {
+							k := batch*i + j
+							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+							s.mustExec(fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
+						}
+					}(i)
 				}
+				wg.Wait()
 
-				return true, nil
+				end := time.Now()
+				fmt.Printf("[TestSimpleDelete][Time Cost]%v\n", end.Sub(start))
+
+				ctx := s.ctx
+				err := ctx.NewTxn(goctx.Background())
+				require.NoError(t, err)
+
+				tbl := s.getTable(t, tblName)
+				handles := kv.NewHandleMap()
+				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+					handles.Set(h, struct{}{})
+					return true, nil
+				})
+				require.NoError(t, err)
+				require.Equal(t, 0, handles.Len())
 			})
-			require.NoError(t, err)
+		}
+	})
+	t.Run("Conflict", func(t *testing.T) {
+		tests := []struct {
+			name string
+		}{
+			{"test_conflict_delete"},
+			{"test_conflict_delete_common"},
+		}
 
-			deleteCount := atomic.LoadInt64(&rowID) - insertCount - updateCount
-			require.Greater(t, insertCount, int64(0))
-			require.Greater(t, updateCount, int64(0))
-			require.Greater(t, deleteCount, int64(0))
-		})
-	}
-}
+		for _, test := range tests {
+			tblName := test.name
+			t.Run(test.name, func(t *testing.T) {
 
-func TestSimpleInc(t *testing.T) {
-	s := createDDLSuite(t)
-	defer s.teardown(t)
+				var mu sync.Mutex
+				keysMap := make(map[int64]int64)
 
-	tests := []struct {
-		name string
-	}{
-		{"test_inc"},
-		{"test_inc_common"},
-	}
+				workerNum := 10
+				rowCount := 1000
+				batch := rowCount / workerNum
 
-	for _, test := range tests {
-		tblName := test.name
-		t.Run(test.name, func(t *testing.T) {
-			workerNum := 10
-			rowCount := 1000
-			batch := rowCount / workerNum
+				start := time.Now()
 
-			start := time.Now()
+				var wg sync.WaitGroup
+				wg.Add(workerNum)
+				for i := 0; i < workerNum; i++ {
+					go func(i int) {
+						defer wg.Done()
 
-			var wg sync.WaitGroup
-			wg.Add(workerNum)
-			for i := 0; i < workerNum; i++ {
-				go func(i int) {
-					defer wg.Done()
-
-					for j := 0; j < batch; j++ {
-						k := batch*i + j
-						s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
-					}
-				}(i)
-			}
-			wg.Wait()
-
-			end := time.Now()
-			fmt.Printf("[TestSimpleInc][Insert][Time Cost]%v\n", end.Sub(start))
-
-			start = time.Now()
-
-			wg.Add(workerNum)
-			for i := 0; i < workerNum; i++ {
-				go func() {
-					defer wg.Done()
-
-					for j := 0; j < batch; j++ {
-						s.mustExec(fmt.Sprintf("update %s set c2 = c2 + 1 where c1 = 0", tblName))
-					}
-				}()
-			}
-			wg.Wait()
-
-			end = time.Now()
-			fmt.Printf("[TestSimpleInc][Update][Time Cost]%v\n", end.Sub(start))
-
-			ctx := s.ctx
-			err := ctx.NewTxn(goctx.Background())
-			require.NoError(t, err)
-
-			tbl := s.getTable(t, "test_inc")
-			err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-				if reflect.DeepEqual(data[0].GetValue(), int64(0)) {
-					if *enableRestart {
-						require.GreaterOrEqual(t, data[1].GetValue(), int64(rowCount))
-					} else {
-						require.Equal(t, int64(rowCount), data[1].GetValue())
-					}
-				} else {
-					require.Equal(t, data[1].GetValue(), data[0].GetValue())
+						for j := 0; j < batch; j++ {
+							k := batch*i + j
+							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+							mu.Lock()
+							keysMap[int64(k)] = int64(k)
+							mu.Unlock()
+						}
+					}(i)
 				}
+				wg.Wait()
 
-				return true, nil
+				end := time.Now()
+				fmt.Printf("[TestSimpleConflictDelete][Insert][Time Cost]%v\n", end.Sub(start))
+
+				start = time.Now()
+
+				wg.Add(workerNum)
+				for i := 0; i < workerNum; i++ {
+					go func(i int) {
+						defer wg.Done()
+
+						for j := 0; j < batch; j++ {
+							k := randomNum(rowCount)
+							s.mustExec(fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
+							mu.Lock()
+							delete(keysMap, int64(k))
+							mu.Unlock()
+						}
+					}(i)
+				}
+				wg.Wait()
+
+				end = time.Now()
+				fmt.Printf("[TestSimpleConflictDelete][Delete][Time Cost]%v\n", end.Sub(start))
+
+				ctx := s.ctx
+				err := ctx.NewTxn(goctx.Background())
+				require.NoError(t, err)
+
+				tbl := s.getTable(t, tblName)
+				handles := kv.NewHandleMap()
+				err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+					handles.Set(h, struct{}{})
+					require.Contains(t, keysMap, data[0].GetValue())
+					return true, nil
+				})
+				require.NoError(t, err)
+				require.Len(t, keysMap, handles.Len())
 			})
-			require.NoError(t, err)
-		})
-	}
+		}
+	})
 }
 
 // addEnvPath appends newPath to $PATH.

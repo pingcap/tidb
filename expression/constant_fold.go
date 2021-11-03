@@ -154,7 +154,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
 			return expr, false
 		}
-		if function := specialFoldHandler[x.FuncName.L]; function != nil {
+		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(x.GetCtx(), []Expression{expr}) {
 			return function(x)
 		}
 

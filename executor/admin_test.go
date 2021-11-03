@@ -128,6 +128,39 @@ func (s *testSuite5) TestAdminCheckIndexInLocalTemporaryMode(c *C) {
 	tk.MustExec("drop table if exists local_temporary_admin_checksum_table_with_index_test,local_temporary_admin_checksum_table_without_index_test;")
 }
 
+func (s *testSuite5) TestAdminCheckIndexInCacheTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists cache_admin_test;")
+	tk.MustExec("create table cache_admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2))")
+	tk.MustExec("insert cache_admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11)")
+	tk.MustExec("alter table cache_admin_test cache")
+	tk.MustExec("admin check table cache_admin_test;")
+	tk.MustExec("admin check index cache_admin_test c1;")
+	tk.MustExec("admin check index cache_admin_test c2;")
+	tk.MustExec("drop table if exists cache_admin_test;")
+
+	tk.MustExec(`drop table if exists check_index_test;`)
+	tk.MustExec(`create table check_index_test (a int, b varchar(10), index a_b (a, b), index b (b))`)
+	tk.MustExec(`insert check_index_test values (3, "ab"),(2, "cd"),(1, "ef"),(-1, "hi")`)
+	tk.MustExec("alter table  check_index_test cache")
+	result := tk.MustQuery("admin check index check_index_test a_b (2, 4);")
+	result.Check(testkit.Rows("1 ef 3", "2 cd 2"))
+	result = tk.MustQuery("admin check index check_index_test a_b (3, 5);")
+	result.Check(testkit.Rows("-1 hi 4", "1 ef 3"))
+	tk.MustExec("drop table if exists check_index_test;")
+
+	tk.MustExec("drop table if exists cache_admin_table_with_index_test;")
+	tk.MustExec("drop table if exists cache_admin_table_without_index_test;")
+	tk.MustExec("create table cache_admin_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count))")
+	tk.MustExec("create table cache_admin_table_without_index_test (id int, count int, PRIMARY KEY(id))")
+	tk.MustExec("alter table cache_admin_table_with_index_test cache")
+	tk.MustExec("alter table cache_admin_table_without_index_test cache")
+	tk.MustExec("admin checksum table cache_admin_table_with_index_test;")
+	tk.MustExec("admin checksum table cache_admin_table_without_index_test;")
+	tk.MustExec("drop table if exists cache_admin_table_with_index_test,cache_admin_table_without_index_test;")
+}
+
 func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

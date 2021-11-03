@@ -452,7 +452,6 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Ranges  []*ranger.Range
-	PkCols  []*expression.Column
 
 	TableAsName *model.CIStr
 
@@ -503,7 +502,6 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	}
 	clonedScan.Columns = cloneColInfos(ts.Columns)
 	clonedScan.Ranges = cloneRanges(ts.Ranges)
-	clonedScan.PkCols = cloneCols(ts.PkCols)
 	clonedScan.TableAsName = ts.TableAsName
 	if ts.Hist != nil {
 		clonedScan.Hist = ts.Hist.Copy()
@@ -834,7 +832,7 @@ type PhysicalIndexJoin struct {
 	innerTask task
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
-	Ranges []*ranger.Range
+	Ranges ranger.MutableRanges
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
 	// IdxColLens stores the length of each index column.
