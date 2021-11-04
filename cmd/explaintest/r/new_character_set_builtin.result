@@ -150,5 +150,5 @@ md5(compress(a))	md5(compress(b))	md5(compress(c))
 set @@tidb_enable_vectorized_expression = true;
 select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
 md5(compress(a))	md5(compress(b))	md5(compress(c))
-2198d4d3b06a6cba3f9275c7e364105c	bd7a7c844b231ef2b06ad6b50ff2b599	905068487b6220f70bb71a48323826be
+2198d4d3b06a6cba3f9275c7e364105c	5e587a14393aecf0629bb29dbd6b4379	905068487b6220f70bb71a48323826be
 set @@tidb_enable_vectorized_expression = false;
