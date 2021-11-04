@@ -197,7 +197,7 @@ LOOP:
 		case err := <-done:
 			// TODO: Get this information from etcd.
 			// m, err := d.Stats(nil)
-			require.NoError(t, err)
+			require.Nil(t, err)
 			break LOOP
 		}
 	}
