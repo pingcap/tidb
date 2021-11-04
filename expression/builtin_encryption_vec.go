@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 func (b *builtinAesDecryptSig) vectorized() bool {
@@ -586,7 +585,6 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	}
 	bufTp := b.args[0].GetType()
 	bufEnc := charset.NewEncoding(bufTp.Charset)
-	var encodedBuf []byte
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
@@ -602,12 +600,12 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			result.AppendString("")
 		}
 
-		strSlice, err := bufEnc.Encode(encodedBuf, hack.Slice(str))
+		str, err = bufEnc.EncodeString(str)
 		if err != nil {
 			return err
 		}
 
-		compressed, err := deflate(strSlice)
+		compressed, err := deflate([]byte(str))
 		if err != nil {
 			result.AppendNull()
 			continue
