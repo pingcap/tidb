@@ -87,7 +87,7 @@ func TestConsistencyLockControllerRetry(t *testing.T) {
 	conf := defaultConfigForTest(t)
 	resultOk := sqlmock.NewResult(0, 1)
 
-	conf.ServerInfo.ServerType = ServerTypeTiDB
+	conf.ServerInfo.ServerType = ServerTypeMySQL
 	conf.Consistency = consistencyTypeLock
 	conf.Tables = NewDatabaseTables().
 		AppendTables("db1", []string{"t1", "t2", "t3"}, []uint64{1, 2, 3}).
@@ -196,12 +196,14 @@ func TestConsistencyLockTiDBCheck(t *testing.T) {
 	ctrl, err := NewConsistencyController(ctx, conf, db)
 	require.NoError(t, err)
 
+	// no tidb_config found, don't allow to lock tables
 	unknownSysVarErr := errors.New("ERROR 1193 (HY000): Unknown system variable 'tidb_config'")
 	mock.ExpectQuery("SELECT @@tidb_config").WillReturnError(unknownSysVarErr)
 	err = ctrl.Setup(tctx)
 	require.ErrorIs(t, err, unknownSysVarErr)
 	require.NoError(t, mock.ExpectationsWereMet())
 
+	// enable-table-lock is false, don't allow to lock tables
 	tidbConf := dbconfig.NewConfig()
 	tidbConf.EnableTableLock = false
 	tidbConfBytes, err := json.Marshal(tidbConf)
@@ -212,6 +214,7 @@ func TestConsistencyLockTiDBCheck(t *testing.T) {
 	require.ErrorIs(t, err, tiDBDisableTableLockErr)
 	require.NoError(t, mock.ExpectationsWereMet())
 
+	// enable-table-lock is true, allow to lock tables
 	tidbConf.EnableTableLock = true
 	tidbConfBytes, err = json.Marshal(tidbConf)
 	require.NoError(t, err)
