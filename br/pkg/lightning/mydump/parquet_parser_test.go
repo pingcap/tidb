@@ -55,7 +55,7 @@ func (s testParquetParserSuite) TestParquetParser(c *C) {
 	verifyRow := func(i int) {
 		c.Assert(reader.lastRow.RowID, Equals, int64(i+1))
 		c.Assert(len(reader.lastRow.Row), Equals, 2)
-		c.Assert(reader.lastRow.Row[0], DeepEquals, types.NewCollationStringDatum(strconv.Itoa(i), "", 0))
+		c.Assert(reader.lastRow.Row[0], DeepEquals, types.NewCollationStringDatum(strconv.Itoa(i), ""))
 		c.Assert(reader.lastRow.Row[1], DeepEquals, types.NewIntDatum(int64(i)))
 	}
 
@@ -184,7 +184,7 @@ func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 
 	for i, testCase := range cases {
 		c.Assert(reader.ReadRow(), IsNil)
-		vals := []types.Datum{types.NewCollationStringDatum(testCase[1].(string), "", 0)}
+		vals := []types.Datum{types.NewCollationStringDatum(testCase[1].(string), "")}
 		if i%2 == 0 {
 			vals = append(vals, vals[0])
 		} else {

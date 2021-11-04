@@ -50,7 +50,7 @@ type memIndexReader struct {
 	outputOffset  []int
 	// belowHandleCols is the handle's position of the below scan plan.
 	belowHandleCols plannercore.HandleCols
-	cacheTable *table.CacheData
+	cacheTable      *table.CacheData
 }
 
 func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
@@ -69,7 +69,7 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 		retFieldTypes:   retTypes(us),
 		outputOffset:    outputOffset,
 		belowHandleCols: us.belowHandleCols,
-		cacheTable: us.cacheTable,
+		cacheTable:      us.cacheTable,
 	}
 }
 
@@ -158,7 +158,7 @@ type memTableReader struct {
 	colIDs        map[int64]int
 	buffer        allocBuf
 	pkColIDs      []int64
-	cacheTable *table.CacheData
+	cacheTable    *table.CacheData
 }
 
 type allocBuf struct {
@@ -201,7 +201,7 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 			handleBytes: make([]byte, 0, 16),
 			rd:          rd,
 		},
-		pkColIDs: pkColIDs,
+		pkColIDs:   pkColIDs,
 		cacheTable: us.cacheTable,
 	}
 }
@@ -335,17 +335,16 @@ func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable *table.CacheData, kvRan
 
 	for _, rg := range kvRanges {
 		iter := txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
-		snapCacheIter,err := getSnapIter(ctx, cacheTable, rg);
+		snapCacheIter, err := getSnapIter(ctx, cacheTable, rg)
 		if err != nil {
 			return err
-		}	
+		}
 		if snapCacheIter != nil {
 			iter, err = transaction.NewUnionIter(iter, snapCacheIter, false)
 			if err != nil {
 				return err
 			}
 		}
-
 		for ; iter.Valid(); err = iter.Next() {
 			if err != nil {
 				return err
@@ -442,7 +441,7 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 		retFieldTypes:   retTypes(us),
 		outputOffset:    outputOffset,
 		belowHandleCols: us.belowHandleCols,
-		cacheTable: us.cacheTable,
+		cacheTable:      us.cacheTable,
 	}
 
 	return &memIndexLookUpReader{
@@ -458,7 +457,7 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 		partitionMode:     idxLookUpReader.partitionTableMode,
 		partitionKVRanges: idxLookUpReader.partitionKVRanges,
 		partitionTables:   idxLookUpReader.prunedPartitions,
-		cacheTable: us.cacheTable,
+		cacheTable:        us.cacheTable,
 	}
 }
 

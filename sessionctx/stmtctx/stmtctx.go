@@ -87,7 +87,10 @@ type StatementContext struct {
 	IgnoreNoPartition            bool
 	MaybeOverOptimized4PlanCache bool
 	IgnoreExplainIDSuffix        bool
-	IsStaleness                  bool
+	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
+	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
+	// in stmtCtx
+	IsStaleness bool
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -172,8 +175,6 @@ type StatementContext struct {
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
-	// cachedTables is used to store cache table id when it satisfies the cache read condition
-	cachedTables map[int64]bool
 
 	// cache is used to reduce object allocation.
 	cache struct {
@@ -323,27 +324,6 @@ func (sc *StatementContext) InitMemTracker(label int, bytesLimit int64) {
 func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHintSet = true
 	sc.planHint = hint
-}
-
-// StoreCacheTableReadCondition stores the read condition of the given key.
-func (sc *StatementContext) StoreCacheTableReadCondition(tblID int64, cond bool) {
-	if sc.cachedTables == nil {
-		sc.cachedTables = make(map[int64]bool)
-	}
-	if cond {
-		sc.cachedTables[tblID] = cond
-	}
-}
-
-// GetCacheTableReadCondition gets the read condition of the given key if it exists
-func (sc *StatementContext) GetCacheTableReadCondition(tblID int64) bool {
-	if sc.cachedTables == nil {
-		sc.cachedTables = make(map[int64]bool)
-	}
-	if _, ok := sc.cachedTables[tblID]; !ok {
-		return false
-	}
-	return sc.cachedTables[tblID]
 }
 
 // TableEntry presents table in db.

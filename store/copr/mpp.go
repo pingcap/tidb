@@ -141,6 +141,8 @@ type mppIterator struct {
 
 	vars *tikv.Variables
 
+	needTriggerFallback bool
+
 	mu sync.Mutex
 }
 
@@ -236,8 +238,12 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		// That's a hard job but we can try it in the future.
 		if sender.GetRPCError() != nil {
 			logutil.BgLogger().Warn("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-			// we return timeout to trigger tikv's fallback
-			err = derr.ErrTiFlashServerTimeout
+			// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
+			if m.needTriggerFallback {
+				err = derr.ErrTiFlashServerTimeout
+			} else {
+				err = sender.GetRPCError()
+			}
 		}
 	} else {
 		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutMedium)
@@ -258,8 +264,11 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 
 	if err != nil {
 		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-		// we return timeout to trigger tikv's fallback
-		m.sendError(derr.ErrTiFlashServerTimeout)
+		// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
+		if m.needTriggerFallback {
+			err = derr.ErrTiFlashServerTimeout
+		}
+		m.sendError(err)
 		return
 	}
 
@@ -345,8 +354,12 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 
 	if err != nil {
 		logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-		// we return timeout to trigger tikv's fallback
-		m.sendError(derr.ErrTiFlashServerTimeout)
+		// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
+		if m.needTriggerFallback {
+			m.sendError(derr.ErrTiFlashServerTimeout)
+		} else {
+			m.sendError(err)
+		}
 		return
 	}
 
@@ -378,7 +391,12 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 					logutil.BgLogger().Info("stream unknown error", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 				}
 			}
-			m.sendError(derr.ErrTiFlashServerTimeout)
+			// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
+			if m.needTriggerFallback {
+				m.sendError(derr.ErrTiFlashServerTimeout)
+			} else {
+				m.sendError(err)
+			}
 			return
 		}
 	}
@@ -470,17 +488,18 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 // DispatchMPPTasks dispatches all the mpp task and waits for the responses.
-func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest) kv.Response {
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool) kv.Response {
 	vars := variables.(*tikv.Variables)
 	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{
-		store:      c.store,
-		tasks:      dispatchReqs,
-		finishCh:   make(chan struct{}),
-		cancelFunc: cancelFunc,
-		respChan:   make(chan *mppResponse, 4096),
-		startTs:    dispatchReqs[0].StartTs,
-		vars:       vars,
+		store:               c.store,
+		tasks:               dispatchReqs,
+		finishCh:            make(chan struct{}),
+		cancelFunc:          cancelFunc,
+		respChan:            make(chan *mppResponse, 4096),
+		startTs:             dispatchReqs[0].StartTs,
+		vars:                vars,
+		needTriggerFallback: needTriggerFallback,
 	}
 	go iter.run(ctxChild)
 	return iter

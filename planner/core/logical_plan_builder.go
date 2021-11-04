@@ -4144,16 +4144,15 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		result = us
 	}
 	// If a table is a cache table, it is judged whether it satisfies the conditions of read cache.
-	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable && b.ctx.GetSessionVars().SnapshotTS == 0 && !b.ctx.GetSessionVars().StmtCtx.IsStaleness {
 		cachedTable := tbl.(table.CachedTable)
 		txn, err := b.ctx.Txn(true)
 		if err != nil {
 			return nil, err
 		}
-		// Check the cache data of the table to see is it possible to read from cache.
-		cacheData := cachedTable.IsReadFromCache(txn.StartTS())
+		// Use the TS of the transaction to determine whether the cache can be used.
+		cacheData := cachedTable.TryReadFromCache(txn.StartTS())
 		if cacheData != nil {
-			fmt.Println("cache available, read from cache...")
 			us := LogicalUnionScan{handleCols: handleCols, cacheTable: cacheData}.Init(b.ctx, b.getSelectOffset())
 			us.SetChildren(ds)
 			result = us
