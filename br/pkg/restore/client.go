@@ -801,7 +801,7 @@ func (rc *Client) GoValidateChecksum(
 	// run the stat loader
 	go func() {
 		defer wg.Done()
-		rc.statLoader(ctx, loadStatCh)
+		rc.updateMetaAndLoadStats(ctx, loadStatCh)
 	}()
 	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
 	go func() {
@@ -907,8 +907,7 @@ func (rc *Client) execChecksum(
 	return nil
 }
 
-func (rc *Client) statLoader(ctx context.Context, input <-chan *CreatedTable) {
-	log.Info("UpdateStatsMeta")
+func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *CreatedTable) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -918,15 +917,16 @@ func (rc *Client) statLoader(ctx context.Context, input <-chan *CreatedTable) {
 				return
 			}
 
-			if tbl.OldTable.TotalKvs > 0 {
-				log.Info("UpdateStatsMeta",
-					zap.Int64("tableid", tbl.Table.ID),
-					zap.Int64("snapshot", int64(rc.restoreTS)),
-					zap.Int64("totalKVS", int64(tbl.OldTable.TotalKvs)),
-				)
-				err := rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, rc.restoreTS, tbl.OldTable.TotalKvs)
+			// Not need to return err when failed because of update analysis-meta
+			if tbl.OldTable.Crc64Xor > 0 {
+				restoreTS, err := rc.GetTS(ctx)
 				if err != nil {
-					log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
+					log.Error("getTS failed", zap.Error(err))
+				} else {
+					err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, tbl.OldTable.TotalKvs)
+					if err != nil {
+						log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
+					}
 				}
 			}
 

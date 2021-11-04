@@ -94,15 +94,17 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 }
 
 // UpdateStatsMeta update count and snapshot ts in mysql.stats_meta
-func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, snapshotTS uint64, count uint64) error {
+func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, restoreTS uint64, count uint64) error {
 	sysDB := mysql.SystemDB
 	statsMetaTbl := "stats_meta"
 
+	// set restoreTS to snapshot ans version
 	updateMetaSQL := fmt.Sprintf(
-		"update %s.%s set snapshot = %d, count = %d where table_id = %d",
+		"update %s.%s set snapshot = %d, version = %d, count = %d where table_id = %d",
 		sysDB,
 		statsMetaTbl,
-		snapshotTS,
+		restoreTS,
+		restoreTS,
 		count,
 		tableID,
 	)
