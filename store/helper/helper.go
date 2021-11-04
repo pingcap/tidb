@@ -917,7 +917,7 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
 		group,
-		)
+	)
 
 	resp, err := util.InternalHTTPClient().Get(getURL)
 	if err != nil {
@@ -953,7 +953,6 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-
 	postURL := fmt.Sprintf("%s://%s/pd/api/v1/regions/accelerate-schedule",
 		util.InternalHTTPSchema(),
 		pdAddrs[0])
@@ -964,8 +963,8 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 		return err
 	}
 	input := map[string]string{
-		"start_key":  url.QueryEscape(string(startKey)),
-		"end_key":    url.QueryEscape(string(endKey)),
+		"start_key": url.QueryEscape(string(startKey)),
+		"end_key":   url.QueryEscape(string(endKey)),
 	}
 	v, err := json.Marshal(input)
 	if err != nil {
@@ -1000,7 +999,7 @@ func (h *Helper) GetPDRegionStats2(tableID int64, stats *PDRegionStats) error {
 		url.QueryEscape(string(startKey)),
 		url.QueryEscape(string(endKey)))
 
-	fmt.Printf("startUrl %v\n", statURL);
+	fmt.Printf("startUrl %v\n", statURL)
 
 	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
@@ -1019,4 +1018,3 @@ func (h *Helper) GetPDRegionStats2(tableID int64, stats *PDRegionStats) error {
 
 	return dec.Decode(stats)
 }
-

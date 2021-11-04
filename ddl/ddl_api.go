@@ -4673,13 +4673,13 @@ type TiFlashReplicaStatusResult struct {
 
 func (d *ddl) MakeBaseRule() placement.Rule {
 	return placement.Rule{
-		GroupID: "tiflash",
-		ID: "",
-		Index:0,
-		Override:true,
-		Role: placement.Learner,
-		Count:2,
-		Constraints:[]placement.Constraint{
+		GroupID:  "tiflash",
+		ID:       "",
+		Index:    0,
+		Override: true,
+		Role:     placement.Learner,
+		Count:    2,
+		Constraints: []placement.Constraint{
 			{
 				Key:    "engine",
 				Op:     placement.In,
