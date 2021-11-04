@@ -15,10 +15,13 @@
 package tables
 
 import (
+	"fmt"
 	"sync/atomic"
 	"time"
+	"context"
 	
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -30,33 +33,10 @@ import (
 var _ table.Table = &cachedTable{}
 var _ table.CachedTable = &cachedTable{}
 
-
-// CachedTableLockType define the lock type for cached table
-type CachedTableLockType int
-
-const (
-	// CachedTableLockNone means there is no lock.
-	CachedTableLockNone CachedTableLockType = iota
-	// CachedTableLockRead is the READ lock type.
-	CachedTableLockRead
-	// CachedTableLockIntend is the write INTEND, it exists when the changing READ to WRITE, and the READ lock lease is not expired..
-	CachedTableLockIntend
-	// CachedTableLockWrite is the WRITE lock type.
-	CachedTableLockWrite
-)
-
-type StateRemote interface {
-	Load(tid int) (CachedTableLockType, uint64, error)
-	LockForRead(tid int64, now, ts uint64) (bool, error)
-	LockForWrite(tid int64, now, ts uint64) error
-	RenewLease(tid int64, ts uint64) (bool, error)
-}
-
-
 type cachedTable struct {
 	TableCommon
 
-	stateRemoteHandle StateRemote
+	handle StateRemote
 	cacheData atomic.Value
 }
 
@@ -74,15 +54,26 @@ func (c *cachedTable) IsReadFromCache(ts uint64) *table.CacheData {
 	return nil
 }
 
-// func (c *cachedTable) GetMemCache() kv.MemBuffer {
-// 	return c.MemBuffer
-// }
+var mockStateRemote = struct {
+	Ch chan remoteTask
+	Data *mockStateRemoteData
+}{}
 
 // NewCachedTable creates a new CachedTable Instance
 func NewCachedTable(tbl *TableCommon) (table.Table, error) {
-	return &cachedTable{
+	// Only for the first time.
+	if mockStateRemote.Data == nil {
+		mockStateRemote.Data = newMockStateRemoteData()
+		mockStateRemote.Ch = make(chan remoteTask, 100)
+		go mockRemoteService(mockStateRemote.Data, mockStateRemote.Ch)
+	}
+
+	ret := &cachedTable{
 		TableCommon: *tbl,
-	}, nil
+		handle: &mockStateRemoteHandle{mockStateRemote.Ch},
+	}
+
+	return ret, nil
 }
 
 func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
@@ -130,14 +121,21 @@ func loadDataFromOriginalTable(sctx sessionctx.Context, tid int64, lease uint64)
 	return mb, nil
 }
 
-const defaultLeaseDuration time.Duration = 3*time.Second
+
+func leaseFromTS(ts uint64) uint64 {
+	const defaultLeaseDuration time.Duration = 3*time.Second
+	physicalTime := oracle.GetTimeFromTS(ts)
+	lease := oracle.GoTimeToTS(physicalTime.Add(defaultLeaseDuration))
+	return lease
+}
 
 func (c *cachedTable) UpdateLockForRead(ctx sessionctx.Context, ts uint64) error {
 	// Now only the data is re-load here, and the lock information is not updated. any read-lock information update will in the next pr.
+	fmt.Println("..... Update lock for read ...", ts, c.handle)
+
 	tid := c.Meta().ID
-	physicalTime := oracle.GetTimeFromTS(ts)
-	lease := oracle.GoTimeToTS(physicalTime.Add(defaultLeaseDuration))
-	succ, err := c.stateRemoteHandle.LockForRead(tid, ts, lease)
+	lease := leaseFromTS(ts)
+	succ, err := c.handle.LockForRead(tid, ts, lease)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -157,3 +155,47 @@ func (c *cachedTable) UpdateLockForRead(ctx sessionctx.Context, ts uint64) error
 	// Current status is not suitable to cache.
 	return nil
 }
+
+func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	now := txn.StartTS()
+	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return c.TableCommon.AddRecord(ctx, r, opts...)
+}
+
+
+// UpdateRecord updates a row which should contain only writable columns.
+func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	now := txn.StartTS()
+	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return c.TableCommon.UpdateRecord(ctx, sctx, h, oldData, newData, touched)
+}
+
+
+// RemoveRecord removes a row in the table.
+func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	now := txn.StartTS()
+	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return c.TableCommon.RemoveRecord(ctx, h, r)
+}
+
