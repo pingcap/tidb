@@ -790,9 +790,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	var lastRange *coprocessor.KeyRange
 	if task.paging {
 		lastRange = resp.Resp.(*coprocessor.Response).Range
-		if lastRange == nil {
-			return nil, errors.New("unexpected nil range in paging mode")
-		}
+		//if lastRange == nil {
+		//	return nil, errors.New("unexpected nil range in paging mode")
+		//}
 	}
 	// Handles the response for non-streaming copTask.
 	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, lastRange, costTime)
@@ -1034,7 +1034,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		}
 	}
 	worker.sendToRespCh(resp, ch, true)
-	if !task.paging {
+	if lastRange == nil {
 		return nil, nil
 	}
 	//logutil.BgLogger().Info("MYLOG before build remain tasks",
