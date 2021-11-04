@@ -808,13 +808,7 @@ func (rc *Client) GoValidateChecksum(
 			close(loadStatCh)
 			wg.Done()
 		}()
-		// total checksum time
-		start := time.Now()
-		defer func() {
-			elapsed := time.Since(start)
-			summary.CollectDuration("restore checksum", elapsed)
 
-		}()
 		for {
 			select {
 			// if we use ectx here, maybe canceled will mask real error.
@@ -826,11 +820,6 @@ func (rc *Client) GoValidateChecksum(
 				}
 
 				workers.ApplyOnErrorGroup(eg, func() error {
-					// acumulative checksum tables
-					defer func() {
-						checksumStart := time.Now()
-						summary.CollectSuccessUnit("table checksum", 1, time.Since(checksumStart))
-					}()
 					err := rc.execChecksum(ectx, tbl, kvClient, concurrency, loadStatCh)
 					if err != nil {
 						return errors.Trace(err)
