@@ -141,3 +141,14 @@ select md5(a), md5(b), md5(c) from t;
 md5(a)	md5(b)	md5(c)
 8093a32450075324682d01456d6e3919	a45d4af7b243e7f393fa09bed72ac73e	aae0117857fe54811a5239275dd81133
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select decode(encode(a,"monty"),"monty") = a, md5(decode(encode(b,"monty"),"monty")) = md5(b), decode(encode(c,"monty"),"monty") = c from t;
+decode(encode(a,"monty"),"monty") = a	md5(decode(encode(b,"monty"),"monty")) = md5(b)	decode(encode(c,"monty"),"monty") = c
+1	1	1
+set @@tidb_enable_vectorized_expression = true;
+select decode(encode(a,"monty"),"monty") = a, md5(decode(encode(b,"monty"),"monty")) = md5(b), decode(encode(c,"monty"),"monty") = c from t;
+decode(encode(a,"monty"),"monty") = a	md5(decode(encode(b,"monty"),"monty")) = md5(b)	decode(encode(c,"monty"),"monty") = c
+1	1	1
+set @@tidb_enable_vectorized_expression = false;
