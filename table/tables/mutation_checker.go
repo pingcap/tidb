@@ -402,12 +402,11 @@ func CheckTxnConsistency(txn kv.Transaction) error {
 		return errors.Trace(err)
 	}
 	for tableID, count := range indexInsertionCount {
-		// FIXME: always? what if like backfilling?
+		// TODO: always? what if like backfilling?
 		if rowInsertionCount[tableID] > 0 && count%rowInsertionCount[tableID] != 0 {
 			return errors.Errorf("inconsistent index insertion count %d and row insertion count %d",
 				count, rowInsertionCount[tableID])
 		}
-
 	}
 	return nil
 }
