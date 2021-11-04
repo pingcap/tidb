@@ -207,9 +207,11 @@ func (s *DDLSuite) testReorgWithSuite(t *testing.T) {
 
 	// TODO: should be usings.RerunWithCommonHandleEnabled(c, s.TestReorg).
 	// but doing it manually while we finish migrating to testify.
-	s.IsCommonHandle = true
-	s.testReorgWithSuite(t)
-	s.IsCommonHandle = false
+	if !s.IsCommonHandle {
+		s.IsCommonHandle = true
+		s.testReorgWithSuite(t)
+		s.IsCommonHandle = false
+	}
 }
 
 func (s *DDLSuite) TestReorgOwner(t *testing.T) {

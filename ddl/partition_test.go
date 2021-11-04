@@ -18,7 +18,6 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -27,22 +26,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testPartitionSuite{})
-
-type testPartitionSuite struct {
+type partitionSuite struct {
 	store kv.Storage
 }
 
-func (s *testPartitionSuite) SetUpSuite(t *testing.T) {
+func createPartitionSuite(t *testing.T) (s *partitionSuite, clean func()) {
+	s = new(partitionSuite)
 	s.store = testCreateStore(t, "test_store")
+	clean = func() {
+		err := s.store.Close()
+		require.NoError(t, err)
+	}
+	return
 }
 
-func (s *testPartitionSuite) TearDownSuite(t *testing.T) {
-	err := s.store.Close()
-	require.NoError(t, err)
-}
-
-func (s *testPartitionSuite) TestDropAndTruncatePartition(t *testing.T) {
+func TestDropAndTruncatePartition(t *testing.T) {
+	s, clean := createPartitionSuite(t)
+	defer clean()
 	d := testNewDDLAndStart(
 		context.Background(),
 		t,
