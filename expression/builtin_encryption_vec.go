@@ -212,6 +212,9 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
+	dataTp := b.args[0].GetType()
+	dataEnc := charset.NewEncoding(dataTp.Charset)
+
 	buf1, err1 := b.bufAllocator.get()
 	if err1 != nil {
 		return err1
@@ -220,14 +223,22 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
+	passwordTp := b.args[1].GetType()
+	passwordEnc := charset.NewEncoding(passwordTp.Charset)
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		dataStr := buf.GetString(i)
-		passwordStr := buf1.GetString(i)
+		dataStr, err := dataEnc.EncodeString(buf.GetString(i))
+		if err != nil {
+			return err
+		}
+		passwordStr, err := passwordEnc.EncodeString(buf1.GetString(i))
+		if err != nil {
+			return err
+		}
 		decodeStr, err := encrypt.SQLDecode(dataStr, passwordStr)
 		if err != nil {
 			return err
@@ -255,18 +266,29 @@ func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err1 != nil {
 		return err1
 	}
+	dataTp := b.args[0].GetType()
+	dataEnc := charset.NewEncoding(dataTp.Charset)
 	defer b.bufAllocator.put(buf1)
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
+	passwordTp := b.args[1].GetType()
+	passwordEnc := charset.NewEncoding(passwordTp.Charset)
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		decodeStr := buf.GetString(i)
-		passwordStr := buf1.GetString(i)
+
+		decodeStr, err := dataEnc.EncodeString(buf.GetString(i))
+		if err != nil {
+			return err
+		}
+		passwordStr, err := passwordEnc.EncodeString(buf1.GetString(i))
+		if err != nil {
+			return err
+		}
 		dataStr, err := encrypt.SQLEncode(decodeStr, passwordStr)
 		if err != nil {
 			return err

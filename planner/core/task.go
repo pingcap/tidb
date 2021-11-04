@@ -1546,6 +1546,7 @@ func BuildFinalModeAggregation(
 	for i, aggFunc := range original.AggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
 		finalAggFunc.Name = aggFunc.Name
+		finalAggFunc.OrderByItems = aggFunc.OrderByItems
 		args := make([]expression.Expression, 0, len(aggFunc.Args))
 		if aggFunc.HasDistinct {
 			/*
@@ -1563,7 +1564,8 @@ func BuildFinalModeAggregation(
 				// 1. add all args to partial.GroupByItems
 				foundInGroupBy := false
 				for j, gbyExpr := range partial.GroupByItems {
-					if gbyExpr.Equal(sctx, distinctArg) {
+					if gbyExpr.Equal(sctx, distinctArg) && gbyExpr.GetType().Equal(distinctArg.GetType()) {
+						// if the two expressions exactly the same in terms of data types and collation, then can avoid it.
 						foundInGroupBy = true
 						ret = partialGbySchema.Columns[j]
 						break
@@ -1700,7 +1702,6 @@ func BuildFinalModeAggregation(
 		finalAggFunc.Args = args
 		finalAggFunc.RetTp = aggFunc.RetTp
 		final.AggFuncs[i] = finalAggFunc
-		finalAggFunc.OrderByItems = aggFunc.OrderByItems
 	}
 	partial.Schema.Append(partialGbySchema.Columns...)
 	return
