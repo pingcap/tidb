@@ -34,8 +34,8 @@ import (
 
 // hashContext keeps the needed hash context of a db table in hash join.
 type hashContext struct {
-	// hashTypes one-to-one correspondence with keyColIdx
-	hashTypes []*types.FieldType
+	// allTypes one-to-one correspondence with keyColIdx
+	allTypes  []*types.FieldType
 	keyColIdx []int
 	buf       []byte
 	hashVals  []hash.Hash64
@@ -138,8 +138,8 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 // matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
 func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx *hashContext) (ok bool, err error) {
 	return codec.EqualChunkRow(c.sc,
-		buildRow, c.hCtx.hashTypes, c.hCtx.keyColIdx,
-		probeRow, probeHCtx.hashTypes, probeHCtx.keyColIdx)
+		buildRow, c.hCtx.allTypes, c.hCtx.keyColIdx,
+		probeRow, probeHCtx.allTypes, probeHCtx.keyColIdx)
 }
 
 // alreadySpilledSafeForTest indicates that records have spilled out into disk. It's thread-safe.
@@ -172,7 +172,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 	hCtx := c.hCtx
 	for keyIdx, colIdx := range c.hCtx.keyColIdx {
 		ignoreNull := len(ignoreNulls) > keyIdx && ignoreNulls[keyIdx]
-		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.hashTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
+		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			return errors.Trace(err)
 		}

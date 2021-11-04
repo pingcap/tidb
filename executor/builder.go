@@ -1247,6 +1247,10 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	executorCountHashJoinExec.Inc()
 
+	// We should use JoinKey to construct the type information using by hashing, instead of using the child's schema directly.
+	// When a hybrid type column is hashed multiple times, we need to distinguish what field types are used.
+	// For example, the condition `enum = int and enum = string`, we should use ETInt to hash the first column,
+	// and use ETString to hash the second column, although they may be the same column.
 	leftExecTypes, rightExecTypes := retTypes(leftExec), retTypes(rightExec)
 	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys))
 	for i, col := range v.LeftJoinKeys {
@@ -2696,6 +2700,10 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		outerTypes[col.Index].Flag = col.RetType.Flag
 	}
 
+	// We should use JoinKey to construct the type information using by hashing, instead of using the child's schema directly.
+	// When a hybrid type column is hashed multiple times, we need to distinguish what field types are used.
+	// For example, the condition `enum = int and enum = string`, we should use ETInt to hash the first column,
+	// and use ETString to hash the second column, although they may be the same column.
 	innerHashTypes := make([]*types.FieldType, len(v.InnerHashKeys))
 	outerHashTypes := make([]*types.FieldType, len(v.OuterHashKeys))
 	for i, col := range v.InnerHashKeys {

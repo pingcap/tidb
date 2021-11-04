@@ -124,10 +124,10 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 	if e.isDistinct {
 		e.hashTbl = newConcurrentMapHashTable()
 		e.hCtx = &hashContext{
-			hashTypes: e.base().retFieldTypes,
+			allTypes: e.base().retFieldTypes,
 		}
 		// We use all columns to compute hash.
-		e.hCtx.keyColIdx = make([]int, len(e.hCtx.hashTypes))
+		e.hCtx.keyColIdx = make([]int, len(e.hCtx.allTypes))
 		for i := range e.hCtx.keyColIdx {
 			e.hCtx.keyColIdx[i] = i
 		}
@@ -465,7 +465,7 @@ func (e *CTEExec) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) {
 
 	for i := 0; i < chk.NumCols(); i++ {
 		if err = codec.HashChunkSelected(e.ctx.GetSessionVars().StmtCtx, e.hCtx.hashVals,
-			chk, e.hCtx.hashTypes[i], i, e.hCtx.buf, e.hCtx.hasNull,
+			chk, e.hCtx.allTypes[i], i, e.hCtx.buf, e.hCtx.hasNull,
 			hashBitMap, false); err != nil {
 			return nil, err
 		}
@@ -563,8 +563,8 @@ func (e *CTEExec) checkHasDup(probeKey uint64,
 			return false, err
 		}
 		isEqual, err := codec.EqualChunkRow(e.ctx.GetSessionVars().StmtCtx,
-			row, e.hCtx.hashTypes, e.hCtx.keyColIdx,
-			matchedRow, e.hCtx.hashTypes, e.hCtx.keyColIdx)
+			row, e.hCtx.allTypes, e.hCtx.keyColIdx,
+			matchedRow, e.hCtx.allTypes, e.hCtx.keyColIdx)
 		if err != nil {
 			return false, err
 		}
