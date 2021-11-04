@@ -825,7 +825,7 @@ func (rc *Client) GoValidateChecksum(
 					return
 				}
 
-				workers.ApplyOnErrorGroup(wg, func() error {
+				workers.ApplyOnErrorGroup(eg, func() error {
 					// acumulative checksum tables
 					defer func() {
 						checksumStart := time.Now()
