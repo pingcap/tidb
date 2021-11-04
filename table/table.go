@@ -260,3 +260,8 @@ type CachedTable interface {
 	// you need to update the lock information and read the data from the original table
 	UpdateLockForRead(ctx sessionctx.Context, ts uint64) error
 }
+
+type CacheData struct {
+	Lease uint64
+	kv.MemBuffer
+}

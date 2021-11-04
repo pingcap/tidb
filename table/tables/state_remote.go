@@ -17,9 +17,13 @@ package tables
 import (
 	"fmt"
 	"sync"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
-//CachedTableLockType define the lock type for cached table
+// CachedTableLockType define the lock type for cached table
 type CachedTableLockType int
 
 const (
@@ -33,139 +37,228 @@ const (
 	CachedTableLockWrite
 )
 
-func (l CachedTableLockType) String() string {
-	switch l {
-	case CachedTableLockNone:
-		return "NONE"
-	case CachedTableLockRead:
-		return "READ"
-	case CachedTableLockIntend:
-		return "INTEND"
-	case CachedTableLockWrite:
-		return "WRITE"
-	}
-	panic("invalid CachedTableLockType value")
+type StateRemote interface {
+	Load(tid int64) (CachedTableLockType, uint64, error)
+	LockForRead(tid int64, now, ts uint64) (bool, error)
+	LockForWrite(tid int64, now, ts uint64) error
+	RenewLease(tid int64, ts uint64) (bool, error)
 }
 
-type stateRemote interface {
-	Load(tblID int64) (stateLocal, error)
-	LockForRead(tblID int64, now, ts uint64) error
-	PreLock(tblID int64, now, ts uint64) (uint64, error)
-	LockForWrite(tblID int64, ts uint64) error
-	RenewLease(tblID int64, ts uint64) error
-	ClearOrphanLock(tblID int64, ts uint64) error
-}
-type lockInfo struct {
-	lockType CachedTableLockType
-	lease    uint64
-	sync.RWMutex
-}
-type stateRemoteHandle struct {
-	remoteInfo map[int64]*lockInfo
+// mockStateRemoteHandle implement the StateRemote interface.
+type mockStateRemoteHandle struct {
+	ch   chan remoteTask
 }
 
-func NewStateRemoteHandle(tblID int64) stateRemote {
-	remote := &stateRemoteHandle{
-		make(map[int64]*lockInfo),
-	}
-	var mu sync.RWMutex
-	remote.remoteInfo[tblID] = &lockInfo{
-		CachedTableLockNone,
-		0,
-		mu,
-	}
-	return remote
-}
-func (h *stateRemoteHandle) RenewLease(tblID int64, ts uint64) error {
-	info := *h.remoteInfo[tblID]
-	if info.lockType != CachedTableLockRead {
-		return fmt.Errorf("can't renew lease in %s lock", info.lockType.String())
-	}
-	info.lockType = CachedTableLockRead
-	info.lease = ts
-	info.Lock()
-	h.remoteInfo[tblID] = &info
-	info.Unlock()
-	return nil
-}
-func (h *stateRemoteHandle) Load(tblID int64) (stateLocal, error) {
-	info := *h.remoteInfo[tblID]
-	info.RLock()
-	defer info.RUnlock()
-	return stateLocal{info.lockType,
-		info.lease,
-	}, nil
+func (r *mockStateRemoteHandle) Load(tid int64) (CachedTableLockType, uint64, error) {
+	op := &loadOP{tid: tid}
+	op.Add(1)
+	r.ch <- op
+	op.Wait()
+	return op.lockType, op.lease, op.err
 }
 
-func (h *stateRemoteHandle) LockForRead(tblID int64, now, ts uint64) error {
-	// In the server side:
-	info := *h.remoteInfo[tblID]
-	switch info.lockType {
-	case CachedTableLockNone:
-		info.lockType = CachedTableLockRead
-		info.lease = ts
-	case CachedTableLockRead:
-		info.lease = ts
-	case CachedTableLockWrite, CachedTableLockIntend:
-		if now > info.lease {
-			// clear orphan lock
-			info.lockType = CachedTableLockRead
-			info.lease = ts
-		} else {
-			return fmt.Errorf("fail to lock for read, curr state = %v", info.lockType)
-		}
-	}
-	info.Lock()
-	h.remoteInfo[tblID] = &info
-	info.Unlock()
-	return nil
-}
-func (h *stateRemoteHandle) PreLock(tblID int64, now, ts uint64) (uint64, error) {
-	// In the server side:
-	info := *h.remoteInfo[tblID]
-	oldLease := info.lease
-	if info.lockType == CachedTableLockNone {
-		info.lockType = CachedTableLockIntend
-		info.lease = ts
-		info.Lock()
-		h.remoteInfo[tblID] = &info
-		info.Unlock()
-		return oldLease, nil
-	}
-
-	if info.lockType == CachedTableLockRead {
-		info.lockType = CachedTableLockIntend
-		info.lease = ts
-		info.Lock()
-		h.remoteInfo[tblID] = &info
-		info.Unlock()
-		return oldLease, nil
-	}
-
-	return 0, fmt.Errorf("fail to add lock intent, curr state = %v %d %d", info.lockType, info.lease, now)
+func (r *mockStateRemoteHandle) LockForRead(tid int64, now, ts uint64) (bool, error) {
+	op := &lockForReadOP{tid: tid, now: now, ts: ts}
+	op.Add(1)
+	r.ch <- op
+	op.Wait()
+	return op.succ, op.err
 }
 
-func (h *stateRemoteHandle) LockForWrite(tblID int64, ts uint64) error {
-	info := *h.remoteInfo[tblID]
-	if info.lockType == CachedTableLockIntend || info.lockType == CachedTableLockNone {
-		info.lockType = CachedTableLockWrite
-		info.lease = ts
-		info.Lock()
-		h.remoteInfo[tblID] = &info
-		info.Unlock()
+func (r *mockStateRemoteHandle) LockForWrite(tid int64, now, ts uint64) error {
+	op := &lockForWriteOP{tid: tid, now: now, ts: ts}
+	op.Add(1)
+	r.ch <- op
+	op.Wait()
+	if op.err != nil {
+		return errors.Trace(op.err)
+	}
+	// No block, finish.
+	if op.oldLease == 0 {
 		return nil
 	}
 
-	return fmt.Errorf("lock for write fail, lock intent is gone! %v", info.lockType)
+	// Wait for read lock to expire.
+	t1 := oracle.GetTimeFromTS(op.oldLease)
+	t2 := oracle.GetTimeFromTS(now)
+	waitDuration := t1.Sub(t2)
+	fmt.Println("lock for write meet read lock", "old lease ts=", t1, "now=", t2, "sleep=", waitDuration)
+	time.Sleep(waitDuration)
+
+	// TODO: now should be a new ts
+	op = &lockForWriteOP{tid: tid, now: op.oldLease + 1, ts: leaseFromTS(op.oldLease + 1)}
+	op.Add(1)
+	r.ch <- op
+	op.Wait()
+	// op.oldLease should be 0 this time.
+	return op.err
 }
-func (h *stateRemoteHandle) ClearOrphanLock(tblID int64, ts uint64) error {
-	info := *h.remoteInfo[tblID]
-	if info.lockType != CachedTableLockWrite {
-		return fmt.Errorf("only clear lock on wrtie lock and now is %s", info.lockType.String())
+
+func (r *mockStateRemoteHandle) RenewLease(tid int64, ts uint64) (bool, error) {
+	return false, errors.New("not implemented yet")
+}
+
+func mockRemoteService(r *mockStateRemoteData, ch chan remoteTask) {
+	for task := range ch {
+		task.Exec(r)
 	}
-	info.lockType = CachedTableLockNone
-	info.Lock()
-	h.remoteInfo[tblID] = &info
-	info.Unlock()
-	return nil
+}
+
+type remoteTask interface {
+	Exec(data *mockStateRemoteData)
+}
+
+// loadOP is a kind of remoteTask
+type loadOP struct {
+	sync.WaitGroup
+	// Input
+	tid int64
+
+	// Output
+	lockType CachedTableLockType
+	lease    uint64
+	err      error
+}
+
+func (op *loadOP) Exec(data *mockStateRemoteData) {
+	op.lockType, op.lease, op.err = data.Load(op.tid)
+	op.Done()
+}
+
+// lockForReadOP is a kind of rmoteTask
+type lockForReadOP struct {
+	sync.WaitGroup
+	// Input
+	tid int64
+	now uint64
+	ts  uint64
+
+	// Output
+	succ bool
+	err  error
+}
+
+func (op *lockForReadOP) Exec(r *mockStateRemoteData) {
+	op.succ, op.err = r.LockForRead(op.tid, op.now, op.ts)
+	op.Done()
+}
+
+// lockForWriteOP is a kind of remote task
+type lockForWriteOP struct {
+	sync.WaitGroup
+	// Input
+	tid int64
+	now uint64
+	ts  uint64
+
+	// Output
+	err      error
+	oldLease uint64
+}
+
+func (op *lockForWriteOP) Exec(data *mockStateRemoteData) {
+	op.oldLease, op.err = data.LockForWrite(op.tid, op.now, op.ts)
+	op.Done()
+}
+
+type mockStateRemoteData struct {
+	data map[int64]*stateRecord
+}
+
+type stateRecord struct {
+	lease    uint64
+	lockType CachedTableLockType
+}
+
+func newMockStateRemoteData() *mockStateRemoteData {
+	return &mockStateRemoteData{
+		data: make(map[int64]*stateRecord),
+	}
+}
+
+func (r *mockStateRemoteData) Load(tid int64) (CachedTableLockType, uint64, error) {
+	record, ok := r.data[tid]
+	if !ok {
+		return CachedTableLockNone, 0, nil
+	}
+	return record.lockType, record.lease, nil
+}
+
+func (r *mockStateRemoteData) LockForRead(tid int64, now, ts uint64) (bool, error) {
+	record, ok := r.data[tid]
+	if !ok {
+		record = &stateRecord{
+			lease:    ts,
+			lockType: CachedTableLockRead,
+		}
+		r.data[tid] = record
+		return true, nil
+	}
+	switch record.lockType {
+	case CachedTableLockNone:
+		// Add the read lock
+		record.lockType = CachedTableLockRead
+		record.lease = ts
+		return true, nil
+	case CachedTableLockRead:
+		// Renew lease for this case.
+		if record.lease < ts {
+			record.lease = ts
+			return true, nil
+		}
+		// Already read locked.
+		return true, nil
+	case CachedTableLockWrite, CachedTableLockIntend:
+		if now > record.lease {
+			// Outdated...clear orphan lock
+			record.lockType = CachedTableLockRead
+			record.lease = ts
+			return true, nil
+		}
+		return false, nil
+	}
+	return false, errors.New("unknown lock type")
+}
+
+func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, error) {
+	record, ok := r.data[tid]
+	if !ok {
+		record.lockType = CachedTableLockWrite
+		record.lease = ts
+		return 0, nil
+	}
+
+	switch record.lockType {
+	case CachedTableLockNone:
+		fmt.Println("write for lock meet none, add lock")
+		record.lockType = CachedTableLockWrite
+		record.lease = ts
+		return 0, nil
+	case CachedTableLockRead:
+		if now > record.lease {
+			// Outdated, clear orphan lock and add write lock directly.
+			record.lockType = CachedTableLockWrite
+			record.lease = ts
+			return 0, nil
+		}
+
+		// Change state to intend, prevent renew lease operation.
+		oldLease := record.lease
+		record.lockType = CachedTableLockIntend
+		record.lease = leaseFromTS(ts)
+		fmt.Println("read lock -> write intend")
+		return oldLease, nil
+	case CachedTableLockWrite:
+		if ts > record.lease {
+			record.lease = ts
+		}
+	case CachedTableLockIntend:
+		// // Add the write lock.
+		record.lockType = CachedTableLockWrite
+		record.lease = ts
+		fmt.Println("intend -> write lock")
+	default:
+		return 0, fmt.Errorf("wrong lock state %v", record.lockType)
+	}
+	return 0, nil
 }
