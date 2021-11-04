@@ -178,7 +178,7 @@ type StatementContext struct {
 	// cachedTables is used to store cache table id and a pointer to cache data when it satisfies the cache read condition
 	cachedTables []struct {
 		id        int64
-		memBuffer *atomic.Value
+		memBuffer interface{} // is a point to cache.MemBuffer. in order to avoid import cycle
 	}
 
 	// cache is used to reduce object allocation.
@@ -332,21 +332,21 @@ func (sc *StatementContext) SetPlanHint(hint string) {
 }
 
 // StoreCacheTable stores the read condition and a point to cache data of the given key.
-func (sc *StatementContext) StoreCacheTable(tblID int64, buffer atomic.Value) {
+func (sc *StatementContext) StoreCacheTable(tblID int64, buffer interface{}) {
 	for _, data := range sc.cachedTables {
 		if data.id == tblID {
-			data.memBuffer = &buffer
+			data.memBuffer = buffer
 		}
 		return
 	}
 	sc.cachedTables = append(sc.cachedTables, struct {
 		id        int64
-		memBuffer *atomic.Value
-	}{id: tblID, memBuffer: &buffer})
+		memBuffer interface{}
+	}{id: tblID, memBuffer: buffer})
 }
 
 // GetCacheTable gets the read condition and a point to cache data of the given key if it exists
-func (sc *StatementContext) GetCacheTable(tblID int64) (bool, *atomic.Value) {
+func (sc *StatementContext) GetCacheTable(tblID int64) (bool, interface{}) {
 	for _, data := range sc.cachedTables {
 		if data.id == tblID {
 			return true, data.memBuffer

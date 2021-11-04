@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -4153,10 +4152,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 		// Use the txn of the transaction to determine whether the cache can be read.
 		// About read lock and read condition feature. will add in the next pr.
-		cond := cachedTable.IsReadFromCache(txn.StartTS())
+		buffer, cond := cachedTable.TryGetMemcache(txn.StartTS())
 		if cond {
-			var buffer atomic.Value
-			buffer.Store(cachedTable.GetMemCache())
 			b.ctx.GetSessionVars().StmtCtx.StoreCacheTable(tbl.Meta().ID, buffer)
 			us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 			us.SetChildren(ds)

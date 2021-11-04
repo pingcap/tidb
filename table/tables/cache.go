@@ -16,6 +16,7 @@ package tables
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -32,16 +33,18 @@ type cachedTable struct {
 	kv.MemBuffer
 }
 
-func (c *cachedTable) IsReadFromCache(ts uint64) bool {
+func (c *cachedTable) TryGetMemcache(ts uint64) (*kv.MemBuffer, bool) {
+	if c.isReadFromCache(ts) {
+		return &c.MemBuffer, true
+	}
+	return nil, false
+}
+func (c *cachedTable) isReadFromCache(ts uint64) bool {
 	// If first read cache table. directly return false, the backend goroutine will help us update the lock information
 	// and read the data from the original table at the same time
 	// TODO : Use lease and ts judge whether it is readable.
 	// TODO : If the cache is not readable. MemBuffer become invalid.
 	return c.MemBuffer != nil
-}
-
-func (c *cachedTable) GetMemCache() kv.MemBuffer {
-	return c.MemBuffer
 }
 
 // NewCachedTable creates a new CachedTable Instance
@@ -51,7 +54,10 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 	}, nil
 }
 
-func (c *cachedTable) LoadDataFromOriginalTable(ctx sessionctx.Context) error {
+func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context) error {
+	var mu sync.RWMutex
+	mu.Lock()
+	defer mu.Unlock()
 	prefix := tablecodec.GenTablePrefix(c.tableID)
 	txn, err := ctx.Txn(true)
 	if err != nil {
@@ -61,7 +67,7 @@ func (c *cachedTable) LoadDataFromOriginalTable(ctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	c.MemBuffer = buffTxn.GetMemBuffer()
+	buffer := buffTxn.GetMemBuffer()
 	it, err := txn.Iter(prefix, prefix.PrefixNext())
 	if err != nil {
 		return err
@@ -72,7 +78,7 @@ func (c *cachedTable) LoadDataFromOriginalTable(ctx sessionctx.Context) error {
 	}
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		value := it.Value()
-		err = c.MemBuffer.Set(it.Key(), value)
+		err = buffer.Set(it.Key(), value)
 		if err != nil {
 			return err
 		}
@@ -81,12 +87,13 @@ func (c *cachedTable) LoadDataFromOriginalTable(ctx sessionctx.Context) error {
 			return err
 		}
 	}
+	c.MemBuffer = buffer
 	return nil
 }
 
 func (c *cachedTable) UpdateLockForRead(ctx sessionctx.Context, ts uint64) error {
 	// Now only the data is re-load here, and the lock information is not updated. any read-lock information update will in the next pr.
-	err := c.LoadDataFromOriginalTable(ctx)
+	err := c.loadDataFromOriginalTable(ctx)
 	if err != nil {
 		return fmt.Errorf("reload data error")
 	}
