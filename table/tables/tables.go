@@ -145,9 +145,11 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 		if err := initTableIndices(&t); err != nil {
 			return nil, err
 		}
+		if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+			return NewCachedTable(&t)
+		}
 		return &t, nil
 	}
-
 	return newPartitionedTable(&t, tblInfo)
 }
 
