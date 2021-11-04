@@ -606,11 +606,13 @@ func GetTiDBDDLIDs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 }
 
 // getTiDBConfig gets tidb config from TiDB server
+// @@tidb_config details doc https://docs.pingcap.com/tidb/stable/system-variables#tidb_config
+// this variable exists at least from v2.0.0, so this works in most existing tidb instances
 func getTiDBConfig(db *sql.Conn) (dbconfig.Config, error) {
 	const query = "SELECT @@tidb_config;"
 	var (
 		tidbConfig      dbconfig.Config
-		tidbConfigBytes sql.RawBytes
+		tidbConfigBytes []byte
 	)
 	row := db.QueryRowContext(context.Background(), query)
 	err := row.Scan(&tidbConfigBytes)
