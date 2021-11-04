@@ -560,6 +560,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
+			SetPaging(e.indexPaging).
 			SetReadReplicaScope(e.readReplicaScope).
 			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -584,12 +585,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				worker.syncErr(err)
 				break
 			}
-			var result distsql.SelectResult
-			if e.indexPaging {
-				result, err = distsql.SelectWithPaging(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
-			} else {
-				result, err = distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
-			}
+			result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
 			if err != nil {
 				worker.syncErr(err)
 				break

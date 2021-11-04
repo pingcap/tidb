@@ -6,10 +6,6 @@ import (
 	"sort"
 	"time"
 
-	"go.uber.org/zap"
-
-	"github.com/pingcap/tidb/util/logutil"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -175,12 +171,6 @@ func (p *pagingResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 				loadedRows = chk.NumRows()
 				p.nextPage(ctx)
 			} else {
-				logutil.Logger(ctx).Info("MYLOG break",
-					zap.Bool("is full", chk.IsFull()),
-					zap.Uint64("curr", p.currPageLoaded),
-					zap.Uint64("page size", p.currPageSize),
-					zap.Int("chk rows", chk.NumRows()),
-					zap.Int("loaded rows", loadedRows))
 				break
 			}
 		}
