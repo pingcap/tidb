@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
 )
 
@@ -89,6 +90,29 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 			zap.Int64("historySchemaVersion", ddlJob.BinlogInfo.SchemaVersion),
 			zap.Error(err))
 	}
+	return errors.Trace(err)
+}
+
+// UpdateStatsMeta update count and snapshot ts in mysql.stats_meta
+func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, snapshotTS uint64, count uint64) error {
+	sysDB := mysql.SystemDB
+	statsMetaTbl := "stats_meta"
+
+	updateMetaSQL := fmt.Sprintf(
+		"update %s.%s set snapshot = %d, count = %d where table_id = %d",
+		sysDB,
+		statsMetaTbl,
+		snapshotTS,
+		count,
+		tableID,
+	)
+	err := db.se.Execute(ctx, updateMetaSQL)
+	if err != nil {
+		log.Error("execute update sql failed",
+			zap.String("query", updateMetaSQL),
+			zap.Error(err))
+	}
+
 	return errors.Trace(err)
 }
 

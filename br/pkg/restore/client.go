@@ -76,6 +76,7 @@ type Client struct {
 	// this probably isn't as easy as it seems like (however, not hard, too :D)
 	db              *DB
 	rateLimit       uint64
+	restoreTS       uint64
 	isOnline        bool
 	noSchema        bool
 	hasSpeedLimited bool
@@ -285,6 +286,10 @@ func (rc *Client) EnableOnline() {
 // GetTLSConfig returns the tls config.
 func (rc *Client) GetTLSConfig() *tls.Config {
 	return rc.tlsConf
+}
+
+func (rc *Client) SetRestoreTS(restoreTS uint64) {
+	rc.restoreTS = restoreTS
 }
 
 // GetTS gets a new timestamp from PD.
@@ -842,7 +847,13 @@ func (rc *Client) GoValidateChecksum(
 	return outCh
 }
 
-func (rc *Client) execChecksum(ctx context.Context, tbl CreatedTable, kvClient kv.Client, concurrency uint, loadStatCh chan<- *CreatedTable) error {
+func (rc *Client) execChecksum(
+	ctx context.Context,
+	tbl CreatedTable,
+	kvClient kv.Client,
+	concurrency uint,
+	loadStatCh chan<- *CreatedTable,
+) error {
 	logger := log.With(
 		zap.String("db", tbl.OldTable.DB.Name.O),
 		zap.String("table", tbl.OldTable.Info.Name.O),
@@ -891,13 +902,13 @@ func (rc *Client) execChecksum(ctx context.Context, tbl CreatedTable, kvClient k
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-	if table.Stats != nil {
-		loadStatCh <- &tbl
-	}
+
+	loadStatCh <- &tbl
 	return nil
 }
 
 func (rc *Client) statLoader(ctx context.Context, input <-chan *CreatedTable) {
+	log.Info("UpdateStatsMeta")
 	for {
 		select {
 		case <-ctx.Done():
@@ -906,19 +917,34 @@ func (rc *Client) statLoader(ctx context.Context, input <-chan *CreatedTable) {
 			if !ok {
 				return
 			}
-			table := tbl.OldTable
-			log.Info("start loads analyze after validate checksum",
-				zap.Int64("old id", tbl.OldTable.Info.ID),
-				zap.Int64("new id", tbl.Table.ID),
-			)
-			start := time.Now()
-			if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), table.Stats); err != nil {
-				log.Error("analyze table failed", zap.Any("table", table.Stats), zap.Error(err))
+
+			if tbl.OldTable.TotalKvs > 0 {
+				log.Info("UpdateStatsMeta",
+					zap.Int64("tableid", tbl.Table.ID),
+					zap.Int64("snapshot", int64(rc.restoreTS)),
+					zap.Int64("totalKVS", int64(tbl.OldTable.TotalKvs)),
+				)
+				err := rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, rc.restoreTS, tbl.OldTable.TotalKvs)
+				if err != nil {
+					log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
+				}
 			}
-			log.Info("restore stat done",
-				zap.String("table", table.Info.Name.L),
-				zap.String("db", table.DB.Name.L),
-				zap.Duration("cost", time.Since(start)))
+
+			table := tbl.OldTable
+			if table.Stats != nil {
+				log.Info("start loads analyze after validate checksum",
+					zap.Int64("old id", tbl.OldTable.Info.ID),
+					zap.Int64("new id", tbl.Table.ID),
+				)
+				start := time.Now()
+				if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), table.Stats); err != nil {
+					log.Error("analyze table failed", zap.Any("table", table.Stats), zap.Error(err))
+				}
+				log.Info("restore stat done",
+					zap.String("table", table.Info.Name.L),
+					zap.String("db", table.DB.Name.L),
+					zap.Duration("cost", time.Since(start)))
+			}
 		}
 	}
 }
