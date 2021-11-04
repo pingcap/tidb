@@ -16,46 +16,23 @@ package handle_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/testkit"
 	"math/rand"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testSerialStatsSuite{})
-
-type testSerialStatsSuite struct {
-	store kv.Storage
-	do    *domain.Domain
-}
-
-func (s *testSerialStatsSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	// Add the hook here to avoid data race.
-	var err error
-	s.store, s.do, err = newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-}
-
-func (s *testSerialStatsSuite) TearDownSuite(c *C) {
-	s.do.Close()
-	s.store.Close()
-	testleak.AfterTest(c)()
-}
-
-func (s *testSerialStatsSuite) TestAutoAnalyzeOnEmptyTable(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
+	tk, dom, clean := createTestKitAndDom(t)
+	defer clean()
 
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
@@ -64,12 +41,12 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeOnEmptyTable(c *C) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
 
-	t := time.Now().Add(-1 * time.Minute)
-	h, m := t.Hour(), t.Minute()
+	now := time.Now().Add(-1 * time.Minute)
+	h, m := now.Hour(), now.Minute()
 	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
-	s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema())
+	dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema())
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, index idx(a))")
@@ -77,20 +54,20 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeOnEmptyTable(c *C) {
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(handle.AutoAnalyzeMinCnt)))
-	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+	require.Nil(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
 	// test if it will be limited by the time range
-	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsFalse)
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
 
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
-	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
 }
 
-func (s *testSerialStatsSuite) TestAutoAnalyzeOutOfSpecifiedTime(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
+	tk, dom, clean := createTestKitAndDom(t)
+	defer clean()
 
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
@@ -99,12 +76,12 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeOutOfSpecifiedTime(c *C) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
 
-	t := time.Now().Add(-1 * time.Minute)
-	h, m := t.Hour(), t.Minute()
+	now := time.Now().Add(-1 * time.Minute)
+	h, m := now.Hour(), now.Minute()
 	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
-	s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema())
+	dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema())
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
@@ -112,23 +89,23 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeOutOfSpecifiedTime(c *C) {
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(handle.AutoAnalyzeMinCnt)))
-	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+	require.Nil(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
-	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsFalse)
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
 	tk.MustExec("analyze table t")
 
 	tk.MustExec("alter table t add index ia(a)")
-	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsFalse)
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
 
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
-	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
 }
 
-func (s *testSerialStatsSuite) TestIssue25700(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue25700(t *testing.T) {
+	tk, dom, clean := createTestKitAndDom(t)
+	defer clean()
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
 	defer func() {
@@ -143,88 +120,87 @@ func (s *testSerialStatsSuite) TestIssue25700(c *C) {
 	tk.MustExec("CREATE TABLE `t` ( `ldecimal` decimal(32,4) DEFAULT NULL, `rdecimal` decimal(32,4) DEFAULT NULL, `gen_col` decimal(36,4) GENERATED ALWAYS AS (`ldecimal` + `rdecimal`) VIRTUAL, `col_timestamp` timestamp(3) NULL DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	tk.MustExec("analyze table t")
 	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) VALUES (2265.2200, 9843.4100, '1999-12-31 16:00:00')" + strings.Repeat(", (2265.2200, 9843.4100, '1999-12-31 16:00:00')", int(handle.AutoAnalyzeMinCnt)))
-	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(s.do.StatsHandle().Update(s.do.InfoSchema()), IsNil)
+	require.Nil(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
-	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
-	c.Assert(tk.MustQuery("show analyze status").Rows()[1][7], Equals, "finished")
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.Equal(t, "finished", tk.MustQuery("show analyze status").Rows()[1][7])
 }
 
-func (s *testSerialStatsSuite) TestAutoAnalyzeOnChangeAnalyzeVer(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
+	tk, do, clean := createTestKitAndDom(t)
+	defer clean()
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, index idx(a))")
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("set @@global.tidb_analyze_version = 1")
-	do := s.do
 	handle.AutoAnalyzeMinCnt = 0
 	defer func() {
 		handle.AutoAnalyzeMinCnt = 1000
 	}()
 	h := do.StatsHandle()
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	require.NoError(t, err)
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	is := do.InfoSchema()
 	err = h.UpdateSessionVar()
-	c.Assert(err, IsNil)
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
 	// Auto analyze when global ver is 1.
 	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
+	require.Nil(t, h.Update(is))
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	statsTbl1 := h.GetTableStats(tbl.Meta())
 	// Check that all the version of t's stats are 1.
 	for _, col := range statsTbl1.Columns {
-		c.Assert(col.StatsVer, Equals, int64(1))
+		require.Equal(t, int64(1), col.StatsVer)
 	}
 	for _, idx := range statsTbl1.Indices {
-		c.Assert(idx.StatsVer, Equals, int64(1))
+		require.Equal(t, int64(1), idx.StatsVer)
 	}
 	tk.MustExec("set @@global.tidb_analyze_version = 2")
 	err = h.UpdateSessionVar()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tk.MustExec("insert into t values(1), (2), (3), (4)")
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(is))
 	// Auto analyze t whose version is 1 after setting global ver to 2.
 	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
+	require.Nil(t, h.Update(is))
 	statsTbl1 = h.GetTableStats(tbl.Meta())
-	c.Assert(statsTbl1.Count, Equals, int64(5))
+	require.Equal(t, int64(5), statsTbl1.Count)
 	// All of its statistics should still be version 1.
 	for _, col := range statsTbl1.Columns {
-		c.Assert(col.StatsVer, Equals, int64(1))
+		require.Equal(t, int64(1), col.StatsVer)
 	}
 	for _, idx := range statsTbl1.Indices {
-		c.Assert(idx.StatsVer, Equals, int64(1))
+		require.Equal(t, int64(1), idx.StatsVer)
 	}
 	// Add a new table after the analyze version set to 2.
 	tk.MustExec("create table tt(a int, index idx(a))")
 	tk.MustExec("insert into tt values(1), (2), (3), (4), (5)")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	require.NoError(t, err)
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	is = do.InfoSchema()
 	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
-	c.Assert(err, IsNil)
-	c.Assert(h.Update(is), IsNil)
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
 	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
+	require.Nil(t, h.Update(is))
 	statsTbl2 := h.GetTableStats(tbl2.Meta())
 	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
 	for _, idx := range statsTbl2.Indices {
-		c.Assert(idx.StatsVer, Equals, int64(2))
+		require.Equal(t, int64(2), idx.StatsVer)
 	}
 	for _, col := range statsTbl2.Columns {
-		c.Assert(col.StatsVer, Equals, int64(2))
+		require.Equal(t, int64(2), col.StatsVer)
 	}
 	tk.MustExec("set @@global.tidb_analyze_version = 1")
 }
 
-func (s *testSerialStatsSuite) TestMergeTopN(c *C) {
+func TestMergeTopN(t *testing.T) {
 	// Move this test to here to avoid race test.
 	tests := []struct {
 		topnNum    int
@@ -257,13 +233,13 @@ func (s *testSerialStatsSuite) TestMergeTopN(c *C) {
 			maxTopNCnt: 100,
 		},
 	}
-	for _, t := range tests {
-		topnNum, n := t.topnNum, t.n
-		maxTopNVal, maxTopNCnt := t.maxTopNVal, t.maxTopNCnt
+	for _, tt := range tests {
+		topnNum, n := tt.topnNum, tt.n
+		maxTopNVal, maxTopNCnt := tt.maxTopNVal, tt.maxTopNCnt
 
 		// the number of maxTopNVal should be bigger than n.
 		ok := maxTopNVal >= n
-		c.Assert(ok, Equals, true)
+		require.Equal(t, true, ok)
 
 		topNs := make([]*statistics.TopN, 0, topnNum)
 		res := make(map[int]uint64)
@@ -293,28 +269,28 @@ func (s *testSerialStatsSuite) TestMergeTopN(c *C) {
 		var minTopNCnt uint64
 		for _, topNMeta := range topN.TopN {
 			val, err := strconv.Atoi(string(topNMeta.Encoded))
-			c.Assert(err, IsNil)
-			c.Assert(topNMeta.Count, Equals, res[val])
+			require.NoError(t, err)
+			require.Equal(t, res[val], topNMeta.Count)
 			minTopNCnt = topNMeta.Count
 		}
 		if remainTopN != nil {
 			cnt += len(remainTopN)
 			for _, remainTopNMeta := range remainTopN {
 				val, err := strconv.Atoi(string(remainTopNMeta.Encoded))
-				c.Assert(err, IsNil)
-				c.Assert(remainTopNMeta.Count, Equals, res[val])
+				require.NoError(t, err)
+				require.Equal(t, res[val], remainTopNMeta.Count)
 				// The count of value in remainTopN may equal to the min count of value in TopN.
 				ok = minTopNCnt >= remainTopNMeta.Count
-				c.Assert(ok, Equals, true)
+				require.Equal(t, true, ok)
 			}
 		}
-		c.Assert(cnt, Equals, len(res))
+		require.Equal(t, len(res), cnt)
 	}
 }
 
-func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
+func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
+	testKit, do, clean := createTestKitAndDom(t)
+	defer clean()
 	testkit.WithPruneMode(testKit, variable.DynamicOnly, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec("set @@tidb_analyze_version = 2;")
@@ -325,14 +301,13 @@ func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
 					partition p1 values less than (20),
 					partition p2 values less than (30))`)
 
-		do := s.do
 		is := do.InfoSchema()
 		h := do.StatsHandle()
-		c.Assert(h.RefreshVars(), IsNil)
-		c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+		require.Nil(t, h.RefreshVars())
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 
 		testKit.MustExec("insert into t values (1, 'a'), (2, 'b'), (11, 'c'), (12, 'd'), (21, 'e'), (22, 'f')")
-		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 		testKit.MustExec("set @@tidb_analyze_version = 2")
 		testKit.MustExec("analyze table t")
 
@@ -343,42 +318,42 @@ func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
 			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
 		}()
 
-		c.Assert(h.Update(is), IsNil)
+		require.Nil(t, h.Update(is))
 		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		pi := tableInfo.GetPartitionInfo()
 		globalStats := h.GetTableStats(tableInfo)
 		partitionStats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-		c.Assert(globalStats.Count, Equals, int64(6))
-		c.Assert(globalStats.ModifyCount, Equals, int64(0))
-		c.Assert(partitionStats.Count, Equals, int64(2))
-		c.Assert(partitionStats.ModifyCount, Equals, int64(0))
+		require.Equal(t, int64(6), globalStats.Count)
+		require.Equal(t, int64(0), globalStats.ModifyCount)
+		require.Equal(t, int64(2), partitionStats.Count)
+		require.Equal(t, int64(0), partitionStats.ModifyCount)
 
 		testKit.MustExec("insert into t values (3, 'g')")
-		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-		c.Assert(h.Update(is), IsNil)
+		require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		require.Nil(t, h.Update(is))
 		globalStats = h.GetTableStats(tableInfo)
 		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-		c.Assert(globalStats.Count, Equals, int64(7))
-		c.Assert(globalStats.ModifyCount, Equals, int64(1))
-		c.Assert(partitionStats.Count, Equals, int64(3))
-		c.Assert(partitionStats.ModifyCount, Equals, int64(1))
+		require.Equal(t, int64(7), globalStats.Count)
+		require.Equal(t, int64(1), globalStats.ModifyCount)
+		require.Equal(t, int64(3), partitionStats.Count)
+		require.Equal(t, int64(1), partitionStats.ModifyCount)
 
 		h.HandleAutoAnalyze(is)
-		c.Assert(h.Update(is), IsNil)
+		require.Nil(t, h.Update(is))
 		globalStats = h.GetTableStats(tableInfo)
 		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-		c.Assert(globalStats.Count, Equals, int64(7))
-		c.Assert(globalStats.ModifyCount, Equals, int64(0))
-		c.Assert(partitionStats.Count, Equals, int64(3))
-		c.Assert(partitionStats.ModifyCount, Equals, int64(0))
+		require.Equal(t, int64(7), globalStats.Count)
+		require.Equal(t, int64(0), globalStats.ModifyCount)
+		require.Equal(t, int64(3), partitionStats.Count)
+		require.Equal(t, int64(0), partitionStats.ModifyCount)
 	})
 }
 
-func (s *testSerialStatsSuite) TestAutoAnalyzeRatio(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	tk := testkit.NewTestKit(c, s.store)
+func TestAutoAnalyzeRatio(t *testing.T) {
+	tk, dom, clean := createTestKitAndDom(t)
+	defer clean()
 
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
@@ -389,33 +364,33 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeRatio(c *C) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
 
-	h := s.do.StatsHandle()
+	h := dom.StatsHandle()
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
-	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+	require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19))
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	is := s.do.InfoSchema()
-	c.Assert(h.Update(is), IsNil)
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	is := dom.InfoSchema()
+	require.Nil(t, h.Update(is))
 	// To pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 1")
-	c.Assert(h.LoadNeededHistograms(), IsNil)
+	require.Nil(t, h.LoadNeededHistograms())
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 10))
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	c.Assert(h.HandleAutoAnalyze(is), IsTrue)
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(is))
+	require.True(t, h.HandleAutoAnalyze(is))
 
 	tk.MustExec("delete from t limit 12")
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	c.Assert(h.HandleAutoAnalyze(is), IsFalse)
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(is))
+	require.False(t, h.HandleAutoAnalyze(is))
 
 	tk.MustExec("delete from t limit 4")
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	c.Assert(h.HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.Update(is))
+	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
 }

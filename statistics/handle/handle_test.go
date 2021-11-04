@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -49,7 +50,28 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-// TODO replace cleanEnv with createTestKitAndDom in gc_series_test.go when migrate this file
+var _ = SerialSuites(&testSerialStatsSuite{})
+
+type testSerialStatsSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+}
+
+func (s *testSerialStatsSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	// Add the hook here to avoid data race.
+	var err error
+	s.store, s.do, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSerialStatsSuite) TearDownSuite(c *C) {
+	s.do.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
+
+// TODO replace cleanEnv with createTestKitAndDom in gc_test.go when migrate this file
 func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
