@@ -702,6 +702,10 @@ func (tr *TableRestore) postProcess(
 		return false, errors.Trace(err)
 	}
 
+	if !forcePostProcess && rc.cfg.PostRestore.PostProcessAtLast {
+		return true, nil
+	}
+
 	w := rc.checksumWorks.Apply()
 	defer rc.checksumWorks.Recycle(w)
 
@@ -735,10 +739,6 @@ func (tr *TableRestore) postProcess(
 		needChecksum, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
 		if err != nil {
 			return false, err
-		}
-
-		if !forcePostProcess && rc.cfg.PostRestore.PostProcessAtLast {
-			return true, nil
 		}
 
 		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
