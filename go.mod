@@ -53,14 +53,8 @@ require (
 	github.com/pingcap/log v0.0.0-20210818144256-6455d4a4c6f9
 	github.com/pingcap/parser v0.0.0-20210831085004-b5390aa83f65
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
-<<<<<<< HEAD
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
-	github.com/pingcap/tipb v0.0.0-20210708040514-0f154bb0dc0f
-=======
-	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
-	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20211025074540-e1c7362eeeb4
->>>>>>> 82c6041ac... Executor,MPP: Send schema in ExchangeSender (#29057)
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
