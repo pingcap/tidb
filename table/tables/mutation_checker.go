@@ -496,16 +496,16 @@ func CheckTxnConsistency(txn kv.Transaction) error {
 		return nil
 	}
 
-	indexInsertionCount := 0
-	rowInsertionCount := 0
+	// count for each table
+	indexInsertionCount := make(map[int64]int)
+	rowInsertionCount := make(map[int64]int)
 	f := func(k kv.Key, v []byte) error {
-		if rowcodec.IsRowKey(k) {
-			if len(v) > 0 {
-				rowInsertionCount += 1
-			}
-		} else {
-			if len(v) > 0 {
-				indexInsertionCount += 1
+		if len(v) > 0 {
+			tableID := tablecodec.DecodeTableID(k)
+			if rowcodec.IsRowKey(k) {
+				rowInsertionCount[tableID] += 1
+			} else {
+				indexInsertionCount[tableID] += 1
 			}
 		}
 		return nil
@@ -513,8 +513,13 @@ func CheckTxnConsistency(txn kv.Transaction) error {
 	if err := kv.WalkMemBuffer(memBuffer, f); err != nil {
 		return errors.Trace(err)
 	}
-	if indexInsertionCount%rowInsertionCount != 0 {
-		return errors.Errorf("inconsistent index insertion count %d and row insertion count %d", indexInsertionCount, rowInsertionCount)
+	for tableID, count := range indexInsertionCount {
+		// FIXME: always? what if like backfilling?
+		if rowInsertionCount[tableID] > 0 && count%rowInsertionCount[tableID] != 0 {
+			return errors.Errorf("inconsistent index insertion count %d and row insertion count %d",
+				count, rowInsertionCount[tableID])
+		}
+
 	}
 	return nil
 }
