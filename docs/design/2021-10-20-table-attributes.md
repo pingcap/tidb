@@ -52,7 +52,7 @@ SHOW ATTRIBUTES FOR [{DATABASE|SCHEMA} s][TABLE t][PARTITION p];
 ```
 or 
 ```
-SHOW CREATE TABLE;
+SHOW CREATE TABLE t;
 ```
 
 At least we should support one way to show the attributes. Here is an example:
@@ -79,7 +79,7 @@ Here are the concrete behaviors when doing the DDL operations with a table/parti
 + For the truncate partition operation, the partition range of attributes will be updated.
 
 #### Recover/Flashback Clause
-+ The attributes will be not changed once the recover/flashback process success.
++ The attributes will be kept as the old values after the recover/flashback process succeed.
 
 #### Exchange Clause
 + The attributes will be exchanged including the ID and ranges.
