@@ -376,6 +376,8 @@ func getOrBuildColumnMaps(
 	return maps
 }
 
+// CheckTxnConsistency checks the number of row/index mutations before the txn commits,
+// to prevent some inconsistent transactions.
 func CheckTxnConsistency(txn kv.Transaction) error {
 	memBuffer := txn.GetMemBuffer()
 	if memBuffer == nil {
