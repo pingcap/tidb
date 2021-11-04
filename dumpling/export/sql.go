@@ -13,13 +13,13 @@ import (
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
-
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
+
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
-	"go.uber.org/zap"
 )
 
 const (
@@ -263,7 +263,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 				if engine == "" && (comment == "" || comment == TableTypeViewStr) {
 					tableType = TableTypeView
 				} else if engine == "" {
-					tctx.L().Warn("Invalid table without engine found", zap.String("database", schema), zap.String("table", table))
+					tctx.L().Warn("invalid table without engine found", zap.String("database", schema), zap.String("table", table))
 					continue
 				}
 				if _, ok := selectedTableType[tableType]; !ok {
@@ -1003,7 +1003,7 @@ func estimateCount(tctx *tcontext.Context, dbName, tableName string, db *sql.Con
 func detectEstimateRows(tctx *tcontext.Context, db *sql.Conn, query string, fieldNames []string) uint64 {
 	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
-		tctx.L().Warn("can't detect estimate rows from db",
+		tctx.L().Info("can't estimate rows from db",
 			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
@@ -1011,13 +1011,13 @@ func detectEstimateRows(tctx *tcontext.Context, db *sql.Conn, query string, fiel
 	rows.Next()
 	columns, err := rows.Columns()
 	if err != nil {
-		tctx.L().Warn("can't get columns from db",
+		tctx.L().Info("can't get columns when estimate rows from db",
 			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
 	err = rows.Err()
 	if err != nil {
-		tctx.L().Warn("rows meet some error during the query",
+		tctx.L().Info("rows meet some error during the query when estimate rows",
 			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
@@ -1038,17 +1038,18 @@ found:
 	}
 	err = rows.Scan(addr...)
 	if err != nil || fieldIndex < 0 {
-		tctx.L().Warn("can't get estimate count from db",
-			zap.String("query", query), log.ShortError(err))
+		tctx.L().Info("can't estimate rows from db",
+			zap.String("query", query), zap.Int("fieldIndex", fieldIndex), log.ShortError(err))
 		return 0
 	}
 
 	estRows, err := strconv.ParseFloat(oneRow[fieldIndex].String, 64)
 	if err != nil {
-		tctx.L().Warn("can't get parse rows from db",
+		tctx.L().Info("can't get parse estimate rows from db",
 			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
+
 	return uint64(estRows)
 }
 
