@@ -123,3 +123,15 @@ func TestSlowQueryLoggerCreation(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, prop.Level.String(), conf.Level)
 }
+
+func TestGlobalLoggerReplace(t *testing.T) {
+	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxDays: 0, MaxSize: 4096}}
+	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+	err := InitLogger(conf)
+	require.NoError(t, err)
+
+	conf.Config.File.MaxDays = 14
+
+	err = ReplaceLogger(conf)
+	require.NoError(t, err)
+}

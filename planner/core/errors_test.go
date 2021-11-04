@@ -28,6 +28,7 @@ func (s testErrorSuite) TestError(c *C) {
 	kvErrs := []*terror.Error{
 		ErrUnsupportedType,
 		ErrAnalyzeMissIndex,
+		ErrAnalyzeMissColumn,
 		ErrWrongParamCount,
 		ErrSchemaChanged,
 		ErrTablenameNotAllowedHere,

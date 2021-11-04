@@ -85,6 +85,7 @@ const (
 	pColumnLen  = "colLen"
 	pRowBin     = "rowBin"
 	pSnapshot   = "snapshot"
+	pFileName   = "filename"
 )
 
 // For query string
@@ -978,7 +979,7 @@ func getSchemaTablesStorageInfo(h *schemaStorageHandler, schema *model.CIStr, ta
 		messages = make([]*schemaTableStorage, 0)
 		defer terror.Call(results.Close)
 		for {
-			req := results.NewChunk()
+			req := results.NewChunk(nil)
 			if err = results.Next(context.TODO(), req); err != nil {
 				break
 			}
