@@ -72,13 +72,18 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		dbName = e.ctx.GetSessionVars().CurrentDB
 	}
 
-	// For table , check whether table exists and privilege is valid
+	// For table & column level, check whether table exists and privilege is valid
 	if e.Level.Level == ast.GrantLevelTable {
 		// Return if privilege is invalid, to fail before not existing table, see issue #29302
 		for _, p := range e.Privs {
-			// Exclude column level
-			if len(p.Cols) == 0 && !mysql.AllowedTablePrivs.Has(p.Priv) {
-				return ErrIllegalGrantForTable
+			if len(p.Cols) == 0 {
+				if !mysql.AllTablePrivs.Has(p.Priv) && p.Priv != mysql.AllPriv && p.Priv != mysql.UsagePriv && p.Priv != mysql.GrantPriv {
+					return ErrIllegalGrantForTable
+				}
+			} else {
+				if !mysql.AllColumnPrivs.Has(p.Priv) && p.Priv != mysql.AllPriv && p.Priv != mysql.UsagePriv {
+					return ErrWrongUsage.GenWithStackByArgs("COLUMN GRANT", "NON-COLUMN PRIVILEGES")
+				}
 			}
 		}
 		dbNameStr := model.NewCIStr(dbName)
@@ -669,10 +674,6 @@ func composeTablePrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder
 func composeColumnPrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string, col string) error {
 	var newColumnPriv []string
 	if priv != mysql.AllPriv {
-		if !mysql.AllColumnPrivs.Has(priv) {
-			return ErrWrongUsage.GenWithStackByArgs("COLUMN GRANT", "NON-COLUMN PRIVILEGES")
-		}
-
 		currColumnPriv, err := getColumnPriv(ctx, name, host, db, tbl, col)
 		if err != nil {
 			return err
