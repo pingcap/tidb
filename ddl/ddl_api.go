@@ -4659,8 +4659,8 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 }
 
 type PollTiFlashReplicaStatusContext struct {
-	ID        int64
-	TableInfo *model.TableInfo
+	ID           int64
+	TableInfo    *model.TableInfo
 	HighPriority bool
 }
 
@@ -4674,10 +4674,10 @@ type TiFlashReplicaStatusResult struct {
 func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 	ddlGlobalSchemaVersion := 0
 	resp, err := d.etcdCli.Get(ctx.(context.Context), ddlutil.DDLGlobalSchemaVersion)
-	if err == nil{
+	if err == nil {
 		if len(resp.Kvs) > 0 {
 			ddlGlobalSchemaVersion, err = strconv.Atoi(string(resp.Kvs[0].Value))
-			if err != nil{
+			if err != nil {
 				errors.Trace(err)
 			}
 		}
@@ -4685,13 +4685,13 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 
 	lastHandledSchemaVersionTso := "0_tso_0"
 	resp, err = d.etcdCli.Get(ctx.(context.Context), ddlutil.TiFlashLastHandledSchemaVersion)
-	if err == nil{
+	if err == nil {
 		if len(resp.Kvs) > 0 {
 			lastHandledSchemaVersionTso = string(resp.Kvs[0].Value)
 		}
 	}
 
-	splitVec := strings.Split("_tso_",lastHandledSchemaVersionTso)
+	splitVec := strings.Split("_tso_", lastHandledSchemaVersionTso)
 	lastHandledSchemaVersion, err := strconv.Atoi(splitVec[0])
 	if err != nil {
 		return errors.Trace(err)
@@ -4703,16 +4703,16 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 
 	curTso := time.Now().Unix()
 
-	if ddlGlobalSchemaVersion != lastHandledSchemaVersion || int64(lastHandledSchemaTso + 300) <= curTso {
+	if ddlGlobalSchemaVersion != lastHandledSchemaVersion || int64(lastHandledSchemaTso+300) <= curTso {
 		// Need to update table
 		allUpdate, err := d.TiFlashReplicaTableUpdate(ctx)
-		if err != nil{
+		if err != nil {
 			return errors.Trace(err)
 		}
 		if allUpdate {
 			// Need to update pd's schema version
 			v := fmt.Sprintf("%v_tso_%v", ddlGlobalSchemaVersion, curTso)
-			d.etcdCli.Put(ctx.(context.Context),"/tiflash/cluster/last_handled_schema_version", v)
+			d.etcdCli.Put(ctx.(context.Context), "/tiflash/cluster/last_handled_schema_version", v)
 		}
 	}
 	return nil
@@ -4776,9 +4776,9 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 
 		// TODO implement _check_and_make_rule
 
-		if !tb.TableInfo.TiFlashReplica.Available{
+		if !tb.TableInfo.TiFlashReplica.Available {
 			allReplicaReady = false
-			
+
 			if tb.HighPriority {
 				tikvHelper.PostAccelerateSchedule(tb.ID)
 			}
