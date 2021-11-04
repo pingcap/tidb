@@ -252,9 +252,6 @@ var MockTableFromMeta func(tableInfo *model.TableInfo) Table
 type CachedTable interface {
 	Table
 
-	// LoadDataFromOriginalTable Load data from the original table to the cache
-	LoadDataFromOriginalTable(ctx sessionctx.Context) error
-
 	// GetMemCache Get the MemBuffer used by the cache table
 	GetMemCache() kv.MemBuffer
 

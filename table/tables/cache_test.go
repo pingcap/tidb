@@ -111,5 +111,20 @@ func TestCacheTableBasicScan(t *testing.T) {
 		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
 	}
 	assertSelect()
+}
 
+func TestCacheTableBasicReadAndWrite(t *testing.T) {
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists write_tmp1")
+	tk.MustExec("create  table write_tmp1 (id int primary key auto_increment, u int unique, v int)")
+	tk.MustExec("alter table write_tmp1 cache")
+	tk.MustExec("insert into write_tmp1 values" +
+		"(1, 101, 1001), (3, 113, 1003), (5, 105, 1005), (7, 117, 1007), (9, 109, 1009)," +
+		"(10, 110, 1010), (12, 112, 1012), (14, 114, 1014), (16, 116, 1016), (18, 118, 1018)",
+	)
+	//tk.MustExec("alter table tmp1 cache")
 }
