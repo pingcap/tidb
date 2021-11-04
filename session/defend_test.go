@@ -39,3 +39,19 @@ func TestCorrupt(t *testing.T) {
 	tk.MustExec("commit")
 	failpoint.Disable("github.com/pingcap/tidb/table/tables/corruptMutations")
 }
+
+func TestCheckInTxn(t *testing.T) {
+	store, close := testkit.CreateMockStore(t)
+	defer close()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec("set global tidb_enable_mutation_checker = true;")
+	tk.MustExec("create table t(id int, v varchar(20), unique key i1(id))")
+	tk.MustExec("insert into t values (1, 'a')")
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/table/tables/printMutation", "return"))
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 'd'), (3, 'f') on duplicate key update v='x'")
+	tk.MustExec("commit")
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/table/tables/printMutation"))
+}
