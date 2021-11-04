@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/ddl/placement"
 	"io"
 	"io/ioutil"
 	"math"
@@ -906,6 +907,42 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 	return dec.Decode(stats)
 }
 
+func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return nil, err
+	}
+
+	getURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rules/group/%s",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+		group,
+		)
+
+	resp, err := util.InternalHTTPClient().Get(getURL)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			log.Error("err", zap.Error(err))
+		}
+	}()
+
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(resp.Body)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var rules []placement.Rule
+	err = json.Unmarshal(buf.Bytes(), &rules)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return rules, nil
+}
+
 func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
@@ -934,7 +971,12 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	if err != nil {
 		return err
 	}
-	_, err = util.InternalHTTPClient().Post(postURL, "application/json", bytes.NewBuffer(v))
+	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", bytes.NewBuffer(v))
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			log.Error("err", zap.Error(err))
+		}
+	}()
 	if err != nil {
 		return err
 	}

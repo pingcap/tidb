@@ -4671,9 +4671,28 @@ type TiFlashReplicaStatusResult struct {
 	ReplicaDetail    map[int64]int
 }
 
+func (d *ddl) MakeBaseRule() placement.Rule {
+	return placement.Rule{
+		GroupID: "tiflash",
+		ID: "",
+		Index:0,
+		Override:true,
+		Role: placement.Learner,
+		Count:2,
+		Constraints:[]placement.Constraint{
+			{
+				Key:    "engine",
+				Op:     placement.In,
+				Values: []string{"tiflash"},
+			},
+		},
+	}
+}
+
 func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 	ddlGlobalSchemaVersion := 0
-	resp, err := d.etcdCli.Get(ctx.(context.Context), ddlutil.DDLGlobalSchemaVersion)
+
+	resp, err := d.etcdCli.Get(d.ctx, ddlutil.DDLGlobalSchemaVersion)
 	if err == nil {
 		if len(resp.Kvs) > 0 {
 			ddlGlobalSchemaVersion, err = strconv.Atoi(string(resp.Kvs[0].Value))
@@ -4684,14 +4703,14 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 	}
 
 	lastHandledSchemaVersionTso := "0_tso_0"
-	resp, err = d.etcdCli.Get(ctx.(context.Context), ddlutil.TiFlashLastHandledSchemaVersion)
+	resp, err = d.etcdCli.Get(d.ctx, ddlutil.TiFlashLastHandledSchemaVersion)
 	if err == nil {
 		if len(resp.Kvs) > 0 {
 			lastHandledSchemaVersionTso = string(resp.Kvs[0].Value)
 		}
 	}
 
-	splitVec := strings.Split("_tso_", lastHandledSchemaVersionTso)
+	splitVec := strings.Split(lastHandledSchemaVersionTso, "_tso_")
 	lastHandledSchemaVersion, err := strconv.Atoi(splitVec[0])
 	if err != nil {
 		return errors.Trace(err)
@@ -4712,7 +4731,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 		if allUpdate {
 			// Need to update pd's schema version
 			v := fmt.Sprintf("%v_tso_%v", ddlGlobalSchemaVersion, curTso)
-			d.etcdCli.Put(ctx.(context.Context), "/tiflash/cluster/last_handled_schema_version", v)
+			d.etcdCli.Put(d.ctx, "/tiflash/cluster/last_handled_schema_version", v)
 		}
 	}
 	return nil
@@ -4733,6 +4752,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 
 	schema := d.GetInfoSchemaWithInterceptor(ctx)
 
+	// compute table_list
 	var table_list []PollTiFlashReplicaStatusContext = make([]PollTiFlashReplicaStatusContext, 0)
 	for _, db := range schema.AllSchemas() {
 		fmt.Printf("PollTiFlashReplicaStatus has db %v\n", db.Name)
@@ -4756,6 +4776,12 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 		}
 	}
 
+	allRules, err := tikvHelper.GetGroupRules("tiflash")
+	if err != nil {
+		return allReplicaReady, errors.Trace(err)
+	}
+	fmt.Printf("allRules is %v", allRules)
+
 	tikvStats, err := tikvHelper.GetStoresStat()
 	if err != nil {
 		return allReplicaReady, errors.Trace(err)
@@ -4775,6 +4801,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 		// TODO Can we batch request table?
 
 		// TODO implement _check_and_make_rule
+		//rule := d.MakeBaseRule()
 
 		if !tb.TableInfo.TiFlashReplica.Available {
 			allReplicaReady = false
