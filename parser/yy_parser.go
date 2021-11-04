@@ -144,7 +144,10 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 			return nil, nil, err
 		}
 	}
-	sql = parser.lexer.tryDecodeToUTF8String(sql)
+	sql, err = parser.lexer.tryDecodeToUTF8String(sql)
+	if err != nil && parser.lexer.GetSQLMode().HasStrictMode() {
+		return nil, nil, errors.Trace(err)
+	}
 	parser.src = sql
 	parser.result = parser.result[:0]
 

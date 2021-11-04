@@ -6484,6 +6484,8 @@ func TestPlanReplayer(t *testing.T) {
 func TestGBKEncoding(t *testing.T) {
 	t.Parallel()
 	p := parser.New()
+	p.SetSQLMode(mysql.ModeNone)
+
 	gbkEncoding, _ := charset.Lookup("gbk")
 	encoder := gbkEncoding.NewEncoder()
 	sql, err := encoder.String("create table 测试表 (测试列 varchar(255) default 'GBK测试用例');")
@@ -6516,6 +6518,19 @@ func TestGBKEncoding(t *testing.T) {
 
 	stmt, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
 	require.Error(t, err)
+}
+
+func TestInvalidCharSQL(t *testing.T) {
+	t.Parallel()
+	p := parser.New()
+	sql := "select '一二三a'"
+
+	_, _, err := p.ParseSQL(sql, parser.CharsetClient("gbk"))
+	require.Error(t, err)
+
+	p.SetSQLMode(mysql.ModeNone)
+	_, _, err = p.ParseSQL(sql, parser.CharsetClient("gbk"))
+	require.NoError(t, err)
 }
 
 type gbkEncodingChecker struct {

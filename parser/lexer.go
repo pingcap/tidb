@@ -145,13 +145,13 @@ func (s *Scanner) AppendWarn(err error) {
 	s.warns = append(s.warns, err)
 }
 
-func (s *Scanner) tryDecodeToUTF8String(sql string) string {
-	utf8Lit, err := s.encoding.DecodeString(sql)
+func (s *Scanner) tryDecodeToUTF8String(sql string) (string, error) {
+	sql, err := s.encoding.DecodeString(sql)
 	if err != nil {
 		s.AppendError(err)
 		s.lastErrorAsWarn()
 	}
-	return utf8Lit
+	return sql, err
 }
 
 func (s *Scanner) getNextToken() int {
