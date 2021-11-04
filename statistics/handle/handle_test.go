@@ -17,7 +17,10 @@ package handle_test
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 	"math"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +60,18 @@ type testSerialStatsSuite struct {
 	do    *domain.Domain
 }
 
+type testSuiteBase struct {
+	store kv.Storage
+	do    *domain.Domain
+	hook  *logHook
+}
+
+var _ = Suite(&testStatsSuite{})
+
+type testStatsSuite struct {
+	testSuiteBase
+}
+
 func (s *testSerialStatsSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	// Add the hook here to avoid data race.
@@ -69,6 +84,29 @@ func (s *testSerialStatsSuite) TearDownSuite(c *C) {
 	s.do.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
+}
+
+func (s *testSuiteBase) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	// Add the hook here to avoid data race.
+	s.registerHook()
+	var err error
+	s.store, s.do, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuiteBase) TearDownSuite(c *C) {
+	s.do.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
+
+func (s *testSuiteBase) registerHook() {
+	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
+	_, r, _ := log.InitLogger(conf)
+	s.hook = &logHook{r.Core, ""}
+	lg := zap.New(s.hook)
+	log.ReplaceGlobals(lg, r)
 }
 
 // TODO replace cleanEnv with createTestKitAndDom in gc_test.go when migrate this file
