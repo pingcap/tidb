@@ -303,7 +303,6 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
-	client.SetRestoreTS(restoreTS)
 	sp := utils.BRServiceSafePoint{
 		BackupTS: restoreTS,
 		TTL:      utils.DefaultBRGCSafePointTTL,

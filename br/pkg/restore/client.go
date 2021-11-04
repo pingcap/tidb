@@ -288,10 +288,6 @@ func (rc *Client) GetTLSConfig() *tls.Config {
 	return rc.tlsConf
 }
 
-func (rc *Client) SetRestoreTS(restoreTS uint64) {
-	rc.restoreTS = restoreTS
-}
-
 // GetTS gets a new timestamp from PD.
 func (rc *Client) GetTS(ctx context.Context) (uint64, error) {
 	p, l, err := rc.pdClient.GetTS(ctx)
