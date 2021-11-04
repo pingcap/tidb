@@ -711,6 +711,11 @@ error = '''
 Placement policy '%-.192s' is still in use
 '''
 
+["ddl:8242"]
+error = '''
+'%s' is unsupported on cache tables.
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -761,6 +766,11 @@ error = '''
 Incorrect usage of %s and %s
 '''
 
+["executor:1235"]
+error = '''
+%-.32s is not supported. To enable this experimental feature, set '%-.32s' in the configuration file.
+'''
+
 ["executor:1242"]
 error = '''
 Subquery returns more than 1 row
@@ -801,9 +811,19 @@ error = '''
 You are not allowed to create a user with GRANT
 '''
 
+["executor:1524"]
+error = '''
+Plugin '%-.192s' is not loaded
+'''
+
 ["executor:1568"]
 error = '''
 Transaction characteristics can't be changed while a transaction is in progress
+'''
+
+["executor:1699"]
+error = '''
+SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication plugin does not support it.
 '''
 
 ["executor:1827"]

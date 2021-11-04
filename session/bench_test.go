@@ -100,7 +100,7 @@ func prepareJoinBenchData(se Session, colType string, valueFormat string, valueC
 }
 
 func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	for count > 0 {
 		err := rs.Next(ctx, req)
 		if err != nil {
