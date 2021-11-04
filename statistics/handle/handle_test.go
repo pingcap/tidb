@@ -2922,6 +2922,7 @@ func (s *testSerialStatsSuite) TestFastAnalyzeColumnHistWithNullValue(c *C) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t (a int)")
 	testKit.MustExec("insert into t values (1), (2), (3), (4), (NULL)")
+	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("set @@tidb_enable_fast_analyze=1")
 	defer testKit.MustExec("set @@tidb_enable_fast_analyze=0")
 	testKit.MustExec("analyze table t with 0 topn, 2 buckets")
