@@ -532,6 +532,7 @@ func (conf *Config) createExternalStorage(ctx context.Context) (storage.External
 		return nil, errors.Trace(err)
 	}
 
+	// TODO: support setting httpClient with certification later
 	return storage.New(ctx, b, &storage.ExternalStorageOptions{})
 }
 
