@@ -16,6 +16,7 @@ package tables
 
 import (
 	"fmt"
+	"sync"
 )
 
 //CachedTableLockType define the lock type for cached table
@@ -47,68 +48,124 @@ func (l CachedTableLockType) String() string {
 }
 
 type stateRemote interface {
-	Load() (stateLocal, error)
-	LockForRead(now, ts uint64) error
-	PreLock(now, ts uint64) (uint64, error)
-	LockForWrite(ts uint64) error
+	Load(tblID int64) (stateLocal, error)
+	LockForRead(tblID int64, now, ts uint64) error
+	PreLock(tblID int64, now, ts uint64) (uint64, error)
+	LockForWrite(tblID int64, ts uint64) error
+	RenewLease(tblID int64, ts uint64) error
+	ClearOrphanLock(tblID int64, ts uint64) error
 }
-
-type stateRemoteHandle struct {
-	lease    uint64
+type lockInfo struct {
 	lockType CachedTableLockType
+	lease    uint64
+	sync.RWMutex
+}
+type stateRemoteHandle struct {
+	remoteInfo map[int64]*lockInfo
 }
 
-func (h *stateRemoteHandle) Load() (stateLocal, error) {
-	return stateLocal{
-		lockType: h.lockType,
-		lease:    h.lease,
+func NewStateRemoteHandle(tblID int64) stateRemote {
+	remote := &stateRemoteHandle{
+		make(map[int64]*lockInfo),
+	}
+	var mu sync.RWMutex
+	remote.remoteInfo[tblID] = &lockInfo{
+		CachedTableLockNone,
+		0,
+		mu,
+	}
+	return remote
+}
+func (h *stateRemoteHandle) RenewLease(tblID int64, ts uint64) error {
+	info := *h.remoteInfo[tblID]
+	if info.lockType != CachedTableLockRead {
+		return fmt.Errorf("can't renew lease in %s lock", info.lockType.String())
+	}
+	info.lockType = CachedTableLockRead
+	info.lease = ts
+	info.Lock()
+	h.remoteInfo[tblID] = &info
+	info.Unlock()
+	return nil
+}
+func (h *stateRemoteHandle) Load(tblID int64) (stateLocal, error) {
+	info := *h.remoteInfo[tblID]
+	info.RLock()
+	defer info.RUnlock()
+	return stateLocal{info.lockType,
+		info.lease,
 	}, nil
 }
 
-func (h *stateRemoteHandle) LockForRead(now, ts uint64) error {
-
+func (h *stateRemoteHandle) LockForRead(tblID int64, now, ts uint64) error {
 	// In the server side:
-	switch h.lockType {
+	info := *h.remoteInfo[tblID]
+	switch info.lockType {
 	case CachedTableLockNone:
-		h.lockType = CachedTableLockRead
-		h.lease = ts
+		info.lockType = CachedTableLockRead
+		info.lease = ts
 	case CachedTableLockRead:
-		h.lease = ts
+		info.lease = ts
 	case CachedTableLockWrite, CachedTableLockIntend:
-		if now > h.lease {
+		if now > info.lease {
 			// clear orphan lock
-			h.lockType = CachedTableLockRead
-			h.lease = ts
+			info.lockType = CachedTableLockRead
+			info.lease = ts
 		} else {
-			return fmt.Errorf("fail to lock for read, curr state = %v", h.lockType)
+			return fmt.Errorf("fail to lock for read, curr state = %v", info.lockType)
 		}
 	}
+	info.Lock()
+	h.remoteInfo[tblID] = &info
+	info.Unlock()
 	return nil
 }
-func (h *stateRemoteHandle) PreLock(now, ts uint64) (uint64, error) {
+func (h *stateRemoteHandle) PreLock(tblID int64, now, ts uint64) (uint64, error) {
 	// In the server side:
-	oldLease := h.lease
-	if h.lockType == CachedTableLockNone {
-		h.lockType = CachedTableLockIntend
-		h.lease = ts
+	info := *h.remoteInfo[tblID]
+	oldLease := info.lease
+	if info.lockType == CachedTableLockNone {
+		info.lockType = CachedTableLockIntend
+		info.lease = ts
+		info.Lock()
+		h.remoteInfo[tblID] = &info
+		info.Unlock()
 		return oldLease, nil
 	}
 
-	if h.lockType == CachedTableLockRead {
-		h.lockType = CachedTableLockIntend
-		h.lease = ts
+	if info.lockType == CachedTableLockRead {
+		info.lockType = CachedTableLockIntend
+		info.lease = ts
+		info.Lock()
+		h.remoteInfo[tblID] = &info
+		info.Unlock()
 		return oldLease, nil
 	}
 
-	return 0, fmt.Errorf("fail to add lock intent, curr state = %v %d %d", h.lockType, h.lease, now)
+	return 0, fmt.Errorf("fail to add lock intent, curr state = %v %d %d", info.lockType, info.lease, now)
 }
 
-func (h *stateRemoteHandle) LockForWrite(ts uint64) error {
-	if h.lockType == CachedTableLockIntend || h.lockType == CachedTableLockNone {
-		h.lockType = CachedTableLockWrite
-		h.lease = ts
+func (h *stateRemoteHandle) LockForWrite(tblID int64, ts uint64) error {
+	info := *h.remoteInfo[tblID]
+	if info.lockType == CachedTableLockIntend || info.lockType == CachedTableLockNone {
+		info.lockType = CachedTableLockWrite
+		info.lease = ts
+		info.Lock()
+		h.remoteInfo[tblID] = &info
+		info.Unlock()
 		return nil
 	}
 
-	return fmt.Errorf("lock for write fail, lock intent is gone! %v", h.lockType)
+	return fmt.Errorf("lock for write fail, lock intent is gone! %v", info.lockType)
+}
+func (h *stateRemoteHandle) ClearOrphanLock(tblID int64, ts uint64) error {
+	info := *h.remoteInfo[tblID]
+	if info.lockType != CachedTableLockWrite {
+		return fmt.Errorf("only clear lock on wrtie lock and now is %s", info.lockType.String())
+	}
+	info.lockType = CachedTableLockNone
+	info.Lock()
+	h.remoteInfo[tblID] = &info
+	info.Unlock()
+	return nil
 }

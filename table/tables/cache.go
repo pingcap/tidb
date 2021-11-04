@@ -58,7 +58,7 @@ func (c *cachedTable) IsLocalStale(tsNow uint64) bool {
 }
 
 func (c *cachedTable) SyncState() error {
-	s, err := c.stateRemote.Load()
+	s, err := c.stateRemote.Load(c.tableID)
 	if err != nil {
 		return err
 	}
@@ -70,7 +70,7 @@ func (c *cachedTable) SyncState() error {
 func (c *cachedTable) PreLock(ts uint64) (uint64, error) {
 	ts1 := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(3 * time.Second))
 	// Lock remote.
-	oldLease, err := c.stateRemote.PreLock(ts, ts1)
+	oldLease, err := c.stateRemote.PreLock(c.tableID, ts, ts1)
 	if err == nil {
 		// Update local on success
 		c.stateLocal = &stateLocal{
@@ -81,7 +81,7 @@ func (c *cachedTable) PreLock(ts uint64) (uint64, error) {
 	return oldLease, err
 }
 
-func (c *cachedTable) LockForWrite(ts uint64) error {
+func (c *cachedTable) lockForWrite(ts uint64) error {
 	// Make sure the local state is accurate.
 	if c.IsLocalStale(ts) {
 		err := c.SyncState()
@@ -107,12 +107,12 @@ func (c *cachedTable) LockForWrite(ts uint64) error {
 		}
 		// newTs := oldLease + 3
 		newTs := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(3 * time.Second))
-		if err := c.stateRemote.LockForWrite(newTs); err != nil {
+		if err := c.stateRemote.LockForWrite(c.tableID, newTs); err != nil {
 			return err
 		}
 	case CachedTableLockNone:
-		if err := c.stateRemote.LockForWrite(ts); err != nil {
-			return c.stateRemote.LockForWrite(ts)
+		if err := c.stateRemote.LockForWrite(c.tableID, ts); err != nil {
+			return c.lockForWrite(ts)
 		}
 	case CachedTableLockWrite:
 		if c.stateLocal.Lease() > ts {
@@ -136,9 +136,10 @@ func (c *cachedTable) TryGetMemcache(ts uint64) (kv.MemBuffer, bool) {
 func (c *cachedTable) isReadFromCache(ts uint64) bool {
 	// If first read cache table. directly return false, the backend goroutine will help us update the lock information
 	// and read the data from the original table at the same time
-	// TODO : Use lease and ts judge whether it is readable.
-	// TODO : If the cache is not readable. MemBuffer become invalid.
-	return c.MemBuffer != nil
+	if c.MemBuffer == nil {
+		return false
+	}
+	return isReadFromCache(c.stateLocal, ts, &c.isReNewLease)
 }
 
 // NewCachedTable creates a new CachedTable Instance
@@ -146,9 +147,7 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 	return &cachedTable{
 		TableCommon: *tbl,
 		// only a remote instance but not really write to kv
-		stateRemote: &stateRemoteHandle{
-			lockType: CachedTableLockNone,
-		},
+		stateRemote: NewStateRemoteHandle(tbl.tableID),
 	}, nil
 }
 
@@ -201,7 +200,7 @@ func (c *cachedTable) UpdateLockForRead(ctx sessionctx.Context, ts uint64) error
 		return fmt.Errorf("reload data error")
 	}
 	ts1 := oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(3 * time.Second))
-	err = c.stateRemote.LockForRead(ts, ts1)
+	err = c.stateRemote.LockForRead(c.tableID, ts, ts1)
 	if err == nil {
 		// Update the local state here on success.
 		c.stateLocal = &stateLocal{
@@ -220,12 +219,16 @@ func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err != nil {
 		return nil, err
 	}
-	err = c.LockForWrite(txn.StartTS())
+	err = c.lockForWrite(txn.StartTS())
 	if err != nil {
 		return nil, err
 	}
 
 	record, err := c.TableCommon.AddRecord(ctx, r, opts...)
+	if err != nil {
+		return nil, err
+	}
+	err = c.ClearOrphanLock(c.tableID, txn.StartTS())
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +243,7 @@ func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 
-	err = c.LockForWrite(txn.StartTS())
+	err = c.lockForWrite(txn.StartTS())
 	if err != nil {
 		return err
 	}
@@ -249,6 +252,7 @@ func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return err
 	}
+	err = c.ClearOrphanLock(c.tableID, txn.StartTS())
 	if err != nil {
 		return err
 	}
@@ -263,11 +267,15 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 	ts := txn.StartTS()
 
-	err = c.LockForWrite(ts)
+	err = c.lockForWrite(ts)
 	if err != nil {
 		return err
 	}
 	err = c.TableCommon.RemoveRecord(ctx, h, r)
+	if err != nil {
+		return err
+	}
+	err = c.ClearOrphanLock(c.tableID, txn.StartTS())
 	if err != nil {
 		return err
 	}

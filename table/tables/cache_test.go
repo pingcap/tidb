@@ -15,7 +15,9 @@
 package tables_test
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/testkit"
 )
@@ -119,12 +121,33 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk1 := testkit.NewTestKit(t, store)
 	tk.MustExec("drop table if exists write_tmp1")
 	tk.MustExec("create  table write_tmp1 (id int primary key auto_increment, u int unique, v int)")
-	tk.MustExec("alter table write_tmp1 cache")
 	tk.MustExec("insert into write_tmp1 values" +
-		"(1, 101, 1001), (3, 113, 1003), (5, 105, 1005), (7, 117, 1007), (9, 109, 1009)," +
-		"(10, 110, 1010), (12, 112, 1012), (14, 114, 1014), (16, 116, 1016), (18, 118, 1018)",
+		"(1, 101, 1001), (3, 113, 1003)",
 	)
-	//tk.MustExec("alter table tmp1 cache")
+	tk.MustExec("alter table write_tmp1 cache")
+	// Read and add read lock
+	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001",
+		"3 113 1003"))
+
+	time.Sleep(1)
+	// read lock should valid
+	result := tk.MustQuery("explain format = 'brief' select *from write_tmp1")
+	result.Check(testkit.Rows("UnionScan 10000.00 root  ",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:write_tmp1 keep order:false, stats:pseudo"))
+	fmt.Println(result)
+	tk1.MustExec("use test")
+	tk1.MustExec("insert into write_tmp1 values (2, 222, 222)")
+	// none lock can't read cache first wait add read lock
+	tk.MustQuery("explain format = 'brief' select *from write_tmp1").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:TableFullScan",
+		"└─TableFullScan 10000.00 cop[tikv] table:write_tmp1 keep order:false, stats:pseudo"))
+	// second can read cache
+	tk.MustQuery("explain format = 'brief' select *from write_tmp1").Check(testkit.Rows("UnionScan 10000.00 root  ",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:write_tmp1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001","2 222 222","3 113 1003"))
 }
