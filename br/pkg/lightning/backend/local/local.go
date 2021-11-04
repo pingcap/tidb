@@ -932,7 +932,7 @@ func NewLocalBackend(
 	}
 
 	var duplicateDB *pebble.DB
-	if cfg.TikvImporter.DuplicateDetection {
+	if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		duplicateDB, err = openDuplicateDB(localFile)
 		if err != nil {
 			return backend.MakeBackend(nil), errors.Annotate(err, "open duplicate db failed")
@@ -970,7 +970,7 @@ func NewLocalBackend(
 
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
-		duplicateDetection:      cfg.TikvImporter.DuplicateDetection,
+		duplicateDetection:      cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
 		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
 		errorMgr:                errorMgr,
@@ -2139,13 +2139,13 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	}()
 
 	switch algorithm {
-	case config.DupeResAlgUnsafeNoop:
-		logger.Warn("[resolve-dupe] skipping resolution since algorithm is 'unsafe-noop'. this table will become inconsistent!")
+	case config.DupeResAlgRecord, config.DupeResAlgNone:
+		logger.Warn("[resolve-dupe] skipping resolution due to selected algorithm. this table will become inconsistent!", zap.Stringer("algorithm", algorithm))
 		return nil
-	case config.DupeResAlgKeepAnyOne:
-		panic("keep-any-one is not yet supported")
-	case config.DupeResAlgDelete:
+	case config.DupeResAlgRemove:
 		break
+	default:
+		panic(fmt.Sprintf("[resolve-dupe] unknown resolution algorithm %v", algorithm))
 	}
 
 	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
