@@ -76,7 +76,6 @@ type Client struct {
 	// this probably isn't as easy as it seems like (however, not hard, too :D)
 	db              *DB
 	rateLimit       uint64
-	restoreTS       uint64
 	isOnline        bool
 	noSchema        bool
 	hasSpeedLimited bool
