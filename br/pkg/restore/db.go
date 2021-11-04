@@ -98,9 +98,10 @@ func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, restoreTS uint
 	sysDB := mysql.SystemDB
 	statsMetaTbl := "stats_meta"
 
-	// set restoreTS to snapshot ans version
-	updateMetaSQL := fmt.Sprintf(
-		"update %s.%s set snapshot = %d, version = %d, count = %d where table_id = %d",
+	// set restoreTS to snapshot and version which is used to update stats_meta
+	err := db.se.ExecuteInternal(
+		ctx,
+		"update %n.%n set snapshot = %?, version = %?, count = %? where table_id = %?",
 		sysDB,
 		statsMetaTbl,
 		restoreTS,
@@ -108,14 +109,10 @@ func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, restoreTS uint
 		count,
 		tableID,
 	)
-	err := db.se.Execute(ctx, updateMetaSQL)
 	if err != nil {
-		log.Error("execute update sql failed",
-			zap.String("query", updateMetaSQL),
-			zap.Error(err))
+		log.Error("execute update sql failed", zap.Error(err))
 	}
-
-	return errors.Trace(err)
+	return nil
 }
 
 // CreateDatabase executes a CREATE DATABASE SQL.

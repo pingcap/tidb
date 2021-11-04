@@ -913,15 +913,13 @@ func (rc *Client) updateMetaAndLoadStats(ctx context.Context, input <-chan *Crea
 			}
 
 			// Not need to return err when failed because of update analysis-meta
-			if tbl.OldTable.Crc64Xor > 0 {
-				restoreTS, err := rc.GetTS(ctx)
+			restoreTS, err := rc.GetTS(ctx)
+			if err != nil {
+				log.Error("getTS failed", zap.Error(err))
+			} else {
+				err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, tbl.OldTable.TotalKvs)
 				if err != nil {
-					log.Error("getTS failed", zap.Error(err))
-				} else {
-					err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, tbl.OldTable.TotalKvs)
-					if err != nil {
-						log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
-					}
+					log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
 				}
 			}
 
