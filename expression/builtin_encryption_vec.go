@@ -601,12 +601,12 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			result.AppendString("")
 		}
 
-		strSlice, err := bufEnc.Encode(encodedBuf, str)
+		strBuf, err := bufEnc.Encode(encodedBuf, str)
 		if err != nil {
 			return err
 		}
 
-		compressed, err := deflate(strSlice)
+		compressed, err := deflate(strBuf)
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -624,7 +624,7 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		defer deallocateByteSlice(buffer)
 		buffer = buffer[:resultLength]
 
-		binary.LittleEndian.PutUint32(buffer, uint32(len(str)))
+		binary.LittleEndian.PutUint32(buffer, uint32(len(strBuf)))
 		copy(buffer[4:], compressed)
 
 		if shouldAppendSuffix {
