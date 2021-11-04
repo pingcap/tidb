@@ -222,8 +222,6 @@ func checkIndexKeys(
 		}
 
 		if len(m.value) == 0 {
-			logutil.BgLogger().Error("line 224", zap.String("mutation", fmt.Sprintf("%#v", m)), zap.Any("indexData",
-				indexData))
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo)
 		} else {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo)
@@ -326,7 +324,6 @@ func compareIndexData(
 	sc *stmtctx.StatementContext, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
 ) error {
 	for i, decodedMutationDatum := range indexData {
-		logutil.BgLogger().Error("line 326", zap.Int("i", i), zap.Int("Offset", indexInfo.Columns[i].Offset))
 		expectedDatum := input[indexInfo.Columns[i].Offset]
 
 		tablecodec.TruncateIndexValue(
