@@ -10383,6 +10383,17 @@ func (s *testIntegrationSuite) TestLastInsertId(c *C) {
 	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
 }
 
+func (s *testIntegrationSuite) TestTimestamp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustQuery("SELECT @@timestamp;")
+	tk.MustExec("set @@timestamp = 12345;")
+	tk.MustQuery("SELECT @@timestamp;").Check(testkit.Rows("12345"))
+	tk.MustExec("set @@timestamp = default;")
+	tk.MustQuery("SELECT @@timestamp;")
+
+}
+
 func (s *testIntegrationSuite) TestIdentity(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)

@@ -747,6 +747,25 @@ func TestLastInsertID(t *testing.T) {
 	require.Equal(t, val, "21")
 }
 
+func TestTimestamp(t *testing.T)  {
+	vars := NewSessionVars()
+	val, err := GetSessionOrGlobalSystemVar(vars, Timestamp)
+	require.NoError(t, err)
+	require.NotEqual(t, "0", val)
+
+	vars.systems[Timestamp] = "10"
+	val, err = GetSessionOrGlobalSystemVar(vars, Timestamp)
+	require.NoError(t, err)
+	require.NotEqual(t, "0", val)
+	require.Equal(t, "10", val)
+
+	vars.systems[Timestamp] = "0"
+	val, err = GetSessionOrGlobalSystemVar(vars, Timestamp)
+	require.NoError(t, err)
+	require.NotEqual(t, "0", val)
+	require.NotEqual(t, "10", val)
+}
+
 func TestIdentity(t *testing.T) {
 	vars := NewSessionVars()
 	val, err := GetSessionOrGlobalSystemVar(vars, Identity)

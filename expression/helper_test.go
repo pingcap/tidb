@@ -44,7 +44,7 @@ func TestGetTimeValue(t *testing.T) {
 	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
 	sessionVars := ctx.GetSessionVars()
 	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "")
-	require.NoError(t, err)
+	require.Error(t, err)
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	require.NoError(t, err)
 
@@ -62,7 +62,7 @@ func TestGetTimeValue(t *testing.T) {
 	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
 
 	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "")
-	require.NoError(t, err)
+	require.Error(t, err)
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	require.NoError(t, err)
 
