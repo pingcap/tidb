@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"go.etcd.io/etcd/clientv3"
+
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 const tidbServerInformationPath = "/tidb/server/info"
