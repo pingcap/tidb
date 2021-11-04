@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createTestKitAndDom(t *testing.T) (*testkit.TestKit, *domain.Domain, func()) {
+func createTestKitAndDom(t testing.TB) (*testkit.TestKit, *domain.Domain, func()) {
 	store, dom, err := newStoreWithBootstrap()
 	require.NoError(t, err)
 	clean := func() {

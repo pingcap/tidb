@@ -268,6 +268,7 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	c.Assert(statsTbl.Pseudo, IsFalse)
 }
 
+// TODO assertTableEqualNew
 func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 	c.Assert(a.Count, Equals, b.Count)
 	c.Assert(a.ModifyCount, Equals, b.ModifyCount)

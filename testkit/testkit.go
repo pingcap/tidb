@@ -72,6 +72,11 @@ func (tk *TestKit) Session() session.Session {
 	return tk.session
 }
 
+// Store return the store associated with the testkit
+func (tk *TestKit) Store() kv.Storage {
+	return tk.store
+}
+
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	res, err := tk.Exec(sql, args...)
