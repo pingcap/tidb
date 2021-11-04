@@ -16,13 +16,14 @@ package charset
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"strings"
 	"unicode"
+	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/hack"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/transform"
 )
@@ -105,7 +106,7 @@ func (e *Encoding) EncodeString(src string) (string, error) {
 	if !e.enabled() {
 		return src, nil
 	}
-	bs, err := e.transform(e.enc.NewEncoder(), nil, hack.Slice(src), false)
+	bs, err := e.transform(e.enc.NewEncoder(), nil, Slice(src), false)
 	return string(bs), err
 }
 
@@ -152,7 +153,7 @@ func (e *Encoding) DecodeString(src string) (string, error) {
 	if !e.enabled() {
 		return src, nil
 	}
-	bs, err := e.transform(e.enc.NewDecoder(), nil, hack.Slice(src), true)
+	bs, err := e.transform(e.enc.NewDecoder(), nil, Slice(src), true)
 	return string(bs), err
 }
 
@@ -212,4 +213,15 @@ var replacementBytes = []byte{0xEF, 0xBF, 0xBD}
 // beginWithReplacementChar check if dst has the prefix '0xEFBFBD'.
 func beginWithReplacementChar(dst []byte) bool {
 	return bytes.HasPrefix(dst, replacementBytes)
+}
+
+// Slice converts string to slice without copy.
+// Use at your own risk.
+func Slice(s string) (b []byte) {
+	pBytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pString := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pBytes.Data = pString.Data
+	pBytes.Len = pString.Len
+	pBytes.Cap = pString.Len
+	return
 }
