@@ -24,8 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/executor"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -1127,10 +1125,10 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 
 	tk.MustExec("SET tidb_enable_noop_functions='OFF'")
 	defer tk.MustExec("SET tidb_enable_noop_functions='OFF'")
-	_, err := tk.Exec("lock tables t1 write")
-	c.Assert(err.Error(), Equals, executor.ErrFuncNotEnabled.GenWithStackByArgs("Lock tables", "enable-table-lock").Error())
-	_, err = tk.Exec("unlock tables")
-	c.Assert(err.Error(), Equals, executor.ErrFuncNotEnabled.GenWithStackByArgs("Unlock tables", "enable-table-lock").Error())
+	tk.MustExec("lock tables t1 write")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 Lock tables works only when enable-table-lock is set in config file"))
+	tk.MustExec("unlock tables")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 Unlock tables works only when enable-table-lock is set in config file"))
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
 
 	tk.MustExec("SET tidb_enable_noop_functions='WARN'")
