@@ -35,9 +35,9 @@ type cachedTable struct {
 }
 
 func (c *cachedTable) TryGetMemcache(ts uint64) (kv.MemBuffer, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if c.isReadFromCache(ts) {
-		c.mu.RLock()
-		defer c.mu.RUnlock()
 		return c.MemBuffer, true
 	}
 	return nil, false
