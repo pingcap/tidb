@@ -360,7 +360,7 @@ func getMemIter(tblID int64, ctx sessionctx.Context, iter kv.Iterator, rg kv.Key
 	}
 	cond, buffer := ctx.GetSessionVars().StmtCtx.GetCacheTable(tblID)
 	if cond {
-		cacheIter, err := (*buffer).Load().(kv.MemBuffer).Iter(rg.StartKey, rg.EndKey)
+		cacheIter, err := buffer.(kv.MemBuffer).Iter(rg.StartKey, rg.EndKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

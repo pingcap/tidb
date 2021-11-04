@@ -35,6 +35,7 @@ var _ table.CachedTable = &cachedTable{}
 type cachedTable struct {
 	TableCommon
 	kv.MemBuffer
+	mu sync.RWMutex
 	*stateLocal
 	stateRemote
 	isReNewLease bool
@@ -52,18 +53,6 @@ func (s *stateLocal) Lease() uint64 {
 	return s.lease
 }
 
-func (c *cachedTable) IsReadFromCache(ts uint64) bool {
-	// If first read cache table. directly return false, the backend goroutine will help us update the lock information
-	// and read the data from the original table at the same time
-	if c.MemBuffer == nil {
-		return false
-	}
-	return isReadFromCache(c.stateLocal, ts, &c.isReNewLease)
-}
-
-func (c *cachedTable) GetMemCache() kv.MemBuffer {
-	return c.MemBuffer
-}
 func (c *cachedTable) IsLocalStale(tsNow uint64) bool {
 	return isLocalStale(c.stateLocal, tsNow)
 }
@@ -136,6 +125,22 @@ func (c *cachedTable) LockForWrite(ts uint64) error {
 	return nil
 }
 
+func (c *cachedTable) TryGetMemcache(ts uint64) (kv.MemBuffer, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.isReadFromCache(ts) {
+		return c.MemBuffer, true
+	}
+	return nil, false
+}
+func (c *cachedTable) isReadFromCache(ts uint64) bool {
+	// If first read cache table. directly return false, the backend goroutine will help us update the lock information
+	// and read the data from the original table at the same time
+	// TODO : Use lease and ts judge whether it is readable.
+	// TODO : If the cache is not readable. MemBuffer become invalid.
+	return c.MemBuffer != nil
+}
+
 // NewCachedTable creates a new CachedTable Instance
 func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 	return &cachedTable{
@@ -157,7 +162,8 @@ func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	c.MemBuffer = buffTxn.GetMemBuffer()
+
+	buffer := buffTxn.GetMemBuffer()
 	it, err := txn.Iter(prefix, prefix.PrefixNext())
 	if err != nil {
 		return err
@@ -168,7 +174,7 @@ func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context) error {
 	}
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		value := it.Value()
-		err = c.MemBuffer.Set(it.Key(), value)
+		err = buffer.Set(it.Key(), value)
 		if err != nil {
 			return err
 		}
@@ -177,6 +183,10 @@ func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context) error {
 			return err
 		}
 	}
+
+	c.mu.Lock()
+	c.MemBuffer = buffer
+	c.mu.Unlock()
 	return nil
 }
 
@@ -185,6 +195,7 @@ func (c *cachedTable) UpdateLockForRead(ctx sessionctx.Context, ts uint64) error
 	var mu sync.Mutex
 	mu.Lock()
 	defer mu.Unlock()
+	// Now only the data is re-load here, and the lock information is not updated. any read-lock information update will in the next pr.
 	err := c.loadDataFromOriginalTable(ctx)
 	if err != nil {
 		return fmt.Errorf("reload data error")
