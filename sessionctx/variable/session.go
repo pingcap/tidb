@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -1389,10 +1388,10 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 // SetUserVar set the value and collation for user defined variable.
 func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
 	if len(collation) > 0 {
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
 	} else {
 		_, collation = s.GetCharsetInfo()
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
 	}
 }
 
