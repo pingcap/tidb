@@ -344,7 +344,11 @@ spilled-file-encryption-method = "aes128-ctr"
 
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false
+<<<<<<< HEAD
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
+=======
+	require.Equal(t, GetGlobalConfig(), conf)
+>>>>>>> 0e817e157... config: set the default value of auto_tls to false (#27486)
 
 	// Test for log config.
 	c.Assert(conf.Log.ToLogConfig(), DeepEquals, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }))

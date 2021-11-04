@@ -686,6 +686,10 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
 		AutoTLS:                     false,
+<<<<<<< HEAD
+=======
+		RSAKeySize:                  4096,
+>>>>>>> 0e817e157... config: set the default value of auto_tls to false (#27486)
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
