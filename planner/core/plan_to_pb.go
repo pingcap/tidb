@@ -245,9 +245,8 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 	hashCols := make([]expression.Expression, 0, len(e.HashCols))
 	hashColTypes := make([]*tipb.FieldType, 0, len(e.HashCols))
 	for _, col := range e.HashCols {
-		hashCols = append(hashCols, col.Col)
-		tp := expression.ToPBFieldType(col.Col.RetType)
-		tp.Collate = col.CollateID
+		hashCols = append(hashCols, col)
+		tp := expression.ToPBFieldType(col.RetType)
 		hashColTypes = append(hashColTypes, tp)
 	}
 	allFieldTypes := make([]*tipb.FieldType, 0, len(e.Schema().Columns))
