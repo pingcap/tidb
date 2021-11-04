@@ -234,7 +234,7 @@ func TestErrorBind(t *testing.T) {
 
 	rs, err := tk.Exec("show global bindings")
 	require.NoError(t, err)
-	chk := rs.NewChunk()
+	chk := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), chk)
 	require.NoError(t, err)
 	require.Equal(t, 0, chk.NumRows())
@@ -884,16 +884,15 @@ func TestBindingWithoutCharset(t *testing.T) {
 }
 
 func TestGCBindRecord(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
 	// set lease for gc tests
 	originLease := bindinfo.Lease
 	bindinfo.Lease = 0
-
 	defer func() {
 		bindinfo.Lease = originLease
 	}()
+
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -55,6 +55,7 @@ const (
 	AnalyzeOptCMSketchDepth
 	AnalyzeOptCMSketchWidth
 	AnalyzeOptNumSamples
+	AnalyzeOptSampleRate
 )
 
 // AnalyzeOptionString stores the string form of analyze options.
@@ -64,6 +65,7 @@ var AnalyzeOptionString = map[AnalyzeOptionType]string{
 	AnalyzeOptCMSketchWidth: "CMSKETCH WIDTH",
 	AnalyzeOptCMSketchDepth: "CMSKETCH DEPTH",
 	AnalyzeOptNumSamples:    "SAMPLES",
+	AnalyzeOptSampleRate:    "SAMPLERATE",
 }
 
 // HistogramOperationType is the type for histogram operation.
@@ -91,7 +93,7 @@ func (hot HistogramOperationType) String() string {
 // AnalyzeOpt stores the analyze option type and value.
 type AnalyzeOpt struct {
 	Type  AnalyzeOptionType
-	Value uint64
+	Value ValueExpr
 }
 
 // Restore implements Node interface.
@@ -159,7 +161,7 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WritePlainf(" %d ", opt.Value)
+			ctx.WritePlainf(" %v ", opt.Value.GetValue())
 			ctx.WritePlain(AnalyzeOptionString[opt.Type])
 		}
 	}

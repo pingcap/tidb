@@ -565,15 +565,25 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	var tests []TestCase
 
 	tests = append(tests, TestCase{
-		name:   "empty 1",
-		input:  &model.PlacementSettings{},
-		output: []*Rule{},
+		name:  "empty 1",
+		input: &model.PlacementSettings{},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect()),
+		},
 	})
 
 	tests = append(tests, TestCase{
 		name:  "empty 2",
 		input: nil,
 		err:   ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
+		name: "empty 3",
+		input: &model.PlacementSettings{
+			LearnerConstraints: "[+region=us]",
+		},
+		err: ErrInvalidPlacementOptions,
 	})
 
 	tests = append(tests, TestCase{
@@ -594,14 +604,37 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 		input: &model.PlacementSettings{
 			PrimaryRegion: "us",
 			Regions:       "bj,sh,us",
+			Followers:     1,
 		},
 		output: []*Rule{
 			NewRule(Voter, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
-			NewRule(Follower, 2, NewConstraintsDirect(
+			NewRule(Follower, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "bj", "sh"),
 			)),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: omit regions 1",
+		input: &model.PlacementSettings{
+			Followers: 2,
+			Schedule:  "even",
+		},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect()),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "sugar syntax: omit regions 2",
+		input: &model.PlacementSettings{
+			Followers: 2,
+			Schedule:  "majority_in_primary",
+		},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect()),
 		},
 	})
 
@@ -690,7 +723,7 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			NewRule(Leader, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
-			NewRule(Follower, 2, NewConstraintsDirect(
+			NewRule(Voter, 2, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
 		},
@@ -707,12 +740,42 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			NewRule(Leader, 1, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
-			NewRule(Follower, 2, NewConstraintsDirect(
+			NewRule(Voter, 2, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
 			NewRule(Learner, 2, NewConstraintsDirect(
 				NewConstraintDirect("region", In, "us"),
 			)),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: lack count 1",
+		input: &model.PlacementSettings{
+			LeaderConstraints:   "[+region=as]",
+			FollowerConstraints: "[-region=us]",
+		},
+		err: ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: lack count 2",
+		input: &model.PlacementSettings{
+			LeaderConstraints:  "[+region=as]",
+			LearnerConstraints: "[-region=us]",
+		},
+		err: ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: omit leader",
+		input: &model.PlacementSettings{
+			Followers:           2,
+			FollowerConstraints: "[+region=bj]",
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect()),
+			NewRule(Voter, 2, NewConstraintsDirect(NewConstraintDirect("region", In, "bj"))),
 		},
 	})
 

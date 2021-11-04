@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -162,8 +164,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildLoadStats(v)
 	case *plannercore.IndexAdvise:
 		return b.buildIndexAdvise(v)
-	case *plannercore.PlanReplayerSingle:
-		return b.buildPlanReplayerSingle(v)
+	case *plannercore.PlanReplayer:
+		return b.buildPlanReplayer(v)
 	case *plannercore.PhysicalLimit:
 		return b.buildLimit(v)
 	case *plannercore.Prepare:
@@ -905,10 +907,18 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 	return e
 }
 
-func (b *executorBuilder) buildPlanReplayerSingle(v *plannercore.PlanReplayerSingle) Executor {
+func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) Executor {
+	if v.Load {
+		e := &PlanReplayerLoadExec{
+			baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+			info:         &PlanReplayerLoadInfo{Path: v.File, Ctx: b.ctx},
+		}
+		return e
+	}
 	e := &PlanReplayerSingleExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
-		info:         &PlanReplayerSingleInfo{v.ExecStmt, v.Analyze, v.Load, v.File, b.ctx},
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		ExecStmt:     v.ExecStmt,
+		Analyze:      v.Analyze,
 	}
 	return e
 }
@@ -1597,7 +1607,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
-			strings.ToLower(infoschema.TableRegionLabel),
+			strings.ToLower(infoschema.TableAttributes),
 			strings.ToLower(infoschema.TablePlacementRules):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -2216,9 +2226,33 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		baseCount:               count,
 		baseModifyCnt:           modifyCount,
 	}
+	sampleRate := new(float64)
+	if opts[ast.AnalyzeOptNumSamples] == 0 {
+		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
+		if *sampleRate < 0 {
+			*sampleRate = b.getAdjustedSampleRate(b.ctx, task.TableID.GetStatisticsID(), task.TblInfo)
+			if task.PartitionName != "" {
+				sc.AppendNote(errors.Errorf(
+					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s.",
+					*sampleRate,
+					task.DBName,
+					task.TableName,
+					task.PartitionName,
+				))
+			} else {
+				sc.AppendNote(errors.Errorf(
+					"Analyze use auto adjusted sample rate %f for table %s.%s.",
+					*sampleRate,
+					task.DBName,
+					task.TableName,
+				))
+			}
+		}
+	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
+		SampleRate:   sampleRate,
 		SketchSize:   maxSketchSize,
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle),
 		ColumnGroups: colGroups,
@@ -2231,6 +2265,60 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, task.ColsInfo)
 	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+}
+
+// getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
+func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, tid int64, tblInfo *model.TableInfo) float64 {
+	statsHandle := domain.GetDomain(sctx).StatsHandle()
+	defaultRate := 0.001
+	if statsHandle == nil {
+		return defaultRate
+	}
+	var statsTbl *statistics.Table
+	if tid == tblInfo.ID {
+		statsTbl = statsHandle.GetTableStats(tblInfo)
+	} else {
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, tid)
+	}
+	approxiCount, hasPD := b.getApproximateTableCountFromPD(sctx, tid)
+	// If there's no stats meta and no pd, return the default rate.
+	if statsTbl == nil && !hasPD {
+		return defaultRate
+	}
+	// If the count in stats_meta is still 0 and there's no information from pd side, we scan all rows.
+	if statsTbl.Count == 0 && !hasPD {
+		return 1
+	}
+	// we have issue https://github.com/pingcap/tidb/issues/29216.
+	// To do a workaround for this issue, we check the approxiCount from the pd side to do a comparison.
+	// If the count from the stats_meta is extremely smaller than the approximate count from the pd,
+	// we think that we meet this issue and use the approximate count to calculate the sample rate.
+	if float64(statsTbl.Count*100) < approxiCount {
+		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
+		// So we increase the number to 150000 to reduce this error rate.
+		return math.Min(1, 150000/approxiCount)
+	}
+	// If we don't go into the above if branch and we still detect the count is zero. Return 1 to prevent the dividing zero.
+	if statsTbl.Count == 0 {
+		return 1
+	}
+	// We are expected to scan about 100000 rows or so.
+	// Since there's tiny error rate around the count from the stats meta, we use 110000 to get a little big result
+	return math.Min(1, 110000/float64(statsTbl.Count))
+}
+
+func (b *executorBuilder) getApproximateTableCountFromPD(sctx sessionctx.Context, tid int64) (float64, bool) {
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
+	if !ok {
+		return 0, false
+	}
+	regionStats := &helper.PDRegionStats{}
+	pdHelper := helper.NewHelper(tikvStore)
+	err := pdHelper.GetPDRegionStats(tid, regionStats)
+	if err != nil {
+		return 0, false
+	}
+	return float64(regionStats.StorageKeys), true
 }
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
@@ -2813,7 +2901,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	ts := v.GetTableScan()
-	if err = b.validCanReadTemporaryTable(ts.Table); err != nil {
+	if err = b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		return nil, err
 	}
 
@@ -2929,7 +3017,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	ts := v.GetTableScan()
-	if err = b.validCanReadTemporaryTable(ts.Table); err != nil {
+	if err = b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil
 	}
@@ -3152,7 +3240,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) Executor {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	if err := b.validCanReadTemporaryTable(is.Table); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
 		return nil
 	}
@@ -3311,7 +3399,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	if err := b.validCanReadTemporaryTable(is.Table); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
 		b.err = err
 		return nil
 	}
@@ -3426,7 +3514,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) Executor {
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-	if err := b.validCanReadTemporaryTable(ts.Table); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil
 	}
@@ -4231,7 +4319,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
-	if err := b.validCanReadTemporaryTable(plan.TblInfo); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
 		b.err = err
 		return nil
 	}
@@ -4515,6 +4603,28 @@ func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) E
 		iterInTbl:    storages.IterInTbl,
 		chkIdx:       0,
 	}
+}
+func (b *executorBuilder) validCanReadTemporaryOrCacheTable(tbl *model.TableInfo) error {
+	err := b.validCanReadTemporaryTable(tbl)
+	if err != nil {
+		return err
+	}
+	return b.validCanReadCacheTable(tbl)
+}
+
+func (b *executorBuilder) validCanReadCacheTable(tbl *model.TableInfo) error {
+	if tbl.TableCacheStatusType == model.TableCacheStatusDisable {
+		return nil
+	}
+
+	sessionVars := b.ctx.GetSessionVars()
+
+	// Temporary table can't switch into cache table. so the following code will not cause confusion
+	if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
+		return errors.Trace(errors.New("can not stale read cache table"))
+	}
+
+	return nil
 }
 
 func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error {
