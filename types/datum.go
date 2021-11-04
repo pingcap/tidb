@@ -580,7 +580,7 @@ func (d *Datum) CompareDatum(sc *stmtctx.StatementContext, ad *Datum) (int, erro
 	case KindFloat32, KindFloat64:
 		return d.compareFloat64(sc, ad.GetFloat64())
 	case KindString:
-		return d.compareString(sc, ad.GetString(), d.collation)
+		return d.compareString(sc, ad.GetString())
 	case KindBytes:
 		return d.compareBytes(sc, ad.GetBytes())
 	case KindMysqlDecimal:
@@ -673,7 +673,7 @@ func (d *Datum) compareFloat64(sc *stmtctx.StatementContext, f float64) (int, er
 	}
 }
 
-func (d *Datum) compareString(sc *stmtctx.StatementContext, s string, retCollation string) (int, error) {
+func (d *Datum) compareString(sc *stmtctx.StatementContext, s string) (int, error) {
 	switch d.k {
 	case KindNull, KindMinNotNull:
 		return -1, nil
@@ -708,7 +708,7 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string, retCollati
 
 func (d *Datum) compareBytes(sc *stmtctx.StatementContext, b []byte) (int, error) {
 	str := string(hack.String(b))
-	return d.compareString(sc, str, d.collation)
+	return d.compareString(sc, str)
 }
 
 func (d *Datum) compareMysqlDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (int, error) {
