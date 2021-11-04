@@ -45,10 +45,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/util/topsql"
-	"github.com/pingcap/tipb/go-binlog"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -73,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
@@ -87,9 +84,12 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tipb/go-binlog"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
 var (
@@ -564,6 +564,14 @@ func (s *session) doCommit(ctx context.Context) error {
 
 func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {
 	sessVars := s.sessionVars
+
+	// TODO: add an enablement check
+	if sessVars.InTxn() {
+		if err := tables.CheckTxnConsistency(txn); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	txnTempTables := sessVars.TxnCtx.TemporaryTables
 	if len(txnTempTables) == 0 {
 		return txn.Commit(ctx)
