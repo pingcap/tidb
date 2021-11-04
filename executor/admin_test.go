@@ -895,7 +895,6 @@ func TestAdminCheckPartitionTableFailed(t *testing.T) {
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
 		err = tk.ExecToErr("admin check table admin_test_p")
-		require.Error(t, err)
 		require.EqualError(t, err, fmt.Sprintf("[executor:8003]admin_test_p err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:%d, Values:[]types.Datum{types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}}}", i, i))
 		require.True(t, executor.ErrAdminCheckTable.Equal(err))
 		// TODO: fix admin recover for partition table.
@@ -924,7 +923,6 @@ func TestAdminCheckPartitionTableFailed(t *testing.T) {
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
 		err = tk.ExecToErr("admin check table admin_test_p")
-		require.Error(t, err)
 		require.EqualError(t, err, fmt.Sprintf("[executor:8133]handle %d, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>", i+8, i+8))
 		// TODO: fix admin recover for partition table.
 		txn, err = store.Begin()
@@ -947,7 +945,6 @@ func TestAdminCheckPartitionTableFailed(t *testing.T) {
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
 		err = tk.ExecToErr("admin check table admin_test_p")
-		require.Error(t, err)
 		require.EqualError(t, err, fmt.Sprintf("[executor:8134]col c2, handle %d, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}, compare err:<nil>", i, i+8, i))
 		// TODO: fix admin recover for partition table.
 		txn, err = store.Begin()
