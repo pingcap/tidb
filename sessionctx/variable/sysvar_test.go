@@ -747,7 +747,7 @@ func TestLastInsertID(t *testing.T) {
 	require.Equal(t, val, "21")
 }
 
-func TestTimestamp(t *testing.T)  {
+func TestTimestamp(t *testing.T) {
 	vars := NewSessionVars()
 	val, err := GetSessionOrGlobalSystemVar(vars, Timestamp)
 	require.NoError(t, err)
