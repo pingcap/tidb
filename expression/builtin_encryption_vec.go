@@ -585,6 +585,7 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	}
 	bufTp := b.args[0].GetType()
 	bufEnc := charset.NewEncoding(bufTp.Charset)
+	var encodedBuf []byte
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
@@ -593,19 +594,19 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 
-		str := buf.GetString(i)
+		str := buf.GetBytes(i)
 
 		// According to doc: Empty strings are stored as empty strings.
 		if len(str) == 0 {
 			result.AppendString("")
 		}
 
-		str, err = bufEnc.EncodeString(str)
+		strSlice, err := bufEnc.Encode(encodedBuf, str)
 		if err != nil {
 			return err
 		}
 
-		compressed, err := deflate([]byte(str))
+		compressed, err := deflate(strSlice)
 		if err != nil {
 			result.AppendNull()
 			continue
