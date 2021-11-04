@@ -796,7 +796,7 @@ func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
 		// For compatibility with mysqldump, only return warning
 		// https://github.com/pingcap/tidb/pull/29301#discussion_r742083632
 		if noopFuncsMode == variable.WarnInt || noopFuncsMode == variable.OffInt {
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrFuncNotEnabled.GenWithStackByArgs("Lock tables", "enable-table-lock"))
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrFuncNotEnabled.GenWithStackByArgs("LOCK TABLES", "enable-table-lock"))
 		}
 		return nil
 	}
@@ -816,7 +816,7 @@ func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 		// For compatibility with mysqldump, only return warning
 		// https://github.com/pingcap/tidb/pull/29301#discussion_r742083632
 		if noopFuncsMode == variable.WarnInt || noopFuncsMode == variable.OffInt {
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrFuncNotEnabled.GenWithStackByArgs("Unlock tables", "enable-table-lock"))
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrFuncNotEnabled.GenWithStackByArgs("UNLOCK TABLES", "enable-table-lock"))
 		}
 		return nil
 	}

@@ -1126,16 +1126,16 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	tk.MustExec("SET tidb_enable_noop_functions='OFF'")
 	defer tk.MustExec("SET tidb_enable_noop_functions='OFF'")
 	tk.MustExec("lock tables t1 write")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 Lock tables works only when enable-table-lock is set in config file"))
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 LOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 	tk.MustExec("unlock tables")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 Unlock tables works only when enable-table-lock is set in config file"))
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 UNLOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
 
 	tk.MustExec("SET tidb_enable_noop_functions='WARN'")
 	tk.MustExec("lock tables t1 write")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 Lock tables works only when enable-table-lock is set in config file"))
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 LOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 	tk.MustExec("unlock tables")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 Unlock tables works only when enable-table-lock is set in config file"))
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 UNLOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
 }
 

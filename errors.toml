@@ -768,7 +768,7 @@ Incorrect usage of %s and %s
 
 ["executor:1235"]
 error = '''
-%-.32s works only when %-.32s is set in config file
+%-.32s is not supported. To enable this experimental feature, set '%-.32s' in the configuration file.
 '''
 
 ["executor:1242"]
