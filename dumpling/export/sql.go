@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -13,13 +14,14 @@ import (
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
-
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
+
+	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
-	"go.uber.org/zap"
 )
 
 const (
@@ -233,7 +235,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 			}
 		}
 	default:
-		queryTemplate := "SHOW TABLE STATUS FROM `%s`"
+		const queryTemplate = "SHOW TABLE STATUS FROM `%s`"
 		selectedTableType := make(map[TableType]struct{})
 		for _, tableType = range tableTypes {
 			selectedTableType[tableType] = struct{}{}
@@ -583,7 +585,7 @@ func GetSpecifiedColumnValuesAndClose(rows *sql.Rows, columnName ...string) ([][
 
 // GetPdAddrs gets PD address from TiDB
 func GetPdAddrs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
-	query := "SELECT * FROM information_schema.cluster_info where type = 'pd';"
+	const query = "SELECT * FROM information_schema.cluster_info where type = 'pd';"
 	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
 		return []string{}, errors.Annotatef(err, "sql: %s", query)
@@ -594,7 +596,7 @@ func GetPdAddrs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 
 // GetTiDBDDLIDs gets DDL IDs from TiDB
 func GetTiDBDDLIDs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
-	query := "SELECT * FROM information_schema.tidb_servers_info;"
+	const query = "SELECT * FROM information_schema.tidb_servers_info;"
 	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
 		return []string{}, errors.Annotatef(err, "sql: %s", query)
@@ -603,18 +605,51 @@ func GetTiDBDDLIDs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 	return ddlIDs, errors.Annotatef(err, "sql: %s", query)
 }
 
+// getTiDBConfig gets tidb config from TiDB server
+func getTiDBConfig(db *sql.Conn) (dbconfig.Config, error) {
+	const query = "SELECT @@tidb_config;"
+	var (
+		tidbConfig      dbconfig.Config
+		tidbConfigBytes sql.RawBytes
+	)
+	row := db.QueryRowContext(context.Background(), query)
+	err := row.Scan(&tidbConfigBytes)
+	if err != nil {
+		return tidbConfig, errors.Annotatef(err, "sql: %s", query)
+	}
+	err = json.Unmarshal(tidbConfigBytes, &tidbConfig)
+	return tidbConfig, errors.Annotatef(err, "sql: %s", query)
+}
+
 // CheckTiDBWithTiKV use sql to check whether current TiDB has TiKV
 func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
+	conn, err := db.Conn(context.Background())
+	if err == nil {
+		defer conn.Close()
+		tidbConfig, err := getTiDBConfig(conn)
+		if err == nil {
+			return tidbConfig.Store == "tikv", nil
+		}
+	}
 	var count int
-	query := "SELECT COUNT(1) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'"
+	const query = "SELECT COUNT(1) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'"
 	row := db.QueryRow(query)
-	err := row.Scan(&count)
+	err = row.Scan(&count)
 	if err != nil {
 		// still return true here. Because sometimes users may not have privileges for MySQL.TiDB database
 		// In most production cases TiDB has TiKV
 		return true, errors.Annotatef(err, "sql: %s", query)
 	}
 	return count > 0, nil
+}
+
+// CheckTiDBEnableTableLock use sql variable to check whether current TiDB has TiKV
+func CheckTiDBEnableTableLock(db *sql.Conn) (bool, error) {
+	tidbConfig, err := getTiDBConfig(db)
+	if err != nil {
+		return false, err
+	}
+	return tidbConfig.EnableTableLock, nil
 }
 
 func getSnapshot(db *sql.Conn) (string, error) {
