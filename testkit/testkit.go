@@ -19,12 +19,12 @@ package testkit
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/ddl"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
