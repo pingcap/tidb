@@ -612,21 +612,10 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 
 func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
 	if !config.TableLockEnabled() {
-<<<<<<< HEAD
-		return nil
-	}
-=======
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrFuncNotEnabled.GenWithStackByArgs("LOCK TABLES", "enable-table-lock"))
 		return nil
 	}
 
-	for _, tb := range s.TableLocks {
-		if _, ok := e.getLocalTemporaryTable(tb.Table.Schema, tb.Table.Name); ok {
-			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("LOCK TABLES")
-		}
-	}
-
->>>>>>> dcbfda914... ddl, executor: add warning log for lock/unlock tables (#29301)
 	return domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
 }
 
