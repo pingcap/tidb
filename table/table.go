@@ -254,7 +254,7 @@ type CachedTable interface {
 
 	// TryGetMemcache Check if the cache table is readable, if it is readable,
 	// Return the pointer to the MemBuffer and true otherwise return nil and false
-	TryGetMemcache(ts uint64) (*kv.MemBuffer, bool)
+	TryGetMemcache(ts uint64) (kv.MemBuffer, bool)
 
 	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
 	// you need to update the lock information and read the data from the original table

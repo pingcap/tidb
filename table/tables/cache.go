@@ -31,11 +31,14 @@ var _ table.CachedTable = &cachedTable{}
 type cachedTable struct {
 	TableCommon
 	kv.MemBuffer
+	mu sync.RWMutex
 }
 
-func (c *cachedTable) TryGetMemcache(ts uint64) (*kv.MemBuffer, bool) {
+func (c *cachedTable) TryGetMemcache(ts uint64) (kv.MemBuffer, bool) {
 	if c.isReadFromCache(ts) {
-		return &c.MemBuffer, true
+		c.mu.RLock()
+		defer c.mu.RUnlock()
+		return c.MemBuffer, true
 	}
 	return nil, false
 }
@@ -55,9 +58,6 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 }
 
 func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context) error {
-	var mu sync.RWMutex
-	mu.Lock()
-	defer mu.Unlock()
 	prefix := tablecodec.GenTablePrefix(c.tableID)
 	txn, err := ctx.Txn(true)
 	if err != nil {
@@ -87,7 +87,9 @@ func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context) error {
 			return err
 		}
 	}
+	c.mu.Lock()
 	c.MemBuffer = buffer
+	c.mu.Unlock()
 	return nil
 }
 
