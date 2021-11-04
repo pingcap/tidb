@@ -661,8 +661,9 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
-	{Scope: ScopeSession, Name: Timestamp, Value: "", skipInit: true, Type: TypeFloat, MinValue: 1, MaxValue: 2147483647, GetSession: func(s *SessionVars) (string, error) {
-		if timestamp, ok := s.systems[Timestamp]; ok {
+	{Scope: ScopeSession, Name: Timestamp, Value: "0", skipInit: true, Type: TypeFloat, MinValue: 1, MaxValue: 2147483647, GetSession: func(s *SessionVars) (string, error) {
+		defaultTimestamp := GetSysVar(Timestamp).Value
+		if timestamp, ok := s.systems[Timestamp]; ok && timestamp != defaultTimestamp {
 			return timestamp, nil
 		}
 		timestamp := s.StmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time)

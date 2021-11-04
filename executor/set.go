@@ -282,6 +282,11 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		if sysVar != nil {
 			return sysVar.Value, nil
 		}
+		// Setting timestamp to DEFAULT causes its value to be the current date and time as of the time it is accessed.
+		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_timestamp
+		if v.Name == variable.Timestamp {
+			return "default", nil
+		}
 		return variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 	}
 	nativeVal, err := v.Expr.Eval(chunk.Row{})
