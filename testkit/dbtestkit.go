@@ -58,3 +58,8 @@ func (tk *DBTestKit) MustQuery(sql string, args ...interface{}) *sql.Rows {
 	tk.require.NotNil(rows, comment)
 	return rows
 }
+
+// GetDB returns the underlay sql.DB instance.
+func (tk *DBTestKit) GetDB() *sql.DB {
+	return tk.db
+}
