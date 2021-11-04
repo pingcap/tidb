@@ -717,22 +717,16 @@ func (tr *TableRestore) postProcess(
 
 		// 4.5. do duplicate detection.
 		hasDupe := false
-<<<<<<< HEAD
-		if rc.cfg.TikvImporter.DuplicateDetection {
-=======
 		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			opts := &kv.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
->>>>>>> dc2d5a4f4... lightning: fix duplicate check panic (#29338)
 			var err error
 			hasLocalDupe, err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
-				if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgUnsafeNoop {
-					return false, err
-				}
+				return false, err
 			} else {
 				hasDupe = hasLocalDupe
 			}
@@ -747,22 +741,15 @@ func (tr *TableRestore) postProcess(
 			return true, nil
 		}
 
-<<<<<<< HEAD
-		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateDetection {
-			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName)
-=======
 		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			opts := &kv.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
 			}
 			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
->>>>>>> dc2d5a4f4... lightning: fix duplicate check panic (#29338)
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
-				if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgUnsafeNoop {
-					return false, e
-				}
+				return false, e
 			} else {
 				hasDupe = hasDupe || hasRemoteDupe
 			}

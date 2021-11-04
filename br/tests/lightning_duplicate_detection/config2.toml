@@ -5,8 +5,7 @@ table-concurrency = 10
 
 [tikv-importer]
 backend = "local"
-duplicate-detection = true
-duplicate-resolution = 'unsafe-noop'
+duplicate-resolution = 'record'
 
 [checkpoint]
 enable = true

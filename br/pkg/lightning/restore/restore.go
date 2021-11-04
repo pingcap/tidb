@@ -25,10 +25,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -54,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/collate"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -111,6 +115,11 @@ const (
 
 	compactionLowerThreshold = 512 * units.MiB
 	compactionUpperThreshold = 32 * units.GiB
+)
+
+var (
+	minTiKVVersionForDuplicateResolution = *semver.New("5.2.0")
+	maxTiKVVersionForDuplicateResolution = version.NextMajorVersion()
 )
 
 // DeliverPauser is a shared pauser to pause progress to (*chunkRestore).encodeLoop
@@ -344,6 +353,17 @@ func NewRestoreControllerWithPauser(
 		// check overflow
 		if maxOpenFiles < 0 {
 			maxOpenFiles = math.MaxInt32
+		}
+
+		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+			if err := tikv.CheckTiKVVersion(ctx, tls, cfg.TiDB.PdAddr, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
+				if berrors.Is(err, berrors.ErrVersionMismatch) {
+					log.L().Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
+					cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
+				} else {
+					return nil, errors.Annotate(err, "check TiKV version for duplicate resolution failed")
+				}
+			}
 		}
 
 		backend, err = local.NewLocalBackend(ctx, tls, cfg, g, maxOpenFiles, errorMgr)
@@ -1236,8 +1256,6 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 
 var checksumManagerKey struct{}
 
-<<<<<<< HEAD
-=======
 const (
 	pauseGCTTLForDupeRes      = time.Hour
 	pauseGCIntervalForDupeRes = time.Minute
@@ -1249,7 +1267,6 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer pdCli.Close()
 
 	serviceID := "lightning-duplicate-resolution-" + uuid.New().String()
 	ttl := int64(pauseGCTTLForDupeRes / time.Second)
@@ -1265,10 +1282,12 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		}
 		minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, 1)
 		if err != nil {
+			pdCli.Close()
 			return nil, errors.Trace(err)
 		}
 		newMinSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, minSafePoint)
 		if err != nil {
+			pdCli.Close()
 			return nil, errors.Trace(err)
 		}
 		if newMinSafePoint <= minSafePoint {
@@ -1284,11 +1303,13 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		)
 	}
 	if !paused {
+		pdCli.Close()
 		return nil, errors.New("failed to pause GC for duplicate resolution after all retries")
 	}
 
 	exitCh := make(chan struct{})
 	go func(safePoint uint64) {
+		defer pdCli.Close()
 		defer close(exitCh)
 		ticker := time.NewTicker(pauseGCIntervalForDupeRes)
 		defer ticker.Stop()
@@ -1322,8 +1343,20 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 	return exitCh, nil
 }
 
->>>>>>> dc2d5a4f4... lightning: fix duplicate check panic (#29338)
 func (rc *Controller) restoreTables(ctx context.Context) error {
+	if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+		subCtx, cancel := context.WithCancel(ctx)
+		exitCh, err := rc.keepPauseGCForDupeRes(subCtx)
+		if err != nil {
+			cancel()
+			return errors.Trace(err)
+		}
+		defer func() {
+			cancel()
+			<-exitCh
+		}()
+	}
+
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
 	if rc.tableWorkers == nil {
 		rc.tableWorkers = worker.NewPool(ctx, rc.cfg.App.TableConcurrency, "table")
