@@ -33,37 +33,44 @@ import (
 )
 
 var cryptTests = []struct {
+	chs      string
 	origin   interface{}
 	password interface{}
 	crypt    interface{}
 }{
-	{"", "", ""},
-	{"pingcap", "1234567890123456", "2C35B5A4ADF391"},
-	{"pingcap", "asdfjasfwefjfjkj", "351CC412605905"},
-	{"pingcap123", "123456789012345678901234", "7698723DC6DFE7724221"},
-	{"pingcap#%$%^", "*^%YTu1234567", "8634B9C55FF55E5B6328F449"},
-	{"pingcap", "", "4A77B524BD2C5C"},
-	{"分布式データベース", "pass1234@#$%%^^&", "80CADC8D328B3026D04FB285F36FED04BBCA0CC685BF78B1E687CE"},
-	{"分布式データベース", "分布式7782734adgwy1242", "0E24CFEF272EE32B6E0BFBDB89F29FB43B4B30DAA95C3F914444BC"},
-	{"pingcap", "密匙", "CE5C02A5010010"},
-	{"pingcap数据库", "数据库passwd12345667", "36D5F90D3834E30E396BE3226E3B4ED3"},
-	{"数据库5667", 123.435, "B22196D0569386237AE12F8AAB"},
-	{nil, "数据库passwd12345667", nil},
+	{mysql.DefaultCollationName, "", "", ""},
+	{mysql.DefaultCollationName, "pingcap", "1234567890123456", "2C35B5A4ADF391"},
+	{mysql.DefaultCollationName, "pingcap", "asdfjasfwefjfjkj", "351CC412605905"},
+	{mysql.DefaultCollationName, "pingcap123", "123456789012345678901234", "7698723DC6DFE7724221"},
+	{mysql.DefaultCollationName, "pingcap#%$%^", "*^%YTu1234567", "8634B9C55FF55E5B6328F449"},
+	{mysql.DefaultCollationName, "pingcap", "", "4A77B524BD2C5C"},
+	{mysql.DefaultCollationName, "分布式データベース", "pass1234@#$%%^^&", "80CADC8D328B3026D04FB285F36FED04BBCA0CC685BF78B1E687CE"},
+	{mysql.DefaultCollationName, "分布式データベース", "分布式7782734adgwy1242", "0E24CFEF272EE32B6E0BFBDB89F29FB43B4B30DAA95C3F914444BC"},
+	{mysql.DefaultCollationName, "pingcap", "密匙", "CE5C02A5010010"},
+	{"gbk", "pingcap", "密匙", "E407AC6F691ADE"},
+	{mysql.DefaultCollationName, "pingcap数据库", "数据库passwd12345667", "36D5F90D3834E30E396BE3226E3B4ED3"},
+	{"gbk", "pingcap数据库", "数据库passwd12345667", "B4BDBD6EC8346379F42836E2E0"},
+	{mysql.DefaultCollationName, "数据库5667", 123.435, "B22196D0569386237AE12F8AAB"},
+	{"gbk", "数据库5667", 123.435, "79E22979BD860EF58229"},
+	{mysql.DefaultCollationName, nil, "数据库passwd12345667", nil},
 }
 
 func TestSQLDecode(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
-	fc := funcs[ast.Decode]
 	for _, tt := range cryptTests {
-		str := types.NewDatum(tt.origin)
-		password := types.NewDatum(tt.password)
-
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, password}))
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
-		crypt, err := evalBuiltinFunc(f, chunk.Row{})
+		err = ctx.GetSessionVars().SetSystemVar(variable.CollationConnection, tt.chs)
 		require.NoError(t, err)
-		require.Equal(t, types.NewDatum(tt.crypt), toHex(crypt))
+		f, err := newFunctionForTest(ctx, ast.Decode, primitiveValsToConstants(ctx, []interface{}{tt.origin, tt.password})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		require.NoError(t, err)
+		if !d.IsNull() {
+			d = toHex(d)
+		}
+		require.Equal(t, types.NewDatum(tt.crypt), d)
 	}
 	testNullInput(t, ctx, ast.Decode)
 }
@@ -71,18 +78,29 @@ func TestSQLDecode(t *testing.T) {
 func TestSQLEncode(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
-
-	fc := funcs[ast.Encode]
 	for _, test := range cryptTests {
-		password := types.NewDatum(test.password)
-		cryptStr := fromHex(test.crypt)
-
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{cryptStr, password}))
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, test.chs)
 		require.NoError(t, err)
-		str, err := evalBuiltinFunc(f, chunk.Row{})
-
+		err = ctx.GetSessionVars().SetSystemVar(variable.CollationConnection, test.chs)
 		require.NoError(t, err)
-		require.Equal(t, types.NewDatum(test.origin), str)
+		var h []byte
+		if test.crypt != nil {
+			h, _ = hex.DecodeString(test.crypt.(string))
+		} else {
+			h = nil
+		}
+		f, err := newFunctionForTest(ctx, ast.Encode, primitiveValsToConstants(ctx, []interface{}{h, test.password})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		require.NoError(t, err)
+		if test.origin != nil {
+			result, err := charset.NewEncoding(test.chs).EncodeString(test.origin.(string))
+			require.NoError(t, err)
+			require.Equal(t, types.NewCollationStringDatum(result, test.chs, 1), d)
+		} else {
+			result := types.NewDatum(test.origin)
+			require.Equal(t, result.GetBytes(), d.GetBytes())
+		}
 	}
 	testNullInput(t, ctx, ast.Encode)
 }
@@ -324,19 +342,28 @@ func TestMD5Hash(t *testing.T) {
 	cases := []struct {
 		args     interface{}
 		expected string
+		charset  string
 		isNil    bool
 		getErr   bool
 	}{
-		{"", "d41d8cd98f00b204e9800998ecf8427e", false, false},
-		{"a", "0cc175b9c0f1b6a831c399e269772661", false, false},
-		{"ab", "187ef4436122d1cc2f40dc2b92f0eba0", false, false},
-		{"abc", "900150983cd24fb0d6963f7d28e17f72", false, false},
-		{123, "202cb962ac59075b964b07152d234b70", false, false},
-		{"123", "202cb962ac59075b964b07152d234b70", false, false},
-		{123.123, "46ddc40585caa8abc07c460b3485781e", false, false},
-		{nil, "", true, false},
+		{"", "d41d8cd98f00b204e9800998ecf8427e", "", false, false},
+		{"a", "0cc175b9c0f1b6a831c399e269772661", "", false, false},
+		{"ab", "187ef4436122d1cc2f40dc2b92f0eba0", "", false, false},
+		{"abc", "900150983cd24fb0d6963f7d28e17f72", "", false, false},
+		{"abc", "900150983cd24fb0d6963f7d28e17f72", "gbk", false, false},
+		{123, "202cb962ac59075b964b07152d234b70", "", false, false},
+		{"123", "202cb962ac59075b964b07152d234b70", "", false, false},
+		{"123", "202cb962ac59075b964b07152d234b70", "gbk", false, false},
+		{123.123, "46ddc40585caa8abc07c460b3485781e", "", false, false},
+		{"一二三", "8093a32450075324682d01456d6e3919", "", false, false},
+		{"一二三", "a45d4af7b243e7f393fa09bed72ac73e", "gbk", false, false},
+		{"ㅂ123", "0e85d0f68c104b65a15d727e26705596", "", false, false},
+		{"ㅂ123", "", "gbk", false, true},
+		{nil, "", "", true, false},
 	}
 	for _, c := range cases {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.charset)
+		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.MD5, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
