@@ -299,6 +299,21 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		for _, cte := range node.CTEs {
 			p.withName[cte.Name.L] = struct{}{}
 		}
+	case *ast.BeginStmt:
+		// If the begin statement was like following:
+		// start transaction read only as of timestamp ....
+		// then we need set StmtCtx.IsStaleness as true in order to avoid take tso in PrepareTSFuture.
+		if node.AsOf != nil {
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+			p.IsStaleness = true
+		} else if p.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS() > 0 {
+			// If the begin statement was like following:
+			// set transaction read only as of timestamp ...
+			// begin
+			// then we need set StmtCtx.IsStaleness as true in order to avoid take tso in PrepareTSFuture.
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+			p.IsStaleness = true
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -1531,6 +1546,17 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 
 // handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
 func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
+	if p.stmtTp != TypeSelect {
+		return
+	}
+	defer func() {
+		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
+		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
+		// in stmtCtx
+		if p.flag&inPrepare == 0 && p.IsStaleness {
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+		}
+	}()
 	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
 	// otherwise we should directly set the return param from TxnCtx.
 	p.ReadReplicaScope = kv.GlobalReplicaScope
@@ -1597,6 +1623,10 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.IsStaleness = true
 		}
 	case readTS == 0 && node == nil && readStaleness != 0:
+		// If both readTS and node is empty while the readStaleness isn't, it means we meet following situation:
+		// set @@tidb_read_staleness='-5';
+		// select * from t;
+		// Then the following select statement should be affected by the tidb_read_staleness in session.
 		ts, p.err = calculateTsWithReadStaleness(p.ctx, readStaleness)
 		if p.err != nil {
 			return
@@ -1613,6 +1643,8 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.IsStaleness = true
 		}
 	}
+
+	// If the select statement is related to multi tables, we should grantee that all tables use the same timestamp
 	if p.LastSnapshotTS != ts {
 		p.err = ErrAsOf.GenWithStack("can not set different time in the as of")
 		return
@@ -1630,9 +1662,6 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			return
 		}
 		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
-	}
-	if p.flag&inPrepare == 0 {
-		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
 	}
 	p.initedLastSnapshotTS = true
 }

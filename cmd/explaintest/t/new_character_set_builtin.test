@@ -66,3 +66,12 @@ select md5(a), md5(b), md5(c) from t;
 set @@tidb_enable_vectorized_expression = true;
 select md5(a), md5(b), md5(c) from t;
 set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function decode()/encode()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select decode(encode(a,"monty"),"monty") = a, md5(decode(encode(b,"monty"),"monty")) = md5(b), decode(encode(c,"monty"),"monty") = c from t;
+set @@tidb_enable_vectorized_expression = true;
+select decode(encode(a,"monty"),"monty") = a, md5(decode(encode(b,"monty"),"monty")) = md5(b), decode(encode(c,"monty"),"monty") = c from t;
+set @@tidb_enable_vectorized_expression = false;
