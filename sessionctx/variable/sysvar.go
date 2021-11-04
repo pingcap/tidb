@@ -666,7 +666,7 @@ var defaultSysVars = []*SysVar{
 			return timestamp, nil
 		}
 		timestamp := s.StmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time)
-		return types.ToString(float64(timestamp.UnixMicro()) / math.Pow10(6))
+		return types.ToString(float64(timestamp.UnixNano()) / float64(time.Second))
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
