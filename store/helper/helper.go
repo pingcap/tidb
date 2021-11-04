@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
 	"net/http"
 	"net/url"
@@ -898,9 +899,46 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 		}
 	}()
 
+	data, err := ioutil.ReadAll(resp.Body)
+	fmt.Printf("GetPDRegionStats return %v\n", string(data))
 	dec := json.NewDecoder(resp.Body)
 
 	return dec.Decode(stats)
+}
+
+func (h *Helper) PostAccelerateSchedule(tableID int64) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return err
+	}
+	startKey := tablecodec.GenTableRecordPrefix(tableID)
+	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+	startKey = codec.EncodeBytes([]byte{}, startKey)
+	endKey = codec.EncodeBytes([]byte{}, endKey)
+
+
+	postURL := fmt.Sprintf("%s://%s/pd/api/v1/regions/accelerate-schedule",
+		util.InternalHTTPSchema(),
+		pdAddrs[0])
+
+	fmt.Printf("%v", postURL)
+
+	if err != nil {
+		return err
+	}
+	input := map[string]string{
+		"start_key":  url.QueryEscape(string(startKey)),
+		"end_key":    url.QueryEscape(string(endKey)),
+	}
+	v, err := json.Marshal(input)
+	if err != nil {
+		return err
+	}
+	_, err = util.InternalHTTPClient().Post(postURL, "application/json", bytes.NewBuffer(v))
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (h *Helper) GetPDRegionStats2(tableID int64, stats *PDRegionStats) error {

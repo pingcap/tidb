@@ -47,6 +47,7 @@ const (
 	// InitialVersion is the initial schema version for every server.
 	// It's exported for testing.
 	InitialVersion       = "0"
+	TiFlashLastHandledSchemaVersion = "/tiflash/cluster/last_handled_schema_version"
 	putKeyNoRetry        = 1
 	keyOpDefaultRetryCnt = 3
 	putKeyRetryUnlimited = math.MaxInt64
