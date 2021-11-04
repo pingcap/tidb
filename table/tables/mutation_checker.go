@@ -487,6 +487,8 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 	return nil
 }
 
+// CheckTxnConsistency checks the number of row/index mutations before the txn commits,
+// to prevent some inconsistent transactions.
 func CheckTxnConsistency(txn kv.Transaction) error {
 	memBuffer := txn.GetMemBuffer()
 	if memBuffer == nil {
