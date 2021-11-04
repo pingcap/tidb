@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
@@ -660,7 +661,13 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
-	{Scope: ScopeSession, Name: Timestamp, Value: "", skipInit: true},
+	{Scope: ScopeSession, Name: Timestamp, Value: "", skipInit: true, Type: TypeFloat, MinValue: 1, MaxValue: 2147483647, GetSession: func(s *SessionVars) (string, error) {
+		if timestamp, ok := s.systems[Timestamp]; ok {
+			return timestamp, nil
+		}
+		timestamp := s.StmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time)
+		return types.ToString(float64(timestamp.UnixMicro()) / math.Pow10(6))
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
