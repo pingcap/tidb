@@ -625,7 +625,9 @@ func TestNonExistTableIllegalGrant(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user u29302")
 	defer tk.MustExec("drop user u29302")
-
+	// Table level, not existing table, illegal privilege
 	tk.MustGetErrCode("grant create temporary tables on NotExistsD29302.NotExistsT29302 to u29302", mysql.ErrIllegalGrantForTable)
 	tk.MustGetErrCode("grant lock tables on test.NotExistsT29302 to u29302", mysql.ErrIllegalGrantForTable)
+	// Column level, not existing table, illegal privilege
+	tk.MustGetErrCode("grant create temporary tables (NotExistsCol) on NotExistsD29302.NotExistsT29302 to u29302;", mysql.ErrWrongUsage)
 }
