@@ -438,6 +438,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 			p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
 			return
 		}
+		p.handleTableName(tn)
 	}
 
 	originSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()))
