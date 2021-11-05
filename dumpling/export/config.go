@@ -135,7 +135,6 @@ type Config struct {
 	Tables             DatabaseTables
 }
 
-
 // ServerInfoUnknown is the unknown database type to dumpling
 var ServerInfoUnknown = version.ServerInfo{
 	ServerType:    version.ServerTypeUnknown,

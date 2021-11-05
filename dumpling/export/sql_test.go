@@ -1049,7 +1049,7 @@ func TestBuildRegionQueriesWithPartitions(t *testing.T) {
 	}
 	d.conf.ServerInfo = version.ServerInfo{
 		HasTiKV:       true,
-		ServerType:   version.ServerTypeTiDB,
+		ServerType:    version.ServerTypeTiDB,
 		ServerVersion: gcSafePointVersion,
 	}
 	partitions := []string{"p0", "p1", "p2"}
