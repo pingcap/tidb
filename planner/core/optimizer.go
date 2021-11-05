@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 )
 
@@ -83,9 +84,37 @@ var optRuleList = []logicalOptRule{
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 }
 
+type logicalOptimizeOp struct {
+	// tracer is goring to track optimize steps during rule optimizing
+	tracer *tracing.LogicalOptimizeTracer
+}
+
+func defaultLogicalOptimizeOption() *logicalOptimizeOp {
+	return &logicalOptimizeOp{}
+}
+
+func (op *logicalOptimizeOp) withEnableOptimizeTrace(tracer *tracing.LogicalOptimizeTracer) *logicalOptimizeOp {
+	op.tracer = tracer
+	return op
+}
+
+func (op *logicalOptimizeOp) appendRuleTracerBeforeRuleOptimize(name string, before LogicalPlan) {
+	if op.tracer == nil {
+		return
+	}
+	op.tracer.AppendRuleTracerBeforeRuleOptimize(name, before.buildLogicalPlanTrace())
+}
+
+func (op *logicalOptimizeOp) trackLogicalPlanAfterRuleOptimize(after LogicalPlan) {
+	if op.tracer == nil {
+		return
+	}
+	op.tracer.TrackLogicalPlanAfterRuleOptimize(after.buildLogicalPlanTrace())
+}
+
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
-	optimize(context.Context, LogicalPlan) (LogicalPlan, error)
+	optimize(context.Context, LogicalPlan, *logicalOptimizeOp) (LogicalPlan, error)
 	name() string
 }
 
@@ -335,6 +364,15 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
+	opt := defaultLogicalOptimizeOption()
+	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
+	if stmtCtx.EnableOptimizeTrace {
+		tracer := &tracing.LogicalOptimizeTracer{Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0)}
+		opt = opt.withEnableOptimizeTrace(tracer)
+		defer func() {
+			stmtCtx.LogicalOptimizeTrace = tracer
+		}()
+	}
 	var err error
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
@@ -343,10 +381,12 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		logic, err = rule.optimize(ctx, logic)
+		opt.appendRuleTracerBeforeRuleOptimize(rule.name(), logic)
+		logic, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
+		opt.trackLogicalPlanAfterRuleOptimize(logic)
 	}
 	return logic, err
 }

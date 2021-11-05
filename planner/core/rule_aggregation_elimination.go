@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/tracing"
 )
 
 type aggregationEliminator struct {
@@ -70,7 +71,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 	return nil
 }
 
-func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregation) {
+func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregation, opt *logicalOptimizeOp) {
 	for _, af := range agg.AggFuncs {
 		if af.HasDistinct {
 			cols := make([]*expression.Column, 0, len(af.Args))
@@ -100,6 +101,16 @@ func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggrega
 				}
 				if distinctByUniqueKey {
 					af.HasDistinct = false
+					if opt.tracer != nil {
+						opt.tracer.AppendRuleTracerStepToCurrent(
+							tracing.LogicalRuleOptimizeTraceStep{
+								TP: agg.TP(),
+								ID: agg.ID(),
+								// TODO: fulfill in future pr
+								Reason: "",
+								Action: "",
+							})
+					}
 				}
 			}
 		}
@@ -179,10 +190,10 @@ func wrapCastFunction(ctx sessionctx.Context, arg expression.Expression, targetT
 	return expression.BuildCastFunction(ctx, arg, targetTp)
 }
 
-func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
+func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, err := a.optimize(ctx, child)
+		newChild, err := a.optimize(ctx, child, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -193,7 +204,7 @@ func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan) (Lo
 	if !ok {
 		return p, nil
 	}
-	a.tryToEliminateDistinct(agg)
+	a.tryToEliminateDistinct(agg, opt)
 	if proj := a.tryToEliminateAggregation(agg); proj != nil {
 		return proj, nil
 	}
