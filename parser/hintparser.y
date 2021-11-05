@@ -43,6 +43,7 @@ import (
 
 	/*yy:token "%c" */
 	hintIdentifier
+	hintInvalid    "a special token never used by parser, used by lexer to indicate error"
 
 	/*yy:token "@%c" */
 	hintSingleAtIdentifier "identifier with single leading at"

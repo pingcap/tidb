@@ -227,13 +227,13 @@ func runLiteralTest(t *testing.T, table []testLiteralValue) {
 		val := l.LexLiteral()
 		switch val.(type) {
 		case int64:
-			requires.Equal(t, val, v.val, v.str)
+			requires.Equal(t, v.val, val, v.str)
 		case float64:
-			requires.Equal(t, val, v.val, v.str)
+			requires.Equal(t, v.val, val, v.str)
 		case string:
-			requires.Equal(t, val, v.val, v.str)
+			requires.Equal(t, v.val, val, v.str)
 		default:
-			requires.Equal(t, fmt.Sprint(val), v.val, v.str)
+			requires.Equal(t, v.val, fmt.Sprint(val), v.str)
 		}
 	}
 }
@@ -316,7 +316,6 @@ func TestScanString(t *testing.T) {
 func TestIdentifier(t *testing.T) {
 	t.Parallel()
 
-	replacementString := string(unicode.ReplacementChar) + "xxx"
 	table := [][2]string{
 		{`哈哈`, "哈哈"},
 		{"`numeric`", "numeric"},
@@ -324,7 +323,7 @@ func TestIdentifier(t *testing.T) {
 		{`5number`, `5number`},
 		{"1_x", "1_x"},
 		{"0_x", "0_x"},
-		{replacementString, replacementString},
+		{string(unicode.ReplacementChar) + "xxx", string(unicode.ReplacementChar) + "xxx"},
 		{"9e", "9e"},
 		{"0b", "0b"},
 		{"0b123", "0b123"},
@@ -341,8 +340,8 @@ func TestIdentifier(t *testing.T) {
 		l.reset(item[0])
 		var v yySymType
 		tok := l.Lex(&v)
-		requires.Equal(t, identifier, tok)
-		requires.Equal(t, item[1], v.ident)
+		requires.Equal(t, identifier, tok, item)
+		requires.Equal(t, item[1], v.ident, item)
 	}
 }
 
@@ -582,13 +581,13 @@ func TestVersionDigits(t *testing.T) {
 		input    string
 		min      int
 		max      int
-		nextChar rune
+		nextChar byte
 	}{
 		{
 			input:    "12345",
 			min:      5,
 			max:      5,
-			nextChar: unicode.ReplacementChar,
+			nextChar: 0,
 		},
 		{
 			input:    "12345xyz",
@@ -618,7 +617,7 @@ func TestVersionDigits(t *testing.T) {
 			input:    "",
 			min:      5,
 			max:      5,
-			nextChar: unicode.ReplacementChar,
+			nextChar: 0,
 		},
 		{
 			input:    "1234567xyz",
@@ -636,7 +635,7 @@ func TestVersionDigits(t *testing.T) {
 			input:    "12345",
 			min:      5,
 			max:      6,
-			nextChar: unicode.ReplacementChar,
+			nextChar: 0,
 		},
 		{
 			input:    "1234xyz",
@@ -661,12 +660,12 @@ func TestFeatureIDs(t *testing.T) {
 	tests := []struct {
 		input      string
 		featureIDs []string
-		nextChar   rune
+		nextChar   byte
 	}{
 		{
 			input:      "[feature]",
 			featureIDs: []string{"feature"},
-			nextChar:   unicode.ReplacementChar,
+			nextChar:   0,
 		},
 		{
 			input:      "[feature] xx",
@@ -676,17 +675,17 @@ func TestFeatureIDs(t *testing.T) {
 		{
 			input:      "[feature1,feature2]",
 			featureIDs: []string{"feature1", "feature2"},
-			nextChar:   unicode.ReplacementChar,
+			nextChar:   0,
 		},
 		{
 			input:      "[feature1,feature2,feature3]",
 			featureIDs: []string{"feature1", "feature2", "feature3"},
-			nextChar:   unicode.ReplacementChar,
+			nextChar:   0,
 		},
 		{
 			input:      "[id_en_ti_fier]",
 			featureIDs: []string{"id_en_ti_fier"},
-			nextChar:   unicode.ReplacementChar,
+			nextChar:   0,
 		},
 		{
 			input:      "[invalid,    whitespace]",

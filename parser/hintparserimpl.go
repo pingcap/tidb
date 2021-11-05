@@ -16,7 +16,6 @@ package parser
 import (
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -51,7 +50,7 @@ func (hs *hintScanner) Lex(lval *yyhintSymType) int {
 		n, e := strconv.ParseUint(lit, 10, 64)
 		if e != nil {
 			hs.AppendError(ErrWarnOptimizerHintInvalidInteger.GenWithStackByArgs(lit))
-			return int(unicode.ReplacementChar)
+			return hintInvalid
 		}
 		lval.number = n
 		return hintIntLit
@@ -108,7 +107,7 @@ func (hs *hintScanner) Lex(lval *yyhintSymType) int {
 	}
 
 	hs.AppendError(ErrWarnOptimizerHintInvalidToken.GenWithStackByArgs(errorTokenType, lit, tok))
-	return int(unicode.ReplacementChar)
+	return hintInvalid
 }
 
 type hintParser struct {

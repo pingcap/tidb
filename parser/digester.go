@@ -21,7 +21,6 @@ import (
 	"reflect"
 	"strings"
 	"sync"
-	"unicode"
 	"unsafe"
 
 	"github.com/pingcap/tidb/parser/charset"
@@ -170,9 +169,6 @@ func (d *sqlDigester) normalize(sql string) {
 		if tok == invalid {
 			break
 		}
-		if tok == unicode.ReplacementChar && d.lexer.r.eof() {
-			break
-		}
 		if pos.Offset == len(sql) {
 			break
 		}
@@ -235,7 +231,7 @@ func (d *sqlDigester) reduceOptimizerHint(tok *token) (reduced bool) {
 			case "force", "use", "ignore":
 				for {
 					tok, _, lit := d.lexer.scan()
-					if tok == 0 || (tok == unicode.ReplacementChar && d.lexer.r.eof()) {
+					if (tok == 0 && d.lexer.r.eof()) || tok == invalid {
 						break
 					}
 					if lit == ")" {
