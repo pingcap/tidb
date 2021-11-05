@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 
+	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
@@ -1537,6 +1539,55 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 
 			chunkIdx++
 		}
+	}
+}
+
+func TestCheckTiDBWithTiKV(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+
+	tidbConf := dbconfig.NewConfig()
+	stores := []string{"unistore", "mocktikv", "tikv"}
+	for _, store := range stores {
+		tidbConf.Store = store
+		tidbConfBytes, err := json.Marshal(tidbConf)
+		require.NoError(t, err)
+		mock.ExpectQuery("SELECT @@tidb_config").WillReturnRows(
+			sqlmock.NewRows([]string{"@@tidb_config"}).AddRow(string(tidbConfBytes)))
+		hasTiKV, err := CheckTiDBWithTiKV(db)
+		require.NoError(t, err)
+		if store == "tikv" {
+			require.True(t, hasTiKV)
+		} else {
+			require.False(t, hasTiKV)
+		}
+		require.NoError(t, mock.ExpectationsWereMet())
+	}
+
+	errLackPrivilege := errors.New("ERROR 1142 (42000): SELECT command denied to user 'test'@'%' for table 'tidb'")
+	expectedResults := []interface{}{errLackPrivilege, 1, 0}
+	for i, res := range expectedResults {
+		t.Logf("case #%d", i)
+		mock.ExpectQuery("SELECT @@tidb_config").WillReturnError(errLackPrivilege)
+		expectedErr, ok := res.(error)
+		if ok {
+			mock.ExpectQuery("SELECT COUNT").WillReturnError(expectedErr)
+			hasTiKV, err := CheckTiDBWithTiKV(db)
+			require.ErrorIs(t, err, expectedErr)
+			require.True(t, hasTiKV)
+		} else if cnt, ok := res.(int); ok {
+			mock.ExpectQuery("SELECT COUNT").WillReturnRows(
+				sqlmock.NewRows([]string{"c"}).AddRow(cnt))
+			hasTiKV, err := CheckTiDBWithTiKV(db)
+			require.NoError(t, err)
+			require.Equal(t, cnt > 0, hasTiKV)
+		}
+		require.NoError(t, mock.ExpectationsWereMet())
 	}
 }
 

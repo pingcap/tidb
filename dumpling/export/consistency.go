@@ -20,6 +20,8 @@ const (
 	consistencyTypeNone     = "none"
 )
 
+var tiDBDisableTableLockErr = errors.New("try to apply lock consistency on TiDB but it doesn't enable table lock. please set enable-table-lock=true in tidb server config")
+
 // NewConsistencyController returns a new consistency controller
 func NewConsistencyController(ctx context.Context, conf *Config, session *sql.DB) (ConsistencyController, error) {
 	conn, err := session.Conn(ctx)
@@ -116,6 +118,15 @@ type ConsistencyLockDumpingTables struct {
 
 // Setup implements ConsistencyController.Setup
 func (c *ConsistencyLockDumpingTables) Setup(tctx *tcontext.Context) error {
+	if c.conf.ServerInfo.ServerType == ServerTypeTiDB {
+		if enableTableLock, err := CheckTiDBEnableTableLock(c.conn); err != nil || !enableTableLock {
+			if err != nil {
+				return err
+			} else {
+				return tiDBDisableTableLockErr
+			}
+		}
+	}
 	blockList := make(map[string]map[string]interface{})
 	return utils.WithRetry(tctx, func() error {
 		lockTablesSQL := buildLockTablesSQL(c.conf.Tables, blockList)

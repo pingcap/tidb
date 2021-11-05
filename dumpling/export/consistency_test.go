@@ -4,6 +4,7 @@ package export
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 
+	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
@@ -26,7 +28,7 @@ func TestConsistencyController(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	tctx := tcontext.Background().WithContext(ctx)
+	tctx := tcontext.Background().WithContext(ctx).WithLogger(appLogger)
 	conf := defaultConfigForTest(t)
 	resultOk := sqlmock.NewResult(0, 1)
 
@@ -55,6 +57,7 @@ func TestConsistencyController(t *testing.T) {
 	require.NoError(t, ctrl.Setup(tctx))
 	require.NoError(t, ctrl.TearDown(tctx))
 
+	conf.ServerInfo.ServerType = ServerTypeMySQL
 	conf.Consistency = consistencyTypeLock
 	conf.Tables = NewDatabaseTables().
 		AppendTables("db1", []string{"t1", "t2", "t3"}, []uint64{1, 2, 3}).
@@ -84,6 +87,7 @@ func TestConsistencyLockControllerRetry(t *testing.T) {
 	conf := defaultConfigForTest(t)
 	resultOk := sqlmock.NewResult(0, 1)
 
+	conf.ServerInfo.ServerType = ServerTypeMySQL
 	conf.Consistency = consistencyTypeLock
 	conf.Tables = NewDatabaseTables().
 		AppendTables("db1", []string{"t1", "t2", "t3"}, []uint64{1, 2, 3}).
@@ -140,7 +144,7 @@ func TestConsistencyControllerError(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	tctx := tcontext.Background().WithContext(ctx)
+	tctx := tcontext.Background().WithContext(ctx).WithLogger(appLogger)
 	conf := defaultConfigForTest(t)
 
 	conf.Consistency = "invalid_str"
@@ -168,4 +172,58 @@ func TestConsistencyControllerError(t *testing.T) {
 	ctrl, _ = NewConsistencyController(ctx, conf, db)
 	err = ctrl.Setup(tctx)
 	require.Error(t, err)
+}
+
+func TestConsistencyLockTiDBCheck(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tctx := tcontext.Background().WithContext(ctx).WithLogger(appLogger)
+	conf := defaultConfigForTest(t)
+	resultOk := sqlmock.NewResult(0, 1)
+
+	conf.ServerInfo.ServerType = ServerTypeTiDB
+	conf.Consistency = consistencyTypeLock
+	conf.Tables = NewDatabaseTables().
+		AppendTables("db1", []string{"t1"}, []uint64{1})
+	ctrl, err := NewConsistencyController(ctx, conf, db)
+	require.NoError(t, err)
+
+	// no tidb_config found, don't allow to lock tables
+	unknownSysVarErr := errors.New("ERROR 1193 (HY000): Unknown system variable 'tidb_config'")
+	mock.ExpectQuery("SELECT @@tidb_config").WillReturnError(unknownSysVarErr)
+	err = ctrl.Setup(tctx)
+	require.ErrorIs(t, err, unknownSysVarErr)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	// enable-table-lock is false, don't allow to lock tables
+	tidbConf := dbconfig.NewConfig()
+	tidbConf.EnableTableLock = false
+	tidbConfBytes, err := json.Marshal(tidbConf)
+	require.NoError(t, err)
+	mock.ExpectQuery("SELECT @@tidb_config").WillReturnRows(
+		sqlmock.NewRows([]string{"@@tidb_config"}).AddRow(string(tidbConfBytes)))
+	err = ctrl.Setup(tctx)
+	require.ErrorIs(t, err, tiDBDisableTableLockErr)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	// enable-table-lock is true, allow to lock tables
+	tidbConf.EnableTableLock = true
+	tidbConfBytes, err = json.Marshal(tidbConf)
+	require.NoError(t, err)
+	mock.ExpectQuery("SELECT @@tidb_config").WillReturnRows(
+		sqlmock.NewRows([]string{"@@tidb_config"}).AddRow(string(tidbConfBytes)))
+	mock.ExpectExec("LOCK TABLES `db1`.`t1` READ").WillReturnResult(resultOk)
+	mock.ExpectExec("UNLOCK TABLES").WillReturnResult(resultOk)
+	err = ctrl.Setup(tctx)
+	require.NoError(t, err)
+	require.NoError(t, ctrl.TearDown(tctx))
+	require.NoError(t, mock.ExpectationsWereMet())
 }
