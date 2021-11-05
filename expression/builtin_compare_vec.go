@@ -629,11 +629,11 @@ func vecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Co
 	}
 }
 
-func (b *builtinGreatestTimeSig) vectorized() bool {
+func (b *builtinGreatestCmpStringAsDatetimeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGreatestCmpStringAsDatetimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	n := input.NumRows()
 
@@ -641,6 +641,7 @@ func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk
 	// TODO: use Column.MergeNulls instead, however, it doesn't support var-length type currently.
 	dstNullMap := make([]bool, n)
 
+	var parsedStr string
 	for j := 0; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
 			return err
@@ -651,18 +652,30 @@ func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk
 			}
 
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
-			argTimeStr := string(result.GetBytes(i))
-
-			argTime, err := types.ParseDatetime(sc, argTimeStr)
-			if err != nil {
-				if err = handleInvalidTimeError(b.ctx, err); err != nil {
-					return err
+			argStr := string(result.GetBytes(i))
+			parsedStr = argStr
+			if b.detailedTimeType == mysql.TypeDuration {
+				argTime, err := types.ParseDuration(sc, argStr, int8(b.getRetTp().Decimal))
+				if err != nil {
+					if err = handleInvalidTimeError(b.ctx, err); err != nil {
+						return err
+					}
+				} else {
+					parsedStr = argTime.String()
 				}
 			} else {
-				argTimeStr = argTime.String()
+				argTime, err := types.ParseTime(sc, argStr, b.detailedTimeType, int8(b.getRetTp().Decimal))
+				if err != nil {
+					if err = handleInvalidTimeError(b.ctx, err); err != nil {
+						return err
+					}
+				} else {
+					parsedStr = argTime.String()
+				}
 			}
-			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) > 0 {
-				dstStrings[i] = argTimeStr
+
+			if j == 0 || strings.Compare(parsedStr, dstStrings[i]) > 0 {
+				dstStrings[i] = argStr
 			}
 		}
 	}
@@ -674,6 +687,197 @@ func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk
 			result.AppendNull()
 		} else {
 			result.AppendString(dstStrings[i])
+		}
+	}
+	return nil
+}
+
+func (b *builtinLeastCmpStringAsDatetimeSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLeastCmpStringAsDatetimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	n := input.NumRows()
+
+	dstStrings := make([]string, n)
+	// TODO: use Column.MergeNulls instead, however, it doesn't support var-length type currently.
+	dstNullMap := make([]bool, n)
+
+	var parsedStr string
+	for j := 0; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if dstNullMap[i] = dstNullMap[i] || result.IsNull(i); dstNullMap[i] {
+				continue
+			}
+
+			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
+			argStr := string(result.GetBytes(i))
+			parsedStr = argStr
+			if b.detailedTimeType == mysql.TypeDuration {
+				argTime, err := types.ParseDuration(sc, argStr, int8(b.getRetTp().Decimal))
+				if err != nil {
+					if err = handleInvalidTimeError(b.ctx, err); err != nil {
+						return err
+					}
+				} else {
+					parsedStr = argTime.String()
+				}
+			} else {
+				argTime, err := types.ParseTime(sc, argStr, b.detailedTimeType, int8(b.getRetTp().Decimal))
+				if err != nil {
+					if err = handleInvalidTimeError(b.ctx, err); err != nil {
+						return err
+					}
+				} else {
+					parsedStr = argTime.String()
+				}
+			}
+
+			if j == 0 || strings.Compare(parsedStr, dstStrings[i]) < 0 {
+				dstStrings[i] = argStr
+			}
+		}
+	}
+
+	// Aggregate the NULL and String value into result
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if dstNullMap[i] {
+			result.AppendNull()
+		} else {
+			result.AppendString(dstStrings[i])
+		}
+	}
+	return nil
+}
+
+func (b *builtinGreatestTimeSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGreatestTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeTime(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalTime(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resTimes := result.Times()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			argTime := buf.GetTime(rowIdx)
+			if argIdx == 0 || argTime.Compare(resTimes[rowIdx]) > 0 {
+				resTimes[rowIdx] = argTime
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinLeastTimeSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLeastTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeTime(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalTime(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resTimes := result.Times()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			argTime := buf.GetTime(rowIdx)
+			if argIdx == 0 || argTime.Compare(resTimes[rowIdx]) < 0 {
+				resTimes[rowIdx] = argTime
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinGreatestDurationSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGreatestDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeGoDuration(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalDuration(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resDurations := result.GoDurations()
+		argDurations := buf.GoDurations()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argDurations[rowIdx] > resDurations[rowIdx] {
+				resDurations[rowIdx] = argDurations[rowIdx]
+			}
+		}
+	}
+	return nil
+}
+
+func (b *builtinLeastDurationSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinLeastDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+
+	result.ResizeGoDuration(n, false)
+	for argIdx := 0; argIdx < len(b.args); argIdx++ {
+		if err := b.args[argIdx].VecEvalDuration(b.ctx, input, buf); err != nil {
+			return err
+		}
+		result.MergeNulls(buf)
+		resDurations := result.GoDurations()
+		argDurations := buf.GoDurations()
+		for rowIdx := 0; rowIdx < n; rowIdx++ {
+			if result.IsNull(rowIdx) {
+				continue
+			}
+			if argIdx == 0 || argDurations[rowIdx] < resDurations[rowIdx] {
+				resDurations[rowIdx] = argDurations[rowIdx]
+			}
 		}
 	}
 	return nil
@@ -709,56 +913,6 @@ func (b *builtinGreatestRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 			if v[i] > f64s[i] {
 				f64s[i] = v[i]
 			}
-		}
-	}
-	return nil
-}
-
-func (b *builtinLeastTimeSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	n := input.NumRows()
-
-	dstStrings := make([]string, n)
-	// TODO: use Column.MergeNulls instead, however, it doesn't support var-length type currently.
-	dstNullMap := make([]bool, n)
-
-	for j := 0; j < len(b.args); j++ {
-		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
-			return err
-		}
-		for i := 0; i < n; i++ {
-			if dstNullMap[i] = dstNullMap[i] || result.IsNull(i); dstNullMap[i] {
-				continue
-			}
-
-			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
-			argTimeStr := string(result.GetBytes(i))
-
-			argTime, err := types.ParseDatetime(sc, argTimeStr)
-			if err != nil {
-				if err = handleInvalidTimeError(b.ctx, err); err != nil {
-					return err
-				}
-			} else {
-				argTimeStr = argTime.String()
-			}
-			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) < 0 {
-				dstStrings[i] = argTimeStr
-			}
-		}
-	}
-
-	// Aggregate the NULL and String value into result
-	result.ReserveString(n)
-	for i := 0; i < n; i++ {
-		if dstNullMap[i] {
-			result.AppendNull()
-		} else {
-			result.AppendString(dstStrings[i])
 		}
 	}
 	return nil

@@ -3785,6 +3785,46 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	tk.MustQuery("SELECT a/b FROM t;").Check(testkit.Rows("0.0000", "0.8264"))
 }
 
+func (s *testIntegrationSuite) TestGreatestTimeType(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c_time time(5), c_dt datetime(4), c_ts timestamp(3), c_d date, c_str varchar(100));")
+	tk.MustExec("insert into t1 values('-800:10:10', '2021-10-10 10:10:10.1234', '2021-10-10 10:10:10.1234', '2021-10-11', '2021-10-10 10:10:10.1234');")
+
+	for i := 0; i < 2; i++ {
+		if i == 0 {
+			tk.MustExec("set @@tidb_enable_vectorized_expression = off;")
+		} else {
+			tk.MustExec("set @@tidb_enable_vectorized_expression = on;")
+		}
+		tk.MustQuery("select greatest(c_time, c_time) from t1;").Check(testkit.Rows("-800:10:10.00000"))
+		tk.MustQuery("select greatest(c_dt, c_dt) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
+		tk.MustQuery("select greatest(c_ts, c_ts) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.123"))
+		tk.MustQuery("select greatest(c_d, c_d) from t1;").Check(testkit.Rows("2021-10-11"))
+		tk.MustQuery("select greatest(c_time, c_str) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
+		tk.MustQuery("select greatest(c_dt, c_str) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.123400"))
+		tk.MustQuery("select greatest(c_d, c_str) from t1;").Check(testkit.Rows("2021-10-11"))
+		tk.MustQuery("select greatest(c_time, c_dt, c_ts, c_d, c_str) from t1;").Check(testkit.Rows("2021-10-11 00:00:00.000000"))
+		tk.MustQuery("select greatest(c_time, c_dt, c_ts, c_d, c_str, '99999999999') from t1;").Check(testkit.Rows("99999999999"))
+
+		tk.MustQuery("select least(c_time, c_time) from t1;").Check(testkit.Rows("-800:10:10.00000"))
+		tk.MustQuery("select least(c_dt, c_dt) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
+		tk.MustQuery("select least(c_ts, c_ts) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.123"))
+		tk.MustQuery("select least(c_d, c_d) from t1;").Check(testkit.Rows("2021-10-11"))
+		tk.MustQuery("select least(c_time, c_str) from t1;").Check(testkit.Rows("-800:10:10.00000"))
+		tk.MustQuery("select least(c_dt, c_str) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.123400"))
+		tk.MustQuery("select least(c_d, c_str) from t1;").Check(testkit.Rows("2021-10-11"))
+		tk.MustQuery("select least(c_time, c_dt, c_ts, c_d, c_str) from t1;").Check(testkit.Rows("2021-10-01 15:49:50.000000"))
+		// TODO: select c_time, c_dt, least(c_time, c_dt, '99999999999') from t1;
+		// Duration is not handled properly. Actually we expect '-800:10:10.00000'.
+		// Why: -800:10:10.00000 -cast-as-string-> '-800:10:10.00000' -cast-as-datetime-> 2000-00-00 00:00:00
+		// So we need should convert -800:10:10.00000 to datetime directly. But we cannot do that for now.
+		tk.MustQuery("select least(c_time, c_dt, c_ts, c_d, c_str, '99999999999') from t1;").Check(testkit.Rows("2000-00-00 00:00:00"))
+	}
+}
+
 func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
