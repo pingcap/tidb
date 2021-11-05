@@ -4,9 +4,9 @@ package export
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/br/pkg/version"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/stretchr/testify/require"
 )
 

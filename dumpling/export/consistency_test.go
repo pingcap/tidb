@@ -6,13 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/pingcap/tidb/br/pkg/version"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 
+	"github.com/pingcap/tidb/br/pkg/version"
 	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
@@ -58,7 +58,7 @@ func TestConsistencyController(t *testing.T) {
 	require.NoError(t, ctrl.Setup(tctx))
 	require.NoError(t, ctrl.TearDown(tctx))
 
-	conf.ServerInfo.ServerType = ServerTypeMySQL
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
 	conf.Consistency = consistencyTypeLock
 	conf.Tables = NewDatabaseTables().
 		AppendTables("db1", []string{"t1", "t2", "t3"}, []uint64{1, 2, 3}).
@@ -88,7 +88,7 @@ func TestConsistencyLockControllerRetry(t *testing.T) {
 	conf := defaultConfigForTest(t)
 	resultOk := sqlmock.NewResult(0, 1)
 
-	conf.ServerInfo.ServerType = ServerTypeMySQL
+	conf.ServerInfo.ServerType = version.ServerTypeMySQL
 	conf.Consistency = consistencyTypeLock
 	conf.Tables = NewDatabaseTables().
 		AppendTables("db1", []string{"t1", "t2", "t3"}, []uint64{1, 2, 3}).
@@ -190,7 +190,7 @@ func TestConsistencyLockTiDBCheck(t *testing.T) {
 	conf := defaultConfigForTest(t)
 	resultOk := sqlmock.NewResult(0, 1)
 
-	conf.ServerInfo.ServerType = ServerTypeTiDB
+	conf.ServerInfo.ServerType = version.ServerTypeTiDB
 	conf.Consistency = consistencyTypeLock
 	conf.Tables = NewDatabaseTables().
 		AppendTables("db1", []string{"t1"}, []uint64{1})

@@ -3,7 +3,6 @@
 package export
 
 import (
-	"github.com/pingcap/tidb/br/pkg/version"
 	"strings"
 	"testing"
 
@@ -11,6 +10,7 @@ import (
 	tf "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/stretchr/testify/require"
 
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 

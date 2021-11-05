@@ -5,7 +5,6 @@ package export
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/br/pkg/version"
 	"testing"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 

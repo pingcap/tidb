@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"github.com/pingcap/tidb/br/pkg/version"
 	"math/big"
 	"sort"
 	"strconv"
@@ -26,6 +25,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/dumpling/cli"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"

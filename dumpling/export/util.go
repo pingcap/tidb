@@ -5,7 +5,6 @@ package export
 import (
 	"context"
 	"database/sql"
-	"github.com/pingcap/tidb/br/pkg/version"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/pingcap/errors"
 	"go.etcd.io/etcd/clientv3"
 
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 

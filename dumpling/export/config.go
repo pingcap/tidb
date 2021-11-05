@@ -7,10 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/br/pkg/version"
 	"io/ioutil"
-	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -22,13 +19,12 @@ import (
 	"github.com/pingcap/errors"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb-tools/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/br/pkg/version"
 )
 
 const (

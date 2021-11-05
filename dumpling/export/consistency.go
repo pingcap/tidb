@@ -5,11 +5,11 @@ package export
 import (
 	"context"
 	"database/sql"
-	"github.com/pingcap/tidb/br/pkg/version"
 
 	"github.com/pingcap/errors"
 
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
@@ -119,7 +119,7 @@ type ConsistencyLockDumpingTables struct {
 
 // Setup implements ConsistencyController.Setup
 func (c *ConsistencyLockDumpingTables) Setup(tctx *tcontext.Context) error {
-	if c.conf.ServerInfo.ServerType == ServerTypeTiDB {
+	if c.conf.ServerInfo.ServerType == version.ServerTypeTiDB {
 		if enableTableLock, err := CheckTiDBEnableTableLock(c.conn); err != nil || !enableTableLock {
 			if err != nil {
 				return err

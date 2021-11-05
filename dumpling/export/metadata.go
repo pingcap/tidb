@@ -7,7 +7,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/pingcap/tidb/br/pkg/version"
 	"strings"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
