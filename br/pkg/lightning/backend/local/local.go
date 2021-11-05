@@ -932,7 +932,7 @@ func NewLocalBackend(
 	}
 
 	var duplicateDB *pebble.DB
-	if cfg.TikvImporter.DuplicateDetection {
+	if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		duplicateDB, err = openDuplicateDB(localFile)
 		if err != nil {
 			return backend.MakeBackend(nil), errors.Annotate(err, "open duplicate db failed")
@@ -970,7 +970,7 @@ func NewLocalBackend(
 
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
-		duplicateDetection:      cfg.TikvImporter.DuplicateDetection,
+		duplicateDetection:      cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
 		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
 		errorMgr:                errorMgr,
@@ -1347,9 +1347,15 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			sstMetasChan:       make(chan metaOrFlush),
 			tableInfo:          cfg.TableInfo,
 			duplicateDetection: local.duplicateDetection,
+			duplicateDB:        local.duplicateDB,
 			errorMgr:           local.errorMgr,
 		}
 		engineFile.sstIngester = dbSSTIngester{e: engineFile}
+		keyAdapter := KeyAdapter(noopKeyAdapter{})
+		if local.duplicateDetection {
+			keyAdapter = duplicateKeyAdapter{}
+		}
+		engineFile.keyAdapter = keyAdapter
 		if err = engineFile.loadEngineMeta(); err != nil {
 			return err
 		}
@@ -2087,7 +2093,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	return nil
 }
 
-func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (hasDupe bool, err error) {
+func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
 	if local.duplicateDB == nil {
 		return false, nil
 	}
@@ -2102,7 +2108,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 		return false, err
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
-	duplicateManager, err := NewDuplicateManager(local, ts)
+	duplicateManager, err := NewDuplicateManager(local, ts, opts)
 	if err != nil {
 		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
@@ -2113,7 +2119,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 	return hasDupe, nil
 }
 
-func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
+func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	log.L().Info("Begin collect remote duplicate keys", zap.String("table", tableName))
 	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
@@ -2121,7 +2127,7 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
 
-	duplicateManager, err := NewDuplicateManager(local, ts)
+	duplicateManager, err := NewDuplicateManager(local, ts, opts)
 	if err != nil {
 		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
@@ -2139,13 +2145,13 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	}()
 
 	switch algorithm {
-	case config.DupeResAlgUnsafeNoop:
-		logger.Warn("[resolve-dupe] skipping resolution since algorithm is 'unsafe-noop'. this table will become inconsistent!")
+	case config.DupeResAlgRecord, config.DupeResAlgNone:
+		logger.Warn("[resolve-dupe] skipping resolution due to selected algorithm. this table will become inconsistent!", zap.Stringer("algorithm", algorithm))
 		return nil
-	case config.DupeResAlgKeepAnyOne:
-		panic("keep-any-one is not yet supported")
-	case config.DupeResAlgDelete:
+	case config.DupeResAlgRemove:
 		break
+	default:
+		panic(fmt.Sprintf("[resolve-dupe] unknown resolution algorithm %v", algorithm))
 	}
 
 	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.

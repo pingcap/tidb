@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"sort"
@@ -171,12 +170,12 @@ const (
 	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
 	// TableTiDBTrx is current running transaction status table.
 	TableTiDBTrx = "TIDB_TRX"
-	// TableDeadlocks is the string constatnt of deadlock table.
+	// TableDeadlocks is the string constant of deadlock table.
 	TableDeadlocks = "DEADLOCKS"
 	// TableDataLockWaits is current lock waiting status table.
 	TableDataLockWaits = "DATA_LOCK_WAITS"
-	// TableRegionLabel is the string constant of region label table.
-	TableRegionLabel = "REGION_LABEL"
+	// TableAttributes is the string constant of attributes table.
+	TableAttributes = "ATTRIBUTES"
 	// TablePlacementRules is the string constant of placement rules table.
 	TablePlacementRules = "PLACEMENT_RULES"
 )
@@ -274,7 +273,7 @@ var tableIDMap = map[string]int64{
 	TableDataLockWaits:                   autoid.InformationSchemaDBID + 74,
 	TableStatementsSummaryEvicted:        autoid.InformationSchemaDBID + 75,
 	ClusterTableStatementsSummaryEvicted: autoid.InformationSchemaDBID + 76,
-	TableRegionLabel:                     autoid.InformationSchemaDBID + 77,
+	TableAttributes:                      autoid.InformationSchemaDBID + 77,
 	TableTiDBHotRegionsHistory:           autoid.InformationSchemaDBID + 78,
 	TablePlacementRules:                  autoid.InformationSchemaDBID + 79,
 }
@@ -867,6 +866,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogBackoffDetail, tp: mysql.TypeVarchar, size: 4096},
 	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogIsExplicitTxn, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromBinding, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -1441,10 +1441,10 @@ var tableStatementsSummaryEvictedCols = []columnInfo{
 	{name: "EVICTED_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 }
 
-var tableRegionLabelCols = []columnInfo{
-	{name: "RULE_ID", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "RULE_TYPE", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag},
-	{name: "REGION_LABEL", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
+var tableAttributesCols = []columnInfo{
+	{name: "ID", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "TYPE", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag},
+	{name: "ATTRIBUTES", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
 	{name: "RANGES", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
@@ -1644,8 +1644,8 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}
 	var servers = make([]ServerInfo, 0, len(members))
 	for _, addr := range members {
-		// Get PD version
-		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.ClusterVersion)
+		// Get PD version, git_hash
+		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1655,25 +1655,8 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		pdVersion, err := io.ReadAll(resp.Body)
-		terror.Log(resp.Body.Close())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
-
-		// Get PD git_hash
-		url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
-		req, err = http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		req.Header.Add("PD-Allow-follower-handle", "true")
-		resp, err = util.InternalHTTPClient().Do(req)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		var content = struct {
+			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
 			StartTimestamp int64  `json:"start_timestamp"`
 		}{}
@@ -1682,12 +1665,15 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if len(content.Version) > 0 && content.Version[0] == 'v' {
+			content.Version = content.Version[1:]
+		}
 
 		servers = append(servers, ServerInfo{
 			ServerType:     "pd",
 			Address:        addr,
 			StatusAddr:     addr,
-			Version:        version,
+			Version:        content.Version,
 			GitHash:        content.GitHash,
 			StartTimestamp: content.StartTimestamp,
 		})
@@ -1848,7 +1834,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBTrx:                            tableTiDBTrxCols,
 	TableDeadlocks:                          tableDeadlocksCols,
 	TableDataLockWaits:                      tableDataLockWaitsCols,
-	TableRegionLabel:                        tableRegionLabelCols,
+	TableAttributes:                         tableAttributesCols,
 	TablePlacementRules:                     tablePlacementRulesCols,
 }
 
