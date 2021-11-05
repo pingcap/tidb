@@ -126,7 +126,7 @@ if [ "$checksum_new" != "$checksum_empty" ];then
 fi
 
 echo "partial restore start..."
-run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 311111 --end 311122 --format hex --concurrency 4
+run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 311111 --end 311122 --format hex --concurrency 4 --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
 bin/rawkv --pd $PD_ADDR \
     --ca "$TEST_DIR/certs/ca.pem" \
     --cert "$TEST_DIR/certs/br.pem" \
