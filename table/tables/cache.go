@@ -111,7 +111,7 @@ func (c *cachedTable) loadDataFromOriginalTable(sctx sessionctx.Context, lease u
 			return err
 		}
 
-		buffer := buffTxn.GetMemBuffer()
+		buffer = buffTxn.GetMemBuffer()
 		it, err := txn.Iter(prefix, prefix.PrefixNext())
 		if err != nil {
 			return err

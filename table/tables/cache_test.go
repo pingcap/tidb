@@ -15,10 +15,11 @@
 package tables_test
 
 import (
+	"testing"
+
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestCacheTableBasicScan(t *testing.T) {
