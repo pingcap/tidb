@@ -2158,8 +2158,7 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 }
 
 func decodeTableKey(key []byte, tableID int64, tbl table.Table, loc *time.Location) (string, error) {
-	ret := make(map[string]interface{})
-	ret["table_id"] = tableID
+	ret := map[string]int64{"table_id": tableID}
 	retStr, err := json.Marshal(ret)
 	if err != nil {
 		return "", errors.Trace(err)
