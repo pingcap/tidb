@@ -1578,7 +1578,7 @@ func TestCheckTiDBWithTiKV(t *testing.T) {
 		if ok {
 			mock.ExpectQuery("SELECT COUNT").WillReturnError(expectedErr)
 			hasTiKV, err := CheckTiDBWithTiKV(db)
-			require.ErrorIs(t, err, expectedErr)
+			require.ErrorIs(t, errors.Cause(err), expectedErr)
 			require.True(t, hasTiKV)
 		} else if cnt, ok := res.(int); ok {
 			mock.ExpectQuery("SELECT COUNT").WillReturnRows(
@@ -1727,7 +1727,7 @@ func TestPickupPossibleField(t *testing.T) {
 
 		field, err := pickupPossibleField(meta, conn)
 		if expectedErr != nil {
-			require.ErrorIs(t, err, expectedErr)
+			require.ErrorIs(t, errors.Cause(err), expectedErr)
 		} else {
 			require.NoError(t, err)
 			require.Equal(t, testCase.expectedField, field)

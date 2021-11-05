@@ -5,11 +5,11 @@ package export
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 
 	dbconfig "github.com/pingcap/tidb/config"
@@ -200,7 +200,7 @@ func TestConsistencyLockTiDBCheck(t *testing.T) {
 	unknownSysVarErr := errors.New("ERROR 1193 (HY000): Unknown system variable 'tidb_config'")
 	mock.ExpectQuery("SELECT @@tidb_config").WillReturnError(unknownSysVarErr)
 	err = ctrl.Setup(tctx)
-	require.ErrorIs(t, err, unknownSysVarErr)
+	require.ErrorIs(t, errors.Cause(err), unknownSysVarErr)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	// enable-table-lock is false, don't allow to lock tables
