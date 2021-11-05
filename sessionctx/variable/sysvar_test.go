@@ -761,7 +761,7 @@ func TestTimestamp(t *testing.T) {
 	vars.systems[Timestamp] = "" // set to default
 	val, err = GetSessionOrGlobalSystemVar(vars, Timestamp)
 	require.NoError(t, err)
-	require.NotEqual(t, "0", val)
+	require.NotEqual(t, "", val)
 	require.NotEqual(t, "10", val)
 }
 
