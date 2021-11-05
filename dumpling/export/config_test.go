@@ -6,8 +6,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"testing"
 
-	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/stretchr/testify/require"
+
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 func TestCreateExternalStorage(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"io/ioutil"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -25,6 +26,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
+
+	"github.com/pingcap/tidb/br/pkg/storage"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 const (
@@ -536,21 +540,9 @@ func (conf *Config) createExternalStorage(ctx context.Context) (storage.External
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	httpClient := http.DefaultClient
-	httpClient.Timeout = 30 * time.Second
-	maxIdleConnsPerHost := http.DefaultMaxIdleConnsPerHost
-	if conf.Threads > maxIdleConnsPerHost {
-		maxIdleConnsPerHost = conf.Threads
-	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.MaxIdleConnsPerHost = maxIdleConnsPerHost
-	httpClient.Transport = transport
 
-	return storage.New(ctx, b, &storage.ExternalStorageOptions{
-		HTTPClient:      httpClient,
-		SkipCheckPath:   true,
-		SendCredentials: false,
-	})
+	// TODO: support setting httpClient with certification later
+	return storage.New(ctx, b, &storage.ExternalStorageOptions{})
 }
 
 const (
