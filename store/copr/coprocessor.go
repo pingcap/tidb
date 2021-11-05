@@ -1047,7 +1047,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	}
 	if task.pagingSize < maxPagingSize {
 		for _, t := range tasks {
-			t.pagingSize += minPagingSize
+			t.pagingSize *= 2
 		}
 	}
 	return tasks, err
