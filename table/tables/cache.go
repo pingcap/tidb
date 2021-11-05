@@ -85,7 +85,10 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 
 // Close TODO only for skip go leap. and will remove in the following
 func Close() {
-	close(mockStateRemote.Ch)
+	_, ok := <-mockStateRemote.Ch
+	if ok {
+		close(mockStateRemote.Ch)
+	}
 }
 func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context) (kv.MemBuffer, error) {
 	prefix := tablecodec.GenTablePrefix(c.tableID)
