@@ -2305,12 +2305,20 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		bigints = bigints[0:0]
 		for j := 0; j < l-1; j++ {
 			if buf[j].IsNull(i) {
+				result.AppendNull()
 				continue
 			}
 			bigints = append(bigints, bufint[j][i])
 		}
-		tempString := string(b.convertToBytes(bigints))
-		result.AppendString(tempString)
+		dBytes := b.convertToBytes(bigints)
+
+		resultBytes, err := charset.NewEncoding(b.tp.Charset).Decode(nil, dBytes)
+		if err != nil {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(string(resultBytes))
 	}
 	return nil
 }

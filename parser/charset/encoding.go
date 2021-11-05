@@ -19,6 +19,7 @@ import (
 	"reflect"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/cznic/mathutil"
@@ -140,9 +141,40 @@ func (e *Encoding) EncodeInternal(dest, src []byte) []byte {
 	return dest
 }
 
+// Check whether there are illegal utf8 characters in []byte
+func (e *Encoding) vaildUTF8(src []byte) ([]byte, error) {
+	resultBytes := src
+	for len(src) > 0 {
+		r, size := utf8.DecodeRune(src)
+		if r == utf8.RuneError && size == 1 {
+			return resultBytes, e.generateErr(src, 3)
+		}
+		src = src[size:]
+	}
+
+	return resultBytes, nil
+}
+
+// Check whether there are illegal utf8 characters in string
+func (e *Encoding) vaildUTF8String(src string) (string, error) {
+	resultStr := src
+	for len(src) > 0 {
+		r, size := utf8.DecodeRuneInString(src)
+		if r == utf8.RuneError && size == 1 {
+			return resultStr, e.generateErr([]byte(src), 3)
+		}
+		src = src[size:]
+	}
+
+	return resultStr, nil
+}
+
 // Decode convert bytes from a specific charset to utf-8 charset.
 func (e *Encoding) Decode(dest, src []byte) ([]byte, error) {
 	if !e.enabled() {
+		if e.name == "utf-8" {
+			return e.vaildUTF8(src)
+		}
 		return src, nil
 	}
 	return e.transform(e.enc.NewDecoder(), dest, src, true)
@@ -151,6 +183,9 @@ func (e *Encoding) Decode(dest, src []byte) ([]byte, error) {
 // DecodeString convert a string from a specific charset to utf-8 charset.
 func (e *Encoding) DecodeString(src string) (string, error) {
 	if !e.enabled() {
+		if e.name == "utf-8" {
+			return e.vaildUTF8String(src)
+		}
 		return src, nil
 	}
 	bs, err := e.transform(e.enc.NewDecoder(), nil, Slice(src), true)
