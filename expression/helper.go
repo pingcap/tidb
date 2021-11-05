@@ -161,7 +161,7 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 			return now, nil
 		}
 		seconds, fractionalSeconds := math.Modf(timestamp)
-		return time.Unix(int64(seconds), int64(fractionalSeconds * float64(time.Second))), nil
+		return time.Unix(int64(seconds), int64(fractionalSeconds*float64(time.Second))), nil
 	}
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	return stmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time), nil
