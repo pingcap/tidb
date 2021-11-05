@@ -416,7 +416,7 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 }
 
 // resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringAsDatetime bool, _ byte) {
+func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringAsDatetime bool) {
 	aggType := aggregateType(args)
 
 	var temporalItem *types.FieldType
@@ -437,7 +437,7 @@ func resolveType4Extremum(args []Expression) (_ types.EvalType, cmpStringAsDatet
 		}
 		// TODO: String charset, collation checking are needed.
 	}
-	return aggType.EvalType(), cmpStringAsDatetime, aggType.Tp
+	return aggType.EvalType(), cmpStringAsDatetime
 }
 
 // unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
@@ -459,7 +459,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpStringAsDatetime, detailedTimeType := resolveType4Extremum(args)
+	tp, cmpStringAsDatetime := resolveType4Extremum(args)
 	if cmpStringAsDatetime {
 		// Args are temporal and stirng mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		tp = types.ETString
@@ -487,7 +487,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
 	case types.ETString:
 		if cmpStringAsDatetime {
-			sig = &builtinGreatestCmpStringAsDatetimeSig{bf, detailedTimeType}
+			sig = &builtinGreatestCmpStringAsDatetimeSig{bf}
 			// TODO
 			// sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
 		} else {
@@ -640,13 +640,11 @@ func (b *builtinGreatestStringSig) evalString(row chunk.Row) (max string, isNull
 
 type builtinGreatestCmpStringAsDatetimeSig struct {
 	baseBuiltinFunc
-	detailedTimeType byte
 }
 
 func (b *builtinGreatestCmpStringAsDatetimeSig) Clone() builtinFunc {
 	newSig := &builtinGreatestCmpStringAsDatetimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.detailedTimeType = b.detailedTimeType
 	return newSig
 }
 
@@ -729,7 +727,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpStringAsDatetime, detailedTimeType := resolveType4Extremum(args)
+	tp, cmpStringAsDatetime := resolveType4Extremum(args)
 	if cmpStringAsDatetime {
 		// Args are temporal and stirng mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		tp = types.ETString
@@ -757,7 +755,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
 	case types.ETString:
 		if cmpStringAsDatetime {
-			sig = &builtinLeastCmpStringAsDatetimeSig{bf, detailedTimeType}
+			sig = &builtinLeastCmpStringAsDatetimeSig{bf}
 			// TODO
 			// sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
 		} else {
@@ -897,13 +895,11 @@ func (b *builtinLeastStringSig) evalString(row chunk.Row) (min string, isNull bo
 
 type builtinLeastCmpStringAsDatetimeSig struct {
 	baseBuiltinFunc
-	detailedTimeType byte
 }
 
 func (b *builtinLeastCmpStringAsDatetimeSig) Clone() builtinFunc {
 	newSig := &builtinLeastCmpStringAsDatetimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.detailedTimeType = b.detailedTimeType
 	return newSig
 }
 

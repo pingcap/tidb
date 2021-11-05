@@ -641,7 +641,6 @@ func (b *builtinGreatestCmpStringAsDatetimeSig) vecEvalString(input *chunk.Chunk
 	// TODO: use Column.MergeNulls instead, however, it doesn't support var-length type currently.
 	dstNullMap := make([]bool, n)
 
-	var parsedStr string
 	for j := 0; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
 			return err
@@ -652,30 +651,18 @@ func (b *builtinGreatestCmpStringAsDatetimeSig) vecEvalString(input *chunk.Chunk
 			}
 
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
-			argStr := string(result.GetBytes(i))
-			parsedStr = argStr
-			if b.detailedTimeType == mysql.TypeDuration {
-				argTime, err := types.ParseDuration(sc, argStr, int8(b.getRetTp().Decimal))
-				if err != nil {
-					if err = handleInvalidTimeError(b.ctx, err); err != nil {
-						return err
-					}
-				} else {
-					parsedStr = argTime.String()
+			argTimeStr := string(result.GetBytes(i))
+
+			argTime, err := types.ParseDatetime(sc, argTimeStr)
+			if err != nil {
+				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+					return err
 				}
 			} else {
-				argTime, err := types.ParseTime(sc, argStr, b.detailedTimeType, int8(b.getRetTp().Decimal))
-				if err != nil {
-					if err = handleInvalidTimeError(b.ctx, err); err != nil {
-						return err
-					}
-				} else {
-					parsedStr = argTime.String()
-				}
+				argTimeStr = argTime.String()
 			}
-
-			if j == 0 || strings.Compare(parsedStr, dstStrings[i]) > 0 {
-				dstStrings[i] = argStr
+			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) > 0 {
+				dstStrings[i] = argTimeStr
 			}
 		}
 	}
@@ -704,7 +691,6 @@ func (b *builtinLeastCmpStringAsDatetimeSig) vecEvalString(input *chunk.Chunk, r
 	// TODO: use Column.MergeNulls instead, however, it doesn't support var-length type currently.
 	dstNullMap := make([]bool, n)
 
-	var parsedStr string
 	for j := 0; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
 			return err
@@ -715,30 +701,18 @@ func (b *builtinLeastCmpStringAsDatetimeSig) vecEvalString(input *chunk.Chunk, r
 			}
 
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
-			argStr := string(result.GetBytes(i))
-			parsedStr = argStr
-			if b.detailedTimeType == mysql.TypeDuration {
-				argTime, err := types.ParseDuration(sc, argStr, int8(b.getRetTp().Decimal))
-				if err != nil {
-					if err = handleInvalidTimeError(b.ctx, err); err != nil {
-						return err
-					}
-				} else {
-					parsedStr = argTime.String()
+			argTimeStr := string(result.GetBytes(i))
+
+			argTime, err := types.ParseDatetime(sc, argTimeStr)
+			if err != nil {
+				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+					return err
 				}
 			} else {
-				argTime, err := types.ParseTime(sc, argStr, b.detailedTimeType, int8(b.getRetTp().Decimal))
-				if err != nil {
-					if err = handleInvalidTimeError(b.ctx, err); err != nil {
-						return err
-					}
-				} else {
-					parsedStr = argTime.String()
-				}
+				argTimeStr = argTime.String()
 			}
-
-			if j == 0 || strings.Compare(parsedStr, dstStrings[i]) < 0 {
-				dstStrings[i] = argStr
+			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) < 0 {
+				dstStrings[i] = argTimeStr
 			}
 		}
 	}
