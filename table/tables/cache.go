@@ -98,41 +98,39 @@ func CloseRemoteService() {
 		}
 	}
 }
-func (c *cachedTable) loadDataFromOriginalTable(sctx sessionctx.Context, lease uint64) (kv.MemBuffer, error) {
-	var buffer kv.MemBuffer
-	err := kv.RunInNewTxn(context.Background(), sctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
-		prefix := tablecodec.GenTablePrefix(c.tableID)
-		if txn.StartTS() >= lease {
-			return errors.New("the loaded data is outdate for caching")
-		}
-
-		buffTxn, err := sctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
-		if err != nil {
-			return err
-		}
-
-		buffer = buffTxn.GetMemBuffer()
-		it, err := txn.Iter(prefix, prefix.PrefixNext())
-		if err != nil {
-			return err
-		}
-		defer it.Close()
-		for it.Valid() && it.Key().HasPrefix(prefix) {
-			value := it.Value()
-			err = buffer.Set(it.Key(), value)
-			if err != nil {
-				return err
-			}
-			err = it.Next()
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context, lease uint64) (kv.MemBuffer, error) {
+	prefix := tablecodec.GenTablePrefix(c.tableID)
+	txn, err := ctx.Txn(true)
 	if err != nil {
 		return nil, err
 	}
+	if txn.StartTS() >= lease {
+		return nil, errors.New("the loaded data is outdate for caching")
+	}
+
+	buffTxn, err := ctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
+	if err != nil {
+		return nil, err
+	}
+
+	buffer := buffTxn.GetMemBuffer()
+	it, err := txn.Iter(prefix, prefix.PrefixNext())
+	if err != nil {
+		return nil, err
+	}
+	defer it.Close()
+	for it.Valid() && it.Key().HasPrefix(prefix) {
+		value := it.Value()
+		err = buffer.Set(it.Key(), value)
+		if err != nil {
+			return nil, err
+		}
+		err = it.Next()
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return buffer, nil
 }
 

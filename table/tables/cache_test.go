@@ -26,7 +26,6 @@ func TestCacheTableBasicScan(t *testing.T) {
 	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	defer tables.CloseRemoteService()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tmp1")
