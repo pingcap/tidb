@@ -3942,8 +3942,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows("3 c 1.3 2"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	result = tk.MustQuery(`select greatest(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), greatest(cast("2017-01-01" as date), "123", null)`)
-	// todo: MySQL returns "2018-01-01 <nil>"
-	result.Check(testkit.Rows("2018-01-01 00:00:00 <nil>"))
+	result.Check(testkit.Rows("234 <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
 	// for least
 	result = tk.MustQuery(`select least(1, 2, 3), least("a", "b", "c"), least(1.1, 1.2, 1.3), least("123a", 1, 2)`)
@@ -9937,6 +9936,19 @@ func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
 	tk.MustExec("insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);")
 	tk.MustQuery("select if(A, null,b)=1 from t;").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
 	tk.MustQuery("select if(A, null,b)='a' from t;").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
+
+	// issue 29357
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(`a` enum('y','b','Abc','null','1','2','0')) CHARSET=binary;")
+	tk.MustExec("insert into t values(\"1\");")
+	tk.MustQuery("SELECT count(*) from t where (null like 'a') = (case when cast('2015' as real) <=> round(\"1200\",\"1\") then a end);\n").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT (null like 'a') = (case when cast('2015' as real) <=> round(\"1200\",\"1\") then a end) from t;\n").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT 5 = (case when 0 <=> 0 then a end) from t;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT '1' = (case when 0 <=> 0 then a end) from t;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT 5 = (case when 0 <=> 1 then a end) from t;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT '1' = (case when 0 <=> 1 then a end) from t;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT 5 = (case when 0 <=> 1 then a else a end) from t;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT '1' = (case when 0 <=> 1 then a else a end) from t;").Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestComplexShowVariables(c *C) {
@@ -10431,6 +10443,24 @@ func (s *testIntegrationSuite) TestIssue28643(c *C) {
 	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
 	tk.MustExec("set tidb_enable_vectorized_expression = off;")
 	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
+}
+
+func (s *testIntegrationSuite) TestIssue29434(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 datetime);")
+	tk.MustExec("insert into t1 values('2021-12-12 10:10:10.000');")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select greatest(c1, '99999999999999') from t1;").Check(testkit.Rows("99999999999999"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select greatest(c1, '99999999999999') from t1;").Check(testkit.Rows("99999999999999"))
+
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select least(c1, '99999999999999') from t1;").Check(testkit.Rows("2021-12-12 10:10:10"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select least(c1, '99999999999999') from t1;").Check(testkit.Rows("2021-12-12 10:10:10"))
 }
 
 func (s *testIntegrationSuite) TestIssue29244(c *C) {
