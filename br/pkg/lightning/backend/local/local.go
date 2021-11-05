@@ -2330,7 +2330,6 @@ func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.Che
 		return err
 	}
 
-
 	serverInfo := version.ParseServerInfo(versionStr)
 	return checkTiFlashVersion(ctx, local.g, checkCtx, *serverInfo.ServerVersion)
 }
