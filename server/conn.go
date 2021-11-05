@@ -2144,7 +2144,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	fetchedRows := rs.GetFetchedRows()
 	for len(fetchedRows) < fetchSize {
 		// if fetchedRows is not enough, getting data from recordSet.
-		req := rs.NewChunk()
+		req := rs.NewChunk(cc.chunkAlloc)
 		// Here server.tidbResultSet implements Next method.
 		if err := rs.Next(ctx, req); err != nil {
 			return err
