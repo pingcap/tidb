@@ -10419,21 +10419,6 @@ PARTITION p20210909 VALUES LESS THAN (1631203200)
 	tk.MustQuery("SELECT cast(floor(hour(ts) / 4) as char) as win_start FROM perf_offline_day partition (p20210907, p20210908) GROUP BY win_start;").Check(testkit.Rows("3"))
 }
 
-<<<<<<< HEAD
-=======
-func (s *testIntegrationSuite) TestIssue28643(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a time(4));")
-	tk.MustExec("insert into t values(\"-838:59:59.000000\");")
-	tk.MustExec("insert into t values(\"838:59:59.000000\");")
-	tk.MustExec("set tidb_enable_vectorized_expression = on;")
-	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
-	tk.MustExec("set tidb_enable_vectorized_expression = off;")
-	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
-}
-
 func (s *testIntegrationSuite) TestIssue27831(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -10448,7 +10433,6 @@ func (s *testIntegrationSuite) TestIssue27831(c *C) {
 	tk.MustQuery("select /*+ inl_hash_join(t1) */  * from t t1 right join t t2 on t1.a=t2.b and t1.a= t2.c and t1.d=t2.d;").Check(testkit.Rows("a a 1 1 a a 1 1"))
 }
 
->>>>>>> fa8cbd588... executor: fix wrong result for join with enum type (#29375)
 func (s *testIntegrationSuite) TestIssue29434(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
