@@ -15,7 +15,6 @@
 package tables_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/testkit"
