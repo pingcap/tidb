@@ -82,7 +82,7 @@ jobs:
       - name: Download dependencies
         run: sh dumpling/install.sh
       - name: Integration test
-        run: make dumpling_integration_test
+        run: make dumpling_integration_test VERBOSE="true"
       - name: Set up tmate session
         if: ${{ failure() }}
         uses: mxschmitt/action-tmate@v3
@@ -119,7 +119,7 @@ jobs:
       - name: Download dependencies
         run: sh dumpling/install.sh
       - name: Integration test
-        run: make dumpling_integration_test
+        run: make dumpling_integration_test VERBOSE="true"
       - name: Set up tmate session
         if: ${{ failure() }}
         uses: mxschmitt/action-tmate@v3
@@ -156,7 +156,7 @@ jobs:
       - name: Download dependencies
         run: sh dumpling/install.sh
       - name: Integration test
-        run: make dumpling_integration_test
+        run: make dumpling_integration_test VERBOSE="true"
       - name: Set up tmate session
         if: ${{ failure() }}
         uses: mxschmitt/action-tmate@v3
