@@ -15,7 +15,7 @@ func TestRepeatableRead(t *testing.T) {
 
 	data := [][]interface{}{
 		{version.ServerTypeUnknown, consistencyTypeNone, true},
-		{version.ServerTypeUnknown, consistencyTypeFlush, true},
+		{version.ServerTypeMySQL, consistencyTypeFlush, true},
 		{version.ServerTypeMariaDB, consistencyTypeLock, true},
 		{version.ServerTypeTiDB, consistencyTypeNone, true},
 		{version.ServerTypeTiDB, consistencyTypeSnapshot, false},

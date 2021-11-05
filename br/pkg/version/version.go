@@ -217,11 +217,11 @@ func ExtractTiDBVersion(version string) (*semver.Version, error) {
 
 // CheckTiDBVersion is equals to ExtractTiDBVersion followed by CheckVersion.
 func CheckTiDBVersion(versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
-	version, err := ExtractTiDBVersion(versionStr)
-	if err != nil {
-		return errors.Trace(err)
+	serverInfo := ParseServerInfo(versionStr)
+	if serverInfo.ServerType != ServerTypeTiDB {
+		return errors.Errorf("server with version '%s' is not TiDB", versionStr)
 	}
-	return CheckVersion("TiDB", *version, requiredMinVersion, requiredMaxVersion)
+	return CheckVersion("TiDB", *serverInfo.ServerVersion, requiredMinVersion, requiredMaxVersion)
 }
 
 // NormalizeBackupVersion normalizes the version string from backupmeta.
