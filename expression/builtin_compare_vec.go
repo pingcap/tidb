@@ -629,11 +629,11 @@ func vecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Co
 	}
 }
 
-func (b *builtinGreatestCmpStringAsDatetimeSig) vectorized() bool {
+func (b *builtinGreatestCmpStringAsTimeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinGreatestCmpStringAsDatetimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinGreatestCmpStringAsTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	n := input.NumRows()
 
@@ -714,11 +714,11 @@ func (b *builtinGreatestRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 	return nil
 }
 
-func (b *builtinLeastCmpStringAsDatetimeSig) vectorized() bool {
+func (b *builtinLeastCmpStringAsTimeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLeastCmpStringAsDatetimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLeastCmpStringAsTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	n := input.NumRows()
 
@@ -835,13 +835,13 @@ func (b *builtinGreatestTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 		}
 		result.MergeNulls(buf)
 		resTimes := result.Times()
+		argTimes := buf.Times()
 		for rowIdx := 0; rowIdx < n; rowIdx++ {
 			if result.IsNull(rowIdx) {
 				continue
 			}
-			argTime := buf.GetTime(rowIdx)
-			if argIdx == 0 || argTime.Compare(resTimes[rowIdx]) > 0 {
-				resTimes[rowIdx] = argTime
+			if argIdx == 0 || argTimes[rowIdx].Compare(resTimes[rowIdx]) > 0 {
+				resTimes[rowIdx] = argTimes[rowIdx]
 			}
 		}
 	}
@@ -867,13 +867,13 @@ func (b *builtinLeastTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 		}
 		result.MergeNulls(buf)
 		resTimes := result.Times()
+		argTimes := buf.Times()
 		for rowIdx := 0; rowIdx < n; rowIdx++ {
 			if result.IsNull(rowIdx) {
 				continue
 			}
-			argTime := buf.GetTime(rowIdx)
-			if argIdx == 0 || argTime.Compare(resTimes[rowIdx]) < 0 {
-				resTimes[rowIdx] = argTime
+			if argIdx == 0 || argTimes[rowIdx].Compare(resTimes[rowIdx]) < 0 {
+				resTimes[rowIdx] = argTimes[rowIdx]
 			}
 		}
 	}

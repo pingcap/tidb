@@ -51,14 +51,14 @@ var (
 	_ builtinFunc = &builtinGreatestStringSig{}
 	_ builtinFunc = &builtinGreatestDurationSig{}
 	_ builtinFunc = &builtinGreatestTimeSig{}
-	_ builtinFunc = &builtinGreatestCmpStringAsDatetimeSig{}
+	_ builtinFunc = &builtinGreatestCmpStringAsTimeSig{}
 	_ builtinFunc = &builtinLeastIntSig{}
 	_ builtinFunc = &builtinLeastRealSig{}
 	_ builtinFunc = &builtinLeastDecimalSig{}
 	_ builtinFunc = &builtinLeastStringSig{}
 	_ builtinFunc = &builtinLeastTimeSig{}
 	_ builtinFunc = &builtinLeastDurationSig{}
-	_ builtinFunc = &builtinLeastCmpStringAsDatetimeSig{}
+	_ builtinFunc = &builtinLeastCmpStringAsTimeSig{}
 	_ builtinFunc = &builtinIntervalIntSig{}
 	_ builtinFunc = &builtinIntervalRealSig{}
 
@@ -487,16 +487,15 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestDecimal)
 	case types.ETString:
 		if cmpStringAsDatetime {
-			sig = &builtinGreatestCmpStringAsDatetimeSig{bf}
-			// TODO
-			// sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
+			sig = &builtinGreatestCmpStringAsTimeSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_GreatestCmpStringAsTime)
 		} else {
 			sig = &builtinGreatestStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
 		}
 	case types.ETDuration:
 		sig = &builtinGreatestDurationSig{bf}
-		// sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
+		sig.setPbCode(tipb.ScalarFuncSig_GreatestDuration)
 	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinGreatestTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
@@ -638,19 +637,19 @@ func (b *builtinGreatestStringSig) evalString(row chunk.Row) (max string, isNull
 	return
 }
 
-type builtinGreatestCmpStringAsDatetimeSig struct {
+type builtinGreatestCmpStringAsTimeSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinGreatestCmpStringAsDatetimeSig) Clone() builtinFunc {
-	newSig := &builtinGreatestCmpStringAsDatetimeSig{}
+func (b *builtinGreatestCmpStringAsTimeSig) Clone() builtinFunc {
+	newSig := &builtinGreatestCmpStringAsTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-// evalString evals a builtinGreatestCmpStringAsDatetimeSig.
+// evalString evals a builtinGreatestCmpStringAsTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestCmpStringAsDatetimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
+func (b *builtinGreatestCmpStringAsTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(b.ctx, row)
@@ -755,16 +754,15 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig.setPbCode(tipb.ScalarFuncSig_LeastDecimal)
 	case types.ETString:
 		if cmpStringAsDatetime {
-			sig = &builtinLeastCmpStringAsDatetimeSig{bf}
-			// TODO
-			// sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
+			sig = &builtinLeastCmpStringAsTimeSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_LeastCmpStringAsTime)
 		} else {
 			sig = &builtinLeastStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_LeastString)
 		}
 	case types.ETDuration:
 		sig = &builtinLeastDurationSig{bf}
-		// sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
+		sig.setPbCode(tipb.ScalarFuncSig_LeastDuration)
 	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinLeastTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
@@ -893,19 +891,19 @@ func (b *builtinLeastStringSig) evalString(row chunk.Row) (min string, isNull bo
 	return
 }
 
-type builtinLeastCmpStringAsDatetimeSig struct {
+type builtinLeastCmpStringAsTimeSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinLeastCmpStringAsDatetimeSig) Clone() builtinFunc {
-	newSig := &builtinLeastCmpStringAsDatetimeSig{}
+func (b *builtinLeastCmpStringAsTimeSig) Clone() builtinFunc {
+	newSig := &builtinLeastCmpStringAsTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-// evalString evals a builtinLeastCmpStringAsDatetimeSig.
+// evalString evals a builtinLeastCmpStringAsTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
-func (b *builtinLeastCmpStringAsDatetimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
+func (b *builtinLeastCmpStringAsTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(b.ctx, row)
