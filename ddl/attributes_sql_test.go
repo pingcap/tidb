@@ -404,6 +404,41 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows3[1][3], Equals, rows2[1][3])
 }
 
+func (s *testDBSuite8) TestDropSchema(c *C) {
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`)
+	tk.MustExec(`create table t2 (c int);`)
+
+	// add rules
+	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	c.Assert(err, IsNil)
+	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
+	c.Assert(err, IsNil)
+	_, err = tk.Exec(`alter table t2 attributes="key=value";`)
+	c.Assert(err, IsNil)
+	rows := tk.MustQuery(`select * from information_schema.attributes;`).Rows()
+	c.Assert(len(rows), Equals, 3)
+	// drop database
+	_, err = tk.Exec(`drop database test`)
+	c.Assert(err, IsNil)
+	rows = tk.MustQuery(`select * from information_schema.attributes;`).Rows()
+	c.Assert(len(rows), Equals, 0)
+}
+
 func (s *testDBSuite8) TestDefaultKeyword(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
