@@ -461,7 +461,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	tp, cmpStringAsDatetime := resolveType4Extremum(args)
 	if cmpStringAsDatetime {
-		// Args are temporal and stirng mixed, we cast all args as string and parse it to temporal mannualy to compare.
+		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		tp = types.ETString
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
@@ -729,7 +729,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	tp, cmpStringAsDatetime := resolveType4Extremum(args)
 	if cmpStringAsDatetime {
-		// Args are temporal and stirng mixed, we cast all args as string and parse it to temporal mannualy to compare.
+		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		tp = types.ETString
 	} else if tp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)

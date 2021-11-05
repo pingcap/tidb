@@ -679,6 +679,41 @@ func (b *builtinGreatestCmpStringAsDatetimeSig) vecEvalString(input *chunk.Chunk
 	return nil
 }
 
+func (b *builtinGreatestRealSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGreatestRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	f64s := result.Float64s()
+	for j := 1; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalReal(b.ctx, input, buf); err != nil {
+			return err
+		}
+
+		result.MergeNulls(buf)
+		v := buf.Float64s()
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) {
+				continue
+			}
+			if v[i] > f64s[i] {
+				f64s[i] = v[i]
+			}
+		}
+	}
+	return nil
+}
+
 func (b *builtinLeastCmpStringAsDatetimeSig) vectorized() bool {
 	return true
 }
@@ -725,6 +760,58 @@ func (b *builtinLeastCmpStringAsDatetimeSig) vecEvalString(input *chunk.Chunk, r
 		} else {
 			result.AppendString(dstStrings[i])
 		}
+	}
+	return nil
+}
+
+func (b *builtinGreatestStringSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
+
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	buf2, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+
+	src := result
+	arg := buf1
+	dst := buf2
+	dst.ReserveString(n)
+	for j := 1; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if src.IsNull(i) || arg.IsNull(i) {
+				dst.AppendNull()
+				continue
+			}
+			srcStr := src.GetString(i)
+			argStr := arg.GetString(i)
+			if types.CompareString(srcStr, argStr, b.collation) > 0 {
+				dst.AppendString(srcStr)
+			} else {
+				dst.AppendString(argStr)
+			}
+		}
+		src, dst = dst, src
+		arg.ReserveString(n)
+		dst.ReserveString(n)
+	}
+	if len(b.args)%2 == 0 {
+		src.CopyConstruct(result)
 	}
 	return nil
 }
@@ -853,93 +940,6 @@ func (b *builtinLeastDurationSig) vecEvalDuration(input *chunk.Chunk, result *ch
 				resDurations[rowIdx] = argDurations[rowIdx]
 			}
 		}
-	}
-	return nil
-}
-
-func (b *builtinGreatestRealSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinGreatestRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
-		return err
-	}
-
-	f64s := result.Float64s()
-	for j := 1; j < len(b.args); j++ {
-		if err := b.args[j].VecEvalReal(b.ctx, input, buf); err != nil {
-			return err
-		}
-
-		result.MergeNulls(buf)
-		v := buf.Float64s()
-		for i := 0; i < n; i++ {
-			if result.IsNull(i) {
-				continue
-			}
-			if v[i] > f64s[i] {
-				f64s[i] = v[i]
-			}
-		}
-	}
-	return nil
-}
-
-func (b *builtinGreatestStringSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
-		return err
-	}
-
-	n := input.NumRows()
-	buf1, err := b.bufAllocator.get()
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf1)
-	buf2, err := b.bufAllocator.get()
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf2)
-
-	src := result
-	arg := buf1
-	dst := buf2
-	dst.ReserveString(n)
-	for j := 1; j < len(b.args); j++ {
-		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
-			return err
-		}
-		for i := 0; i < n; i++ {
-			if src.IsNull(i) || arg.IsNull(i) {
-				dst.AppendNull()
-				continue
-			}
-			srcStr := src.GetString(i)
-			argStr := arg.GetString(i)
-			if types.CompareString(srcStr, argStr, b.collation) > 0 {
-				dst.AppendString(srcStr)
-			} else {
-				dst.AppendString(argStr)
-			}
-		}
-		src, dst = dst, src
-		arg.ReserveString(n)
-		dst.ReserveString(n)
-	}
-	if len(b.args)%2 == 0 {
-		src.CopyConstruct(result)
 	}
 	return nil
 }
