@@ -3803,25 +3803,13 @@ func (s *testIntegrationSuite) TestGreatestTimeType(c *C) {
 		tk.MustQuery("select greatest(c_dt, c_dt) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
 		tk.MustQuery("select greatest(c_ts, c_ts) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.123"))
 		tk.MustQuery("select greatest(c_d, c_d) from t1;").Check(testkit.Rows("2021-10-11"))
-		tk.MustQuery("select greatest(c_time, c_str) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
-		tk.MustQuery("select greatest(c_dt, c_str) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.123400"))
-		tk.MustQuery("select greatest(c_d, c_str) from t1;").Check(testkit.Rows("2021-10-11"))
-		tk.MustQuery("select greatest(c_time, c_dt, c_ts, c_d, c_str) from t1;").Check(testkit.Rows("2021-10-11 00:00:00.000000"))
-		tk.MustQuery("select greatest(c_time, c_dt, c_ts, c_d, c_str, '99999999999') from t1;").Check(testkit.Rows("99999999999"))
+		tk.MustQuery("select greatest(c_str, c_str) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
 
 		tk.MustQuery("select least(c_time, c_time) from t1;").Check(testkit.Rows("-800:10:10.00000"))
 		tk.MustQuery("select least(c_dt, c_dt) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
 		tk.MustQuery("select least(c_ts, c_ts) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.123"))
 		tk.MustQuery("select least(c_d, c_d) from t1;").Check(testkit.Rows("2021-10-11"))
-		tk.MustQuery("select least(c_time, c_str) from t1;").Check(testkit.Rows("-800:10:10.00000"))
-		tk.MustQuery("select least(c_dt, c_str) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.123400"))
-		tk.MustQuery("select least(c_d, c_str) from t1;").Check(testkit.Rows("2021-10-11"))
-		tk.MustQuery("select least(c_time, c_dt, c_ts, c_d, c_str) from t1;").Check(testkit.Rows("2021-10-01 15:49:50.000000"))
-		// TODO: select c_time, c_dt, least(c_time, c_dt, '99999999999') from t1;
-		// Duration is not handled properly. Actually we expect '-800:10:10.00000'.
-		// Why: -800:10:10.00000 -cast-as-string-> '-800:10:10.00000' -cast-as-datetime-> 2000-00-00 00:00:00
-		// So we need should convert -800:10:10.00000 to datetime directly. But we cannot do that for now.
-		tk.MustQuery("select least(c_time, c_dt, c_ts, c_d, c_str, '99999999999') from t1;").Check(testkit.Rows("2000-00-00 00:00:00"))
+		tk.MustQuery("select least(c_str, c_str) from t1;").Check(testkit.Rows("2021-10-10 10:10:10.1234"))
 	}
 }
 
