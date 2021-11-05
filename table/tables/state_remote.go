@@ -173,9 +173,9 @@ type mockStateRemoteData struct {
 }
 
 type stateRecord struct {
-	lease    uint64
+	lease         uint64
 	readLockLease uint64 // only use for intent lock
-	lockType CachedTableLockType
+	lockType      CachedTableLockType
 }
 
 func newMockStateRemoteData() *mockStateRemoteData {
