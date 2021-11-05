@@ -258,7 +258,7 @@ func toInt(l yyLexer, lval *yySymType, str string) int {
 			return toDecimal(l, lval, str)
 		}
 		l.AppendError(l.Errorf("integer literal: %v", err))
-		return int(unicode.ReplacementChar)
+		return invalid
 	}
 
 	switch {
@@ -293,7 +293,7 @@ func toFloat(l yyLexer, lval *yySymType, str string) int {
 			return int(unicode.ReplacementChar)
 		}
 		l.AppendError(l.Errorf("float literal: %v", err))
-		return int(unicode.ReplacementChar)
+		return invalid
 	}
 
 	lval.item = n
@@ -305,7 +305,7 @@ func toHex(l yyLexer, lval *yySymType, str string) int {
 	h, err := ast.NewHexLiteral(str)
 	if err != nil {
 		l.AppendError(l.Errorf("hex literal: %v", err))
-		return int(unicode.ReplacementChar)
+		return invalid
 	}
 	lval.item = h
 	return hexLit
@@ -316,7 +316,7 @@ func toBit(l yyLexer, lval *yySymType, str string) int {
 	b, err := ast.NewBitLiteral(str)
 	if err != nil {
 		l.AppendError(l.Errorf("bit literal: %v", err))
-		return int(unicode.ReplacementChar)
+		return invalid
 	}
 	lval.item = b
 	return bitLit
