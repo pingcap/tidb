@@ -5,6 +5,7 @@ package export
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"testing"
 	"time"
 
@@ -74,13 +75,13 @@ func TestDumpTableMeta(t *testing.T) {
 	conf := DefaultConfig()
 	conf.NoSchemas = true
 
-	for serverType := ServerTypeUnknown; serverType < ServerTypeAll; serverType++ {
-		conf.ServerInfo.ServerType = ServerType(serverType)
+	for serverType := version.ServerTypeUnknown; serverType < version.ServerTypeAll; serverType++ {
+		conf.ServerInfo.ServerType = version.ServerType(serverType)
 		hasImplicitRowID := false
 		mock.ExpectQuery("SHOW COLUMNS FROM").
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
-		if serverType == ServerTypeTiDB {
+		if serverType == version.ServerTypeTiDB {
 			mock.ExpectExec("SELECT _tidb_rowid from").
 				WillReturnResult(sqlmock.NewResult(0, 0))
 			hasImplicitRowID = true
@@ -102,22 +103,21 @@ func TestGetListTableTypeByConf(t *testing.T) {
 	t.Parallel()
 
 	conf := defaultConfigForTest(t)
-	tctx := tcontext.Background().WithLogger(appLogger)
 	cases := []struct {
-		serverInfo  ServerInfo
+		serverInfo  version.ServerInfo
 		consistency string
 		expected    listTableType
 	}{
-		{ParseServerInfo(tctx, "5.7.25-TiDB-3.0.6"), consistencyTypeSnapshot, listTableByShowTableStatus},
+		{version.ParseServerInfo("5.7.25-TiDB-3.0.6"), consistencyTypeSnapshot, listTableByShowTableStatus},
 		// no bug version
-		{ParseServerInfo(tctx, "8.0.2"), consistencyTypeLock, listTableByInfoSchema},
-		{ParseServerInfo(tctx, "8.0.2"), consistencyTypeFlush, listTableByShowTableStatus},
-		{ParseServerInfo(tctx, "8.0.23"), consistencyTypeNone, listTableByShowTableStatus},
+		{version.ParseServerInfo("8.0.2"), consistencyTypeLock, listTableByInfoSchema},
+		{version.ParseServerInfo("8.0.2"), consistencyTypeFlush, listTableByShowTableStatus},
+		{version.ParseServerInfo("8.0.23"), consistencyTypeNone, listTableByShowTableStatus},
 
 		// bug version
-		{ParseServerInfo(tctx, "8.0.3"), consistencyTypeLock, listTableByInfoSchema},
-		{ParseServerInfo(tctx, "8.0.3"), consistencyTypeFlush, listTableByShowFullTables},
-		{ParseServerInfo(tctx, "8.0.3"), consistencyTypeNone, listTableByShowTableStatus},
+		{version.ParseServerInfo("8.0.3"), consistencyTypeLock, listTableByInfoSchema},
+		{version.ParseServerInfo("8.0.3"), consistencyTypeFlush, listTableByShowFullTables},
+		{version.ParseServerInfo("8.0.3"), consistencyTypeNone, listTableByShowTableStatus},
 	}
 
 	for _, x := range cases {

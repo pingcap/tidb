@@ -8,6 +8,7 @@ import (
 	"database/sql/driver"
 	"encoding/csv"
 	"fmt"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"io"
 	"os"
 	"path"
@@ -56,15 +57,15 @@ func TestDetectServerInfo(t *testing.T) {
 
 	mkVer := makeVersion
 	data := [][]interface{}{
-		{1, "8.0.18", ServerTypeMySQL, mkVer(8, 0, 18, "")},
-		{2, "10.4.10-MariaDB-1:10.4.10+maria~bionic", ServerTypeMariaDB, mkVer(10, 4, 10, "MariaDB-1")},
-		{3, "5.7.25-TiDB-v4.0.0-alpha-1263-g635f2e1af", ServerTypeTiDB, mkVer(4, 0, 0, "alpha-1263-g635f2e1af")},
-		{4, "5.7.25-TiDB-v3.0.7-58-g6adce2367", ServerTypeTiDB, mkVer(3, 0, 7, "58-g6adce2367")},
-		{5, "5.7.25-TiDB-3.0.6", ServerTypeTiDB, mkVer(3, 0, 6, "")},
-		{6, "invalid version", ServerTypeUnknown, (*semver.Version)(nil)},
+		{1, "8.0.18", version.ServerTypeMySQL, mkVer(8, 0, 18, "")},
+		{2, "10.4.10-MariaDB-1:10.4.10+maria~bionic", version.ServerTypeMariaDB, mkVer(10, 4, 10, "MariaDB-1")},
+		{3, "5.7.25-TiDB-v4.0.0-alpha-1263-g635f2e1af", version.ServerTypeTiDB, mkVer(4, 0, 0, "alpha-1263-g635f2e1af")},
+		{4, "5.7.25-TiDB-v3.0.7-58-g6adce2367", version.ServerTypeTiDB, mkVer(3, 0, 7, "58-g6adce2367")},
+		{5, "5.7.25-TiDB-3.0.6", version.ServerTypeTiDB, mkVer(3, 0, 6, "")},
+		{6, "invalid version", version.ServerTypeUnknown, (*semver.Version)(nil)},
 	}
-	dec := func(d []interface{}) (tag int, verStr string, tp ServerType, v *semver.Version) {
-		return d[0].(int), d[1].(string), ServerType(d[2].(int)), d[3].(*semver.Version)
+	dec := func(d []interface{}) (tag int, verStr string, tp version.ServerType, v *semver.Version) {
+		return d[0].(int), d[1].(string), version.ServerType(d[2].(int)), d[3].(*semver.Version)
 	}
 
 	for _, datum := range data {
@@ -76,7 +77,7 @@ func TestDetectServerInfo(t *testing.T) {
 		verStr, err := SelectVersion(db)
 		require.NoError(t, err, comment)
 
-		info := ParseServerInfo(tcontext.Background(), verStr)
+		info := version.ParseServerInfo(verStr)
 		require.Equal(t, serverTp, info.ServerType, comment)
 		require.Equal(t, expectVer == nil, info.ServerVersion == nil, comment)
 
@@ -106,7 +107,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 	mockConf.SortByPk = true
 
 	// Test TiDB server.
-	mockConf.ServerInfo.ServerType = ServerTypeTiDB
+	mockConf.ServerInfo.ServerType = version.ServerTypeTiDB
 
 	orderByClause, err := buildOrderByClause(mockConf, conn, database, table, true)
 	require.NoError(t, err)
@@ -140,7 +141,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	// Test other servers.
-	otherServers := []ServerType{ServerTypeUnknown, ServerTypeMySQL, ServerTypeMariaDB}
+	otherServers := []version.ServerType{version.ServerTypeUnknown, version.ServerTypeMySQL, version.ServerTypeMariaDB}
 
 	// Test table with primary key.
 	for _, serverTp := range otherServers {
@@ -196,8 +197,8 @@ func TestBuildSelectAllQuery(t *testing.T) {
 
 	// Test when config.SortByPk is disabled.
 	mockConf.SortByPk = false
-	for tp := ServerTypeUnknown; tp < ServerTypeAll; tp++ {
-		mockConf.ServerInfo.ServerType = ServerType(tp)
+	for tp := version.ServerTypeUnknown; tp < version.ServerTypeAll; tp++ {
+		mockConf.ServerInfo.ServerType = version.ServerType(tp)
 		comment := fmt.Sprintf("current server type: %v", tp)
 
 		mock.ExpectQuery("SHOW COLUMNS FROM").
@@ -229,7 +230,7 @@ func TestBuildOrderByClause(t *testing.T) {
 	mockConf.SortByPk = true
 
 	// Test TiDB server.
-	mockConf.ServerInfo.ServerType = ServerTypeTiDB
+	mockConf.ServerInfo.ServerType = version.ServerTypeTiDB
 
 	orderByClause, err := buildOrderByClause(mockConf, conn, database, table, true)
 	require.NoError(t, err)
@@ -469,9 +470,9 @@ func TestBuildTableSampleQueries(t *testing.T) {
 		cancelCtx:                 cancel,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
-	d.conf.ServerInfo = ServerInfo{
+	d.conf.ServerInfo = version.ServerInfo{
 		HasTiKV:       true,
-		ServerType:    ServerTypeTiDB,
+		ServerType:    version.ServerTypeTiDB,
 		ServerVersion: tableSampleVersion,
 	}
 
@@ -885,9 +886,9 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 		cancelCtx:                 cancel,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
-	d.conf.ServerInfo = ServerInfo{
+	d.conf.ServerInfo = version.ServerInfo{
 		HasTiKV:       true,
-		ServerType:    ServerTypeTiDB,
+		ServerType:    version.ServerTypeTiDB,
 		ServerVersion: gcSafePointVersion,
 	}
 	d.conf.Rows = 200000
@@ -1046,9 +1047,9 @@ func TestBuildRegionQueriesWithPartitions(t *testing.T) {
 		cancelCtx:                 cancel,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
-	d.conf.ServerInfo = ServerInfo{
+	d.conf.ServerInfo = version.ServerInfo{
 		HasTiKV:       true,
-		ServerType:    ServerTypeTiDB,
+		ServerType:   version.ServerTypeTiDB,
 		ServerVersion: gcSafePointVersion,
 	}
 	partitions := []string{"p0", "p1", "p2"}
@@ -1285,9 +1286,9 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 	}
 
 	conf := DefaultConfig()
-	conf.ServerInfo = ServerInfo{
+	conf.ServerInfo = version.ServerInfo{
 		HasTiKV:       true,
-		ServerType:    ServerTypeTiDB,
+		ServerType:    version.ServerTypeTiDB,
 		ServerVersion: decodeRegionVersion,
 	}
 	database := "test"

@@ -5,6 +5,7 @@ package export
 import (
 	"context"
 	"errors"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"testing"
 
 	tcontext "github.com/pingcap/tidb/dumpling/context"
@@ -48,7 +49,7 @@ func TestConsistencyController(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	conf.Consistency = consistencyTypeSnapshot
-	conf.ServerInfo.ServerType = ServerTypeTiDB
+	conf.ServerInfo.ServerType = version.ServerTypeTiDB
 	ctrl, _ = NewConsistencyController(ctx, conf, db)
 	_, ok = ctrl.(*ConsistencyNone)
 	require.True(t, ok)
@@ -111,13 +112,13 @@ func TestResolveAutoConsistency(t *testing.T) {
 
 	conf := defaultConfigForTest(t)
 	cases := []struct {
-		serverTp            ServerType
+		serverTp            version.ServerType
 		resolvedConsistency string
 	}{
-		{ServerTypeTiDB, consistencyTypeSnapshot},
-		{ServerTypeMySQL, consistencyTypeFlush},
-		{ServerTypeMariaDB, consistencyTypeFlush},
-		{ServerTypeUnknown, consistencyTypeNone},
+		{version.ServerTypeTiDB, consistencyTypeSnapshot},
+		{version.ServerTypeMySQL, consistencyTypeFlush},
+		{version.ServerTypeMariaDB, consistencyTypeFlush},
+		{version.ServerTypeUnknown, consistencyTypeNone},
 	}
 
 	for _, x := range cases {
@@ -150,13 +151,13 @@ func TestConsistencyControllerError(t *testing.T) {
 
 	// snapshot consistency is only available in TiDB
 	conf.Consistency = consistencyTypeSnapshot
-	conf.ServerInfo.ServerType = ServerTypeUnknown
+	conf.ServerInfo.ServerType = version.ServerTypeUnknown
 	_, err = NewConsistencyController(ctx, conf, db)
 	require.Error(t, err)
 
 	// flush consistency is unavailable in TiDB
 	conf.Consistency = consistencyTypeFlush
-	conf.ServerInfo.ServerType = ServerTypeTiDB
+	conf.ServerInfo.ServerType = version.ServerTypeTiDB
 	ctrl, _ := NewConsistencyController(ctx, conf, db)
 	err = ctrl.Setup(tctx)
 	require.Error(t, err)

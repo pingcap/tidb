@@ -7,9 +7,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"io/ioutil"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -22,7 +22,6 @@ import (
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -123,7 +122,7 @@ type Config struct {
 	TableFilter        filter.Filter `json:"-"`
 	Where              string
 	FileType           string
-	ServerInfo         ServerInfo
+	ServerInfo         version.ServerInfo
 	Logger             *zap.Logger        `json:"-"`
 	OutputFileTemplate *template.Template `json:"-"`
 	Rows               uint64
@@ -134,6 +133,13 @@ type Config struct {
 	SessionParams      map[string]interface{}
 	Labels             prometheus.Labels `json:"-"`
 	Tables             DatabaseTables
+}
+
+
+// ServerInfoUnknown is the unknown database type to dumpling
+var ServerInfoUnknown = version.ServerInfo{
+	ServerType:    version.ServerTypeUnknown,
+	ServerVersion: nil,
 }
 
 // DefaultConfig returns the default export Config for dumpling
@@ -571,96 +577,6 @@ var (
 	tableSampleVersion  = semver.New("5.0.0-nightly")
 )
 
-// ServerInfo is the combination of ServerType and ServerInfo
-type ServerInfo struct {
-	HasTiKV       bool
-	ServerType    ServerType
-	ServerVersion *semver.Version
-}
-
-// ServerInfoUnknown is the unknown database type to dumpling
-var ServerInfoUnknown = ServerInfo{
-	ServerType:    ServerTypeUnknown,
-	ServerVersion: nil,
-}
-
-var (
-	versionRegex     = regexp.MustCompile(`^\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
-	tidbVersionRegex = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
-)
-
-// ParseServerInfo parses exported server type and version info from version string
-func ParseServerInfo(tctx *tcontext.Context, src string) ServerInfo {
-	tctx.L().Debug("parse server info", zap.String("server info string", src))
-	lowerCase := strings.ToLower(src)
-	serverInfo := ServerInfo{}
-	switch {
-	case strings.Contains(lowerCase, "tidb"):
-		serverInfo.ServerType = ServerTypeTiDB
-	case strings.Contains(lowerCase, "mariadb"):
-		serverInfo.ServerType = ServerTypeMariaDB
-	case versionRegex.MatchString(lowerCase):
-		serverInfo.ServerType = ServerTypeMySQL
-	default:
-		serverInfo.ServerType = ServerTypeUnknown
-	}
-
-	tctx.L().Info("detect server type",
-		zap.String("type", serverInfo.ServerType.String()))
-
-	var versionStr string
-	if serverInfo.ServerType == ServerTypeTiDB {
-		versionStr = tidbVersionRegex.FindString(src)[1:]
-		versionStr = strings.TrimPrefix(versionStr, "v")
-	} else {
-		versionStr = versionRegex.FindString(src)
-	}
-
-	var err error
-	serverInfo.ServerVersion, err = semver.NewVersion(versionStr)
-	if err != nil {
-		tctx.L().Warn("fail to parse version",
-			zap.String("version", versionStr))
-		return serverInfo
-	}
-
-	tctx.L().Info("detect server version",
-		zap.String("version", serverInfo.ServerVersion.String()))
-	return serverInfo
-}
-
-// ServerType represents the type of database to export
-type ServerType int8
-
-// String implements Stringer.String
-func (s ServerType) String() string {
-	if s >= ServerTypeAll {
-		return ""
-	}
-	return serverTypeString[s]
-}
-
-const (
-	// ServerTypeUnknown represents unknown server type
-	ServerTypeUnknown = iota
-	// ServerTypeMySQL represents MySQL server type
-	ServerTypeMySQL
-	// ServerTypeMariaDB represents MariaDB server type
-	ServerTypeMariaDB
-	// ServerTypeTiDB represents TiDB server type
-	ServerTypeTiDB
-
-	// ServerTypeAll represents All server types
-	ServerTypeAll
-)
-
-var serverTypeString = []string{
-	ServerTypeUnknown: "Unknown",
-	ServerTypeMySQL:   "MySQL",
-	ServerTypeMariaDB: "MariaDB",
-	ServerTypeTiDB:    "TiDB",
-}
-
 func adjustConfig(conf *Config, fns ...func(*Config) error) error {
 	for _, f := range fns {
 		err := f(conf)
@@ -734,11 +650,11 @@ func adjustFileFormat(conf *Config) error {
 	return nil
 }
 
-func matchMysqlBugversion(info ServerInfo) bool {
+func matchMysqlBugversion(info version.ServerInfo) bool {
 	// if 8.0.3 <= mysql8 version < 8.0.23
 	// FLUSH TABLES WITH READ LOCK could block other sessions from executing SHOW TABLE STATUS.
 	// see more in https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-23.html
-	if info.ServerType != ServerTypeMySQL {
+	if info.ServerType != version.ServerTypeMySQL {
 		return false
 	}
 	currentVersion := info.ServerVersion

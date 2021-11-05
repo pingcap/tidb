@@ -3,6 +3,7 @@
 package export
 
 import (
+	"github.com/pingcap/tidb/br/pkg/version"
 	"strings"
 	"testing"
 
@@ -29,8 +30,8 @@ func TestFilterTables(t *testing.T) {
 	require.NoError(t, err)
 
 	conf := &Config{
-		ServerInfo: ServerInfo{
-			ServerType: ServerTypeTiDB,
+		ServerInfo: version.ServerInfo{
+			ServerType: version.ServerTypeTiDB,
 		},
 		Tables:      dbTables,
 		TableFilter: tableFilter,
@@ -54,8 +55,8 @@ func TestFilterDatabaseWithNoTable(t *testing.T) {
 
 	dbTables["xxx"] = []*TableInfo{}
 	conf := &Config{
-		ServerInfo: ServerInfo{
-			ServerType: ServerTypeTiDB,
+		ServerInfo: version.ServerInfo{
+			ServerType: version.ServerTypeTiDB,
 		},
 		Tables:            dbTables,
 		TableFilter:       tf.NewSchemasFilter("yyy"),

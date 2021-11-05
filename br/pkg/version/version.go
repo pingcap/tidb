@@ -5,6 +5,7 @@ package version
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"regexp"
 	"strconv"
 	"strings"
@@ -241,11 +242,22 @@ func NormalizeBackupVersion(version string) *semver.Version {
 }
 
 // FetchVersion gets the version information from the database server
+//
+// NOTE: the executed query will be:
+// - `select tidb_version()` if target db is tidb
+// - `select version()` if target db is not tidb
 func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
 	var versionInfo string
+	const queryTiDB = "SELECT tidb_version();"
+	tidbRow := db.QueryRowContext(ctx, queryTiDB)
+	err := tidbRow.Scan(&versionInfo)
+	if err == nil {
+		return versionInfo, nil
+	}
+	log.L().Warn("select tidb_version() failed, will fallback to 'select version();'", logutil.ShortError(err))
 	const query = "SELECT version();"
 	row := db.QueryRowContext(ctx, query)
-	err := row.Scan(&versionInfo)
+	err = row.Scan(&versionInfo)
 	if err != nil {
 		return "", errors.Annotatef(err, "sql: %s", query)
 	}
@@ -255,7 +267,7 @@ func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
 type ServerType int
 
 const (
-	// ServerTypeUnknown represents unknown server type
+	// version.ServerTypeUnknown represents unknown server type
 	ServerTypeUnknown = iota
 	// ServerTypeMySQL represents MySQL server type
 	ServerTypeMySQL
@@ -263,24 +275,51 @@ const (
 	ServerTypeMariaDB
 	// ServerTypeTiDB represents TiDB server type
 	ServerTypeTiDB
+
+	// ServerTypeAll represents All server types
+	ServerTypeAll
 )
+
+var serverTypeString = []string{
+	ServerTypeUnknown: "Unknown",
+	ServerTypeMySQL:   "MySQL",
+	ServerTypeMariaDB: "MariaDB",
+	ServerTypeTiDB:    "TiDB",
+}
+
+// String implements Stringer.String
+func (s ServerType) String() string {
+	if s >= ServerTypeAll {
+		return ""
+	}
+	return serverTypeString[s]
+}
 
 // ServerInfo is the combination of ServerType and ServerInfo
 type ServerInfo struct {
 	ServerType    ServerType
 	ServerVersion *semver.Version
+	HasTiKV		  bool
 }
 
 var (
 	mysqlVersionRegex = regexp.MustCompile(`^\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	// `select version()` result
 	tidbVersionRegex  = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
+	// `select tidb_version()` result
+	tidbReleaseVersionRegex = regexp.MustCompile(`v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 )
 
 // ParseServerInfo parses exported server type and version info from version string
 func ParseServerInfo(src string) ServerInfo {
 	lowerCase := strings.ToLower(src)
 	serverInfo := ServerInfo{}
+	isReleaseVersion := false
 	switch {
+	case strings.Contains(lowerCase, "release version:"):
+		// this version string is tidb release version
+		serverInfo.ServerType = ServerTypeTiDB
+		isReleaseVersion = true
 	case strings.Contains(lowerCase, "tidb"):
 		serverInfo.ServerType = ServerTypeTiDB
 	case strings.Contains(lowerCase, "mariadb"):
@@ -293,7 +332,11 @@ func ParseServerInfo(src string) ServerInfo {
 
 	var versionStr string
 	if serverInfo.ServerType == ServerTypeTiDB {
-		versionStr = tidbVersionRegex.FindString(src)[1:]
+		if isReleaseVersion {
+			versionStr = tidbReleaseVersionRegex.FindString(src)
+		} else {
+			versionStr = tidbVersionRegex.FindString(src)[1:]
+		}
 		versionStr = strings.TrimPrefix(versionStr, "v")
 	} else {
 		versionStr = mysqlVersionRegex.FindString(src)
@@ -305,6 +348,8 @@ func ParseServerInfo(src string) ServerInfo {
 		log.L().Warn("fail to parse version",
 			zap.String("version", versionStr))
 	}
+	log.L().Info("detect server version",
+		zap.String("version", serverInfo.ServerVersion.String()))
 
 	return serverInfo
 }
