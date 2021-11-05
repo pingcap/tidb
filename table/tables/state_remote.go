@@ -37,6 +37,7 @@ const (
 	CachedTableLockWrite
 )
 
+// StateRemote Indicates the remote status information of the read-write lock
 type StateRemote interface {
 	// Load obtain the corresponding lock type and lease value according to the tableID
 	Load(tid int64) (CachedTableLockType, uint64, error)
