@@ -72,7 +72,7 @@ Here are the concrete behaviors when doing the DDL operations with a table/parti
 
 #### Drop Clause 
 + For the drop table operation, the attributes will be deleted once the GC has finished
-+ For the drop partition operation, the attributes will be deleted immediately
++ For the drop schema and partition operation, the attributes will be deleted immediately
 
 #### Truncate Clause
 + For the truncate table operation, both table range and partition range of attributes will be updated.
@@ -93,7 +93,7 @@ Privilege management is quite straightforward:
 * `ADMIN SHOW DDL` requires `Super` privilege
 
 ### Inheritance
-Consider that if we add attributes for a table, all partitions of that table will inherit the attributes by default.
+Consider that if we add attributes for a table, all partitions of that table will inherit the attributes by default. As for `CREATE TABLE x LIKE y`, `x` won't inherit attributes from `y`.
 
 ### Priority
 We may support adding different attributes for both tables and partitions at the same time. For example, the attribute could be `merge_option=deny` on the table level but `merge_option=allow` on the partition level in the same table.
