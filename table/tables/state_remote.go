@@ -38,9 +38,16 @@ const (
 )
 
 type StateRemote interface {
+	// Load obtain the corresponding lock type and lease value according to the tableID
 	Load(tid int64) (CachedTableLockType, uint64, error)
+
+	// LockForRead try to add a read lock to the table with the specified tableID
 	LockForRead(tid int64, now, ts uint64) (bool, error)
+
+	// LockForWrite try to add a write lock to the table with the specified tableID
 	LockForWrite(tid int64, now, ts uint64) error
+
+	// RenewLease attempt to renew the read lock on the table with the specified tableID
 	RenewLease(tid int64, ts uint64) (bool, error)
 }
 
@@ -101,10 +108,6 @@ func mockRemoteService(r *mockStateRemoteData, ch chan remoteTask) {
 	for task := range ch {
 		task.Exec(r)
 	}
-}
-
-func CloseRemoteService() {
-
 }
 
 type remoteTask interface {
