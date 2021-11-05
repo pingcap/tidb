@@ -969,8 +969,12 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 	}()
 	exec := mock.NewMockSQLExecutor(controller)
 	g.EXPECT().GetSQLExecutor().Return(exec).AnyTimes()
-	exec.EXPECT().ObtainStringWithLog(gomock.Any(), "SELECT tidb_version()", gomock.Any(), gomock.Any()).
-		Return("Release Version: v5.2.1\nEdition: Community\n", nil).AnyTimes()
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	g.EXPECT().GetDB().Return(db, nil).AnyTimes()
+	mock.ExpectQuery("SELECT tidb_version\\(\\);").
+		WillReturnRows(sqlmock.NewRows([]string{"tidb_version"}).
+			AddRow("Release Version: v5.2.1\nEdition: Community\n"))
 
 	web.BroadcastInitProgress(rc.dbMetas)
 
