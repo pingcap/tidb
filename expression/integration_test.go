@@ -10419,21 +10419,6 @@ PARTITION p20210909 VALUES LESS THAN (1631203200)
 	tk.MustQuery("SELECT cast(floor(hour(ts) / 4) as char) as win_start FROM perf_offline_day partition (p20210907, p20210908) GROUP BY win_start;").Check(testkit.Rows("3"))
 }
 
-func (s *testIntegrationSuite) TestIssue28643(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a time(4));")
-	tk.MustExec("insert into t values(\"-838:59:59.000000\");")
-	tk.MustExec("insert into t values(\"838:59:59.000000\");")
-	tk.MustExec("set tidb_enable_vectorized_expression = on;")
-	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
-	tk.MustExec("set tidb_enable_vectorized_expression = off;")
-	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
-}
-<<<<<<< HEAD
-=======
-
 func (s *testIntegrationSuite) TestIssue29434(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -10452,16 +10437,15 @@ func (s *testIntegrationSuite) TestIssue29434(c *C) {
 	tk.MustQuery("select least(c1, '99999999999999') from t1;").Check(testkit.Rows("2021-12-12 10:10:10"))
 }
 
-func (s *testIntegrationSuite) TestIssue29244(c *C) {
+func (s *testIntegrationSuite) TestIssue28643(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a time(4));")
-	tk.MustExec("insert into t values(\"-700:10:10.123456111\");")
-	tk.MustExec("insert into t values(\"700:10:10.123456111\");")
+	tk.MustExec("insert into t values(\"-838:59:59.000000\");")
+	tk.MustExec("insert into t values(\"838:59:59.000000\");")
 	tk.MustExec("set tidb_enable_vectorized_expression = on;")
-	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
+	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
 	tk.MustExec("set tidb_enable_vectorized_expression = off;")
-	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
+	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
 }
->>>>>>> 8ae81b385... expression: fix different results for greatest when vectorized is off (#29438)
