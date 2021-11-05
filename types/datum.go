@@ -1924,8 +1924,8 @@ func NewStringDatum(s string) (d Datum) {
 	return d
 }
 
-// NewCollationStringDatum creates a new Datum from a string with collation and length info.
-func NewCollationStringDatum(s string, collation string, length int) (d Datum) {
+// NewCollationStringDatum creates a new Datum from a string with collation.
+func NewCollationStringDatum(s string, collation string) (d Datum) {
 	d.SetString(s, collation)
 	return d
 }
