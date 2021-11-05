@@ -153,14 +153,15 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	}
 
 	if timestampStr != "" {
-		timestamp, err := types.StrToInt(sessionVars.StmtCtx, timestampStr, false)
+		timestamp, err := types.StrToFloat(sessionVars.StmtCtx, timestampStr, false)
 		if err != nil {
 			return time.Time{}, err
 		}
 		if timestamp <= 0 {
 			return now, nil
 		}
-		return time.Unix(timestamp, 0), nil
+		seconds, fractionalSeconds := math.Modf(timestamp)
+		return time.Unix(int64(seconds), int64(fractionalSeconds * float64(time.Second))), nil
 	}
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	return stmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time), nil
