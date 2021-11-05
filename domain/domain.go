@@ -1446,6 +1446,13 @@ const (
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
 func (do *Domain) NotifyUpdatePrivilege() error {
+	// If skip-grant-table is configured, do not flush privileges.
+	// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
+	// the call to do.PrivilegeHandle().Update would panic.
+	if config.GetGlobalConfig().Security.SkipGrantTable {
+		return nil
+	}
+
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), privilegeKey, "")
@@ -1710,6 +1717,12 @@ func (do *Domain) serverIDKeeper() {
 			return
 		}
 	}
+}
+
+// MockInfoCacheAndLoadInfoSchema only used in unit test
+func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
+	do.infoCache = infoschema.NewCache(16)
+	do.infoCache.Insert(is, 0)
 }
 
 func init() {

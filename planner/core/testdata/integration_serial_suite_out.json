@@ -2821,23 +2821,23 @@
       {
         "SQL": "desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and length(b)=1)",
         "Plan": [
-          "IndexMerge 1.72 root  ",
+          "IndexMerge 8.00 root  ",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false",
-          "├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
+          "├─Selection(Build) 0.80 cop[tikv]  1",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false",
-          "└─TableRowIDScan(Probe) 1.72 cop[tikv] table:t keep order:false"
+          "└─TableRowIDScan(Probe) 8.00 cop[tikv] table:t keep order:false"
         ],
         "Warnings": null
       },
       {
         "SQL": "desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1)",
         "Plan": [
-          "IndexMerge 1.54 root  ",
-          "├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
+          "IndexMerge 8.00 root  ",
+          "├─Selection(Build) 0.80 cop[tikv]  1",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false",
-          "├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1, var_string(20))), 1)",
+          "├─Selection(Build) 0.80 cop[tikv]  1",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false",
-          "└─TableRowIDScan(Probe) 1.54 cop[tikv] table:t keep order:false"
+          "└─TableRowIDScan(Probe) 8.00 cop[tikv] table:t keep order:false"
         ],
         "Warnings": null
       },
@@ -3289,6 +3289,227 @@
           "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_0, collate: N/A]",
           "            └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#35, Column#36, Column#37, Column#38, funcs:group_concat(Column#30, Column#31 separator \",\")->Column#26, funcs:max(Column#32)->Column#27, funcs:count(Column#33)->Column#28, funcs:sum(Column#34)->Column#29",
           "              └─Projection 10000.00 batchCop[tiflash]  test.ts.col_1, cast(test.ts.id, var_string(20))->Column#31, test.ts.col_1, test.ts.id, cast(test.ts.id, decimal(15,4) BINARY)->Column#34, test.ts.col_0, test.ts.col_1, test.ts.id, test.ts.col_2",
+          "                └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,'GG') from ts",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(distinct Column#12, Column#13 separator \",\")->Column#5",
+          "      └─Projection 1.00 batchCop[tiflash]  cast(Column#10, var_string(20))->Column#12, Column#11",
+          "        └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "            └─HashAgg 1.00 batchCop[tiflash]  group by:\"GG\", 0, ",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,'01') from ts",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(distinct Column#12, Column#13 separator \",\")->Column#5",
+          "      └─Projection 1.00 batchCop[tiflash]  cast(Column#10, var_string(20))->Column#12, Column#11",
+          "        └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "            └─HashAgg 1.00 batchCop[tiflash]  group by:\"01\", 0, ",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,1) from ts",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(distinct Column#12, Column#13 separator \",\")->Column#5",
+          "      └─Projection 1.00 batchCop[tiflash]  cast(Column#10, var_string(20))->Column#12, cast(Column#11, var_string(20))->Column#13",
+          "        └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "            └─HashAgg 1.00 batchCop[tiflash]  group by:0, 1, ",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,0) from ts",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(distinct Column#9, Column#10 separator \",\")->Column#5",
+          "      └─Projection 1.00 batchCop[tiflash]  cast(Column#8, var_string(20))->Column#9, cast(Column#8, var_string(20))->Column#10",
+          "        └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "            └─HashAgg 1.00 batchCop[tiflash]  group by:0, ",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,10) from ts group by '010'",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  group by:Column#20, funcs:group_concat(distinct Column#18, Column#19 separator \",\")->Column#5",
+          "      └─Projection 1.00 batchCop[tiflash]  cast(Column#16, var_string(20))->Column#18, cast(Column#17, var_string(20))->Column#19, Column#15",
+          "        └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#15, collate: N/A]",
+          "            └─HashAgg 1.00 batchCop[tiflash]  group by:0, 1, 10, ",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,0) from ts group by '011'",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  group by:Column#16, funcs:group_concat(distinct Column#14, Column#15 separator \",\")->Column#5",
+          "      └─Projection 1.00 batchCop[tiflash]  cast(Column#13, var_string(20))->Column#14, cast(Column#13, var_string(20))->Column#15, Column#12",
+          "        └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#12, collate: N/A]",
+          "            └─HashAgg 1.00 batchCop[tiflash]  group by:0, 1, ",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,'GG') from ts group by 'GG'",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  group by:Column#20, funcs:group_concat(distinct Column#18, Column#19 separator \",\")->Column#5",
+          "      └─Projection 1.00 batchCop[tiflash]  cast(Column#16, var_string(20))->Column#18, Column#17, Column#15",
+          "        └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#15, collate: N/A]",
+          "            └─HashAgg 1.00 batchCop[tiflash]  group by:\"GG\", 0, 1, ",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 'GG','GG') from ts",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(distinct Column#8, Column#8 separator \",\")->Column#5",
+          "      └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg 1.00 batchCop[tiflash]  group by:\"GG\", ",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 'Gg','GG') from ts",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(distinct Column#10, Column#11 separator \",\")->Column#5",
+          "      └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg 1.00 batchCop[tiflash]  group by:\"GG\", \"Gg\", ",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 'GG-10','GG') from ts",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(distinct Column#10, Column#11 separator \",\")->Column#5",
+          "      └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg 1.00 batchCop[tiflash]  group by:\"GG\", \"GG-10\", ",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct '1200-01-01 00:00:00.023',1200) from ts",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(distinct Column#12, Column#13 separator \",\")->Column#5",
+          "      └─Projection 1.00 batchCop[tiflash]  Column#10, cast(Column#11, var_string(20))->Column#13",
+          "        └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "            └─HashAgg 1.00 batchCop[tiflash]  group by:\"1200-01-01 00:00:00.023\", 1200, ",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_0) from ts group by id",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 8000.00 batchCop[tiflash]  group by:test.ts.id, funcs:group_concat(Column#9 separator \",\")->Column#5",
+          "      └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.id, collate: N/A]",
+          "          └─HashAgg 8000.00 batchCop[tiflash]  group by:test.ts.id, funcs:group_concat(test.ts.col_0, test.ts.col_0 separator \",\")->Column#9",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_0,id) from ts group by id",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 8000.00 batchCop[tiflash]  group by:test.ts.id, funcs:group_concat(Column#9 separator \",\")->Column#5",
+          "      └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.id, collate: N/A]",
+          "          └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#13, funcs:group_concat(Column#10, Column#11, Column#12 separator \",\")->Column#9",
+          "            └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_0, cast(test.ts.id, var_string(20))->Column#12, test.ts.id",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0 order by id<10) from ts",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(distinct test.ts.col_0 order by Column#8 separator \",\")->Column#5",
+          "      └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg 1.00 batchCop[tiflash]  group by:Column#10, funcs:firstrow(Column#9)->Column#8",
+          "            └─Projection 10000.00 batchCop[tiflash]  lt(test.ts.id, 10)->Column#9, test.ts.col_0",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0 order by id<10) from ts group by col_1",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 8000.00 batchCop[tiflash]  group by:test.ts.col_1, funcs:group_concat(distinct test.ts.col_0 order by Column#9 separator \",\")->Column#5",
+          "      └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_1, collate: N/A]",
+          "          └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#11, Column#12, funcs:firstrow(Column#10)->Column#9",
+          "            └─Projection 10000.00 batchCop[tiflash]  lt(test.ts.id, 10)->Column#10, test.ts.col_1, test.ts.col_0",
+          "              └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0>10 order by id<10) from ts group by col_1",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#19, funcs:group_concat(distinct Column#17 order by Column#18 separator \",\")->Column#5",
+          "      └─Projection 8000.00 batchCop[tiflash]  cast(Column#12, var_string(20))->Column#17, Column#13, test.ts.col_1",
+          "        └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_1, collate: N/A]",
+          "            └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#15, Column#16, funcs:firstrow(Column#14)->Column#13",
+          "              └─Projection 10000.00 batchCop[tiflash]  lt(test.ts.id, 10)->Column#14, test.ts.col_1, gt(cast(test.ts.col_0, double BINARY), 10)->Column#16",
           "                └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
         ]
       }
