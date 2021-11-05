@@ -1696,6 +1696,45 @@ func (s *testPlanSerialSuite) TestIssue23671(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func (s *testPrepareSerialSuite) TestIssue29296(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists UK_MU14722`)
+	tk.MustExec(`CREATE TABLE UK_MU14722 (
+	  COL1 tinytext DEFAULT NULL,
+	  COL2 tinyint(16) DEFAULT NULL,
+	  COL3 datetime DEFAULT NULL,
+	  COL4 int(11) DEFAULT NULL,
+	  UNIQUE KEY U_M_COL (COL1(10)),
+	  UNIQUE KEY U_M_COL2 (COL2),
+	  UNIQUE KEY U_M_COL3 (COL3))`)
+	tk.MustExec(`insert into UK_MU14722 values("輮睅麤敜溺她晁瀪襄頮鹛涓誗钷廔筪惌嶙鎢塴", -121, "3383-02-19 07:58:28" , -639457963),
+		("偧孇鱓鼂瘠钻篝醗時鷷聽箌磇砀玸眞扦鸇祈灇", 127, "7902-03-05 08:54:04", -1094128660),
+		("浀玡慃淛漉围甧鴎史嬙砊齄w章炢忲噑硓哈樘", -127, "5813-04-16 03:07:20", -333397107),
+		("鑝粼啎鸼贖桖弦簼赭蠅鏪鐥蕿捐榥疗耹岜鬓槊", -117, "7753-11-24 10:14:24", 654872077)`)
+	tk.MustExec(`prepare stmt from 'SELECT * FROM UK_MU14722 WHERE col2 > ? OR col2 BETWEEN ? AND ? ORDER BY COL2 + ? LIMIT 3'`)
+	tk.MustExec(`set @a=30410, @b=3937, @c=22045, @d=-4374`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows())
+	tk.MustExec(`set @a=127, @b=127, @c=127, @d=127`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows(`偧孇鱓鼂瘠钻篝醗時鷷聽箌磇砀玸眞扦鸇祈灇 127 7902-03-05 08:54:04 -1094128660`))
+}
+
 func (s *testPrepareSerialSuite) TestIssue28246(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
