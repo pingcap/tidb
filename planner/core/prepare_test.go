@@ -1132,7 +1132,7 @@ func (s *testPlanSerialSuite) TestIssue29303(c *C) {
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows())
 	tk.MustExec(`set @a="龂", @b="龂", @c="龂", @d="龂"`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("� 龂 � 龂"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
 func (s *testPlanSerialSuite) TestIssue28942(c *C) {
@@ -1234,6 +1234,43 @@ func (s *testPlanSerialSuite) TestIssue28254(c *C) {
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("0"))
 	tk.MustExec("set @a=-7235178122860450591")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
+}
+
+func (s *testPlanSerialSuite) TestIssue29486(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists UK_MULTI_COL_11691`)
+	tk.MustExec(`CREATE TABLE UK_MULTI_COL_11691 (
+		COL1 binary(20) DEFAULT NULL,
+		COL2 tinyint(16) DEFAULT NULL,
+		COL3 time DEFAULT NULL,
+		UNIQUE KEY U_M_COL (COL1(10),COL2,COL3))`)
+	tk.MustExec(`insert into UK_MULTI_COL_11691 values(0x340C604874B52E8D30440E8DC2BB170621D8A088, 126, "-105:17:32"),
+	(0x28EC2EDBAC7DF99045BDD0FCEAADAFBAC2ACF76F, 126, "102:54:04"),
+	(0x11C38221B3B1E463C94EC39F0D481303A58A50DC, 118, "599:13:47"),
+	(0x03E2FC9E0C846FF1A926BF829FA9D7BAED3FD7B1, 118, "-257:45:13")`)
+
+	tk.MustExec(`prepare stmt from 'SELECT/*+ INL_JOIN(t1, t2) */ t2.COL2 FROM UK_MULTI_COL_11691 t1 JOIN UK_MULTI_COL_11691 t2 ON t1.col1 = t2.col1 WHERE t1.col2 BETWEEN ? AND ? AND t2.col2 BETWEEN ? AND ?'`)
+	tk.MustExec(`set @a=-29408, @b=-9254, @c=-1849, @d=-2346`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows())
+	tk.MustExec(`set @a=126, @b=126, @c=-125, @d=707`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("126", "126"))
 }
 
 func (s *testPlanSerialSuite) TestIssue28867(c *C) {
