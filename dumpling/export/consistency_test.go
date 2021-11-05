@@ -7,11 +7,11 @@ import (
 	"errors"
 	"testing"
 
-	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/stretchr/testify/require"
-
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
+	"github.com/stretchr/testify/require"
+
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 func TestConsistencyController(t *testing.T) {
