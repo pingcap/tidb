@@ -1620,7 +1620,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 			return
 		}
 		defer terror.Call(rs.Close)
-		chk := rs.NewChunk()
+		chk := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), chk)
 		if err != nil {
 			return

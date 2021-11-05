@@ -203,6 +203,7 @@ func (e *ShowExec) fetchShowPlacementForPartition(ctx context.Context) (err erro
 
 	var partition *model.PartitionDefinition
 	for _, par := range tblInfo.Partition.Definitions {
+		par := par
 		if par.Name.L == e.Partition.L {
 			partition = &par
 			break
