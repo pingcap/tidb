@@ -302,9 +302,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 func cleanupStaleSocket(socket string) error {
 	sockStat, err := os.Stat(socket)
-	// Todo:According to the previous logic, When it's occur error will return nil?
 	if err != nil {
-		//return fmt.Errorf("stat socket file %s failed: %v", socket, err)
 		return nil
 	}
 
