@@ -62,7 +62,7 @@ const (
 )
 
 var (
-	minPagingSize uint64 = 32
+	minPagingSize uint64 = 64
 	maxPagingSize        = minPagingSize * 128
 )
 
@@ -1047,7 +1047,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	}
 	if task.pagingSize < maxPagingSize {
 		for _, t := range tasks {
-			t.pagingSize = 2 * task.pagingSize
+			t.pagingSize += minPagingSize
 		}
 	}
 	return tasks, err
