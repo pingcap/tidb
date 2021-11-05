@@ -64,12 +64,23 @@ func Sha1Hash(bs []byte) []byte {
 	return crypt.Sum(nil)
 }
 
-// EncodePassword converts plaintext password to hashed hex string.
+// EncodePassword converts plaintext password(type is string) to hashed hex string.
 func EncodePassword(pwd string) string {
 	if len(pwd) == 0 {
 		return ""
 	}
 	hash1 := Sha1Hash([]byte(pwd))
+	hash2 := Sha1Hash(hash1)
+
+	return fmt.Sprintf("*%X", hash2)
+}
+
+// EncodePasswordBytes converts plaintext password(type is []byte) to hashed hex string.
+func EncodePasswordBytes(pwd []byte) string {
+	if len(pwd) == 0 {
+		return ""
+	}
+	hash1 := Sha1Hash(pwd)
 	hash2 := Sha1Hash(hash1)
 
 	return fmt.Sprintf("*%X", hash2)
