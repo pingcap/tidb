@@ -48,51 +48,6 @@ const (
 	table    = "bar"
 )
 
-func TestDetectServerInfo(t *testing.T) {
-	t.Parallel()
-
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() {
-		_ = db.Close()
-	}()
-
-	mkVer := makeVersion
-	data := [][]interface{}{
-		{1, "8.0.18", version.ServerTypeMySQL, mkVer(8, 0, 18, "")},
-		{2, "10.4.10-MariaDB-1:10.4.10+maria~bionic", version.ServerTypeMariaDB, mkVer(10, 4, 10, "MariaDB-1")},
-		{3, "5.7.25-TiDB-v4.0.0-alpha-1263-g635f2e1af", version.ServerTypeTiDB, mkVer(4, 0, 0, "alpha-1263-g635f2e1af")},
-		{4, "5.7.25-TiDB-v3.0.7-58-g6adce2367", version.ServerTypeTiDB, mkVer(3, 0, 7, "58-g6adce2367")},
-		{5, "5.7.25-TiDB-3.0.6", version.ServerTypeTiDB, mkVer(3, 0, 6, "")},
-		{6, "invalid version", version.ServerTypeUnknown, (*semver.Version)(nil)},
-	}
-	dec := func(d []interface{}) (tag int, verStr string, tp version.ServerType, v *semver.Version) {
-		return d[0].(int), d[1].(string), version.ServerType(d[2].(int)), d[3].(*semver.Version)
-	}
-
-	for _, datum := range data {
-		tag, r, serverTp, expectVer := dec(datum)
-		comment := fmt.Sprintf("test case number: %d", tag)
-		rows := sqlmock.NewRows([]string{"version"}).AddRow(r)
-		mock.ExpectQuery("SELECT version()").WillReturnRows(rows)
-
-		verStr, err := SelectVersion(db)
-		require.NoError(t, err, comment)
-
-		info := version.ParseServerInfo(verStr)
-		require.Equal(t, serverTp, info.ServerType, comment)
-		require.Equal(t, expectVer == nil, info.ServerVersion == nil, comment)
-
-		if info.ServerVersion == nil {
-			require.Nil(t, expectVer, comment)
-		} else {
-			require.True(t, info.ServerVersion.Equal(*expectVer), comment)
-		}
-
-		require.NoError(t, mock.ExpectationsWereMet(), comment)
-	}
-}
-
 func TestBuildSelectAllQuery(t *testing.T) {
 	t.Parallel()
 

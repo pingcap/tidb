@@ -267,7 +267,7 @@ func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
 type ServerType int
 
 const (
-	// version.ServerTypeUnknown represents unknown server type
+	// ServerTypeUnknown represents unknown server type
 	ServerTypeUnknown = iota
 	// ServerTypeMySQL represents MySQL server type
 	ServerTypeMySQL
@@ -349,6 +349,7 @@ func ParseServerInfo(src string) ServerInfo {
 			zap.String("version", versionStr))
 	}
 	log.L().Info("detect server version",
+		zap.String("type", serverInfo.ServerType.String()),
 		zap.String("version", serverInfo.ServerVersion.String()))
 
 	return serverInfo
