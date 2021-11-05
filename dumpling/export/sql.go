@@ -14,17 +14,14 @@ import (
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
-
-<<<<<<< HEAD
 	"github.com/pingcap/errors"
-=======
+	"go.uber.org/zap"
+
 	dbconfig "github.com/pingcap/tidb/config"
->>>>>>> 651e91091... dumpling: fix tidb lock consistency and check tikv problem (#29448)
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
-	"go.uber.org/zap"
 )
 
 const (

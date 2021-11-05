@@ -17,17 +17,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-=======
 	"github.com/stretchr/testify/require"
 
 	dbconfig "github.com/pingcap/tidb/config"
->>>>>>> 651e91091... dumpling: fix tidb lock consistency and check tikv problem (#29448)
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
@@ -1547,8 +1542,6 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-=======
 func TestCheckTiDBWithTiKV(t *testing.T) {
 	t.Parallel()
 
@@ -1743,7 +1736,6 @@ func TestPickupPossibleField(t *testing.T) {
 	}
 }
 
->>>>>>> 651e91091... dumpling: fix tidb lock consistency and check tikv problem (#29448)
 func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
 	return &semver.Version{
 		Major:      major,

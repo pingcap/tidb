@@ -8,16 +8,12 @@ import (
 	"errors"
 	"testing"
 
-	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/stretchr/testify/require"
-
-<<<<<<< HEAD
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
-=======
+	"github.com/stretchr/testify/require"
+
 	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
->>>>>>> 651e91091... dumpling: fix tidb lock consistency and check tikv problem (#29448)
 )
 
 func TestConsistencyController(t *testing.T) {
