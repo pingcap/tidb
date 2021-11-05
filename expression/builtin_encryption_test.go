@@ -521,23 +521,34 @@ func TestPassword(t *testing.T) {
 	cases := []struct {
 		args     interface{}
 		expected string
+		charset  string
 		isNil    bool
 		getErr   bool
 		getWarn  bool
 	}{
-		{nil, "", false, false, false},
-		{"", "", false, false, false},
-		{"abc", "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", false, false, true},
-		{123, "*23AE809DDACAF96AF0FD78ED04B6A265E05AA257", false, false, true},
-		{1.23, "*A589EEBA8D3F9E1A34A7EE518FAC4566BFAD5BB6", false, false, true},
-		{types.NewDecFromFloatForTest(123.123), "*B15B84262DB34BFB2C817A45A55C405DC7C52BB1", false, false, true},
+		{nil, "", "", false, false, false},
+		{"", "", "", false, false, false},
+		{"abc", "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", "", false, false, true},
+		{"abc", "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", "gbk", false, false, true},
+		{123, "*23AE809DDACAF96AF0FD78ED04B6A265E05AA257", "", false, false, true},
+		{1.23, "*A589EEBA8D3F9E1A34A7EE518FAC4566BFAD5BB6", "", false, false, true},
+		{"一二三四", "*D207780722F22B23C254CAC0580D3B6738C19E18", "", false, false, true},
+		{"一二三四", "*48E0460AD45CF66AC6B8C18CB8B4BC8A403D935B", "gbk", false, false, true},
+		{"ㅂ123", "", "gbk", false, true, false},
+		{types.NewDecFromFloatForTest(123.123), "*B15B84262DB34BFB2C817A45A55C405DC7C52BB1", "", false, false, true},
 	}
 
 	warnCount := len(ctx.GetSessionVars().StmtCtx.GetWarnings())
 	for _, c := range cases {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.charset)
+		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.PasswordFunc, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
+			continue
+		}
 		require.NoError(t, err)
 		if c.isNil {
 			require.Equal(t, types.KindNull, d.Kind())
