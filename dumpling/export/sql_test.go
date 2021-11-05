@@ -21,6 +21,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
+
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
@@ -1676,7 +1677,7 @@ func TestPickupPossibleField(t *testing.T) {
 
 		field, err := pickupPossibleField(meta, conn)
 		if expectedErr != nil {
-			require.ErrorIs(t, err, expectedErr)
+			require.ErrorIs(t, errors.Cause(err), expectedErr)
 		} else {
 			require.NoError(t, err)
 			require.Equal(t, testCase.expectedField, field)
