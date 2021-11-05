@@ -348,9 +348,13 @@ func ParseServerInfo(src string) ServerInfo {
 		log.L().Warn("fail to parse version",
 			zap.String("version", versionStr))
 	}
+	var version string
+	if serverInfo.ServerVersion != nil {
+		version = serverInfo.ServerVersion.String()
+	}
 	log.L().Info("detect server version",
 		zap.String("type", serverInfo.ServerType.String()),
-		zap.String("version", serverInfo.ServerVersion.String()))
+		zap.String("version", version))
 
 	return serverInfo
 }
