@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -432,6 +433,9 @@ func GetPrimaryKeyColumns(db *sql.Conn, database, table string) ([]string, error
 	return cols, nil
 }
 
+// getNumericIndex picks up indices according to the following priority:
+// primary key > unique key with the smallest count > key with the max cardinality
+// primary key with multi cols is before unique key with single col because we will sort result by primary keys
 func getNumericIndex(db *sql.Conn, meta TableMeta) (string, error) {
 	database, table := meta.DatabaseName(), meta.TableName()
 	colName2Type := string2Map(meta.ColumnNames(), meta.ColumnTypes())
@@ -440,22 +444,64 @@ func getNumericIndex(db *sql.Conn, meta TableMeta) (string, error) {
 	if err != nil {
 		return "", errors.Annotatef(err, "sql: %s", keyQuery)
 	}
-	results, err := GetSpecifiedColumnValuesAndClose(rows, "NON_UNIQUE", "KEY_NAME", "COLUMN_NAME")
+	results, err := GetSpecifiedColumnValuesAndClose(rows, "NON_UNIQUE", "SEQ_IN_INDEX", "KEY_NAME", "COLUMN_NAME", "CARDINALITY")
 	if err != nil {
 		return "", errors.Annotatef(err, "sql: %s", keyQuery)
 	}
-	uniqueColumnName := ""
+	type keyColumnPair struct {
+		colName string
+		count   uint64
+	}
+	var (
+		uniqueKeyMap   = map[string]keyColumnPair{} // unique key name -> key column name, unique key columns count
+		keyColumn      string
+		maxCardinality int64 = -1
+	)
+
 	// check primary key first, then unique key
 	for _, oneRow := range results {
-		var ok bool
-		if _, ok = dataTypeNum[colName2Type[oneRow[2]]]; ok && oneRow[1] == "PRIMARY" {
-			return oneRow[2], nil
+		nonUnique, seqInIndex, keyName, colName, cardinality := oneRow[0], oneRow[1], oneRow[2], oneRow[3], oneRow[4]
+		// only try pick the first column, because the second column of pk/uk in where condition will trigger a full table scan
+		if seqInIndex != "1" {
+			if pair, ok := uniqueKeyMap[keyName]; ok {
+				seqInIndexInt, err := strconv.ParseUint(seqInIndex, 10, 64)
+				if err == nil && seqInIndexInt > pair.count {
+					uniqueKeyMap[keyName] = keyColumnPair{pair.colName, seqInIndexInt}
+				}
+			}
+			continue
 		}
-		if uniqueColumnName != "" && oneRow[0] == "0" && ok {
-			uniqueColumnName = oneRow[2]
+		_, numberColumn := dataTypeInt[colName2Type[colName]]
+		if numberColumn {
+			switch {
+			case keyName == "PRIMARY":
+				return colName, nil
+			case nonUnique == "0":
+				uniqueKeyMap[keyName] = keyColumnPair{colName, 1}
+			// pick index column with max cardinality when there is no unique index
+			case len(uniqueKeyMap) == 0:
+				cardinalityInt, err := strconv.ParseInt(cardinality, 10, 64)
+				if err == nil && cardinalityInt > maxCardinality {
+					keyColumn = colName
+					maxCardinality = cardinalityInt
+				}
+			}
 		}
 	}
-	return uniqueColumnName, nil
+	if len(uniqueKeyMap) > 0 {
+		var (
+			minCols         uint64 = math.MaxUint64
+			uniqueKeyColumn string
+		)
+		for _, pair := range uniqueKeyMap {
+			if pair.count < minCols {
+				uniqueKeyColumn = pair.colName
+				minCols = pair.count
+			}
+		}
+		return uniqueKeyColumn, nil
+	}
+	return keyColumn, nil
 }
 
 // FlushTableWithReadLock flush tables with read lock
@@ -948,7 +994,7 @@ func pickupPossibleField(meta TableMeta, db *sql.Conn) (string, error) {
 	if meta.HasImplicitRowID() {
 		return "_tidb_rowid", nil
 	}
-	// try to use pk
+	// try to use pk or uk
 	fieldName, err := getNumericIndex(db, meta)
 	if err != nil {
 		return "", err
