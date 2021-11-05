@@ -755,7 +755,7 @@ func checkTiDBTableRegionPkFields(pkFields, pkColTypes []string) (err error) {
 		err = errors.Errorf("unsupported primary key for selectTableRegion. pkFields: [%s], pkColTypes: [%s]", strings.Join(pkFields, ", "), strings.Join(pkColTypes, ", "))
 		return
 	}
-	if _, ok := dataTypeNum[pkColTypes[0]]; !ok {
+	if _, ok := dataTypeInt[pkColTypes[0]]; !ok {
 		err = errors.Errorf("unsupported primary key type for selectTableRegion. pkFields: [%s], pkColTypes: [%s]", strings.Join(pkFields, ", "), strings.Join(pkColTypes, ", "))
 	}
 	return
