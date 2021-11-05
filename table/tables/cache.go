@@ -83,45 +83,56 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 	return ret, nil
 }
 
-// Close TODO only for skip go leap. and will remove in the following
-func Close() {
-	_, ok := <-mockStateRemote.Ch
-	if ok {
-		close(mockStateRemote.Ch)
+// CloseRemoteService TODO only for skip go leak. and will remove in the following
+func CloseRemoteService() {
+	for {
+		select {
+		case _, ok := <-mockStateRemote.Ch:
+			if ok {
+				close(mockStateRemote.Ch)
+			}
+			return
+		default:
+			close(mockStateRemote.Ch)
+			return
+		}
 	}
 }
-func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context) (kv.MemBuffer, error) {
-	prefix := tablecodec.GenTablePrefix(c.tableID)
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
-	buffTxn, err := ctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
-	if err != nil {
-		return nil, err
-	}
-
-	buffer := buffTxn.GetMemBuffer()
-	it, err := txn.Iter(prefix, prefix.PrefixNext())
-	if err != nil {
-		return nil, err
-	}
-	defer it.Close()
-	if !it.Valid() {
-		return nil, nil
-	}
-	for it.Valid() && it.Key().HasPrefix(prefix) {
-		value := it.Value()
-		err = buffer.Set(it.Key(), value)
-		if err != nil {
-			return nil, err
+func (c *cachedTable) loadDataFromOriginalTable(sctx sessionctx.Context, lease uint64) (kv.MemBuffer, error) {
+	var buffer kv.MemBuffer
+	err := kv.RunInNewTxn(context.Background(), sctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		prefix := tablecodec.GenTablePrefix(c.tableID)
+		if txn.StartTS() >= lease {
+			return errors.New("the loaded data is outdate for caching")
 		}
-		err = it.Next()
-		if err != nil {
-			return nil, err
-		}
-	}
 
+		buffTxn, err := sctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
+		if err != nil {
+			return err
+		}
+
+		buffer := buffTxn.GetMemBuffer()
+		it, err := txn.Iter(prefix, prefix.PrefixNext())
+		if err != nil {
+			return err
+		}
+		defer it.Close()
+		for it.Valid() && it.Key().HasPrefix(prefix) {
+			value := it.Value()
+			err = buffer.Set(it.Key(), value)
+			if err != nil {
+				return err
+			}
+			err = it.Next()
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 	return buffer, nil
 }
 
@@ -134,7 +145,7 @@ func (c *cachedTable) UpdateLockForRead(ctx sessionctx.Context, ts uint64) error
 		return errors.Trace(err)
 	}
 	if succ {
-		mb, err := c.loadDataFromOriginalTable(ctx)
+		mb, err := c.loadDataFromOriginalTable(ctx, lease)
 		if err != nil {
 			return errors.Trace(err)
 		}

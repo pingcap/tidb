@@ -15,18 +15,17 @@
 package tables_test
 
 import (
-	"testing"
-	"time"
-
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"testing"
 )
 
 func TestCacheTableBasicScan(t *testing.T) {
 	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	defer tables.CloseRemoteService()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tmp1")
@@ -114,17 +113,16 @@ func TestCacheTableBasicScan(t *testing.T) {
 		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
 	}
 	assertSelect()
-	tables.Close()
+
 }
 
 func TestCacheTableBasicReadAndWrite(t *testing.T) {
 	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	defer tables.Close()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk1 := testkit.NewTestKit(t, store)
+	//tk1 := testkit.NewTestKit(t, store)
 	tk.MustExec("drop table if exists write_tmp1")
 	tk.MustExec("create  table write_tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into write_tmp1 values" +
@@ -140,26 +138,17 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 			break
 		}
 	}
-
-	tk1.MustExec("use test")
-	tk1.MustExec("insert into write_tmp1 values (2, 222, 222)")
+	tk.MustExec("use test")
+	tk.MustExec("insert into write_tmp1 values (2, 222, 222)")
 	// write lock exists
 	require.False(t, tk.HasPlan("select *from write_tmp1", "UnionScan"))
 	// wait write lock expire and check cache can be used again
-	for {
-		time.Sleep(200 * time.Millisecond)
-		if tk.HasPlan("select *from write_tmp1", "UnionScan") {
-			break
-		}
+	for tk.HasPlan("select *from write_tmp1", "UnionScan"){
 	}
 	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 222", "3 113 1003"))
-	tk1.MustExec("update write_tmp1 set v = 3333 where id = 2")
-	for {
-		time.Sleep(200 * time.Millisecond)
-		if tk.HasPlan("select *from write_tmp1", "UnionScan") {
-			break
-		}
+	tk.MustExec("update write_tmp1 set v = 3333 where id = 2")
+	for tk.HasPlan("select *from write_tmp1", "UnionScan"){
 	}
 	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
-
+	tables.CloseRemoteService()
 }

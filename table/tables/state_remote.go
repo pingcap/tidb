@@ -174,6 +174,7 @@ type mockStateRemoteData struct {
 
 type stateRecord struct {
 	lease    uint64
+	readLockLease uint64 // only use for intent lock
 	lockType CachedTableLockType
 }
 
@@ -206,11 +207,13 @@ func (r *mockStateRemoteData) LockForRead(tid int64, now, ts uint64) (bool, erro
 		// Add the read lock
 		record.lockType = CachedTableLockRead
 		record.lease = ts
+		record.readLockLease = ts
 		return true, nil
 	case CachedTableLockRead:
 		// Renew lease for this case.
 		if record.lease < ts {
 			record.lease = ts
+			record.readLockLease = ts
 			return true, nil
 		}
 		// Already read locked.
@@ -220,6 +223,7 @@ func (r *mockStateRemoteData) LockForRead(tid int64, now, ts uint64) (bool, erro
 			// Outdated...clear orphan lock
 			record.lockType = CachedTableLockRead
 			record.lease = ts
+			record.readLockLease = ts
 			return true, nil
 		}
 		return false, nil
@@ -232,6 +236,7 @@ func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, e
 	if !ok {
 		record.lockType = CachedTableLockWrite
 		record.lease = ts
+		record.readLockLease = ts
 		return 0, nil
 	}
 
@@ -259,8 +264,10 @@ func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, e
 		}
 	case CachedTableLockIntend:
 		// // Add the write lock.
-		record.lockType = CachedTableLockWrite
-		record.lease = ts
+		if now > record.readLockLease {
+			record.lockType = CachedTableLockWrite
+			record.lease = ts
+		}
 	default:
 		return 0, fmt.Errorf("wrong lock state %v", record.lockType)
 	}
