@@ -15,6 +15,8 @@
 package restore
 
 import (
+	"strings"
+
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 )
@@ -39,12 +41,16 @@ type Template interface {
 
 	// Output print all checks results.
 	Output() string
+
+	// FailedMsg represents the error msg for the failed check.
+	FailedMsg() string
 }
 
 type SimpleTemplate struct {
 	count               int
 	warnFailedCount     int
 	criticalFailedCount int
+	failedMsg           []string
 	t                   table.Writer
 }
 
@@ -61,8 +67,13 @@ func NewSimpleTemplate() Template {
 		0,
 		0,
 		0,
+		make([]string, 0),
 		t,
 	}
+}
+
+func (c *SimpleTemplate) FailedMsg() string {
+	return strings.Join(c.failedMsg, ";\n")
 }
 
 func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
@@ -75,6 +86,7 @@ func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
 			c.warnFailedCount++
 		}
 	}
+	c.failedMsg = append(c.failedMsg, msg)
 	c.t.AppendRow(table.Row{c.count, msg, t, passed})
 	c.t.AppendSeparator()
 }

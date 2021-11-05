@@ -22,7 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/hack"
 )
 

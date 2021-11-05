@@ -27,13 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -41,6 +35,13 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
@@ -1377,11 +1378,11 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			childTp := u.children[j].Schema().Columns[i].RetType
 			resultTp = unionJoinFieldType(resultTp, childTp)
 		}
-		dstCharset, dstCollation, coercibility, err := expression.CheckAndDeriveCollationFromExprsWithCoer(b.ctx, "UNION", resultTp.EvalType(), tmpExprs...)
-		if err != nil || coercibility == expression.CoercibilityNone {
+		collation, err := expression.CheckAndDeriveCollationFromExprs(b.ctx, "UNION", resultTp.EvalType(), tmpExprs...)
+		if err != nil || collation.Coer == expression.CoercibilityNone {
 			return collate.ErrIllegalMixCollation.GenWithStackByArgs("UNION")
 		}
-		resultTp.Charset, resultTp.Collate = dstCharset, dstCollation
+		resultTp.Charset, resultTp.Collate = collation.Charset, collation.Collation
 		names = append(names, &types.FieldName{ColName: u.children[0].OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
@@ -3583,8 +3584,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, err
 		}
 	}
-	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
-		if sel.LockInfo.LockType == ast.SelectLockForShare && noopFuncsMode != variable.OnInt {
+	l := sel.LockInfo
+	if l != nil && l.LockType != ast.SelectLockNone {
+		if l.LockType == ast.SelectLockForShare && noopFuncsMode != variable.OnInt {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 			if noopFuncsMode == variable.OffInt {
 				return nil, err
@@ -3592,7 +3594,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			// NoopFuncsMode is Warn, append an error
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
-		p, err = b.buildSelectLock(p, sel.LockInfo)
+		for _, tName := range l.Tables {
+			b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tName.TableInfo.ID] = struct{}{}
+		}
+		p, err = b.buildSelectLock(p, l)
 		if err != nil {
 			return nil, err
 		}
@@ -3789,11 +3794,13 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	// 3. statistics is outdated.
-	if statsTbl.IsOutdated() {
-		tbl := *statsTbl
-		tbl.Pseudo = true
-		statsTbl = &tbl
-		pseudoEstimationOutdate.Inc()
+	if ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() {
+		if statsTbl.IsOutdated() {
+			tbl := *statsTbl
+			tbl.Pseudo = true
+			statsTbl = &tbl
+			pseudoEstimationOutdate.Inc()
+		}
 	}
 	return statsTbl
 }
@@ -4136,6 +4143,31 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		us.SetChildren(ds)
 		result = us
 	}
+	// If a table is a cache table, it is judged whether it satisfies the conditions of read cache.
+	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable && b.ctx.GetSessionVars().SnapshotTS == 0 && !b.ctx.GetSessionVars().StmtCtx.IsStaleness {
+		cachedTable := tbl.(table.CachedTable)
+		txn, err := b.ctx.Txn(true)
+		if err != nil {
+			return nil, err
+		}
+		// Use the txn of the transaction to determine whether the cache can be read.
+		// About read lock and read condition feature. will add in the next pr.
+		buffer, cond := cachedTable.TryGetMemcache(txn.StartTS())
+		if cond {
+			b.ctx.GetSessionVars().StmtCtx.StoreCacheTable(tbl.Meta().ID, buffer)
+			us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
+			us.SetChildren(ds)
+			result = us
+		} else {
+			go func() {
+				err := cachedTable.UpdateLockForRead(b.ctx, txn.StartTS())
+				if err != nil {
+					log.Warn("Update Lock Info Error")
+				}
+			}()
+		}
+	}
+
 	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
 		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	}

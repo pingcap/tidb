@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"

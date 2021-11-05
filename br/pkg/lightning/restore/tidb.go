@@ -23,12 +23,6 @@ import (
 
 	tmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -36,6 +30,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/zap"
 )
 
@@ -83,7 +83,6 @@ func isUnknownSystemVariableErr(err error) bool {
 }
 
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
-
 	param := common.MySQLConnectParam{
 		Host:             dsn.Host,
 		Port:             dsn.Port,
@@ -93,6 +92,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		MaxAllowedPacket: dsn.MaxAllowedPacket,
 		TLS:              dsn.TLS,
 	}
+
 	db, err := param.Connect()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -111,6 +111,12 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		"tidb_opt_write_row_id": "1",
 		// always set auto-commit to ON
 		"autocommit": "1",
+	}
+
+	if dsn.Vars != nil {
+		for k, v := range dsn.Vars {
+			vars[k] = v
+		}
 	}
 
 	for k, v := range vars {
@@ -202,7 +208,7 @@ func createDatabaseIfNotExistStmt(dbName string) string {
 }
 
 func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
-	stmts, _, err := p.Parse(createTable, "", "")
+	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {
 		return []string{}, err
 	}

@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/parser/format"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )

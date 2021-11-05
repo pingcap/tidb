@@ -32,9 +32,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
@@ -43,6 +40,9 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -96,7 +96,7 @@ func TestEarlyClose(t *testing.T) {
 		rss, err := tk.Session().Execute(ctx, "select * from earlyclose order by id")
 		require.NoError(t, err)
 		rs := rss[0]
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		require.NoError(t, rs.Next(ctx, req))
 		require.NoError(t, rs.Close())
 	}
@@ -109,7 +109,7 @@ func TestEarlyClose(t *testing.T) {
 	rss, err := tk.Session().Execute(ctx, "select * from earlyclose")
 	require.NoError(t, err)
 	rs := rss[0]
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	require.Error(t, err)
 	require.NoError(t, rs.Close())
@@ -665,7 +665,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	require.NoError(t, err)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(context.Background(), req)
 	require.NoError(t, err)
 	require.NoError(t, err)
@@ -720,7 +720,7 @@ func TestParallelHashAggClose(t *testing.T) {
 	rss, err := tk.Session().Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	require.NoError(t, err)
 	rs := rss[0]
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	require.EqualError(t, err, "HashAggExec.parallelExec error")
 }
@@ -743,7 +743,7 @@ func TestUnparallelHashAggClose(t *testing.T) {
 	rss, err := tk.Session().Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	require.NoError(t, err)
 	rs := rss[0]
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	require.EqualError(t, err, "HashAggExec.unparallelExec error")
 }
@@ -1572,4 +1572,19 @@ func TestIssue19410(t *testing.T) {
 	tk.MustExec("insert into t3 values (1, 'A');")
 	tk.MustQuery("select /*+ INL_HASH_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
 	tk.MustQuery("select /*+ INL_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
+}
+
+func TestAnalyzeNextRawErrorNoLeak(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int, c varchar(32))")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/distsql/mockNextRawError", `return(true)`))
+	err := tk.ExecToErr("analyze table t1")
+	require.EqualError(t, err, "mockNextRawError")
 }

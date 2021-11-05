@@ -16,7 +16,7 @@ package core_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
