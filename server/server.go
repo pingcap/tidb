@@ -685,8 +685,10 @@ func (s *Server) getTLSConfig() *tls.Config {
 func killConn(conn *clientConn) {
 	sessVars := conn.ctx.GetSessionVars()
 	atomic.StoreUint32(&sessVars.Killed, 1)
-	// 'Kill' status can be showed in Command/Info field when show processlist
-	conn.ctx.SetProcessInfo("this session is being killed", time.Now(), mysql.ComProcessKill, 0)
+	// 'killed' status can be showed in State field when show processlist
+	sessVars.SetStatusFlag(mysql.ServerStatusKilled, true)
+	// we need use the following function to Store the value into State, but it will also rewrite Info
+	conn.ctx.SetProcessInfo("", time.Now(), mysql.ComProcessKill, 0)
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()

@@ -116,6 +116,7 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 var ascServerStatus = []uint16{
 	mysql.ServerStatusInTrans,
 	mysql.ServerStatusAutocommit,
+	mysql.ServerStatusKilled,
 	mysql.ServerMoreResultsExists,
 	mysql.ServerStatusNoGoodIndexUsed,
 	mysql.ServerStatusNoIndexUsed,
@@ -132,6 +133,7 @@ var ascServerStatus = []uint16{
 var mapServerStatus2Str = map[uint16]string{
 	mysql.ServerStatusInTrans:            "in transaction",
 	mysql.ServerStatusAutocommit:         "autocommit",
+	mysql.ServerStatusKilled:             "killed",
 	mysql.ServerMoreResultsExists:        "more results exists",
 	mysql.ServerStatusNoGoodIndexUsed:    "no good index used",
 	mysql.ServerStatusNoIndexUsed:        "no index used",

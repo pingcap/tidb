@@ -49,6 +49,7 @@ const AuthSwitchRequest byte = 0xfe
 const (
 	ServerStatusInTrans            uint16 = 0x0001
 	ServerStatusAutocommit         uint16 = 0x0002
+	ServerStatusKilled             uint16 = 0x0004
 	ServerMoreResultsExists        uint16 = 0x0008
 	ServerStatusNoGoodIndexUsed    uint16 = 0x0010
 	ServerStatusNoIndexUsed        uint16 = 0x0020
