@@ -1336,7 +1336,7 @@ func userExistsInternal(sqlExecutor sqlexec.SQLExecutor, name string, host strin
 	if err != nil {
 		return false, err
 	}
-	req := recordSet.NewChunk()
+	req := recordSet.NewChunk(nil)
 	err = recordSet.Next(context.TODO(), req)
 	var rows int = 0
 	if err == nil {
@@ -1516,12 +1516,6 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 			return errors.New("FLUSH TABLES WITH READ LOCK is not supported.  Please use @@tidb_snapshot")
 		}
 	case ast.FlushPrivileges:
-		// If skip-grant-table is configured, do not flush privileges.
-		// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
-		// Call dom.PrivilegeHandle().Update would panic.
-		if config.GetGlobalConfig().Security.SkipGrantTable {
-			return nil
-		}
 		dom := domain.GetDomain(e.ctx)
 		return dom.NotifyUpdatePrivilege()
 	case ast.FlushTiDBPlugin:
