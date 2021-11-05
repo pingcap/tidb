@@ -4,12 +4,12 @@ package export
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
