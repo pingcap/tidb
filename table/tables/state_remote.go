@@ -46,7 +46,7 @@ type StateRemote interface {
 
 // mockStateRemoteHandle implement the StateRemote interface.
 type mockStateRemoteHandle struct {
-	ch   chan remoteTask
+	ch chan remoteTask
 }
 
 func (r *mockStateRemoteHandle) Load(tid int64) (CachedTableLockType, uint64, error) {
@@ -82,7 +82,6 @@ func (r *mockStateRemoteHandle) LockForWrite(tid int64, now, ts uint64) error {
 	t1 := oracle.GetTimeFromTS(op.oldLease)
 	t2 := oracle.GetTimeFromTS(now)
 	waitDuration := t1.Sub(t2)
-	fmt.Println("lock for write meet read lock", "old lease ts=", t1, "now=", t2, "sleep=", waitDuration)
 	time.Sleep(waitDuration)
 
 	// TODO: now should be a new ts
@@ -102,6 +101,10 @@ func mockRemoteService(r *mockStateRemoteData, ch chan remoteTask) {
 	for task := range ch {
 		task.Exec(r)
 	}
+}
+
+func CloseRemoteService() {
+
 }
 
 type remoteTask interface {
@@ -230,7 +233,6 @@ func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, e
 
 	switch record.lockType {
 	case CachedTableLockNone:
-		fmt.Println("write for lock meet none, add lock")
 		record.lockType = CachedTableLockWrite
 		record.lease = ts
 		return 0, nil
@@ -246,7 +248,6 @@ func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, e
 		oldLease := record.lease
 		record.lockType = CachedTableLockIntend
 		record.lease = leaseFromTS(ts)
-		fmt.Println("read lock -> write intend")
 		return oldLease, nil
 	case CachedTableLockWrite:
 		if ts > record.lease {
@@ -256,7 +257,6 @@ func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, e
 		// // Add the write lock.
 		record.lockType = CachedTableLockWrite
 		record.lease = ts
-		fmt.Println("intend -> write lock")
 	default:
 		return 0, fmt.Errorf("wrong lock state %v", record.lockType)
 	}

@@ -15,11 +15,11 @@
 package tables_test
 
 import (
-	"fmt"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
-
-	"github.com/pingcap/tidb/testkit"
 )
 
 func TestCacheTableBasicScan(t *testing.T) {
@@ -113,12 +113,14 @@ func TestCacheTableBasicScan(t *testing.T) {
 		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
 	}
 	assertSelect()
+	tables.Close()
 }
 
 func TestCacheTableBasicReadAndWrite(t *testing.T) {
 	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	defer tables.Close()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -131,33 +133,32 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 	// Read and add read lock
 	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001",
 		"3 113 1003"))
-
-	time.Sleep(1)
 	// read lock should valid
-	result := tk.MustQuery("explain format = 'brief' select *from write_tmp1")
-	result.Check(testkit.Rows("UnionScan 10000.00 root  ",
-		"└─TableReader 10000.00 root  data:TableFullScan",
-		"  └─TableFullScan 10000.00 cop[tikv] table:write_tmp1 keep order:false, stats:pseudo"))
-	fmt.Println(result)
+	for i := 0; i < 10; i++ {
+		if tk.HasPlan("select *from write_tmp1", "UnionScan") {
+			break
+		}
+	}
+
 	tk1.MustExec("use test")
 	tk1.MustExec("insert into write_tmp1 values (2, 222, 222)")
-	// none lock can't read cache first wait add read lock
-	tk.MustQuery("explain format = 'brief' select *from write_tmp1").Check(testkit.Rows(
-		"TableReader 10000.00 root  data:TableFullScan",
-		"└─TableFullScan 10000.00 cop[tikv] table:write_tmp1 keep order:false, stats:pseudo"))
-	time.Sleep(3 * time.Second)
-	tk.MustQuery("explain format = 'brief' select *from write_tmp1").Check(testkit.Rows(
-		"TableReader 10000.00 root  data:TableFullScan",
-		"└─TableFullScan 10000.00 cop[tikv] table:write_tmp1 keep order:false, stats:pseudo"))
-	// second can read cache
-	tk.MustQuery("explain format = 'brief' select *from write_tmp1").Check(testkit.Rows("UnionScan 10000.00 root  ",
-		"└─TableReader 10000.00 root  data:TableFullScan",
-		"  └─TableFullScan 10000.00 cop[tikv] table:write_tmp1 keep order:false, stats:pseudo"))
+	// write lock exists
+	require.False(t, tk.HasPlan("select *from write_tmp1", "UnionScan"))
+	// wait write lock expire and check cache can be used again
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if tk.HasPlan("select *from write_tmp1", "UnionScan") {
+			break
+		}
+	}
 	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 222", "3 113 1003"))
 	tk1.MustExec("update write_tmp1 set v = 3333 where id = 2")
-	time.Sleep(3 * time.Second)
+	for {
+		time.Sleep(200 * time.Millisecond)
+		if tk.HasPlan("select *from write_tmp1", "UnionScan") {
+			break
+		}
+	}
 	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
-	tk.MustQuery("explain format = 'brief' select *from write_tmp1").Check(testkit.Rows("UnionScan 10000.00 root  ",
-		"└─TableReader 10000.00 root  data:TableFullScan",
-		"  └─TableFullScan 10000.00 cop[tikv] table:write_tmp1 keep order:false, stats:pseudo"))
+
 }

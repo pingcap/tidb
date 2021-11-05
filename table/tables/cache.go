@@ -41,6 +41,7 @@ type cachedTable struct {
 }
 
 func leaseFromTS(ts uint64) uint64 {
+	// TODO make this configurable in the following PRs
 	const defaultLeaseDuration time.Duration = 3 * time.Second
 	physicalTime := oracle.GetTimeFromTS(ts)
 	lease := oracle.GoTimeToTS(physicalTime.Add(defaultLeaseDuration))
@@ -69,6 +70,7 @@ var mockStateRemote = struct {
 // NewCachedTable creates a new CachedTable Instance
 func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 	// Only for the first time.
+	// TODO the mock implementation will be replaced in the following PRs
 	if mockStateRemote.Data == nil {
 		mockStateRemote.Data = newMockStateRemoteData()
 		mockStateRemote.Ch = make(chan remoteTask, 100)
@@ -81,6 +83,10 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 	return ret, nil
 }
 
+// Close TODO only for skip go leap. and will remove in the following
+func Close() {
+	close (mockStateRemote.Ch)
+}
 func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context) (kv.MemBuffer, error) {
 	prefix := tablecodec.GenTablePrefix(c.tableID)
 	txn, err := ctx.Txn(true)
@@ -118,8 +124,6 @@ func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context) (kv.MemB
 
 func (c *cachedTable) UpdateLockForRead(ctx sessionctx.Context, ts uint64) error {
 	// Load data from original table and the update lock information.
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts)
 	succ, err := c.handle.LockForRead(tid, ts, lease)
@@ -183,4 +187,3 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 	return c.TableCommon.RemoveRecord(ctx, h, r)
 }
-
