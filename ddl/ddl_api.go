@@ -24,6 +24,8 @@ import (
 	"fmt"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/store/helper"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"math"
 	"strconv"
 	"strings"
@@ -4671,7 +4673,8 @@ type TiFlashReplicaStatusResult struct {
 	ReplicaDetail    map[int64]int
 }
 
-func (d *ddl) MakeBaseRule() placement.Rule {
+
+func MakeBaseRule() placement.Rule {
 	return placement.Rule{
 		GroupID:  "tiflash",
 		ID:       "",
@@ -4737,6 +4740,53 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 	return nil
 }
 
+func isRuleMatch(rule placement.Rule, tb PollTiFlashReplicaStatusContext) (bool, *placement.Rule) {
+
+	// Compute startKey
+	startKey := tablecodec.GenTableRecordPrefix(tb.ID)
+	endKey := tablecodec.EncodeTablePrefix(tb.ID + 1)
+	startKey = codec.EncodeBytes([]byte{}, startKey)
+	endKey = codec.EncodeBytes([]byte{}, endKey)
+
+	isMatch := true
+
+	if rule.Override && rule.StartKeyHex == startKey.String() && rule.EndKeyHex == endKey.String(){
+		ok := false
+		for _, c := range rule.Constraints {
+			if c.Key == "engine" && len(c.Values) == 1 && c.Values[0] == "tiflash" && c.Op == placement.In {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			isMatch = false
+		}
+
+		// TODO
+		//if rule.LocationLabels != tb.TableInfo.TiFlashReplica.LocationLabels {
+		//	return false
+		//}
+		if isMatch && uint64(rule.Count) != tb.TableInfo.TiFlashReplica.Count {
+			isMatch = false
+		}
+		if isMatch && rule.Role != placement.Learner {
+			isMatch = false
+		}
+	}else{
+		isMatch = false
+	}
+	if isMatch {
+		return true, nil
+	}else{
+		ruleNew := MakeBaseRule()
+		ruleNew.StartKeyHex = startKey.String()
+		ruleNew.EndKeyHex = endKey.String()
+		ruleNew.Count = int(tb.TableInfo.TiFlashReplica.Count)
+		ruleNew.LocationLabels = tb.TableInfo.TiFlashReplica.LocationLabels
+		return false, nil
+	}
+}
+
 func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 	// Should we escape table update?
 
@@ -4776,11 +4826,16 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 		}
 	}
 
-	allRules, err := tikvHelper.GetGroupRules("tiflash")
+	allRulesArr, err := tikvHelper.GetGroupRules("tiflash")
 	if err != nil {
 		return allReplicaReady, errors.Trace(err)
 	}
-	fmt.Printf("allRules is %v", allRules)
+	var allRules map[string]placement.Rule
+	for _, r := range allRulesArr {
+		allRules[r.ID] = r
+	}
+
+	fmt.Printf("allRules is %v\n", allRules)
 
 	tikvStats, err := tikvHelper.GetStoresStat()
 	if err != nil {
@@ -4800,8 +4855,16 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 		// for every region in each table, if it has one replica, we reckon it ready
 		// TODO Can we batch request table?
 
+
 		// TODO implement _check_and_make_rule
-		//rule := d.MakeBaseRule()
+		ruleId := fmt.Sprintf("table-%v-r", tb.ID)
+		rule, ok := allRules[ruleId]
+		if ok {
+			match, ruleNew := isRuleMatch(rule, tb)
+			if !match {
+				tikvHelper.SetPlacementRule(*ruleNew)
+			}
+		}
 
 		if !tb.TableInfo.TiFlashReplica.Available {
 			allReplicaReady = false
@@ -4862,6 +4925,9 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 	}
 
 	// TODO remove needless rules
+	for _, v := range allRules{
+		tikvHelper.DeletePlacementRule("tiflash", v.ID)
+	}
 	return allReplicaReady, nil
 }
 

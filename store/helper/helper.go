@@ -907,6 +907,60 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 	return dec.Decode(stats)
 }
 
+
+func (h *Helper) DeletePlacementRule(group string, ruleId string) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return err
+	}
+
+	deleteURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rule/%v/%v",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+		group,
+		ruleId,
+	)
+
+	req, err := http.NewRequest("DELETE", deleteURL, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := util.InternalHTTPClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			log.Error("err", zap.Error(err))
+		}
+	}()
+	return nil
+}
+
+func (h *Helper) SetPlacementRule(rule placement.Rule) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return err
+	}
+	m, _ := json.Marshal(rule)
+
+	postURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rule",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+	)
+	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", bytes.NewBuffer(m))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			log.Error("err", zap.Error(err))
+		}
+	}()
+	return nil
+}
+
 func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
@@ -940,6 +994,7 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	return rules, nil
 }
 
