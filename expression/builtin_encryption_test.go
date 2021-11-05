@@ -231,7 +231,7 @@ func TestAESDecrypt(t *testing.T) {
 		require.NoError(t, err)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin, collate.DefaultLen), str)
+		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str)
 	}
 }
 
