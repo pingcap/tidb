@@ -143,11 +143,11 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 	// write lock exists
 	require.False(t, tk.HasPlan("select *from write_tmp1", "UnionScan"))
 	// wait write lock expire and check cache can be used again
-	for tk.HasPlan("select *from write_tmp1", "UnionScan"){
+	for tk.HasPlan("select *from write_tmp1", "UnionScan") {
 	}
 	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 222", "3 113 1003"))
 	tk.MustExec("update write_tmp1 set v = 3333 where id = 2")
-	for tk.HasPlan("select *from write_tmp1", "UnionScan"){
+	for tk.HasPlan("select *from write_tmp1", "UnionScan") {
 	}
 	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
 	tables.CloseRemoteService()
