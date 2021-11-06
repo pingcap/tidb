@@ -1102,8 +1102,9 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (string, *parser
 }
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
-func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n ast.StmtNode) (encodedPlan string, hints []*ast.TableOptimizerHint) {
+func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n ast.StmtNode) (encodedPlan string, tableHints []*ast.TableOptimizerHint) {
 	var hintSet bool
+	var hints []*ast.TableOptimizerHint
 	encodedPlan = sctx.GetSessionVars().StmtCtx.GetEncodedPlan()
 	hints, hintSet = sctx.GetSessionVars().StmtCtx.GetPlanHint()
 	if len(encodedPlan) > 0 && (!genHint || hintSet) {
@@ -1119,9 +1120,9 @@ func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n
 	}
 
 	// remove duplicate hints
-	tableHints := make([]*ast.TableOptimizerHint, 0)
+	tableHints = make([]*ast.TableOptimizerHint, 0)
 	hintsMap := make(map[string]struct{}, len(hints))
-	for idx, _ := range hints {
+	for idx := range hints {
 		hintStr := hint.RestoreTableOptimizerHint(hints[idx])
 		if _, ok := hintsMap[hintStr]; ok {
 			continue
@@ -1129,7 +1130,6 @@ func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n
 		hintsMap[hintStr] = struct{}{}
 		tableHints = append(tableHints, hints[idx])
 	}
-	hints = tableHints
 	return
 }
 
