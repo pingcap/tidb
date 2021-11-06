@@ -881,7 +881,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHints []*as
 	case *ast.InsertStmt:
 		blockStartOffset = 1
 		afterProcessFunc = func(bindSQL string) string {
-			insertIdx := 1
+			var insertIdx int
 			if n.IsReplace {
 				insertIdx = strings.Index(bindSQL, "REPLACE")
 			} else {
@@ -905,7 +905,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHints []*as
 func getBindSQL(stmtNode ast.StmtNode, planHints []*ast.TableOptimizerHint, defaultDB string, blockOffsetStart int) string {
 	counter := -1
 	blockHintProcessor := hint.BlockHintProcessor{}
-	offsetToHintMap := make(map[int][]*ast.TableOptimizerHint, 0)
+	offsetToHintMap := make(map[int][]*ast.TableOptimizerHint)
 	for _, pHint := range planHints {
 		hintOffset := blockHintProcessor.ParseOffsetFromBlockName(pHint.QBName, blockOffsetStart)
 		hints := offsetToHintMap[hintOffset]
