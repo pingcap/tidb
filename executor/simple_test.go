@@ -966,5 +966,5 @@ func (s *testSuite3) TestShowGrantsAfterDropRole(c *C) {
 	tk.Se.Auth(&auth.UserIdentity{Username: "u29473", Hostname: "%"}, nil, nil)
 	tk.MustExec("SET ROLE r29473")
 	tk.MustExec("DROP ROLE r29473")
-	tk.MustQuery("SHOW GRANTS")
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT CREATE USER ON *.* TO 'u29473'@'%'"))
 }
