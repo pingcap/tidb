@@ -333,15 +333,10 @@ func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 	ts.runTestStatusAPI(c)
 }
 
-func (ts *tidbTestSuite) TestStatusPort(c *C) {
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	session.DisableStats4Test()
-	dom, err := session.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer dom.Close()
-	ts.tidbdrv = NewTiDBDriver(store)
+func TestStatusPort(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
 	cfg := newTestConfig()
 	cfg.Socket = ""
 	cfg.Port = 0
@@ -350,8 +345,8 @@ func (ts *tidbTestSuite) TestStatusPort(c *C) {
 	cfg.Performance.TCPKeepAlive = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, NotNil)
-	c.Assert(server, IsNil)
+	require.Error(t, err)
+	require.Nil(t, server)
 }
 
 func TestStatusAPIWithTLS(t *testing.T) {
