@@ -240,8 +240,7 @@ func TestMultiSession(t *testing.T) {
 	require.Nil(t, h.Update(is))
 	stats1 = h.GetTableStats(tableInfo1)
 	require.Equal(t, int64(rowCount1*2), stats1.Count)
-	// The session in testKit is already Closed, set it to nil will create a new session.
-	testKit.SetSession(nil)
+	testKit.RefreshSession()
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
 	rs.Check(testkit.Rows("60"))
 }
