@@ -22,7 +22,7 @@ import (
 )
 
 func TestCacheTableBasicScan(t *testing.T) {
-	//t.Parallel()
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

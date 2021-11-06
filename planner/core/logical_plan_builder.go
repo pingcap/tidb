@@ -4151,7 +4151,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			return nil, err
 		}
 		// Use the txn of the transaction to determine whether the cache can be read.
-		// About read lock and read condition feature. will add in the next pr.
 		buffer, cond := cachedTable.TryGetMemcache(txn.StartTS())
 		if cond {
 			b.ctx.GetSessionVars().StmtCtx.StoreCacheTable(tbl.Meta().ID, buffer)
@@ -4160,12 +4159,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			result = us
 		} else {
 			go func() {
-				if b != nil && !b.inUpdateStmt && !b.inDeleteStmt && !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
 					err := cachedTable.UpdateLockForRead(b.ctx, txn.StartTS())
 					if err != nil {
 						log.Warn("Update Lock Info Error")
 					}
-				}
 			}()
 		}
 	}
