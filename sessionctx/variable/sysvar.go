@@ -671,8 +671,8 @@ var defaultSysVars = []*SysVar{
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		sv := GetSysVar(Timestamp)
 		defaultTimestamp := sv.Value
-		if normalizedValue == defaultTimestamp {
-			return normalizedValue, nil
+		if normalizedValue == defaultTimestamp || normalizedValue == "0" {
+			return defaultTimestamp, nil
 		}
 		return sv.checkFloatSystemVar(normalizedValue, vars)
 	}},
