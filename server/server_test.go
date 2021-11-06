@@ -39,7 +39,9 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -69,6 +71,19 @@ func newTestServerClient() *testServerClient {
 		statusPort:   0,
 		statusScheme: "http",
 	}
+}
+
+type testingServerClient struct {
+	testServerClient
+}
+
+// newTestServerClient return a testingServerClient with unique address
+func newTestingServerClient() *testingServerClient {
+	return &testingServerClient{testServerClient{
+		port:         0,
+		statusPort:   0,
+		statusScheme: "http",
+	}}
 }
 
 // statusURL return the full URL of a status path
@@ -117,6 +132,21 @@ func (cli *testServerClient) runTests(c *C, overrider configOverrider, tests ...
 	}()
 
 	dbt := &DBTest{c, db}
+	for _, test := range tests {
+		test(dbt)
+	}
+}
+
+// runTests runs tests using the default database `test`.
+func (cli *testingServerClient) runTests(t *testing.T, overrider configOverrider, tests ...func(dbt *testkit.DBTestKit)) {
+	db, err := sql.Open("mysql", cli.getDSN(overrider))
+	require.NoErrorf(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+
+	dbt := testkit.NewDBTestKit(t, db)
 	for _, test := range tests {
 		test(dbt)
 	}
@@ -1698,6 +1728,18 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(data.Version, Equals, tmysql.ServerVersion)
 	c.Assert(data.GitHash, Equals, versioninfo.TiDBGitHash)
+}
+
+func (cli *testingServerClient) runTestStatusAPI(t *testing.T) {
+	resp, err := cli.fetchStatus("/status")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	decoder := json.NewDecoder(resp.Body)
+	var data status
+	err = decoder.Decode(&data)
+	require.NoError(t, err)
+	require.Equal(t, tmysql.ServerVersion, data.Version)
+	require.Equal(t, versioninfo.TiDBGitHash, data.GitHash)
 }
 
 // The golang sql driver (and most drivers) should have multi-statement

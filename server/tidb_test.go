@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -57,10 +58,76 @@ import (
 	mockTopSQLReporter "github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/tracecpu/mock"
+	"github.com/stretchr/testify/require"
 )
+
+type tidbTestBase struct {
+	*testingServerClient
+	tidbdrv *TiDBDriver
+	server  *Server
+	domain  *domain.Domain
+	store   kv.Storage
+}
+
+func createTiDBTestBase(t *testing.T) (*tidbTestBase, func()) {
+	ts := &tidbTestBase{testingServerClient: newTestingServerClient()}
+
+	// setup tidbTestBase
+	var err error
+	ts.store, err = mockstore.NewMockStore()
+	session.DisableStats4Test()
+	require.NoError(t, err)
+	ts.domain, err = session.BootstrapSession(ts.store)
+	require.NoError(t, err)
+	ts.tidbdrv = NewTiDBDriver(ts.store)
+	cfg := newTestConfig()
+	cfg.Socket = ""
+	cfg.Port = ts.port
+	cfg.Status.ReportStatus = true
+	cfg.Status.StatusPort = ts.statusPort
+	cfg.Performance.TCPKeepAlive = true
+	err = logutil.InitLogger(cfg.Log.ToLogConfig())
+	require.NoError(t, err)
+
+	server, err := NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	ts.port = getPortFromTCPAddr(server.listener.Addr())
+	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+	ts.server = server
+	go func() {
+		err := ts.server.Run()
+		require.NoError(t, err)
+	}()
+	ts.waitUntilServerOnline()
+
+	cleanup := func() {
+		if ts.store != nil {
+			ts.store.Close()
+		}
+		if ts.domain != nil {
+			ts.domain.Close()
+		}
+		if ts.server != nil {
+			ts.server.Close()
+		}
+	}
+
+	return ts, cleanup
+}
 
 type tidbTestSuite struct {
 	*tidbTestSuiteBase
+}
+
+type tidbTest struct {
+	*tidbTestBase
+}
+
+func createTiDBTest(t *testing.T) (*tidbTest, func()) {
+	base, cleanup := createTiDBTestBase(t)
+	// TODO: register metrics
+	// metrics.RegisterMetrics()
+	return &tidbTest{base}, cleanup
 }
 
 type tidbTestSerialSuite struct {
@@ -287,11 +354,14 @@ func (ts *tidbTestSuite) TestStatusPort(c *C) {
 	c.Assert(server, IsNil)
 }
 
-func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
+func TestStatusAPIWithTLS(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
 	caCert, caKey, err := generateCert(0, "TiDB CA 2", nil, nil, "/tmp/ca-key-2.pem", "/tmp/ca-cert-2.pem")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, _, err = generateCert(1, "tidb-server-2", caCert, caKey, "/tmp/server-key-2.pem", "/tmp/server-cert-2.pem")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	defer func() {
 		os.Remove("/tmp/ca-key-2.pem")
@@ -310,22 +380,22 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 	cfg.Security.ClusterSSLCert = "/tmp/server-cert-2.pem"
 	cfg.Security.ClusterSSLKey = "/tmp/server-key-2.pem"
 	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
 		err := server.Run()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
 
 	// https connection should work.
-	ts.runTestStatusAPI(c)
+	ts.runTestStatusAPI(t)
 
 	// but plain http connection should fail.
 	cli.statusScheme = "http"
 	_, err = cli.fetchStatus("/status") // nolint: bodyclose
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	server.Close()
 }
