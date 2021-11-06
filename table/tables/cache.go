@@ -16,7 +16,6 @@ package tables
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,7 +35,6 @@ var _ table.CachedTable = &cachedTable{}
 type cachedTable struct {
 	TableCommon
 	cacheData atomic.Value
-	mu        sync.RWMutex
 	handle    StateRemote
 }
 
@@ -49,8 +47,6 @@ func leaseFromTS(ts uint64) uint64 {
 }
 
 func (c *cachedTable) TryGetMemcache(ts uint64) (kv.MemBuffer, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
 	tmp := c.cacheData.Load()
 	if tmp == nil {
 		return nil, false
@@ -69,8 +65,6 @@ var mockStateRemote = struct {
 
 // NewCachedTable creates a new CachedTable Instance
 func NewCachedTable(tbl *TableCommon) (table.Table, error) {
-	// Only for the first time.
-	// TODO the mock implementation will be replaced in the following PRs
 	if mockStateRemote.Data == nil {
 		mockStateRemote.Data = newMockStateRemoteData()
 		mockStateRemote.Ch = make(chan remoteTask, 100)
@@ -80,24 +74,10 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 		TableCommon: *tbl,
 		handle:      &mockStateRemoteHandle{mockStateRemote.Ch},
 	}
+
 	return ret, nil
 }
 
-// CloseRemoteService TODO only for skip go leak. and will remove in the following
-func CloseRemoteService() {
-	for {
-		select {
-		case _, ok := <-mockStateRemote.Ch:
-			if ok {
-				close(mockStateRemote.Ch)
-			}
-			return
-		default:
-			close(mockStateRemote.Ch)
-			return
-		}
-	}
-}
 func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context, lease uint64) (kv.MemBuffer, error) {
 	prefix := tablecodec.GenTablePrefix(c.tableID)
 	txn, err := ctx.Txn(true)
