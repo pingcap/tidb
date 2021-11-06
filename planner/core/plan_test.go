@@ -447,6 +447,8 @@ func (s *testPlanNormalize) TestExplainFormatHint(c *C) {
 
 	tk.MustQuery("explain format='hint' select /*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ count(1) from t t1 where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12)").Check(testkit.Rows(
 		"use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`)"))
+	tk.MustQuery("explain format='hint' with cte as (select * from t) select /*+use_index(@sel_1 t idx_b)*/  * from cte union select * from t union (select * from t union select * from t)").Check(
+		testkit.Rows("use_index(@`sel_1` `test`.`t` `idx_b`), use_index(@`sel_3` `test`.`t` ), use_index(@`sel_4` `test`.`t` ), use_index(@`sel_5` `test`.`t` )"))
 }
 
 func (s *testPlanNormalize) TestExplainFormatHintRecoverableForTiFlashReplica(c *C) {

@@ -15,6 +15,7 @@
 package stmtctx
 
 import (
+	"github.com/pingcap/tidb/parser/ast"
 	"math"
 	"sort"
 	"strconv"
@@ -157,7 +158,7 @@ type StatementContext struct {
 	planNormalized        string
 	planDigest            *parser.Digest
 	encodedPlan           string
-	planHint              string
+	planHint              []*ast.TableOptimizerHint
 	planHintSet           bool
 	Tables                []TableEntry
 	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
@@ -306,7 +307,7 @@ func (sc *StatementContext) SetEncodedPlan(encodedPlan string) {
 }
 
 // GetPlanHint gets the hint string generated from the plan.
-func (sc *StatementContext) GetPlanHint() (string, bool) {
+func (sc *StatementContext) GetPlanHint() ([]*ast.TableOptimizerHint, bool) {
 	return sc.planHint, sc.planHintSet
 }
 
@@ -323,7 +324,7 @@ func (sc *StatementContext) InitMemTracker(label int, bytesLimit int64) {
 }
 
 // SetPlanHint sets the hint for the plan.
-func (sc *StatementContext) SetPlanHint(hint string) {
+func (sc *StatementContext) SetPlanHint(hint []*ast.TableOptimizerHint) {
 	sc.planHintSet = true
 	sc.planHint = hint
 }
