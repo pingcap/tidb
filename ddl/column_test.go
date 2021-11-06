@@ -1153,6 +1153,37 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testTableSuite) TestDropColumnWithIndex(c *C) {
+	d := testNewDDLAndStart(
+		context.Background(),
+		c,
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	ctx := testNewContext(d)
+
+	tableInfo := testTableInfo(c, d, "test-drop-col-with-index", 2)
+	var idxs []*model.IndexInfo
+	idx := &model.IndexInfo{
+		Name:    model.NewCIStr("idx1"),
+		State:   model.StatePublic,
+		Columns: []*model.IndexColumn{{Name: model.NewCIStr("c1")}},
+	}
+	idxs = append(idxs, idx)
+
+	tableInfo.Indices = idxs
+	testCreateTable(c, ctx, d, s.dbInfo, tableInfo)
+
+	_ = testDropColumns(c, ctx, d, s.dbInfo, tableInfo, []string{"c1"}, true)
+	job := testDropColumns(c, ctx, d, s.dbInfo, tableInfo, []string{"c2"}, false)
+	testCheckJobDone(c, d, job, false)
+
+	job = testDropTable(c, ctx, d, s.dbInfo, tableInfo)
+	testCheckJobDone(c, d, job, false)
+	err := d.Stop()
+	c.Assert(err, IsNil)
+}
+
 func (s *testColumnSuite) TestModifyColumn(c *C) {
 	d := testNewDDLAndStart(
 		context.Background(),
