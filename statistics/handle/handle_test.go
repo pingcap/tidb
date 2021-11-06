@@ -17,9 +17,6 @@ package handle_test
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"math"
 	"os"
 	"strings"
@@ -30,6 +27,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -48,6 +46,8 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestT(t *testing.T) {
