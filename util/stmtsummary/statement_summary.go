@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"container/list"
 	"fmt"
-	"github.com/pingcap/tidb/parser/ast"
 	"math"
 	"sort"
 	"strconv"
@@ -28,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
