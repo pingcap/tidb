@@ -21,10 +21,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/auth"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/testkit"
@@ -135,14 +135,14 @@ func TestSessionBinding(t *testing.T) {
 
 		rs, err := tk.Exec("show global bindings")
 		require.NoError(t, err)
-		chk := rs.NewChunk()
+		chk := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), chk)
 		require.NoError(t, err)
 		require.Equal(t, 0, chk.NumRows())
 
 		rs, err = tk.Exec("show session bindings")
 		require.NoError(t, err)
-		chk = rs.NewChunk()
+		chk = rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), chk)
 		require.NoError(t, err)
 		require.Equal(t, 1, chk.NumRows())
@@ -437,7 +437,6 @@ func TestTemporaryTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set tidb_enable_global_temporary_table = true")
 	tk.MustExec("create global temporary table t(a int, b int, key(a), key(b)) on commit delete rows")
 	tk.MustExec("create table t2(a int, b int, key(a), key(b))")
 	tk.MustGetErrCode("create session binding for select * from t where b = 123 using select * from t ignore index(b) where b = 123;", errno.ErrOptOnTemporaryTable)

@@ -19,16 +19,16 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -341,7 +341,6 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 	ctx := context.Background()
 	execSQLList := []string{
 		"use test",
-		"set tidb_enable_global_temporary_table=true",
 		"create table tb(id int);",
 		"create global temporary table temp(id int) on commit delete rows;",
 		"create global temporary table temp1(id int) on commit delete rows;",

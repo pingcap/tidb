@@ -31,8 +31,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/parser/mysql"
 )
 
 func Test(t *testing.T) {
@@ -505,6 +505,20 @@ func (s *configTestSuite) TestDurationMarshalJSON(c *C) {
 	result, err := duration.MarshalJSON()
 	c.Assert(err, IsNil)
 	c.Assert(string(result), Equals, `"13m20s"`)
+}
+
+func (s *configTestSuite) TestDuplicateResolutionAlgorithm(c *C) {
+	var dra config.DuplicateResolutionAlgorithm
+	dra.FromStringValue("record")
+	c.Assert(dra, Equals, config.DupeResAlgRecord)
+	dra.FromStringValue("none")
+	c.Assert(dra, Equals, config.DupeResAlgNone)
+	dra.FromStringValue("remove")
+	c.Assert(dra, Equals, config.DupeResAlgRemove)
+
+	c.Assert(config.DupeResAlgRecord.String(), Equals, "record")
+	c.Assert(config.DupeResAlgNone.String(), Equals, "none")
+	c.Assert(config.DupeResAlgRemove.String(), Equals, "remove")
 }
 
 func (s *configTestSuite) TestLoadConfig(c *C) {

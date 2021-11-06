@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser/model"
 	stats "github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
@@ -75,6 +75,7 @@ func (h *histogram) randInt() int64 {
 	return h.Bounds.GetRow(idx).GetInt64(0)
 }
 
+// #nosec G404
 func getValidPrefix(lower, upper string) string {
 	for i := range lower {
 		if i >= len(upper) {

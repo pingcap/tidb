@@ -19,10 +19,10 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -566,4 +566,14 @@ func (sf *ScalarFunction) CharsetAndCollation(ctx sessionctx.Context) (string, s
 // SetCharsetAndCollation ...
 func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string) {
 	sf.Function.SetCharsetAndCollation(chs, coll)
+}
+
+// Repertoire returns the repertoire value which is used to check collations.
+func (sf *ScalarFunction) Repertoire() Repertoire {
+	return sf.Function.Repertoire()
+}
+
+// SetRepertoire sets a specified repertoire for this expression.
+func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
+	sf.Function.SetRepertoire(r)
 }
