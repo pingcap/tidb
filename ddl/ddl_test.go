@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"os"
-	"reflect"
 	"testing"
 	"time"
 
@@ -148,15 +147,9 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 	require.Equal(t, t1.Name, t2.Name)
 	require.Equal(t, t1.Charset, t2.Charset)
 	require.Equal(t, t1.Collate, t2.Collate)
-	if !reflect.DeepEqual(t1.PKIsHandle, t2.PKIsHandle) {
-		t.FailNow()
-	}
-	if !reflect.DeepEqual(t1.Comment, t2.Comment) {
-		t.FailNow()
-	}
-	if !reflect.DeepEqual(t1.AutoIncID, t2.AutoIncID) {
-		t.FailNow()
-	}
+	require.Equal(t, t1.PKIsHandle, t2.PKIsHandle)
+	require.Equal(t, t1.Comment, t2.Comment)
+	require.Equal(t, t1.AutoIncID, t2.AutoIncID)
 }
 
 func checkHistoryJob(t *testing.T, job *model.Job) {
@@ -179,9 +172,7 @@ func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *h
 
 	// for handling schema job
 	require.Equal(t, historyJob.BinlogInfo.SchemaVersion, args.ver)
-	if !reflect.DeepEqual(historyJob.BinlogInfo.DBInfo, args.db) {
-		t.FailNow()
-	}
+	require.Equal(t, historyJob.BinlogInfo.DBInfo, args.db)
 	// only for creating schema job
 	if args.db != nil && len(args.tblIDs) == 0 {
 		return

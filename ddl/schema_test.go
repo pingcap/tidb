@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"reflect"
 	"testing"
 	"time"
 
@@ -103,9 +102,7 @@ func testCheckSchemaState(t *testing.T, d *ddl, dbInfo *model.DBInfo, state mode
 				return nil
 			}
 
-			if !reflect.DeepEqual(info.Name, dbInfo.Name) {
-				t.FailNow()
-			}
+			require.Equal(t, info.Name, dbInfo.Name)
 			require.Equal(t, info.State, state)
 			return nil
 		})

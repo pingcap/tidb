@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"reflect"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -332,9 +331,7 @@ func testCheckTableState(t *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *mo
 			require.Nil(t, info)
 			return nil
 		}
-		if !reflect.DeepEqual(info.Name, tblInfo.Name) {
-			t.FailNow()
-		}
+		require.Equal(t, info.Name, tblInfo.Name)
 		require.Equal(t, info.State, state)
 		return nil
 	})

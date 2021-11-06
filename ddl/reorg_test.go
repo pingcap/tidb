@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"reflect"
 	"testing"
 	"time"
 
@@ -133,12 +132,8 @@ func (s *DDLSuite) testReorgWithSuite(t *testing.T) {
 			m = meta.NewMeta(txn)
 			info, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl, nil)
 			require.NoError(t, err1)
-			if !reflect.DeepEqual(info.StartKey, kv.Key(handle.Encoded())) {
-				t.FailNow()
-			}
-			if !reflect.DeepEqual(info.currElement, e) {
-				t.FailNow()
-			}
+			require.Equal(t, info.StartKey, kv.Key(handle.Encoded()))
+			require.Equal(t, info.currElement, e)
 			_, doneHandle, _ := d.generalWorker().reorgCtx.getRowCountAndKey()
 			require.Nil(t, doneHandle)
 			break
@@ -179,15 +174,9 @@ func (s *DDLSuite) testReorgWithSuite(t *testing.T) {
 		transMeta := meta.NewMeta(txn)
 		info1, err1 := getReorgInfo(d.ddlCtx, transMeta, job, mockTbl, []*meta.Element{element})
 		require.Nil(t, err1)
-		if !reflect.DeepEqual(info1.currElement, info.currElement) {
-			t.FailNow()
-		}
-		if !reflect.DeepEqual(info1.StartKey, info.StartKey) {
-			t.FailNow()
-		}
-		if !reflect.DeepEqual(info1.EndKey, info.EndKey) {
-			t.FailNow()
-		}
+		require.Equal(t, info1.currElement, info.currElement)
+		require.Equal(t, info1.StartKey, info.StartKey)
+		require.Equal(t, info1.EndKey, info.EndKey)
 		require.Equal(t, info1.PhysicalTableID, info.PhysicalTableID)
 		return nil
 	})
