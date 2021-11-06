@@ -163,3 +163,14 @@ select password(a), password(b), password(c) from t;
 password(a)	password(b)	password(c)
 *D13577D198CA3F0AF5C548195065991E0E3EE665	*A669F2B2DD49E2463FE62D8F72DDF4F858687EA5	*9FC0B2ABDF3EC9895E852B15BE432EE0EA0C26BA
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('中文', '中文', '中文');
+select ord(a), ord(b), ord(c) from t;
+ord(a)	ord(b)	ord(c)
+14989485	54992	228
+set @@tidb_enable_vectorized_expression = true;
+select ord(a), ord(b), ord(c) from t;
+ord(a)	ord(b)	ord(c)
+14989485	54992	228
+set @@tidb_enable_vectorized_expression = false;

@@ -2257,6 +2257,30 @@ func TestOrd(t *testing.T) {
 	}
 	_, err := funcs[ast.Ord].getFunction(ctx, []Expression{NewZero()})
 	require.NoError(t, err)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result int64
+	}{
+		{"abc", "gbk", 97},
+		{"一二三", "gbk", 53947},
+		{"一二三", "", 14989440},
+		{"àáèé", "gbk", 43172},
+		{"àáèé", "", 50080},
+		{"数据库", "gbk", 51965},
+		{"数据库", "", 15111600},
+	}
+	for _, c := range tbl {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		require.NoError(t, err)
+		f, err := newFunctionForTest(ctx, ast.Ord, primitiveValsToConstants(ctx, []interface{}{c.input})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, c.result, d.GetInt64())
+	}
 }
 
 func TestElt(t *testing.T) {

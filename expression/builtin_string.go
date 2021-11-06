@@ -2910,45 +2910,53 @@ func (b *builtinOrdSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ord
 func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	strBytes := hack.Slice(str)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
 
-	ord, err := chooseOrdFunc(b.args[0].GetType().Charset)
+	charSet := b.args[0].GetType().Charset
+	ord, err := chooseOrdFunc(charSet)
 	if err != nil {
 		return 0, false, err
 	}
-	return ord(str), false, nil
+
+	enc := charset.NewEncoding(charSet)
+	leftMost, err := enc.EncodeFirstChar(nil, strBytes)
+	if err != nil {
+		return 0, false, err
+	}
+	return ord(leftMost), false, nil
 }
 
-func chooseOrdFunc(charSet string) (func(string) int64, error) {
+func chooseOrdFunc(charSet string) (func([]byte) int64, error) {
 	// use utf8 by default
 	if charSet == "" {
 		charSet = charset.CharsetUTF8
 	}
 	desc, err := charset.GetCharsetInfo(charSet)
 	if err != nil {
-		return nil, err
+		// TODO: After gbk added to charset, this compare should be removed
+		if strings.EqualFold(charSet, charset.CharsetGBK) {
+			desc = &charset.Charset{Maxlen: 2}
+		} else {
+			return nil, err
+		}
 	}
 	if desc.Maxlen == 1 {
 		return ordSingleByte, nil
 	}
-	return ordUtf8, nil
+	return ordOthers, nil
 }
 
-func ordSingleByte(str string) int64 {
-	if len(str) == 0 {
+func ordSingleByte(src []byte) int64 {
+	if len(src) == 0 {
 		return 0
 	}
-	return int64(str[0])
+	return int64(src[0])
 }
 
-func ordUtf8(str string) int64 {
-	if len(str) == 0 {
-		return 0
-	}
-	_, size := utf8.DecodeRuneInString(str)
-	leftMost := str[:size]
+func ordOthers(leftMost []byte) int64 {
 	var result int64
 	var factor int64 = 1
 	for i := len(leftMost) - 1; i >= 0; i-- {
