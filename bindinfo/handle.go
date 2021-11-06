@@ -895,14 +895,14 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHints []*as
 		return ""
 	}
 
-	bindSQL := getBindSql(stmtNode, planHints, defaultDB, blockStartOffset)
+	bindSQL := getBindSQL(stmtNode, planHints, defaultDB, blockStartOffset)
 	if bindSQL == "" {
 		return ""
 	}
 	return afterProcessFunc(bindSQL)
 }
 
-func getBindSql(stmtNode ast.StmtNode, planHints []*ast.TableOptimizerHint, defaultDB string, blockOffsetStart int) string {
+func getBindSQL(stmtNode ast.StmtNode, planHints []*ast.TableOptimizerHint, defaultDB string, blockOffsetStart int) string {
 	counter := -1
 	blockHintProcessor := hint.BlockHintProcessor{}
 	offsetToHintMap := make(map[int][]*ast.TableOptimizerHint, 0)

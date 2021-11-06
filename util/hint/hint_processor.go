@@ -244,6 +244,7 @@ func CollectHint(in ast.StmtNode) *HintsSet {
 	return hp.HintsSet
 }
 
+// GetHintsSet generate struct HintsSet by tableHints and indexHints
 func GetHintsSet(tableHints [][]*ast.TableOptimizerHint, indexHints [][]*ast.IndexHint) *HintsSet {
 	return &HintsSet{tableHints: tableHints, indexHints: indexHints}
 }
@@ -439,7 +440,7 @@ func (p *BlockHintProcessor) getBlockOffset(blockName model.CIStr) int {
 	return -1
 }
 
-// parse block offset from blockName
+// ParseOffsetFromBlockName parse block offset from blockName
 func (p *BlockHintProcessor) ParseOffsetFromBlockName(blockName model.CIStr, curLevel int) int {
 	if p.QbNameMap != nil {
 		level, ok := p.QbNameMap[blockName.L]
