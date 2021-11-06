@@ -334,6 +334,7 @@ func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 }
 
 func TestStatusPort(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTiDBTest(t)
 	defer cleanup()
 
@@ -350,6 +351,7 @@ func TestStatusPort(t *testing.T) {
 }
 
 func TestStatusAPIWithTLS(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTiDBTest(t)
 	defer cleanup()
 
@@ -395,7 +397,11 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	server.Close()
 }
 
-func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
+func TestStatusAPIWithTLSCNCheck(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
 	caPath := filepath.Join(os.TempDir(), "ca-cert-cn.pem")
 	serverKeyPath := filepath.Join(os.TempDir(), "server-key-cn.pem")
 	serverCertPath := filepath.Join(os.TempDir(), "server-cert-cn.pem")
@@ -405,17 +411,17 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	client2CertPath := filepath.Join(os.TempDir(), "client-cert-cn-check-b.pem")
 
 	caCert, caKey, err := generateCert(0, "TiDB CA CN CHECK", nil, nil, filepath.Join(os.TempDir(), "ca-key-cn.pem"), caPath)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, _, err = generateCert(1, "tidb-server-cn-check", caCert, caKey, serverKeyPath, serverCertPath)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, _, err = generateCert(2, "tidb-client-cn-check-a", caCert, caKey, client1KeyPath, client1CertPath, func(c *x509.Certificate) {
 		c.Subject.CommonName = "tidb-client-1"
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, _, err = generateCert(3, "tidb-client-cn-check-b", caCert, caKey, client2KeyPath, client2CertPath, func(c *x509.Certificate) {
 		c.Subject.CommonName = "tidb-client-2"
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
@@ -428,37 +434,38 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	cfg.Security.ClusterSSLKey = serverKeyPath
 	cfg.Security.ClusterVerifyCN = []string{"tidb-client-2"}
 	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
 		err := server.Run()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	defer server.Close()
 	time.Sleep(time.Millisecond * 100)
 
-	hc := newTLSHttpClient(c, caPath,
+	hc := newTLSHttpClient(t, caPath,
 		client1CertPath,
 		client1KeyPath,
 	)
 	_, err = hc.Get(cli.statusURL("/status")) // nolint: bodyclose
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
-	hc = newTLSHttpClient(c, caPath,
+	hc = newTLSHttpClient(t, caPath,
 		client2CertPath,
 		client2KeyPath,
 	)
 	resp, err := hc.Get(cli.statusURL("/status"))
-	c.Assert(err, IsNil)
-	c.Assert(resp.Body.Close(), IsNil)
+	require.NoError(t, err)
+	require.Nil(t, resp.Body.Close())
 }
 
-func newTLSHttpClient(c *C, caFile, certFile, keyFile string) *http.Client {
+func newTLSHttpClient(t *testing.T, caFile, certFile, keyFile string) *http.Client {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	caCert, err := os.ReadFile(caFile)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	caCertPool := x509.NewCertPool()
 	caCertPool.AppendCertsFromPEM(caCert)
 	tlsConfig := &tls.Config{
