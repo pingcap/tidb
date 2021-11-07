@@ -308,9 +308,12 @@ func (ts *tidbTestSerialSuite) TestStmtCount(c *C) {
 	ts.runTestStmtCount(c)
 }
 
-func (ts *tidbTestSuite) TestConcurrentUpdate(c *C) {
-	c.Parallel()
-	ts.runTestConcurrentUpdate(c)
+func TestConcurrentUpdate(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestConcurrentUpdate(t)
 }
 
 func (ts *tidbTestSuite) TestErrorCode(c *C) {

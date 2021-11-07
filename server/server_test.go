@@ -1473,36 +1473,36 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 	})
 }
 
-func (cli *testServerClient) runTestConcurrentUpdate(c *C) {
+func (cli *testingServerClient) runTestConcurrentUpdate(t *testing.T) {
 	dbName := "Concurrent"
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.Params["sql_mode"] = "''"
-	}, dbName, func(dbt *DBTest) {
-		dbt.mustExec("drop table if exists test2")
-		dbt.mustExec("create table test2 (a int, b int)")
-		dbt.mustExec("insert test2 values (1, 1)")
-		dbt.mustExec("set @@tidb_disable_txn_auto_retry = 0")
+	}, dbName, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("drop table if exists test2")
+		dbt.MustExec("create table test2 (a int, b int)")
+		dbt.MustExec("insert test2 values (1, 1)")
+		dbt.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 
-		txn1, err := dbt.db.Begin()
-		c.Assert(err, IsNil)
+		txn1, err := dbt.GetDB().Begin()
+		require.NoError(t, err)
 		_, err = txn1.Exec(fmt.Sprintf("USE `%s`;", dbName))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
-		txn2, err := dbt.db.Begin()
-		c.Assert(err, IsNil)
+		txn2, err := dbt.GetDB().Begin()
+		require.NoError(t, err)
 		_, err = txn2.Exec(fmt.Sprintf("USE `%s`;", dbName))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		_, err = txn2.Exec("update test2 set a = a + 1 where b = 1")
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = txn2.Commit()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		_, err = txn1.Exec("update test2 set a = a + 1 where b = 1")
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		err = txn1.Commit()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	})
 }
 
