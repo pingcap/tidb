@@ -872,7 +872,7 @@ func testMultiArgsAggFunc(t *testing.T, ctx sessionctx.Context, p multiArgsAggTe
 	require.Zero(t, result)
 }
 
-// Deprecated: migrating to testMultiArgsAggFunc(t *testing.T, p multiArgsAggTest)
+// Deprecated: migrating to testMultiArgsAggFunc(t *testing.T, ctx sessionctx.Context, p multiArgsAggTest)
 func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	srcChk := p.genSrcChk()
 
