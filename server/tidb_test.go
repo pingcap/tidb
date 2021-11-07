@@ -1297,12 +1297,16 @@ func (ts *tidbTestSuite) TestClientWithCollation(c *C) {
 	ts.runTestClientWithCollation(c)
 }
 
-func (ts *tidbTestSuite) TestCreateTableFlen(c *C) {
+func TestCreateTableFlen(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
 	// issue #4540
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = Execute(context.Background(), qctx, "use test;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	testSQL := "CREATE TABLE `t1` (" +
@@ -1335,25 +1339,25 @@ func (ts *tidbTestSuite) TestCreateTableFlen(c *C) {
 		"PRIMARY KEY (`a`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
 	_, err = Execute(ctx, qctx, testSQL)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rs, err := Execute(ctx, qctx, "show create table t1")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	cols := rs.Columns()
-	c.Assert(err, IsNil)
-	c.Assert(len(cols), Equals, 2)
-	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
-	c.Assert(int(cols[1].ColumnLength), Equals, len(req.GetRow(0).GetString(1))*tmysql.MaxBytesOfCharacter)
+	require.NoError(t, err)
+	require.Len(t, cols, 2)
+	require.Equal(t, 5*tmysql.MaxBytesOfCharacter, int(cols[0].ColumnLength))
+	require.Equal(t, len(req.GetRow(0).GetString(1))*tmysql.MaxBytesOfCharacter, int(cols[1].ColumnLength))
 
 	// for issue#5246
 	rs, err = Execute(ctx, qctx, "select y, z from t1")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	cols = rs.Columns()
-	c.Assert(len(cols), Equals, 2)
-	c.Assert(int(cols[0].ColumnLength), Equals, 21)
-	c.Assert(int(cols[1].ColumnLength), Equals, 22)
+	require.Len(t, cols, 2)
+	require.Equal(t, 21, int(cols[0].ColumnLength))
+	require.Equal(t, 22, int(cols[1].ColumnLength))
 }
 
 func Execute(ctx context.Context, qc *TiDBContext, sql string) (ResultSet, error) {
