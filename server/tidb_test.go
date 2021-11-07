@@ -268,13 +268,6 @@ func TestPreparedTimestamp(t *testing.T) {
 	ts.runTestPreparedTimestamp(t)
 }
 
-func (ts *tidbTestSerialSuite) TestConfigDefaultValue(c *C) {
-	ts.runTestsOnNewDB(c, nil, "config", func(dbt *DBTest) {
-		rows := dbt.mustQuery("select @@tidb_slow_log_threshold;")
-		ts.checkRows(c, rows, "300")
-	})
-}
-
 func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
 	ts.runTestLoadDataForListPartition(c)
 	ts.runTestLoadDataForListPartition2(c)

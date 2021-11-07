@@ -14,7 +14,11 @@
 
 package server
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/testkit"
+)
 
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
 // so we must make it running in serial.
@@ -25,4 +29,14 @@ func TestLoadData(t *testing.T) {
 	ts.runTestLoadData(t, ts.server)
 	ts.runTestLoadDataWithSelectIntoOutfile(t, ts.server)
 	ts.runTestLoadDataForSlowLog(t, ts.server)
+}
+
+func TestConfigDefaultValue(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestsOnNewDB(t, nil, "config", func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select @@tidb_slow_log_threshold;")
+		ts.checkRows(t, rows, "300")
+	})
 }

@@ -920,6 +920,37 @@ func (cli *testServerClient) checkRows(c *C, rows *sql.Rows, expectedRows ...str
 	c.Assert(strings.Join(result, "\n"), Equals, strings.Join(expectedRows, "\n"))
 }
 
+func (cli *testingServerClient) checkRows(t *testing.T, rows *sql.Rows, expectedRows ...string) {
+	buf := bytes.NewBuffer(nil)
+	result := make([]string, 0, 2)
+	for rows.Next() {
+		cols, err := rows.Columns()
+		require.NoError(t, err)
+		rawResult := make([][]byte, len(cols))
+		dest := make([]interface{}, len(cols))
+		for i := range rawResult {
+			dest[i] = &rawResult[i]
+		}
+
+		err = rows.Scan(dest...)
+		require.NoError(t, err)
+		buf.Reset()
+		for i, raw := range rawResult {
+			if i > 0 {
+				buf.WriteString(" ")
+			}
+			if raw == nil {
+				buf.WriteString("<nil>")
+			} else {
+				buf.WriteString(string(raw))
+			}
+		}
+		result = append(result, buf.String())
+	}
+
+	require.Equal(t, strings.Join(expectedRows, "\n"), strings.Join(result, "\n"))
+}
+
 func (cli *testingServerClient) runTestLoadData(t *testing.T, server *Server) {
 	// create a file and write data.
 	path := "/tmp/load_data_test.csv"
