@@ -4,7 +4,9 @@ package version
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -309,6 +311,8 @@ func (s *checkSuite) TestDetectServerInfo(c *C) {
 		{4, "5.7.25-TiDB-v3.0.7-58-g6adce2367", ServerTypeTiDB, mkVer(3, 0, 7, "58-g6adce2367")},
 		{5, "5.7.25-TiDB-3.0.6", ServerTypeTiDB, mkVer(3, 0, 6, "")},
 		{6, "invalid version", ServerTypeUnknown, (*semver.Version)(nil)},
+		{7, "Release Version: v5.2.1\nEdition: Community\nGit Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445", ServerTypeTiDB, mkVer(5, 2, 1, "")},
+		{8, "Release Version: v5.4.0-alpha-21-g86caab907\nEdition: Community\nGit Commit Hash: 86caab907c481bbc4243b5a3346ec13907cc8721\nGit Branch: master", ServerTypeTiDB, mkVer(5, 4, 0, "alpha-21-g86caab907")},
 	}
 	dec := func(d []interface{}) (tag int, verStr string, tp ServerType, v *semver.Version) {
 		return d[0].(int), d[1].(string), ServerType(d[2].(int)), d[3].(*semver.Version)
@@ -318,8 +322,14 @@ func (s *checkSuite) TestDetectServerInfo(c *C) {
 		tag, r, serverTp, expectVer := dec(datum)
 		cmt := Commentf("test case number: %d", tag)
 
-		rows := sqlmock.NewRows([]string{"version"}).AddRow(r)
-		mock.ExpectQuery("SELECT version()").WillReturnRows(rows)
+		tidbVersionQuery := mock.ExpectQuery("SELECT tidb_version\\(\\);")
+		if strings.HasPrefix(r, "Release Version:") {
+			tidbVersionQuery.WillReturnRows(sqlmock.NewRows([]string{"tidb_version"}).AddRow(r))
+		} else {
+			tidbVersionQuery.WillReturnError(errors.New("mock error"))
+			rows := sqlmock.NewRows([]string{"version"}).AddRow(r)
+			mock.ExpectQuery("SELECT version\\(\\);").WillReturnRows(rows)
+		}
 
 		verStr, err := FetchVersion(context.Background(), db)
 		c.Assert(err, IsNil, cmt)
@@ -329,6 +339,7 @@ func (s *checkSuite) TestDetectServerInfo(c *C) {
 		if info.ServerVersion == nil {
 			c.Assert(expectVer, IsNil, cmt)
 		} else {
+			fmt.Printf("%v, %v\n", *info.ServerVersion, *expectVer)
 			c.Assert(info.ServerVersion.Equal(*expectVer), IsTrue)
 		}
 		c.Assert(mock.ExpectationsWereMet(), IsNil, cmt)
@@ -342,4 +353,40 @@ func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
 		PreRelease: semver.PreRelease(preRelease),
 		Metadata:   "",
 	}
+}
+
+func (s *checkSuite) TestFetchVersion(c *C) {
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+
+	tidbVersion := `Release Version: v5.2.1
+Edition: Community
+Git Commit Hash: cd8fb24c5f7ebd9d479ed228bb41848bd5e97445
+Git Branch: heads/refs/tags/v5.2.1
+UTC Build Time: 2021-09-08 02:32:56
+GoVersion: go1.16.4
+Race Enabled: false
+TiKV Min Version: v3.0.0-60965b006877ca7234adaced7890d7b029ed1306
+Check Table Before Drop: false`
+
+	ctx := context.Background()
+	mock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.
+		NewRows([]string{""}).AddRow(tidbVersion))
+	versionStr, err := FetchVersion(ctx, db)
+	c.Assert(err, IsNil)
+	c.Assert(versionStr, Equals, tidbVersion)
+
+	mock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnError(errors.New("mock failure"))
+	mock.ExpectQuery("SELECT version\\(\\);").WillReturnRows(sqlmock.
+		NewRows([]string{""}).AddRow("5.7.25"))
+	versionStr, err = FetchVersion(ctx, db)
+	c.Assert(err, IsNil)
+	c.Assert(versionStr, Equals, "5.7.25")
+
+	mock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnError(errors.New("mock failure"))
+	mock.ExpectQuery("SELECT version\\(\\);").WillReturnError(errors.New("mock failure"))
+
+	_, err = FetchVersion(ctx, db)
+	c.Assert(err, ErrorMatches, ".*mock failure")
+
 }
