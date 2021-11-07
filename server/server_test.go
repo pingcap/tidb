@@ -1563,57 +1563,57 @@ func checkErrorCode(c *C, e error, codes ...uint16) {
 	c.Assert(isMatchCode, IsTrue, Commentf("got err %v, expected err codes %v", me, codes))
 }
 
-func (cli *testServerClient) runTestAuth(c *C) {
-	cli.runTests(c, nil, func(dbt *DBTest) {
-		dbt.mustExec(`CREATE USER 'authtest'@'%' IDENTIFIED BY '123';`)
-		dbt.mustExec(`CREATE ROLE 'authtest_r1'@'%';`)
-		dbt.mustExec(`GRANT ALL on test.* to 'authtest'`)
-		dbt.mustExec(`GRANT authtest_r1 to 'authtest'`)
-		dbt.mustExec(`SET DEFAULT ROLE authtest_r1 TO authtest`)
+func (cli *testingServerClient) runTestAuth(t *testing.T) {
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`CREATE USER 'authtest'@'%' IDENTIFIED BY '123';`)
+		dbt.MustExec(`CREATE ROLE 'authtest_r1'@'%';`)
+		dbt.MustExec(`GRANT ALL on test.* to 'authtest'`)
+		dbt.MustExec(`GRANT authtest_r1 to 'authtest'`)
+		dbt.MustExec(`SET DEFAULT ROLE authtest_r1 TO authtest`)
 	})
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.User = "authtest"
 		config.Passwd = "123"
-	}, func(dbt *DBTest) {
-		dbt.mustExec(`USE information_schema;`)
+	}, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`USE information_schema;`)
 	})
 
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "authtest"
 		config.Passwd = "456"
 	}))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = db.Query("USE information_schema;")
-	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
+	require.NotNilf(t, err, "Wrong password should be failed")
 	err = db.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// Test for loading active roles.
 	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "authtest"
 		config.Passwd = "123"
 	}))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rows, err := db.Query("select current_role;")
-	c.Assert(err, IsNil)
-	c.Assert(rows.Next(), IsTrue)
+	require.NoError(t, err)
+	require.True(t, rows.Next())
 	var outA string
 	err = rows.Scan(&outA)
-	c.Assert(err, IsNil)
-	c.Assert(outA, Equals, "`authtest_r1`@`%`")
+	require.NoError(t, err)
+	require.Equal(t, "`authtest_r1`@`%`", outA)
 	err = db.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// Test login use IP that not exists in mysql.user.
-	cli.runTests(c, nil, func(dbt *DBTest) {
-		dbt.mustExec(`CREATE USER 'authtest2'@'localhost' IDENTIFIED BY '123';`)
-		dbt.mustExec(`GRANT ALL on test.* to 'authtest2'@'localhost'`)
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`CREATE USER 'authtest2'@'localhost' IDENTIFIED BY '123';`)
+		dbt.MustExec(`GRANT ALL on test.* to 'authtest2'@'localhost'`)
 	})
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.User = "authtest2"
 		config.Passwd = "123"
-	}, func(dbt *DBTest) {
-		dbt.mustExec(`USE information_schema;`)
+	}, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`USE information_schema;`)
 	})
 }
 
@@ -1669,31 +1669,31 @@ func (cli *testServerClient) runTestIssue22646(c *C) {
 	})
 }
 
-func (cli *testServerClient) runTestIssue3682(c *C) {
-	cli.runTests(c, nil, func(dbt *DBTest) {
-		dbt.mustExec(`CREATE USER 'issue3682'@'%' IDENTIFIED BY '123';`)
-		dbt.mustExec(`GRANT ALL on test.* to 'issue3682'`)
-		dbt.mustExec(`GRANT ALL on mysql.* to 'issue3682'`)
+func (cli *testingServerClient) runTestIssue3682(t *testing.T) {
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`CREATE USER 'issue3682'@'%' IDENTIFIED BY '123';`)
+		dbt.MustExec(`GRANT ALL on test.* to 'issue3682'`)
+		dbt.MustExec(`GRANT ALL on mysql.* to 'issue3682'`)
 	})
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.User = "issue3682"
 		config.Passwd = "123"
-	}, func(dbt *DBTest) {
-		dbt.mustExec(`USE mysql;`)
+	}, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`USE mysql;`)
 	})
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "issue3682"
 		config.Passwd = "wrong_password"
 		config.DBName = "non_existing_schema"
 	}))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := db.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	err = db.Ping()
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)")
+	require.Error(t, err)
+	require.Equal(t, "Error 1045: Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)", err.Error())
 }
 
 func (cli *testServerClient) runTestDBNameEscape(c *C) {

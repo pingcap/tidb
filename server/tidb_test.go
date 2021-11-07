@@ -305,10 +305,13 @@ func (ts *tidbTestSuite) TestErrorCode(c *C) {
 	ts.runTestErrorCode(c)
 }
 
-func (ts *tidbTestSuite) TestAuth(c *C) {
-	c.Parallel()
-	ts.runTestAuth(c)
-	ts.runTestIssue3682(c)
+func TestAuth(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestAuth(t)
+	ts.runTestIssue3682(t)
 }
 
 func (ts *tidbTestSuite) TestIssues(c *C) {
