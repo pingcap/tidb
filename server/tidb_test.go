@@ -305,9 +305,11 @@ func TestIssues(t *testing.T) {
 	ts.runTestIssue22646(t)
 }
 
-func (ts *tidbTestSuite) TestDBNameEscape(c *C) {
-	c.Parallel()
-	ts.runTestDBNameEscape(c)
+func TestDBNameEscape(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+	ts.runTestDBNameEscape(t)
 }
 
 func (ts *tidbTestSuite) TestResultFieldTableIsNull(c *C) {

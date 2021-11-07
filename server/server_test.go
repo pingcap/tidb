@@ -1843,15 +1843,15 @@ func (cli *testingServerClient) runTestIssue3682(t *testing.T) {
 	require.Equal(t, "Error 1045: Access denied for user 'issue3682'@'127.0.0.1' (using password: YES)", err.Error())
 }
 
-func (cli *testServerClient) runTestDBNameEscape(c *C) {
-	cli.runTests(c, nil, func(dbt *DBTest) {
-		dbt.mustExec("CREATE DATABASE `aa-a`;")
+func (cli *testingServerClient) runTestDBNameEscape(t *testing.T) {
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("CREATE DATABASE `aa-a`;")
 	})
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.DBName = "aa-a"
-	}, func(dbt *DBTest) {
-		dbt.mustExec(`USE mysql;`)
-		dbt.mustExec("DROP DATABASE `aa-a`")
+	}, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`USE mysql;`)
+		dbt.MustExec("DROP DATABASE `aa-a`")
 	})
 }
 
