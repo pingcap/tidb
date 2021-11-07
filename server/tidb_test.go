@@ -1641,26 +1641,30 @@ func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
 	}
 }
 
-func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
+func TestPessimisticInsertSelectForUpdate(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer qctx.Close()
 	ctx := context.Background()
 	_, err = Execute(ctx, qctx, "use test;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = Execute(ctx, qctx, "drop table if exists t1, t2")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = Execute(ctx, qctx, "create table t1 (id int)")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = Execute(ctx, qctx, "create table t2 (id int)")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = Execute(ctx, qctx, "insert into t1 select 1")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = Execute(ctx, qctx, "begin pessimistic")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rs, err := Execute(ctx, qctx, "INSERT INTO t2 (id) select id from t1 where id = 1 for update")
-	c.Assert(err, IsNil)
-	c.Assert(rs, IsNil) // should be no delay
+	require.NoError(t, err)
+	require.Nil(t, rs) // should be no delay
 }
 
 func (ts *tidbTestSerialSuite) TestPrepareCount(c *C) {
