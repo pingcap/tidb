@@ -1934,38 +1934,38 @@ func (cli *testServerClient) runTestMultiStatements(c *C) {
 	})
 }
 
-func (cli *testServerClient) runTestStmtCount(t *C) {
-	cli.runTestsOnNewDB(t, nil, "StatementCount", func(dbt *DBTest) {
+func (cli *testingServerClient) runTestStmtCount(t *testing.T) {
+	cli.runTestsOnNewDB(t, nil, "StatementCount", func(dbt *testkit.DBTestKit) {
 		originStmtCnt := getStmtCnt(string(cli.getMetrics(t)))
 
-		dbt.mustExec("create table test (a int)")
+		dbt.MustExec("create table test (a int)")
 
-		dbt.mustExec("insert into test values(1)")
-		dbt.mustExec("insert into test values(2)")
-		dbt.mustExec("insert into test values(3)")
-		dbt.mustExec("insert into test values(4)")
-		dbt.mustExec("insert into test values(5)")
+		dbt.MustExec("insert into test values(1)")
+		dbt.MustExec("insert into test values(2)")
+		dbt.MustExec("insert into test values(3)")
+		dbt.MustExec("insert into test values(4)")
+		dbt.MustExec("insert into test values(5)")
 
-		dbt.mustExec("delete from test where a = 3")
-		dbt.mustExec("update test set a = 2 where a = 1")
-		dbt.mustExec("select * from test")
-		dbt.mustExec("select 2")
+		dbt.MustExec("delete from test where a = 3")
+		dbt.MustExec("update test set a = 2 where a = 1")
+		dbt.MustExec("select * from test")
+		dbt.MustExec("select 2")
 
-		dbt.mustExec("prepare stmt1 from 'update test set a = 1 where a = 2'")
-		dbt.mustExec("execute stmt1")
-		dbt.mustExec("prepare stmt2 from 'select * from test'")
-		dbt.mustExec("execute stmt2")
-		dbt.mustExec("replace into test(a) values(6);")
+		dbt.MustExec("prepare stmt1 from 'update test set a = 1 where a = 2'")
+		dbt.MustExec("execute stmt1")
+		dbt.MustExec("prepare stmt2 from 'select * from test'")
+		dbt.MustExec("execute stmt2")
+		dbt.MustExec("replace into test(a) values(6);")
 
 		currentStmtCnt := getStmtCnt(string(cli.getMetrics(t)))
-		t.Assert(currentStmtCnt["CreateTable"], Equals, originStmtCnt["CreateTable"]+1)
-		t.Assert(currentStmtCnt["Insert"], Equals, originStmtCnt["Insert"]+5)
-		t.Assert(currentStmtCnt["Delete"], Equals, originStmtCnt["Delete"]+1)
-		t.Assert(currentStmtCnt["Update"], Equals, originStmtCnt["Update"]+1)
-		t.Assert(currentStmtCnt["Select"], Equals, originStmtCnt["Select"]+2)
-		t.Assert(currentStmtCnt["Prepare"], Equals, originStmtCnt["Prepare"]+2)
-		t.Assert(currentStmtCnt["Execute"], Equals, originStmtCnt["Execute"]+2)
-		t.Assert(currentStmtCnt["Replace"], Equals, originStmtCnt["Replace"]+1)
+		require.Equal(t, originStmtCnt["CreateTable"]+1, currentStmtCnt["CreateTable"])
+		require.Equal(t, originStmtCnt["Insert"]+5, currentStmtCnt["Insert"])
+		require.Equal(t, originStmtCnt["Delete"]+1, currentStmtCnt["Delete"])
+		require.Equal(t, originStmtCnt["Update"]+1, currentStmtCnt["Update"])
+		require.Equal(t, originStmtCnt["Select"]+2, currentStmtCnt["Select"])
+		require.Equal(t, originStmtCnt["Prepare"]+2, currentStmtCnt["Prepare"])
+		require.Equal(t, originStmtCnt["Execute"]+2, currentStmtCnt["Execute"])
+		require.Equal(t, originStmtCnt["Replace"]+1, currentStmtCnt["Replace"])
 	})
 }
 
@@ -2021,13 +2021,13 @@ func (cli *testServerClient) runTestSumAvg(c *C) {
 	})
 }
 
-func (cli *testServerClient) getMetrics(t *C) []byte {
+func (cli *testingServerClient) getMetrics(t *testing.T) []byte {
 	resp, err := cli.fetchStatus("/metrics")
-	t.Assert(err, IsNil)
+	require.NoError(t, err)
 	content, err := io.ReadAll(resp.Body)
-	t.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = resp.Body.Close()
-	t.Assert(err, IsNil)
+	require.NoError(t, err)
 	return content
 }
 

@@ -275,10 +275,6 @@ func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
 	ts.runTestLoadDataForListColumnPartition2(c)
 }
 
-func (ts *tidbTestSerialSuite) TestStmtCount(c *C) {
-	ts.runTestStmtCount(c)
-}
-
 func TestConcurrentUpdate(t *testing.T) {
 	t.Parallel()
 	ts, cleanup := createTiDBTest(t)

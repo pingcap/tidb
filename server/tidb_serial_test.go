@@ -63,3 +63,10 @@ func TestExplainFor(t *testing.T) {
 
 	ts.runTestExplainForConn(t)
 }
+
+func TestStmtCount(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestStmtCount(t)
+}
