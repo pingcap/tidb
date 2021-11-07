@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/dumpling/cli"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
@@ -436,7 +437,7 @@ func (d *Dumper) dumpWholeTableDirectly(tctx *tcontext.Context, meta TableMeta, 
 
 func (d *Dumper) sequentialDumpTable(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
 	conf := d.conf
-	if conf.ServerInfo.ServerType == ServerTypeTiDB {
+	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
 		task, err := d.buildConcatTask(tctx, conn, meta)
 		if err != nil {
 			return errors.Trace(err)
@@ -463,7 +464,7 @@ func (d *Dumper) sequentialDumpTable(tctx *tcontext.Context, conn *sql.Conn, met
 func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
 	conf := d.conf
 	db, tbl := meta.DatabaseName(), meta.TableName()
-	if conf.ServerInfo.ServerType == ServerTypeTiDB &&
+	if conf.ServerInfo.ServerType == version.ServerTypeTiDB &&
 		conf.ServerInfo.ServerVersion != nil &&
 		(conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 ||
 			(conf.ServerInfo.HasTiKV && conf.ServerInfo.ServerVersion.Compare(*decodeRegionVersion) >= 0)) {
@@ -897,7 +898,7 @@ func dumpTableMeta(conf *Config, conn *sql.Conn, db string, table *TableInfo) (T
 		colTypes         []*sql.ColumnType
 		hasImplicitRowID bool
 	)
-	if conf.ServerInfo.ServerType == ServerTypeTiDB {
+	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
 		hasImplicitRowID, err = SelectTiDBRowID(conn, db, tbl)
 		if err != nil {
 			return nil, err
@@ -1051,12 +1052,12 @@ func openSQLDB(d *Dumper) error {
 // detectServerInfo is an initialization step of Dumper.
 func detectServerInfo(d *Dumper) error {
 	db, conf := d.dbHandle, d.conf
-	versionStr, err := SelectVersion(db)
+	versionStr, err := version.FetchVersion(d.tctx.Context, db)
 	if err != nil {
 		conf.ServerInfo = ServerInfoUnknown
 		return err
 	}
-	conf.ServerInfo = ParseServerInfo(d.tctx, versionStr)
+	conf.ServerInfo = version.ParseServerInfo(versionStr)
 	return nil
 }
 
@@ -1067,9 +1068,9 @@ func resolveAutoConsistency(d *Dumper) error {
 		return nil
 	}
 	switch conf.ServerInfo.ServerType {
-	case ServerTypeTiDB:
+	case version.ServerTypeTiDB:
 		conf.Consistency = consistencyTypeSnapshot
-	case ServerTypeMySQL, ServerTypeMariaDB:
+	case version.ServerTypeMySQL, version.ServerTypeMariaDB:
 		conf.Consistency = consistencyTypeFlush
 	default:
 		conf.Consistency = consistencyTypeNone
@@ -1080,7 +1081,7 @@ func resolveAutoConsistency(d *Dumper) error {
 // tidbSetPDClientForGC is an initialization step of Dumper.
 func tidbSetPDClientForGC(d *Dumper) error {
 	tctx, si, pool := d.tctx, d.conf.ServerInfo, d.dbHandle
-	if si.ServerType != ServerTypeTiDB ||
+	if si.ServerType != version.ServerTypeTiDB ||
 		si.ServerVersion == nil ||
 		si.ServerVersion.Compare(*gcSafePointVersion) < 0 {
 		return nil
@@ -1146,7 +1147,7 @@ func tidbStartGCSavepointUpdateService(d *Dumper) error {
 			return err
 		}
 		go updateServiceSafePoint(tctx, d.tidbPDClientForGC, defaultDumpGCSafePointTTL, snapshotTS)
-	} else if si.ServerType == ServerTypeTiDB {
+	} else if si.ServerType == version.ServerTypeTiDB {
 		tctx.L().Warn("If the amount of data to dump is large, criteria: (data more than 60GB or dumped time more than 10 minutes)\n" +
 			"you'd better adjust the tikv_gc_life_time to avoid export failure due to TiDB GC during the dump process.\n" +
 			"Before dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '720h' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n" +
@@ -1191,12 +1192,12 @@ func setSessionParam(d *Dumper) error {
 	si := conf.ServerInfo
 	consistency, snapshot := conf.Consistency, conf.Snapshot
 	sessionParam := conf.SessionParams
-	if si.ServerType == ServerTypeTiDB && conf.TiDBMemQuotaQuery != UnspecifiedSize {
+	if si.ServerType == version.ServerTypeTiDB && conf.TiDBMemQuotaQuery != UnspecifiedSize {
 		sessionParam[TiDBMemQuotaQueryName] = conf.TiDBMemQuotaQuery
 	}
 	var err error
 	if snapshot != "" {
-		if si.ServerType != ServerTypeTiDB {
+		if si.ServerType != version.ServerTypeTiDB {
 			return errors.New("snapshot consistency is not supported for this server")
 		}
 		if consistency == consistencyTypeSnapshot {
@@ -1217,7 +1218,7 @@ func setSessionParam(d *Dumper) error {
 
 func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) error {
 	conf := d.conf
-	if !(conf.ServerInfo.ServerType == ServerTypeTiDB && conf.ServerInfo.ServerVersion != nil && conf.ServerInfo.HasTiKV &&
+	if !(conf.ServerInfo.ServerType == version.ServerTypeTiDB && conf.ServerInfo.ServerVersion != nil && conf.ServerInfo.HasTiKV &&
 		conf.ServerInfo.ServerVersion.Compare(*decodeRegionVersion) >= 0 &&
 		conf.ServerInfo.ServerVersion.Compare(*gcSafePointVersion) < 0) {
 		tctx.L().Debug("no need to build region info because database is not TiDB 3.x")
