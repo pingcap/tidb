@@ -252,9 +252,12 @@ func TestSpecialType(t *testing.T) {
 	ts.runTestSpecialType(t)
 }
 
-func (ts *tidbTestSuite) TestPreparedString(c *C) {
-	c.Parallel()
-	ts.runTestPreparedString(c)
+func TestPreparedString(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestPreparedString(t)
 }
 
 func (ts *tidbTestSuite) TestPreparedTimestamp(c *C) {

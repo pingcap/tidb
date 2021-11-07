@@ -418,17 +418,17 @@ func (cli *testServerClient) runTestClientWithCollation(t *C) {
 	})
 }
 
-func (cli *testServerClient) runTestPreparedString(t *C) {
-	cli.runTestsOnNewDB(t, nil, "PreparedString", func(dbt *DBTest) {
-		dbt.mustExec("create table test (a char(10), b char(10))")
-		dbt.mustExec("insert test values (?, ?)", "abcdeabcde", "abcde")
-		rows := dbt.mustQuery("select * from test where 1 = ?", 1)
-		t.Assert(rows.Next(), IsTrue)
+func (cli *testingServerClient) runTestPreparedString(t *testing.T) {
+	cli.runTestsOnNewDB(t, nil, "PreparedString", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table test (a char(10), b char(10))")
+		dbt.MustExec("insert test values (?, ?)", "abcdeabcde", "abcde")
+		rows := dbt.MustQuery("select * from test where 1 = ?", 1)
+		require.True(t, rows.Next())
 		var outA, outB string
 		err := rows.Scan(&outA, &outB)
-		t.Assert(err, IsNil)
-		t.Assert(outA, Equals, "abcdeabcde")
-		t.Assert(outB, Equals, "abcde")
+		require.NoError(t, err)
+		require.Equal(t, "abcdeabcde", outA)
+		require.Equal(t, "abcde", outB)
 	})
 }
 
