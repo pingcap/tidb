@@ -275,12 +275,6 @@ func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
 	ts.runTestLoadDataForListColumnPartition2(c)
 }
 
-// Fix issue#22540. Change tidb_dml_batch_size,
-// then check if load data into table with auto random column works properly.
-func (ts *tidbTestSerialSuite) TestLoadDataAutoRandom(c *C) {
-	ts.runTestLoadDataAutoRandom(c)
-}
-
 func (ts *tidbTestSerialSuite) TestLoadDataAutoRandomWithSpecialTerm(c *C) {
 	ts.runTestLoadDataAutoRandomWithSpecialTerm(c)
 }

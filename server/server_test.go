@@ -577,12 +577,12 @@ func (cli *testServerClient) prepareLoadDataFile(c *C, path string, rows ...stri
 	c.Assert(err, IsNil)
 }
 
-func (cli *testServerClient) runTestLoadDataAutoRandom(c *C) {
+func (cli *testingServerClient) runTestLoadDataAutoRandom(t *testing.T) {
 	path := "/tmp/load_data_txn_error.csv"
 
 	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 
 	defer func() {
 		_ = os.Remove(path)
@@ -597,9 +597,9 @@ func (cli *testServerClient) runTestLoadDataAutoRandom(c *C) {
 		str2 := strconv.Itoa(n2)
 		row := str1 + "\t" + str2
 		_, err := fp.WriteString(row)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		_, err = fp.WriteString("\n")
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		if i == 0 {
 			cksum1 = n1
@@ -611,24 +611,24 @@ func (cli *testServerClient) runTestLoadDataAutoRandom(c *C) {
 	}
 
 	err = fp.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "load_data_batch_dml", func(dbt *DBTest) {
+	}, "load_data_batch_dml", func(dbt *testkit.DBTestKit) {
 		// Set batch size, and check if load data got a invalid txn error.
-		dbt.mustExec("set @@session.tidb_dml_batch_size = 128")
-		dbt.mustExec("drop table if exists t")
-		dbt.mustExec("create table t(c1 bigint auto_random primary key, c2 bigint, c3 bigint)")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t (c2, c3)", path))
-		rows := dbt.mustQuery("select count(*) from t")
-		cli.checkRows(c, rows, "50000")
-		rows = dbt.mustQuery("select bit_xor(c2), bit_xor(c3) from t")
+		dbt.MustExec("set @@session.tidb_dml_batch_size = 128")
+		dbt.MustExec("drop table if exists t")
+		dbt.MustExec("create table t(c1 bigint auto_random primary key, c2 bigint, c3 bigint)")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t (c2, c3)", path))
+		rows := dbt.MustQuery("select count(*) from t")
+		cli.checkRows(t, rows, "50000")
+		rows = dbt.MustQuery("select bit_xor(c2), bit_xor(c3) from t")
 		res := strconv.Itoa(cksum1)
 		res = res + " "
 		res = res + strconv.Itoa(cksum2)
-		cli.checkRows(c, rows, res)
+		cli.checkRows(t, rows, res)
 	})
 }
 

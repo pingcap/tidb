@@ -40,3 +40,12 @@ func TestConfigDefaultValue(t *testing.T) {
 		ts.checkRows(t, rows, "300")
 	})
 }
+
+// Fix issue#22540. Change tidb_dml_batch_size,
+// then check if load data into table with auto random column works properly.
+func TestLoadDataAutoRandom(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestLoadDataAutoRandom(t)
+}
