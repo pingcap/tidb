@@ -229,10 +229,12 @@ func (ts *tidbTestSuiteBase) TearDownSuite(c *C) {
 	}
 }
 
-func (ts *tidbTestSuite) TestRegression(c *C) {
+func TestRegression(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
 	if regression {
-		c.Parallel()
-		ts.runTestRegression(c, nil, "Regression")
+		t.Parallel()
+		ts.runTestRegression(t, nil, "Regression")
 	}
 }
 

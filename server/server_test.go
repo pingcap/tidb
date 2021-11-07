@@ -345,6 +345,84 @@ func (cli *testServerClient) runTestRegression(c *C, overrider configOverrider, 
 	})
 }
 
+func (cli *testingServerClient) runTestRegression(t *testing.T, overrider configOverrider, dbName string) {
+	cli.runTestsOnNewDB(t, overrider, dbName, func(dbt *testkit.DBTestKit) {
+		// Show the user
+		dbt.MustExec("select user()")
+
+		// Create Table
+		dbt.MustExec("CREATE TABLE test (val TINYINT)")
+
+		// Test for unexpected data
+		var out bool
+		rows := dbt.MustQuery("SELECT * FROM test")
+		require.Falsef(t, rows.Next(), "unexpected data in empty table")
+
+		// Create Data
+		res := dbt.MustExec("INSERT INTO test VALUES (1)")
+		//		res := dbt.mustExec("INSERT INTO test VALUES (?)", 1)
+		count, err := res.RowsAffected()
+		require.NoError(t, err)
+		require.Equal(t, int64(1), count)
+		id, err := res.LastInsertId()
+		require.NoError(t, err)
+		require.Equal(t, int64(0), id)
+
+		// Read
+		rows = dbt.MustQuery("SELECT val FROM test")
+		if rows.Next() {
+			err = rows.Scan(&out)
+			require.NoError(t, err)
+			require.True(t, out)
+			require.Falsef(t, rows.Next(), "unexpected data")
+		} else {
+			require.Fail(t, "no data")
+		}
+		rows.Close()
+
+		// Update
+		res = dbt.MustExec("UPDATE test SET val = 0 WHERE val = ?", 1)
+		count, err = res.RowsAffected()
+		require.NoError(t, err)
+		require.Equal(t, int64(1), count)
+
+		// Check Update
+		rows = dbt.MustQuery("SELECT val FROM test")
+		if rows.Next() {
+			err = rows.Scan(&out)
+			require.NoError(t, err)
+			require.False(t, out)
+			require.Falsef(t, rows.Next(), "unexpected data")
+		} else {
+			require.Fail(t, "no data")
+		}
+		rows.Close()
+
+		// Delete
+		res = dbt.MustExec("DELETE FROM test WHERE val = 0")
+		//		res = dbt.mustExec("DELETE FROM test WHERE val = ?", 0)
+		count, err = res.RowsAffected()
+		require.NoError(t, err)
+		require.Equal(t, int64(1), count)
+
+		// Check for unexpected rows
+		res = dbt.MustExec("DELETE FROM test")
+		count, err = res.RowsAffected()
+		require.NoError(t, err)
+		require.Equal(t, int64(0), count)
+
+		dbt.MustQueryRows("SELECT 1")
+
+		var b = make([]byte, 0)
+		if err := dbt.GetDB().QueryRow("SELECT ?", b).Scan(&b); err != nil {
+			t.Fatal(err)
+		}
+		if b == nil {
+			require.Fail(t, "nil echo from non-nil input")
+		}
+	})
+}
+
 func (cli *testingServerClient) runTestPrepareResultFieldType(t *testing.T) {
 	var param int64 = 83
 	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
