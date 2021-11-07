@@ -702,8 +702,8 @@ func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 func (h *rpcHandler) constructRespSchema(dagCtx *dagContext) []*types.FieldType {
 	root := dagCtx.dagReq.Executors[len(dagCtx.dagReq.Executors)-1]
 	agg := root.Aggregation
-	if root.StreamAgg != nil {
-		agg = root.StreamAgg
+	if root.Aggregation != nil {
+		agg = root.Aggregation
 	}
 	if agg == nil {
 		return dagCtx.evalCtx.fieldTps
