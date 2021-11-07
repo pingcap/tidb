@@ -236,8 +236,12 @@ func (ts *tidbTestSuite) TestRegression(c *C) {
 	}
 }
 
-func (ts *tidbTestSuite) TestUint64(c *C) {
-	ts.runTestPrepareResultFieldType(c)
+func TestUint64(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestPrepareResultFieldType(t)
 }
 
 func (ts *tidbTestSuite) TestSpecialType(c *C) {

@@ -308,22 +308,22 @@ func (cli *testServerClient) runTestRegression(c *C, overrider configOverrider, 
 	})
 }
 
-func (cli *testServerClient) runTestPrepareResultFieldType(t *C) {
+func (cli *testingServerClient) runTestPrepareResultFieldType(t *testing.T) {
 	var param int64 = 83
-	cli.runTests(t, nil, func(dbt *DBTest) {
-		stmt, err := dbt.db.Prepare(`SELECT ?`)
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		stmt, err := dbt.GetDB().Prepare(`SELECT ?`)
 		if err != nil {
-			dbt.Fatal(err)
+			t.Fatal(err)
 		}
 		defer stmt.Close()
 		row := stmt.QueryRow(param)
 		var result int64
 		err = row.Scan(&result)
 		if err != nil {
-			dbt.Fatal(err)
+			t.Fatal(err)
 		}
 		if result != param {
-			dbt.Fatal("Unexpected result value")
+			t.Fatal("Unexpected result value")
 		}
 	})
 }
