@@ -328,7 +328,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 		},
 		{
 			[]interface{}{duration, duration},
-			"12:59:59", "12:59:59", false, false,
+			duration, duration, false, false,
 		},
 		{
 			[]interface{}{"123", nil, "123"},
