@@ -1564,24 +1564,28 @@ func TestNullFlag(t *testing.T) {
 	}
 }
 
-func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
+func TestNO_DEFAULT_VALUEFlag(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
 	// issue #21465
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	_, err = Execute(ctx, qctx, "use test")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = Execute(ctx, qctx, "drop table if exists t")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = Execute(ctx, qctx, "create table t(c1 int key, c2 int);")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rs, err := Execute(ctx, qctx, "select c1 from t;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	cols := rs.Columns()
-	c.Assert(len(cols), Equals, 1)
+	require.Len(t, cols, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
-	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
 }
 
 func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
