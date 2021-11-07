@@ -264,7 +264,7 @@ func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, e
 			record.lockLease = ts
 		}
 	case CachedTableLockIntend:
-		// // Add the write lock.
+		// Add the write lock.
 		if now > record.writeIntentLease {
 			record.lockType = CachedTableLockWrite
 			record.lockLease = ts
