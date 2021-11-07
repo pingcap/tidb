@@ -49,11 +49,11 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
-	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	mockTopSQLReporter "github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
@@ -940,14 +940,18 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 	return mysql.RegisterTLSConfig(configName, tlsConfig)
 }
 
-func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
-	tk := testkit.NewTestKit(c, ts.store)
+func TestSystemTimeZone(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	tk := testkit.NewTestKit(t, ts.store)
 	cfg := newTestConfig()
 	cfg.Socket = ""
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer server.Close()
 
 	tz1 := tk.MustQuery("select variable_value from mysql.tidb where variable_name = 'system_tz'").Rows()
