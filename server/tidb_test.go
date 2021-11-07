@@ -481,8 +481,12 @@ func TestMultiStatements(t *testing.T) {
 	ts.runTestMultiStatements(t)
 }
 
-func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
-	cli := newTestServerClient()
+func TestSocketForwarding(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	cli := newTestingServerClient()
 	cfg := newTestConfig()
 	cfg.Socket = "/tmp/tidbtest.sock"
 	cfg.Port = cli.port
@@ -490,16 +494,16 @@ func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 	cfg.Status.ReportStatus = false
 
 	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
 
-	cli.runTestRegression(c, func(config *mysql.Config) {
+	cli.runTestRegression(t, func(config *mysql.Config) {
 		config.User = "root"
 		config.Net = "unix"
 		config.Addr = "/tmp/tidbtest.sock"
