@@ -320,9 +320,12 @@ func TestResultFieldTableIsNull(t *testing.T) {
 	ts.runTestResultFieldTableIsNull(t)
 }
 
-func (ts *tidbTestSuite) TestStatusAPI(c *C) {
-	c.Parallel()
-	ts.runTestStatusAPI(c)
+func TestStatusAPI(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestStatusAPI(t)
 }
 
 func TestStatusPort(t *testing.T) {
