@@ -783,9 +783,8 @@ func testAggMemFunc(t *testing.T, p aggMemTest) {
 	}
 }
 
-func testMultiArgsAggFunc(t *testing.T, p multiArgsAggTest) {
+func testMultiArgsAggFunc(t *testing.T, ctx sessionctx.Context, p multiArgsAggTest) {
 	srcChk := p.genSrcChk()
-	ctx := mock.NewContext()
 
 	args := make([]expression.Expression, len(p.dataTypes))
 	for k := 0; k < len(p.dataTypes); k++ {

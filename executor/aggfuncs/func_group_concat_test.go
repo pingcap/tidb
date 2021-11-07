@@ -41,6 +41,8 @@ func TestMergePartialResult4GroupConcat(t *testing.T) {
 }
 
 func TestGroupConcat(t *testing.T) {
+	t.Parallel()
+
 	ctx := mock.NewContext()
 
 	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, nil, "0 1 2 3 4")
@@ -48,7 +50,7 @@ func TestGroupConcat(t *testing.T) {
 
 	test2 := buildMultiArgsAggTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5, nil, "44 33 22 11 00")
 	test2.orderBy = true
-	testMultiArgsAggFunc(t, test2)
+	testMultiArgsAggFunc(t, ctx, test2)
 
 	defer func() {
 		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen, "1024")
@@ -60,7 +62,7 @@ func TestGroupConcat(t *testing.T) {
 		require.NoError(t, err)
 		test2 = buildMultiArgsAggTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5, nil, "44 33 22 11 00"[:i])
 		test2.orderBy = true
-		testMultiArgsAggFunc(t, test2)
+		testMultiArgsAggFunc(t, ctx, test2)
 	}
 }
 

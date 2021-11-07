@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/stretchr/testify/require"
 )
@@ -80,7 +81,7 @@ func TestCount(t *testing.T) {
 	}
 	for i, test := range tests2 {
 		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
-			testMultiArgsAggFunc(t, test)
+			testMultiArgsAggFunc(t, mock.NewContext(), test)
 		})
 	}
 
@@ -111,7 +112,7 @@ func TestCount(t *testing.T) {
 
 	for i, test := range tests4 {
 		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
-			testMultiArgsAggFunc(t, test)
+			testMultiArgsAggFunc(t, mock.NewContext(), test)
 		})
 	}
 }
