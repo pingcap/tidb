@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build ignore
 // +build ignore
 
 package main
@@ -116,7 +117,6 @@ var builtinStringVecTestTpl = template.Must(template.New("").Parse(`
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
@@ -129,12 +129,12 @@ var vecGeneratedBuiltinStringCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinStringEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecGeneratedBuiltinStringCases)
+func TestVectorizedGeneratedBuiltinStringEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecGeneratedBuiltinStringCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinStringFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecGeneratedBuiltinStringCases)
+func TestVectorizedGeneratedBuiltinStringFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecGeneratedBuiltinStringCases)
 }
 
 func BenchmarkVectorizedGeneratedBuiltinStringEvalOneVec(b *testing.B) {

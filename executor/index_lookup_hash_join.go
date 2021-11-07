@@ -415,8 +415,8 @@ func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask
 
 func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask, workerID int) *indexHashJoinInnerWorker {
 	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
-	copiedRanges := make([]*ranger.Range, 0, len(e.indexRanges))
-	for _, ran := range e.indexRanges {
+	copiedRanges := make([]*ranger.Range, 0, len(e.indexRanges.Range()))
+	for _, ran := range e.indexRanges.Range() {
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
 	var innerStats *innerWorkerRuntimeStats
@@ -554,7 +554,7 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 				}
 			}
 			h.Reset()
-			err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, row, iw.outerCtx.rowTypes, hashColIdx, buf)
+			err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, row, iw.outerCtx.hashTypes, hashColIdx, buf)
 			failpoint.Inject("testIndexHashJoinBuildErr", func() {
 				err = errors.New("mockIndexHashJoinBuildErr")
 			})
@@ -645,7 +645,7 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 
 func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task *indexHashJoinTask, h hash.Hash64, buf []byte) (matchedRows []chunk.Row, matchedRowPtr []chunk.RowPtr, err error) {
 	h.Reset()
-	err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, innerRow, iw.rowTypes, iw.hashCols, buf)
+	err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, innerRow, iw.hashTypes, iw.hashCols, buf)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -659,7 +659,7 @@ func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task
 	matchedRowPtr = make([]chunk.RowPtr, 0, len(iw.matchedOuterPtrs))
 	for _, ptr := range iw.matchedOuterPtrs {
 		outerRow := task.outerResult.GetRow(ptr)
-		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx, innerRow, iw.rowTypes, iw.keyCols, outerRow, iw.outerCtx.rowTypes, iw.outerCtx.hashCols)
+		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx, innerRow, iw.hashTypes, iw.hashCols, outerRow, iw.outerCtx.hashTypes, iw.outerCtx.hashCols)
 		if err != nil {
 			return nil, nil, err
 		}
