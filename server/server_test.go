@@ -1764,47 +1764,47 @@ func (cli *testingServerClient) runTestAuth(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestIssue3662(c *C) {
+func (cli *testingServerClient) runTestIssue3662(t *testing.T) {
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.DBName = "non_existing_schema"
 	}))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := db.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	// According to documentation, "Open may just validate its arguments without
 	// creating a connection to the database. To verify that the data source name
 	// is valid, call Ping."
 	err = db.Ping()
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Error 1049: Unknown database 'non_existing_schema'")
+	require.Error(t, err)
+	require.Equal(t, "Error 1049: Unknown database 'non_existing_schema'", err.Error())
 }
 
-func (cli *testServerClient) runTestIssue3680(c *C) {
+func (cli *testingServerClient) runTestIssue3680(t *testing.T) {
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "non_existing_user"
 	}))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := db.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	// According to documentation, "Open may just validate its arguments without
 	// creating a connection to the database. To verify that the data source name
 	// is valid, call Ping."
 	err = db.Ping()
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: NO)")
+	require.Error(t, err)
+	require.Equal(t, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: NO)", err.Error())
 }
 
-func (cli *testServerClient) runTestIssue22646(c *C) {
-	cli.runTests(c, nil, func(dbt *DBTest) {
+func (cli *testingServerClient) runTestIssue22646(t *testing.T) {
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
 		c1 := make(chan string, 1)
 		go func() {
-			dbt.mustExec(``) // empty query.
+			dbt.MustExec(``) // empty query.
 			c1 <- "success"
 		}()
 		select {

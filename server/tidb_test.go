@@ -295,11 +295,14 @@ func TestAuth(t *testing.T) {
 	ts.runTestIssue3682(t)
 }
 
-func (ts *tidbTestSuite) TestIssues(c *C) {
-	c.Parallel()
-	ts.runTestIssue3662(c)
-	ts.runTestIssue3680(c)
-	ts.runTestIssue22646(c)
+func TestIssues(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestIssue3662(t)
+	ts.runTestIssue3680(t)
+	ts.runTestIssue22646(t)
 }
 
 func (ts *tidbTestSuite) TestDBNameEscape(c *C) {
