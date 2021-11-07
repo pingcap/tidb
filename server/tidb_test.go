@@ -1367,25 +1367,29 @@ func Execute(ctx context.Context, qc *TiDBContext, sql string) (ResultSet, error
 	return qc.ExecuteStmt(ctx, stmts[0])
 }
 
-func (ts *tidbTestSuite) TestShowTablesFlen(c *C) {
+func TestShowTablesFlen(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	ctx := context.Background()
 	_, err = Execute(ctx, qctx, "use test;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	testSQL := "create table abcdefghijklmnopqrstuvwxyz (i int)"
 	_, err = Execute(ctx, qctx, testSQL)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rs, err := Execute(ctx, qctx, "show tables")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	cols := rs.Columns()
-	c.Assert(err, IsNil)
-	c.Assert(len(cols), Equals, 1)
-	c.Assert(int(cols[0].ColumnLength), Equals, 26*tmysql.MaxBytesOfCharacter)
+	require.NoError(t, err)
+	require.Len(t, cols, 1)
+	require.Equal(t, 26*tmysql.MaxBytesOfCharacter, int(cols[0].ColumnLength))
 }
 
 func checkColNames(c *C, columns []*ColumnInfo, names ...string) {
