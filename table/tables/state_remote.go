@@ -173,9 +173,9 @@ type mockStateRemoteData struct {
 }
 
 type stateRecord struct {
-	lease         uint64
-	readLockLease uint64 // only use for intent lock
-	lockType      CachedTableLockType
+	lockLease        uint64
+	writeIntentLease uint64 // only use for intent lock
+	lockType         CachedTableLockType
 }
 
 func newMockStateRemoteData() *mockStateRemoteData {
@@ -189,15 +189,16 @@ func (r *mockStateRemoteData) Load(tid int64) (CachedTableLockType, uint64, erro
 	if !ok {
 		return CachedTableLockNone, 0, nil
 	}
-	return record.lockType, record.lease, nil
+	return record.lockType, record.lockLease, nil
 }
 
 func (r *mockStateRemoteData) LockForRead(tid int64, now, ts uint64) (bool, error) {
 	record, ok := r.data[tid]
 	if !ok {
 		record = &stateRecord{
-			lease:    ts,
-			lockType: CachedTableLockRead,
+			lockLease:        ts,
+			writeIntentLease: ts,
+			lockType:         CachedTableLockRead,
 		}
 		r.data[tid] = record
 		return true, nil
@@ -206,24 +207,24 @@ func (r *mockStateRemoteData) LockForRead(tid int64, now, ts uint64) (bool, erro
 	case CachedTableLockNone:
 		// Add the read lock
 		record.lockType = CachedTableLockRead
-		record.lease = ts
-		record.readLockLease = ts
+		record.lockLease = ts
+		record.writeIntentLease = ts
 		return true, nil
 	case CachedTableLockRead:
 		// Renew lease for this case.
-		if record.lease < ts {
-			record.lease = ts
-			record.readLockLease = ts
+		if record.lockLease < ts {
+			record.lockLease = ts
+			record.writeIntentLease = ts
 			return true, nil
 		}
 		// Already read locked.
 		return true, nil
 	case CachedTableLockWrite, CachedTableLockIntend:
-		if now > record.lease {
+		if now > record.lockLease {
 			// Outdated...clear orphan lock
 			record.lockType = CachedTableLockRead
-			record.lease = ts
-			record.readLockLease = ts
+			record.lockLease = ts
+			record.writeIntentLease = ts
 			return true, nil
 		}
 		return false, nil
@@ -235,38 +236,38 @@ func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, e
 	record, ok := r.data[tid]
 	if !ok {
 		record.lockType = CachedTableLockWrite
-		record.lease = ts
-		record.readLockLease = ts
+		record.lockLease = ts
+		record.writeIntentLease = ts
 		return 0, nil
 	}
 
 	switch record.lockType {
 	case CachedTableLockNone:
 		record.lockType = CachedTableLockWrite
-		record.lease = ts
+		record.lockLease = ts
 		return 0, nil
 	case CachedTableLockRead:
-		if now > record.lease {
+		if now > record.lockLease {
 			// Outdated, clear orphan lock and add write lock directly.
 			record.lockType = CachedTableLockWrite
-			record.lease = ts
+			record.lockLease = ts
 			return 0, nil
 		}
 
 		// Change state to intend, prevent renew lease operation.
-		oldLease := record.lease
+		oldLease := record.lockLease
 		record.lockType = CachedTableLockIntend
-		record.lease = leaseFromTS(ts)
+		record.lockLease = leaseFromTS(ts)
 		return oldLease, nil
 	case CachedTableLockWrite:
-		if ts > record.lease {
-			record.lease = ts
+		if ts > record.lockLease {
+			record.lockLease = ts
 		}
 	case CachedTableLockIntend:
 		// // Add the write lock.
-		if now > record.readLockLease {
+		if now > record.writeIntentLease {
 			record.lockType = CachedTableLockWrite
-			record.lease = ts
+			record.lockLease = ts
 		}
 	default:
 		return 0, fmt.Errorf("wrong lock state %v", record.lockType)
