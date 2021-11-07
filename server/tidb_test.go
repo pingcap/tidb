@@ -312,9 +312,12 @@ func TestDBNameEscape(t *testing.T) {
 	ts.runTestDBNameEscape(t)
 }
 
-func (ts *tidbTestSuite) TestResultFieldTableIsNull(c *C) {
-	c.Parallel()
-	ts.runTestResultFieldTableIsNull(c)
+func TestResultFieldTableIsNull(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestResultFieldTableIsNull(t)
 }
 
 func (ts *tidbTestSuite) TestStatusAPI(c *C) {

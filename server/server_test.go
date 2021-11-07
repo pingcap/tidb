@@ -1855,13 +1855,13 @@ func (cli *testingServerClient) runTestDBNameEscape(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestResultFieldTableIsNull(c *C) {
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+func (cli *testingServerClient) runTestResultFieldTableIsNull(t *testing.T) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.Params["sql_mode"] = "''"
-	}, "ResultFieldTableIsNull", func(dbt *DBTest) {
-		dbt.mustExec("drop table if exists test;")
-		dbt.mustExec("create table test (c int);")
-		dbt.mustExec("explain select * from test;")
+	}, "ResultFieldTableIsNull", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("drop table if exists test;")
+		dbt.MustExec("create table test (c int);")
+		dbt.MustExec("explain select * from test;")
 	})
 }
 
