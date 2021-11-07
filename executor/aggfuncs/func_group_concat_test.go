@@ -41,7 +41,6 @@ func TestMergePartialResult4GroupConcat(t *testing.T) {
 }
 
 func TestGroupConcat(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 
 	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, nil, "0 1 2 3 4")
@@ -81,8 +80,10 @@ func TestMemGroupConcat(t *testing.T) {
 	multiArgsTest4.multiArgsAggTest.orderBy = true
 
 	multiArgsTests := []multiArgsAggMemTest{multiArgsTest1, multiArgsTest2, multiArgsTest3, multiArgsTest4}
-	for _, test := range multiArgsTests {
-		testMultiArgsAggMemFunc(t, test)
+	for i, test := range multiArgsTests {
+		t.Run(fmt.Sprintf("%s_%d", test.multiArgsAggTest.funcName, i), func(t *testing.T) {
+			testMultiArgsAggMemFunc(t, test)
+		})
 	}
 }
 

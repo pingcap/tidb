@@ -16,6 +16,7 @@ package aggfuncs_test
 
 import (
 	"encoding/binary"
+	"fmt"
 	"testing"
 
 	"github.com/dgryski/go-farm"
@@ -62,8 +63,10 @@ func TestCount(t *testing.T) {
 		buildAggTester(ast.AggFuncCount, mysql.TypeDuration, 5, 0, 5),
 		buildAggTester(ast.AggFuncCount, mysql.TypeJSON, 5, 0, 5),
 	}
-	for _, test := range tests {
-		testAggFunc(t, test)
+	for i, test := range tests {
+		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
+			testAggFunc(t, test)
+		})
 	}
 	tests2 := []multiArgsAggTest{
 		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeLonglong, mysql.TypeLonglong}, mysql.TypeLonglong, 5, 0, 5),
@@ -75,8 +78,10 @@ func TestCount(t *testing.T) {
 		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeDuration, mysql.TypeDuration}, mysql.TypeLonglong, 5, 0, 5),
 		buildMultiArgsAggTester(ast.AggFuncCount, []byte{mysql.TypeJSON, mysql.TypeJSON}, mysql.TypeLonglong, 5, 0, 5),
 	}
-	for _, test := range tests2 {
-		testMultiArgsAggFunc(t, test)
+	for i, test := range tests2 {
+		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
+			testMultiArgsAggFunc(t, test)
+		})
 	}
 
 	tests3 := []aggTest{
@@ -104,8 +109,10 @@ func TestCount(t *testing.T) {
 		buildMultiArgsAggTester(ast.AggFuncApproxCountDistinct, []byte{mysql.TypeJSON, mysql.TypeJSON}, mysql.TypeLonglong, 5, 0, 5),
 	}
 
-	for _, test := range tests4 {
-		testMultiArgsAggFunc(t, test)
+	for i, test := range tests4 {
+		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
+			testMultiArgsAggFunc(t, test)
+		})
 	}
 }
 
@@ -148,8 +155,10 @@ func TestMemCount(t *testing.T) {
 		buildAggMemTester(ast.AggFuncApproxCountDistinct, mysql.TypeString, 5,
 			aggfuncs.DefPartialResult4ApproxCountDistinctSize, approxCountDistinctUpdateMemDeltaGens, true),
 	}
-	for _, test := range tests {
-		testAggMemFunc(t, test)
+	for i, test := range tests {
+		t.Run(fmt.Sprintf("%s_%d", test.aggTest.funcName, i), func(t *testing.T) {
+			testAggMemFunc(t, test)
+		})
 	}
 }
 
