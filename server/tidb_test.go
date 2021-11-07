@@ -244,9 +244,12 @@ func TestUint64(t *testing.T) {
 	ts.runTestPrepareResultFieldType(t)
 }
 
-func (ts *tidbTestSuite) TestSpecialType(c *C) {
-	c.Parallel()
-	ts.runTestSpecialType(c)
+func TestSpecialType(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestSpecialType(t)
 }
 
 func (ts *tidbTestSuite) TestPreparedString(c *C) {

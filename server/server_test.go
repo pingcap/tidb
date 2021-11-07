@@ -189,6 +189,43 @@ func (cli *testServerClient) runTestsOnNewDB(c *C, overrider configOverrider, db
 	}
 }
 
+// runTestsOnNewDB runs tests using a specified database which will be created before the test and destroyed after the test.
+func (cli *testingServerClient) runTestsOnNewDB(t *testing.T, overrider configOverrider, dbName string, tests ...func(dbt *testkit.DBTestKit)) {
+	dsn := cli.getDSN(overrider, func(config *mysql.Config) {
+		config.DBName = ""
+	})
+	db, err := sql.Open("mysql", dsn)
+	require.NoErrorf(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+
+	_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`;", dbName))
+	if err != nil {
+		fmt.Println(err)
+	}
+	require.NoErrorf(t, err, "Error drop database %s: %s", dbName, err)
+
+	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE `%s`;", dbName))
+	require.NoErrorf(t, err, "Error create database %s: %s", dbName, err)
+
+	defer func() {
+		_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`;", dbName))
+		require.NoErrorf(t, err, "Error drop database %s: %s", dbName, err)
+	}()
+
+	_, err = db.Exec(fmt.Sprintf("USE `%s`;", dbName))
+	require.NoErrorf(t, err, "Error use database %s: %s", dbName, err)
+
+	dbt := testkit.NewDBTestKit(t, db)
+	for _, test := range tests {
+		test(dbt)
+		// to fix : no db selected
+		_, _ = dbt.GetDB().Exec("DROP TABLE IF EXISTS test")
+	}
+}
+
 type DBTest struct {
 	*C
 	db *sql.DB
@@ -328,21 +365,21 @@ func (cli *testingServerClient) runTestPrepareResultFieldType(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestSpecialType(t *C) {
-	cli.runTestsOnNewDB(t, nil, "SpecialType", func(dbt *DBTest) {
-		dbt.mustExec("create table test (a decimal(10, 5), b datetime, c time, d bit(8))")
-		dbt.mustExec("insert test values (1.4, '2012-12-21 12:12:12', '4:23:34', b'1000')")
-		rows := dbt.mustQuery("select * from test where a > ?", 0)
-		t.Assert(rows.Next(), IsTrue)
+func (cli *testingServerClient) runTestSpecialType(t *testing.T) {
+	cli.runTestsOnNewDB(t, nil, "SpecialType", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table test (a decimal(10, 5), b datetime, c time, d bit(8))")
+		dbt.MustExec("insert test values (1.4, '2012-12-21 12:12:12', '4:23:34', b'1000')")
+		rows := dbt.MustQuery("select * from test where a > ?", 0)
+		require.True(t, rows.Next())
 		var outA float64
 		var outB, outC string
 		var outD []byte
 		err := rows.Scan(&outA, &outB, &outC, &outD)
-		t.Assert(err, IsNil)
-		t.Assert(outA, Equals, 1.4)
-		t.Assert(outB, Equals, "2012-12-21 12:12:12")
-		t.Assert(outC, Equals, "04:23:34")
-		t.Assert(outD, BytesEquals, []byte{8})
+		require.NoError(t, err)
+		require.Equal(t, 1.4, outA)
+		require.Equal(t, "2012-12-21 12:12:12", outB)
+		require.Equal(t, "04:23:34", outC)
+		require.Equal(t, []byte{8}, outD)
 	})
 }
 
