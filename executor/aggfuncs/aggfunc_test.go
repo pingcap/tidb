@@ -1006,6 +1006,97 @@ func (s *testSuite) testAggMemFunc(c *C, p aggMemTest) {
 	}
 }
 
+func testMultiArgsAggFunc(t *testing.T, p multiArgsAggTest) {
+	srcChk := p.genSrcChk()
+	ctx := mock.NewContext()
+
+	args := make([]expression.Expression, len(p.dataTypes))
+	for k := 0; k < len(p.dataTypes); k++ {
+		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
+	}
+	if p.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+	}
+
+	desc, err := aggregation.NewAggFuncDesc(ctx, p.funcName, args, false)
+	require.NoError(t, err)
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc := aggfuncs.Build(ctx, desc, 0)
+	finalPr, _ := finalFunc.AllocPartialResult()
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+
+	iter := chunk.NewIterator4Chunk(srcChk)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		// FIXME: cannot assert error since there are cases of error, e.g. rows were cut by GROUPCONCAT
+		_, _ = finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr)
+	}
+	p.messUpChunk(srcChk)
+	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
+	require.NoError(t, err)
+	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err := dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[1])
+	require.NoError(t, err)
+	require.Zerof(t, result, "%v != %v", dt.String(), p.results[1])
+
+	// test the empty input
+	resultChk.Reset()
+	finalFunc.ResetPartialResult(finalPr)
+	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
+	require.NoError(t, err)
+	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[0])
+	require.NoError(t, err)
+	require.Zerof(t, result, "%v != %v", dt.String(), p.results[0])
+
+	// test the agg func with distinct
+	desc, err = aggregation.NewAggFuncDesc(ctx, p.funcName, args, true)
+	require.NoError(t, err)
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc = aggfuncs.Build(ctx, desc, 0)
+	finalPr, _ = finalFunc.AllocPartialResult()
+
+	resultChk.Reset()
+	srcChk = p.genSrcChk()
+	iter = chunk.NewIterator4Chunk(srcChk)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		// FIXME: cannot check error
+		_, _ = finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr)
+	}
+	p.messUpChunk(srcChk)
+	srcChk = p.genSrcChk()
+	iter = chunk.NewIterator4Chunk(srcChk)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		// FIXME: cannot check error
+		_, _ = finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr)
+	}
+	p.messUpChunk(srcChk)
+	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
+	require.NoError(t, err)
+	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[1])
+	require.NoError(t, err)
+	require.Zerof(t, result, "%v != %v", dt.String(), p.results[1])
+
+	// test the empty input
+	resultChk.Reset()
+	finalFunc.ResetPartialResult(finalPr)
+	err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
+	require.NoError(t, err)
+	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err = dt.CompareDatum(ctx.GetSessionVars().StmtCtx, &p.results[0])
+	require.NoError(t, err)
+	require.Zero(t, result)
+}
+
+// Deprecated: migrating to testMultiArgsAggFunc(t *testing.T, p multiArgsAggTest)
 func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	srcChk := p.genSrcChk()
 
@@ -1095,6 +1186,41 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	c.Assert(result, Equals, 0)
 }
 
+func testMultiArgsAggMemFunc(t *testing.T, p multiArgsAggMemTest) {
+	srcChk := p.multiArgsAggTest.genSrcChk()
+	ctx := mock.NewContext()
+
+	args := make([]expression.Expression, len(p.multiArgsAggTest.dataTypes))
+	for k := 0; k < len(p.multiArgsAggTest.dataTypes); k++ {
+		args[k] = &expression.Column{RetType: p.multiArgsAggTest.dataTypes[k], Index: k}
+	}
+	if p.multiArgsAggTest.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+	}
+
+	desc, err := aggregation.NewAggFuncDesc(ctx, p.multiArgsAggTest.funcName, args, p.isDistinct)
+	require.NoError(t, err)
+	if p.multiArgsAggTest.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc := aggfuncs.Build(ctx, desc, 0)
+	finalPr, memDelta := finalFunc.AllocPartialResult()
+	require.Equal(t, p.allocMemDelta, memDelta)
+
+	updateMemDeltas, err := p.multiArgsUpdateMemDeltaGens(srcChk, p.multiArgsAggTest.dataTypes, desc.OrderByItems)
+	require.NoError(t, err)
+	iter := chunk.NewIterator4Chunk(srcChk)
+	i := 0
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		memDelta, _ := finalFunc.UpdatePartialResult(ctx, []chunk.Row{row}, finalPr)
+		require.Equal(t, updateMemDeltas[i], memDelta)
+		i++
+	}
+}
+
+// Deprecated: migrating to testMultiArgsAggMemFunc(t *testing.T, p multiArgsAggMemTest)
 func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
 	srcChk := p.multiArgsAggTest.genSrcChk()
 
@@ -1127,7 +1253,6 @@ func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
 		i++
 	}
 }
-
 func (s *testSuite) benchmarkAggFunc(b *testing.B, p aggTest) {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
 	for i := 0; i < p.numRows; i++ {
