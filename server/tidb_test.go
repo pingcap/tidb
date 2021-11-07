@@ -268,13 +268,6 @@ func TestPreparedTimestamp(t *testing.T) {
 	ts.runTestPreparedTimestamp(t)
 }
 
-func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
-	ts.runTestLoadDataForListPartition(c)
-	ts.runTestLoadDataForListPartition2(c)
-	ts.runTestLoadDataForListColumnPartition(c)
-	ts.runTestLoadDataForListColumnPartition2(c)
-}
-
 func TestConcurrentUpdate(t *testing.T) {
 	t.Parallel()
 	ts, cleanup := createTiDBTest(t)

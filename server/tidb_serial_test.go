@@ -70,3 +70,13 @@ func TestStmtCount(t *testing.T) {
 
 	ts.runTestStmtCount(t)
 }
+
+func TestLoadDataListPartition(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestLoadDataForListPartition(t)
+	ts.runTestLoadDataForListPartition2(t)
+	ts.runTestLoadDataForListColumnPartition(t)
+	ts.runTestLoadDataForListColumnPartition2(t)
+}

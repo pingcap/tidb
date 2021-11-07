@@ -561,20 +561,20 @@ func (cli *testingServerClient) runTestLoadDataForSlowLog(t *testing.T, server *
 	})
 }
 
-func (cli *testServerClient) prepareLoadDataFile(c *C, path string, rows ...string) {
+func (cli *testingServerClient) prepareLoadDataFile(t *testing.T, path string, rows ...string) {
 	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 	defer func() {
 		err = fp.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	for _, row := range rows {
 		fields := strings.Split(row, " ")
 		_, err = fp.WriteString(strings.Join(fields, "\t"))
 		_, err = fp.WriteString("\n")
 	}
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
 func (cli *testingServerClient) runTestLoadDataAutoRandom(t *testing.T) {
@@ -689,18 +689,18 @@ func (cli *testingServerClient) runTestLoadDataAutoRandomWithSpecialTerm(t *test
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataForListPartition(c *C) {
+func (cli *testingServerClient) runTestLoadDataForListPartition(t *testing.T) {
 	path := "/tmp/load_data_list_partition.csv"
 	defer func() {
 		_ = os.Remove(path)
 	}()
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "load_data_list_partition", func(dbt *DBTest) {
-		dbt.mustExec("set @@session.tidb_enable_list_partition = ON")
-		dbt.mustExec(`create table t (id int, name varchar(10),
+	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set @@session.tidb_enable_list_partition = ON")
+		dbt.MustExec(`create table t (id int, name varchar(10),
 		unique index idx (id)) partition by list (id) (
     	partition p0 values in (3,5,6,9,17),
     	partition p1 values in (1,2,10,11,19,20),
@@ -708,48 +708,48 @@ func (cli *testServerClient) runTestLoadDataForListPartition(c *C) {
     	partition p3 values in (7,8,15,16,null)
 	);`)
 		// Test load data into 1 partition.
-		cli.prepareLoadDataFile(c, path, "1 a", "2 b")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
-		rows := dbt.mustQuery("select * from t partition(p1) order by id")
-		cli.checkRows(c, rows, "1 a", "2 b")
+		cli.prepareLoadDataFile(t, path, "1 a", "2 b")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows := dbt.MustQuery("select * from t partition(p1) order by id")
+		cli.checkRows(t, rows, "1 a", "2 b")
 		// Test load data into multi-partitions.
-		dbt.mustExec("delete from t")
-		cli.prepareLoadDataFile(c, path, "1 a", "3 c", "4 e")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
-		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "1 a", "3 c", "4 e")
+		dbt.MustExec("delete from t")
+		cli.prepareLoadDataFile(t, path, "1 a", "3 c", "4 e")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows = dbt.MustQuery("select * from t order by id")
+		cli.checkRows(t, rows, "1 a", "3 c", "4 e")
 		// Test load data meet duplicate error.
-		cli.prepareLoadDataFile(c, path, "1 x", "2 b", "2 x", "7 a")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
-		rows = dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows,
+		cli.prepareLoadDataFile(t, path, "1 x", "2 b", "2 x", "7 a")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows = dbt.MustQuery("show warnings")
+		cli.checkRows(t, rows,
 			"Warning 1062 Duplicate entry '1' for key 'idx'",
 			"Warning 1062 Duplicate entry '2' for key 'idx'")
-		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		rows = dbt.MustQuery("select * from t order by id")
+		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
 		// Test load data meet no partition warning.
-		cli.prepareLoadDataFile(c, path, "5 a", "100 x")
-		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, IsNil)
-		rows = dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value 100")
-		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
+		cli.prepareLoadDataFile(t, path, "5 a", "100 x")
+		_, err := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		require.NoError(t, err)
+		rows = dbt.MustQuery("show warnings")
+		cli.checkRows(t, rows, "Warning 1526 Table has no partition for value 100")
+		rows = dbt.MustQuery("select * from t order by id")
+		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataForListPartition2(c *C) {
+func (cli *testingServerClient) runTestLoadDataForListPartition2(t *testing.T) {
 	path := "/tmp/load_data_list_partition.csv"
 	defer func() {
 		_ = os.Remove(path)
 	}()
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "load_data_list_partition", func(dbt *DBTest) {
-		dbt.mustExec("set @@session.tidb_enable_list_partition = ON")
-		dbt.mustExec(`create table t (id int, name varchar(10),b int generated always as (length(name)+1) virtual,
+	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set @@session.tidb_enable_list_partition = ON")
+		dbt.MustExec(`create table t (id int, name varchar(10),b int generated always as (length(name)+1) virtual,
 		unique index idx (id,b)) partition by list (id*2 + b*b + b*b - b*b*2 - abs(id)) (
     	partition p0 values in (3,5,6,9,17),
     	partition p1 values in (1,2,10,11,19,20),
@@ -757,48 +757,48 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(c *C) {
     	partition p3 values in (7,8,15,16,null)
 	);`)
 		// Test load data into 1 partition.
-		cli.prepareLoadDataFile(c, path, "1 a", "2 b")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
-		rows := dbt.mustQuery("select id,name from t partition(p1) order by id")
-		cli.checkRows(c, rows, "1 a", "2 b")
+		cli.prepareLoadDataFile(t, path, "1 a", "2 b")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
+		rows := dbt.MustQuery("select id,name from t partition(p1) order by id")
+		cli.checkRows(t, rows, "1 a", "2 b")
 		// Test load data into multi-partitions.
-		dbt.mustExec("delete from t")
-		cli.prepareLoadDataFile(c, path, "1 a", "3 c", "4 e")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
-		rows = dbt.mustQuery("select id,name from t order by id")
-		cli.checkRows(c, rows, "1 a", "3 c", "4 e")
+		dbt.MustExec("delete from t")
+		cli.prepareLoadDataFile(t, path, "1 a", "3 c", "4 e")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
+		rows = dbt.MustQuery("select id,name from t order by id")
+		cli.checkRows(t, rows, "1 a", "3 c", "4 e")
 		// Test load data meet duplicate error.
-		cli.prepareLoadDataFile(c, path, "1 x", "2 b", "2 x", "7 a")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
-		rows = dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows,
+		cli.prepareLoadDataFile(t, path, "1 x", "2 b", "2 x", "7 a")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
+		rows = dbt.MustQuery("show warnings")
+		cli.checkRows(t, rows,
 			"Warning 1062 Duplicate entry '1-2' for key 'idx'",
 			"Warning 1062 Duplicate entry '2-2' for key 'idx'")
-		rows = dbt.mustQuery("select id,name from t order by id")
-		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		rows = dbt.MustQuery("select id,name from t order by id")
+		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
 		// Test load data meet no partition warning.
-		cli.prepareLoadDataFile(c, path, "5 a", "100 x")
-		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
-		c.Assert(err, IsNil)
-		rows = dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value 100")
-		rows = dbt.mustQuery("select id,name from t order by id")
-		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
+		cli.prepareLoadDataFile(t, path, "5 a", "100 x")
+		_, err := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
+		require.NoError(t, err)
+		rows = dbt.MustQuery("show warnings")
+		cli.checkRows(t, rows, "Warning 1526 Table has no partition for value 100")
+		rows = dbt.MustQuery("select id,name from t order by id")
+		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataForListColumnPartition(c *C) {
+func (cli *testingServerClient) runTestLoadDataForListColumnPartition(t *testing.T) {
 	path := "/tmp/load_data_list_partition.csv"
 	defer func() {
 		_ = os.Remove(path)
 	}()
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "load_data_list_partition", func(dbt *DBTest) {
-		dbt.mustExec("set @@session.tidb_enable_list_partition = ON")
-		dbt.mustExec(`create table t (id int, name varchar(10),
+	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set @@session.tidb_enable_list_partition = ON")
+		dbt.MustExec(`create table t (id int, name varchar(10),
 		unique index idx (id)) partition by list columns (id) (
     	partition p0 values in (3,5,6,9,17),
     	partition p1 values in (1,2,10,11,19,20),
@@ -806,87 +806,87 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition(c *C) {
     	partition p3 values in (7,8,15,16,null)
 	);`)
 		// Test load data into 1 partition.
-		cli.prepareLoadDataFile(c, path, "1 a", "2 b")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
-		rows := dbt.mustQuery("select * from t partition(p1) order by id")
-		cli.checkRows(c, rows, "1 a", "2 b")
+		cli.prepareLoadDataFile(t, path, "1 a", "2 b")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows := dbt.MustQuery("select * from t partition(p1) order by id")
+		cli.checkRows(t, rows, "1 a", "2 b")
 		// Test load data into multi-partitions.
-		dbt.mustExec("delete from t")
-		cli.prepareLoadDataFile(c, path, "1 a", "3 c", "4 e")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
-		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "1 a", "3 c", "4 e")
+		dbt.MustExec("delete from t")
+		cli.prepareLoadDataFile(t, path, "1 a", "3 c", "4 e")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows = dbt.MustQuery("select * from t order by id")
+		cli.checkRows(t, rows, "1 a", "3 c", "4 e")
 		// Test load data meet duplicate error.
-		cli.prepareLoadDataFile(c, path, "1 x", "2 b", "2 x", "7 a")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
-		rows = dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows,
+		cli.prepareLoadDataFile(t, path, "1 x", "2 b", "2 x", "7 a")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows = dbt.MustQuery("show warnings")
+		cli.checkRows(t, rows,
 			"Warning 1062 Duplicate entry '1' for key 'idx'",
 			"Warning 1062 Duplicate entry '2' for key 'idx'")
-		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
+		rows = dbt.MustQuery("select * from t order by id")
+		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
 		// Test load data meet no partition warning.
-		cli.prepareLoadDataFile(c, path, "5 a", "100 x")
-		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, IsNil)
-		rows = dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value from column_list")
-		rows = dbt.mustQuery("select id,name from t order by id")
-		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
+		cli.prepareLoadDataFile(t, path, "5 a", "100 x")
+		_, err := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		require.NoError(t, err)
+		rows = dbt.MustQuery("show warnings")
+		cli.checkRows(t, rows, "Warning 1526 Table has no partition for value from column_list")
+		rows = dbt.MustQuery("select id,name from t order by id")
+		cli.checkRows(t, rows, "1 a", "2 b", "3 c", "4 e", "5 a", "7 a")
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataForListColumnPartition2(c *C) {
+func (cli *testingServerClient) runTestLoadDataForListColumnPartition2(t *testing.T) {
 	path := "/tmp/load_data_list_partition.csv"
 	defer func() {
 		_ = os.Remove(path)
 	}()
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "load_data_list_partition", func(dbt *DBTest) {
-		dbt.mustExec("set @@session.tidb_enable_list_partition = ON")
-		dbt.mustExec(`create table t (location varchar(10), id int, a int, unique index idx (location,id)) partition by list columns (location,id) (
+	}, "load_data_list_partition", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set @@session.tidb_enable_list_partition = ON")
+		dbt.MustExec(`create table t (location varchar(10), id int, a int, unique index idx (location,id)) partition by list columns (location,id) (
     	partition p_west  values in (('w', 1),('w', 2),('w', 3),('w', 4)),
     	partition p_east  values in (('e', 5),('e', 6),('e', 7),('e', 8)),
     	partition p_north values in (('n', 9),('n',10),('n',11),('n',12)),
     	partition p_south values in (('s',13),('s',14),('s',15),('s',16))
 	);`)
 		// Test load data into 1 partition.
-		cli.prepareLoadDataFile(c, path, "w 1 1", "w 2 2")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
-		rows := dbt.mustQuery("select * from t partition(p_west) order by id")
-		cli.checkRows(c, rows, "w 1 1", "w 2 2")
+		cli.prepareLoadDataFile(t, path, "w 1 1", "w 2 2")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows := dbt.MustQuery("select * from t partition(p_west) order by id")
+		cli.checkRows(t, rows, "w 1 1", "w 2 2")
 		// Test load data into multi-partitions.
-		dbt.mustExec("delete from t")
-		cli.prepareLoadDataFile(c, path, "w 1 1", "e 5 5", "n 9 9")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
-		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "w 1 1", "e 5 5", "n 9 9")
+		dbt.MustExec("delete from t")
+		cli.prepareLoadDataFile(t, path, "w 1 1", "e 5 5", "n 9 9")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
+		rows = dbt.MustQuery("select * from t order by id")
+		cli.checkRows(t, rows, "w 1 1", "e 5 5", "n 9 9")
 		// Test load data meet duplicate error.
-		cli.prepareLoadDataFile(c, path, "w 1 2", "w 2 2")
-		_, err := dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, IsNil)
-		rows = dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows, "Warning 1062 Duplicate entry 'w-1' for key 'idx'")
-		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
+		cli.prepareLoadDataFile(t, path, "w 1 2", "w 2 2")
+		_, err := dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		require.NoError(t, err)
+		rows = dbt.MustQuery("show warnings")
+		cli.checkRows(t, rows, "Warning 1062 Duplicate entry 'w-1' for key 'idx'")
+		rows = dbt.MustQuery("select * from t order by id")
+		cli.checkRows(t, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
 		// Test load data meet no partition warning.
-		cli.prepareLoadDataFile(c, path, "w 3 3", "w 5 5", "e 8 8")
-		_, err = dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, IsNil)
-		rows = dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows, "Warning 1526 Table has no partition for value from column_list")
-		cli.prepareLoadDataFile(c, path, "x 1 1", "w 1 1")
-		_, err = dbt.db.Exec(fmt.Sprintf("load data local infile %q into table t", path))
-		c.Assert(err, IsNil)
-		rows = dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows,
+		cli.prepareLoadDataFile(t, path, "w 3 3", "w 5 5", "e 8 8")
+		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		require.NoError(t, err)
+		rows = dbt.MustQuery("show warnings")
+		cli.checkRows(t, rows, "Warning 1526 Table has no partition for value from column_list")
+		cli.prepareLoadDataFile(t, path, "x 1 1", "w 1 1")
+		_, err = dbt.GetDB().Exec(fmt.Sprintf("load data local infile %q into table t", path))
+		require.NoError(t, err)
+		rows = dbt.MustQuery("show warnings")
+		cli.checkRows(t, rows,
 			"Warning 1526 Table has no partition for value from column_list",
 			"Warning 1062 Duplicate entry 'w-1' for key 'idx'")
-		rows = dbt.mustQuery("select * from t order by id")
-		cli.checkRows(c, rows, "w 1 1", "w 2 2", "w 3 3", "e 5 5", "e 8 8", "n 9 9")
+		rows = dbt.MustQuery("select * from t order by id")
+		cli.checkRows(t, rows, "w 1 1", "w 2 2", "w 3 3", "e 5 5", "e 8 8", "n 9 9")
 	})
 }
 
