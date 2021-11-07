@@ -435,24 +435,24 @@ func (cli *testingServerClient) runTestPreparedString(t *testing.T) {
 // runTestPreparedTimestamp does not really cover binary timestamp format, because MySQL driver in golang
 // does not use this format. MySQL driver in golang will convert the timestamp to a string.
 // This case guarantees it could work.
-func (cli *testServerClient) runTestPreparedTimestamp(t *C) {
-	cli.runTestsOnNewDB(t, nil, "prepared_timestamp", func(dbt *DBTest) {
-		dbt.mustExec("create table test (a timestamp, b time)")
-		dbt.mustExec("set time_zone='+00:00'")
-		insertStmt := dbt.mustPrepare("insert test values (?, ?)")
+func (cli *testingServerClient) runTestPreparedTimestamp(t *testing.T) {
+	cli.runTestsOnNewDB(t, nil, "prepared_timestamp", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table test (a timestamp, b time)")
+		dbt.MustExec("set time_zone='+00:00'")
+		insertStmt := dbt.MustPrepare("insert test values (?, ?)")
 		defer insertStmt.Close()
 		vts := time.Unix(1, 1)
 		vt := time.Unix(-1, 1)
-		dbt.mustExecPrepared(insertStmt, vts, vt)
-		selectStmt := dbt.mustPrepare("select * from test where a = ? and b = ?")
+		dbt.MustExecPrepared(insertStmt, vts, vt)
+		selectStmt := dbt.MustPrepare("select * from test where a = ? and b = ?")
 		defer selectStmt.Close()
-		rows := dbt.mustQueryPrepared(selectStmt, vts, vt)
-		t.Assert(rows.Next(), IsTrue)
+		rows := dbt.MustQueryPrepared(selectStmt, vts, vt)
+		require.True(t, rows.Next())
 		var outA, outB string
 		err := rows.Scan(&outA, &outB)
-		t.Assert(err, IsNil)
-		t.Assert(outA, Equals, "1970-01-01 00:00:01")
-		t.Assert(outB, Equals, "23:59:59")
+		require.NoError(t, err)
+		require.Equal(t, "1970-01-01 00:00:01", outA)
+		require.Equal(t, "23:59:59", outB)
 	})
 }
 

@@ -260,9 +260,12 @@ func TestPreparedString(t *testing.T) {
 	ts.runTestPreparedString(t)
 }
 
-func (ts *tidbTestSuite) TestPreparedTimestamp(c *C) {
-	c.Parallel()
-	ts.runTestPreparedTimestamp(c)
+func TestPreparedTimestamp(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestPreparedTimestamp(t)
 }
 
 func (ts *tidbTestSerialSuite) TestConfigDefaultValue(c *C) {
