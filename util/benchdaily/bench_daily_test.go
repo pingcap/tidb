@@ -51,7 +51,7 @@ func combineFiles(commitHash string, dateInUnix string, inputFiles []string, out
 	enc.Encode(output)
 }
 
-func BenchmarkDaily(b *testing.B) {
+func TestBenchDaily(t *testing.T) {
 	if !flag.Parsed() {
 		flag.Parse()
 	}

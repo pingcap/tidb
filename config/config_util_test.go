@@ -17,8 +17,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -95,36 +93,6 @@ func TestMergeConfigItems(t *testing.T) {
 	require.Equal(t, oriConf.Store, oldConf.Store)
 	require.Equal(t, oriConf.Port, oldConf.Port)
 	require.Equal(t, oriConf.AdvertiseAddress, oldConf.AdvertiseAddress)
-}
-
-func TestAtomicWriteConfig(t *testing.T) {
-	conf, _ := CloneConf(&defaultConf)
-	confPath := filepath.Join(os.TempDir(), "test-write-config.toml")
-	conf.Performance.MaxMemory = 123
-	conf.Performance.MaxProcs = 234
-	conf.Performance.PseudoEstimateRatio = 3.45
-	require.NoError(t, atomicWriteConfig(conf, confPath))
-
-	content, err := os.ReadFile(confPath)
-	require.NoError(t, err)
-	dconf, err := decodeConfig(string(content))
-	require.NoError(t, err)
-	require.Equal(t, uint64(123), dconf.Performance.MaxMemory)
-	require.Equal(t, uint(234), dconf.Performance.MaxProcs)
-	require.Equal(t, 3.45, dconf.Performance.PseudoEstimateRatio)
-
-	conf.Performance.MaxMemory = 321
-	conf.Performance.MaxProcs = 432
-	conf.Performance.PseudoEstimateRatio = 54.3
-	require.NoError(t, atomicWriteConfig(conf, confPath))
-
-	content, err = os.ReadFile(confPath)
-	require.NoError(t, err)
-	dconf, err = decodeConfig(string(content))
-	require.NoError(t, err)
-	require.Equal(t, uint64(321), dconf.Performance.MaxMemory)
-	require.Equal(t, uint(432), dconf.Performance.MaxProcs)
-	require.Equal(t, 54.3, dconf.Performance.PseudoEstimateRatio)
 }
 
 func TestFlattenConfig(t *testing.T) {

@@ -75,6 +75,7 @@ func (h *histogram) randInt() int64 {
 	return h.Bounds.GetRow(idx).GetInt64(0)
 }
 
+// #nosec G404
 func getValidPrefix(lower, upper string) string {
 	for i := range lower {
 		if i >= len(upper) {

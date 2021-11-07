@@ -2102,7 +2102,7 @@ func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 
 }
 
-func BenchmarkDaily(b *testing.B) {
+func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkReadLastLinesOfHugeLine,
 	)
