@@ -275,14 +275,6 @@ func (ts *tidbTestSerialSuite) TestConfigDefaultValue(c *C) {
 	})
 }
 
-// this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
-// so we must make it running in serial.
-func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
-	ts.runTestLoadData(c, ts.server)
-	ts.runTestLoadDataWithSelectIntoOutfile(c, ts.server)
-	ts.runTestLoadDataForSlowLog(c, ts.server)
-}
-
 func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
 	ts.runTestLoadDataForListPartition(c)
 	ts.runTestLoadDataForListPartition2(c)
@@ -316,9 +308,12 @@ func TestConcurrentUpdate(t *testing.T) {
 	ts.runTestConcurrentUpdate(t)
 }
 
-func (ts *tidbTestSuite) TestErrorCode(c *C) {
-	c.Parallel()
-	ts.runTestErrorCode(c)
+func TestErrorCode(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestErrorCode(t)
 }
 
 func TestAuth(t *testing.T) {

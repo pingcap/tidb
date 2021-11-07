@@ -42,6 +42,24 @@ func NewDBTestKit(t *testing.T, db *sql.DB) *DBTestKit {
 	}
 }
 
+func (tk *DBTestKit) MustPrepare(query string) *sql.Stmt {
+	stmt, err := tk.db.Prepare(query)
+	tk.require.NoErrorf(err, "Prepare %s", query)
+	return stmt
+}
+
+func (tk *DBTestKit) MustExecPrepared(stmt *sql.Stmt, args ...interface{}) sql.Result {
+	res, err := stmt.Exec(args...)
+	tk.require.NoErrorf(err, "Execute prepared with args: %s", args)
+	return res
+}
+
+func (tk *DBTestKit) MustQueryPrepared(stmt *sql.Stmt, args ...interface{}) *sql.Rows {
+	rows, err := stmt.Query(args...)
+	tk.require.NoErrorf(err, "Query prepared with args: %s", args)
+	return rows
+}
+
 // MustExec query the statements and returns the result.
 func (tk *DBTestKit) MustExec(sql string, args ...interface{}) sql.Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
@@ -58,6 +76,12 @@ func (tk *DBTestKit) MustQuery(sql string, args ...interface{}) *sql.Rows {
 	tk.require.NoError(err, comment)
 	tk.require.NotNil(rows, comment)
 	return rows
+}
+
+func (tk *DBTestKit) MustQueryRows(query string, args ...interface{}) {
+	rows := tk.MustQuery(query, args...)
+	tk.require.True(rows.Next())
+	rows.Close()
 }
 
 // GetDB returns the underlay sql.DB instance.

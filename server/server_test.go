@@ -456,62 +456,63 @@ func (cli *testingServerClient) runTestPreparedTimestamp(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(c *C, server *Server) {
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+func (cli *testingServerClient) runTestLoadDataWithSelectIntoOutfile(t *testing.T, server *Server) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "SelectIntoOutfile", func(dbt *DBTest) {
-		dbt.mustExec("create table t (i int, r real, d decimal(10, 5), s varchar(100), dt datetime, ts timestamp, j json)")
-		dbt.mustExec("insert into t values (1, 1.1, 0.1, 'a', '2000-01-01', '01:01:01', '[1]')")
-		dbt.mustExec("insert into t values (2, 2.2, 0.2, 'b', '2000-02-02', '02:02:02', '[1,2]')")
-		dbt.mustExec("insert into t values (null, null, null, null, '2000-03-03', '03:03:03', '[1,2,3]')")
-		dbt.mustExec("insert into t values (4, 4.4, 0.4, 'd', null, null, null)")
+	}, "SelectIntoOutfile", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table t (i int, r real, d decimal(10, 5), s varchar(100), dt datetime, ts timestamp, j json)")
+		dbt.MustExec("insert into t values (1, 1.1, 0.1, 'a', '2000-01-01', '01:01:01', '[1]')")
+		dbt.MustExec("insert into t values (2, 2.2, 0.2, 'b', '2000-02-02', '02:02:02', '[1,2]')")
+		dbt.MustExec("insert into t values (null, null, null, null, '2000-03-03', '03:03:03', '[1,2,3]')")
+		dbt.MustExec("insert into t values (4, 4.4, 0.4, 'd', null, null, null)")
 		outfile := filepath.Join(os.TempDir(), fmt.Sprintf("select_into_outfile_%v_%d.csv", time.Now().UnixNano(), rand.Int()))
 		// On windows use fmt.Sprintf("%q") to escape \ for SQL,
 		// outfile may be 'C:\Users\genius\AppData\Local\Temp\select_into_outfile_1582732846769492000_8074605509026837941.csv'
 		// Without quote, after SQL escape it would become:
 		// 'C:UsersgeniusAppDataLocalTempselect_into_outfile_1582732846769492000_8074605509026837941.csv'
-		dbt.mustExec(fmt.Sprintf("select * from t into outfile %q", outfile))
+		dbt.MustExec(fmt.Sprintf("select * from t into outfile %q", outfile))
 		defer func() {
-			c.Assert(os.Remove(outfile), IsNil)
+			require.NoError(t, os.Remove(outfile))
 		}()
 
-		dbt.mustExec("create table t1 (i int, r real, d decimal(10, 5), s varchar(100), dt datetime, ts timestamp, j json)")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t1", outfile))
+		dbt.MustExec("create table t1 (i int, r real, d decimal(10, 5), s varchar(100), dt datetime, ts timestamp, j json)")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t1", outfile))
 
 		fetchResults := func(table string) [][]interface{} {
 			var res [][]interface{}
-			row := dbt.mustQuery("select * from " + table + " order by i")
+			row := dbt.MustQuery("select * from " + table + " order by i")
 			for row.Next() {
 				r := make([]interface{}, 7)
-				c.Assert(row.Scan(&r[0], &r[1], &r[2], &r[3], &r[4], &r[5], &r[6]), IsNil)
+				require.NoError(t, row.Scan(&r[0], &r[1], &r[2], &r[3], &r[4], &r[5], &r[6]))
 				res = append(res, r)
 			}
-			c.Assert(row.Close(), IsNil)
+			require.NoError(t, row.Close())
 			return res
 		}
 
 		res := fetchResults("t")
 		res1 := fetchResults("t1")
-		c.Assert(len(res), Equals, len(res1))
+		require.Equal(t, len(res1), len(res))
 		for i := range res {
 			for j := range res[i] {
 				// using Sprintf to avoid some uncomparable types
-				c.Assert(fmt.Sprintf("%v", res[i][j]), Equals, fmt.Sprintf("%v", res1[i][j]))
+				require.Equal(t, fmt.Sprintf("%v", res1[i][j]), fmt.Sprintf("%v", res[i][j]))
 			}
 		}
 	})
 }
-func (cli *testServerClient) runTestLoadDataForSlowLog(c *C, server *Server) {
+
+func (cli *testingServerClient) runTestLoadDataForSlowLog(t *testing.T, server *Server) {
 	path := "/tmp/load_data_test.csv"
 	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 	defer func() {
 		err = fp.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = os.Remove(path)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	_, err = fp.WriteString(
 		"1	1\n" +
@@ -519,42 +520,42 @@ func (cli *testServerClient) runTestLoadDataForSlowLog(c *C, server *Server) {
 			"3	3\n" +
 			"4	4\n" +
 			"5	5\n")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "load_data_slow_query", func(dbt *DBTest) {
-		dbt.mustExec("create table t_slow (a int key, b int)")
+	}, "load_data_slow_query", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table t_slow (a int key, b int)")
 		defer func() {
-			dbt.mustExec("set tidb_slow_log_threshold=300;")
-			dbt.mustExec("set @@global.tidb_enable_stmt_summary=0")
+			dbt.MustExec("set tidb_slow_log_threshold=300;")
+			dbt.MustExec("set @@global.tidb_enable_stmt_summary=0")
 		}()
-		dbt.mustExec("set tidb_slow_log_threshold=0;")
-		dbt.mustExec("set @@global.tidb_enable_stmt_summary=1")
+		dbt.MustExec("set tidb_slow_log_threshold=0;")
+		dbt.MustExec("set @@global.tidb_enable_stmt_summary=1")
 		query := fmt.Sprintf("load data local infile %q into table t_slow", path)
-		dbt.mustExec(query)
-		dbt.mustExec("insert ignore into t_slow values (1,1);")
+		dbt.MustExec(query)
+		dbt.MustExec("insert ignore into t_slow values (1,1);")
 
 		checkPlan := func(rows *sql.Rows, expectPlan string) {
-			dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+			require.Truef(t, rows.Next(), "unexpected data")
 			var plan sql.NullString
 			err = rows.Scan(&plan)
-			dbt.Check(err, IsNil)
+			require.NoError(t, err)
 			planStr := strings.ReplaceAll(plan.String, "\t", " ")
 			planStr = strings.ReplaceAll(planStr, "\n", " ")
-			c.Assert(planStr, Matches, expectPlan)
+			require.Regexp(t, expectPlan, planStr)
 		}
 
 		// Test for record slow log for load data statement.
-		rows := dbt.mustQuery("select plan from information_schema.slow_query where query like 'load data local infile % into table t_slow;' order by time desc limit 1")
+		rows := dbt.MustQuery("select plan from information_schema.slow_query where query like 'load data local infile % into table t_slow;' order by time desc limit 1")
 		expectedPlan := ".*LoadData.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*"
 		checkPlan(rows, expectedPlan)
 		// Test for record statements_summary for load data statement.
-		rows = dbt.mustQuery("select plan from information_schema.STATEMENTS_SUMMARY where QUERY_SAMPLE_TEXT like 'load data local infile %' limit 1")
+		rows = dbt.MustQuery("select plan from information_schema.STATEMENTS_SUMMARY where QUERY_SAMPLE_TEXT like 'load data local infile %' limit 1")
 		checkPlan(rows, expectedPlan)
 		// Test log normal statement after executing load date.
-		rows = dbt.mustQuery("select plan from information_schema.slow_query where query = 'insert ignore into t_slow values (1,1);' order by time desc limit 1")
+		rows = dbt.MustQuery("select plan from information_schema.slow_query where query = 'insert ignore into t_slow values (1,1);' order by time desc limit 1")
 		expectedPlan = ".*Insert.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.*"
 		checkPlan(rows, expectedPlan)
 	})
@@ -919,17 +920,17 @@ func (cli *testServerClient) checkRows(c *C, rows *sql.Rows, expectedRows ...str
 	c.Assert(strings.Join(result, "\n"), Equals, strings.Join(expectedRows, "\n"))
 }
 
-func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
+func (cli *testingServerClient) runTestLoadData(t *testing.T, server *Server) {
 	// create a file and write data.
 	path := "/tmp/load_data_test.csv"
 	fp, err := os.Create(path)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 	defer func() {
 		err = fp.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = os.Remove(path)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	_, err = fp.WriteString("\n" +
 		"xxx row1_col1	- row1_col2	1abc\n" +
@@ -937,7 +938,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 		"xxxy row3_col1	- row3_col2	\n" +
 		"xxx row4_col1	- 		900\n" +
 		"xxx row5_col1	- 	row5_col3")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	originalTxnTotalSizeLimit := kv.TxnTotalSizeLimit
 	// If the MemBuffer can't be committed once in each batch, it will return an error like "transaction is too large".
@@ -945,531 +946,531 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 	defer func() { kv.TxnTotalSizeLimit = originalTxnTotalSizeLimit }()
 
 	// support ClientLocalFiles capability
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "LoadData", func(dbt *DBTest) {
-		dbt.mustExec("set @@tidb_dml_batch_size = 3")
-		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
-		dbt.mustExec("create view v1 as select 1")
-		dbt.mustExec("create sequence s1")
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set @@tidb_dml_batch_size = 3")
+		dbt.MustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
+		dbt.MustExec("create view v1 as select 1")
+		dbt.MustExec("create sequence s1")
 
 		// can't insert into views (in TiDB) or sequences. issue #20880
-		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table v1")
-		dbt.Assert(err, NotNil)
-		dbt.Assert(err.Error(), Equals, "Error 1105: can only load data into base tables")
-		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table s1")
-		dbt.Assert(err, NotNil)
-		dbt.Assert(err.Error(), Equals, "Error 1105: can only load data into base tables")
+		_, err = dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table v1")
+		require.Error(t, err)
+		require.Equal(t, "Error 1105: can only load data into base tables", err.Error())
+		_, err = dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table s1")
+		require.Error(t, err)
+		require.Equal(t, "Error 1105: can only load data into base tables", err.Error())
 
-		rs, err1 := dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
-		dbt.Assert(err1, IsNil)
+		rs, err1 := dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table test")
+		require.NoError(t, err1)
 		lastID, err1 := rs.LastInsertId()
-		dbt.Assert(err1, IsNil)
-		dbt.Assert(lastID, Equals, int64(1))
+		require.NoError(t, err1)
+		require.Equal(t, int64(1), lastID)
 		affectedRows, err1 := rs.RowsAffected()
-		dbt.Assert(err1, IsNil)
-		dbt.Assert(affectedRows, Equals, int64(5))
+		require.NoError(t, err1)
+		require.Equal(t, int64(5), affectedRows)
 		var (
 			a  string
 			b  string
 			bb sql.NullString
 			cc int
 		)
-		rows := dbt.mustQuery("select * from test")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows := dbt.MustQuery("select * from test")
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &bb, &cc)
-		dbt.Check(err, IsNil)
-		dbt.Check(a, DeepEquals, "")
-		dbt.Check(bb.String, DeepEquals, "")
-		dbt.Check(cc, DeepEquals, 1)
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Empty(t, a)
+		require.Empty(t, bb.String)
+		require.Equal(t, 1, cc)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &cc)
-		c.Assert(err, IsNil)
-		dbt.Check(a, DeepEquals, "xxx row2_col1")
-		dbt.Check(b, DeepEquals, "- row2_col2")
-		dbt.Check(cc, DeepEquals, 2)
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, "xxx row2_col1", a)
+		require.Equal(t, "- row2_col2", b)
+		require.Equal(t, 2, cc)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &cc)
-		c.Assert(err, IsNil)
-		dbt.Check(a, DeepEquals, "xxxy row3_col1")
-		dbt.Check(b, DeepEquals, "- row3_col2")
-		dbt.Check(cc, DeepEquals, 3)
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, "xxxy row3_col1", a)
+		require.Equal(t, "- row3_col2", b)
+		require.Equal(t, 3, cc)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &cc)
-		c.Assert(err, IsNil)
-		dbt.Check(a, DeepEquals, "xxx row4_col1")
-		dbt.Check(b, DeepEquals, "- ")
-		dbt.Check(cc, DeepEquals, 4)
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, "xxx row4_col1", a)
+		require.Equal(t, "- ", b)
+		require.Equal(t, 4, cc)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &cc)
-		c.Assert(err, IsNil)
-		dbt.Check(a, DeepEquals, "xxx row5_col1")
-		dbt.Check(b, DeepEquals, "- ")
-		dbt.Check(cc, DeepEquals, 5)
-		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, "xxx row5_col1", a)
+		require.Equal(t, "- ", b)
+		require.Equal(t, 5, cc)
+		require.Falsef(t, rows.Next(), "unexpected data")
 		rows.Close()
 
 		// specify faileds and lines
-		dbt.mustExec("delete from test")
-		dbt.mustExec("set @@tidb_dml_batch_size = 3")
-		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
-		dbt.Assert(err, IsNil)
+		dbt.MustExec("delete from test")
+		dbt.MustExec("set @@tidb_dml_batch_size = 3")
+		rs, err = dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
+		require.NoError(t, err)
 		lastID, err = rs.LastInsertId()
-		dbt.Assert(err, IsNil)
-		dbt.Assert(lastID, Equals, int64(6))
+		require.NoError(t, err)
+		require.Equal(t, int64(6), lastID)
 		affectedRows, err = rs.RowsAffected()
-		dbt.Assert(err, IsNil)
-		dbt.Assert(affectedRows, Equals, int64(4))
-		rows = dbt.mustQuery("select * from test")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, int64(4), affectedRows)
+		rows = dbt.MustQuery("select * from test")
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &cc)
-		c.Assert(err, IsNil)
-		dbt.Check(a, DeepEquals, "row1_col1")
-		dbt.Check(b, DeepEquals, "row1_col2\t1abc")
-		dbt.Check(cc, DeepEquals, 6)
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, "row1_col1", a)
+		require.Equal(t, "row1_col2\t1abc", b)
+		require.Equal(t, 6, cc)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &cc)
-		c.Assert(err, IsNil)
-		dbt.Check(a, DeepEquals, "row2_col1")
-		dbt.Check(b, DeepEquals, "row2_col2\t")
-		dbt.Check(cc, DeepEquals, 7)
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, "row2_col1", a)
+		require.Equal(t, "row2_col2\t", b)
+		require.Equal(t, 7, cc)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &cc)
-		c.Assert(err, IsNil)
-		dbt.Check(a, DeepEquals, "row4_col1")
-		dbt.Check(b, DeepEquals, "\t\t900")
-		dbt.Check(cc, DeepEquals, 8)
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, "row4_col1", a)
+		require.Equal(t, "\t\t900", b)
+		require.Equal(t, 8, cc)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &cc)
-		c.Assert(err, IsNil)
-		dbt.Check(a, DeepEquals, "row5_col1")
-		dbt.Check(b, DeepEquals, "\trow5_col3")
-		dbt.Check(cc, DeepEquals, 9)
-		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, "row5_col1", a)
+		require.Equal(t, "\trow5_col3", b)
+		require.Equal(t, 9, cc)
+		require.Falsef(t, rows.Next(), "unexpected data")
 
 		// infile size more than a packet size(16K)
-		dbt.mustExec("delete from test")
+		dbt.MustExec("delete from test")
 		_, err = fp.WriteString("\n")
-		dbt.Assert(err, IsNil)
+		require.NoError(t, err)
 		for i := 6; i <= 800; i++ {
 			_, err = fp.WriteString(fmt.Sprintf("xxx row%d_col1	- row%d_col2\n", i, i))
-			dbt.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
-		dbt.mustExec("set @@tidb_dml_batch_size = 3")
-		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
-		dbt.Assert(err, IsNil)
+		dbt.MustExec("set @@tidb_dml_batch_size = 3")
+		rs, err = dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table test fields terminated by '\t- ' lines starting by 'xxx ' terminated by '\n'")
+		require.NoError(t, err)
 		lastID, err = rs.LastInsertId()
-		dbt.Assert(err, IsNil)
-		dbt.Assert(lastID, Equals, int64(10))
+		require.NoError(t, err)
+		require.Equal(t, int64(10), lastID)
 		affectedRows, err = rs.RowsAffected()
-		dbt.Assert(err, IsNil)
-		dbt.Assert(affectedRows, Equals, int64(799))
-		rows = dbt.mustQuery("select * from test")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, int64(799), affectedRows)
+		rows = dbt.MustQuery("select * from test")
+		require.Truef(t, rows.Next(), "unexpected data")
 
 		// don't support lines terminated is ""
-		dbt.mustExec("set @@tidb_dml_batch_size = 3")
-		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test lines terminated by ''")
-		dbt.Assert(err, NotNil)
+		dbt.MustExec("set @@tidb_dml_batch_size = 3")
+		_, err = dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table test lines terminated by ''")
+		require.NotNil(t, err)
 
 		// infile doesn't exist
-		dbt.mustExec("set @@tidb_dml_batch_size = 3")
-		_, err = dbt.db.Exec("load data local infile '/tmp/nonexistence.csv' into table test")
-		dbt.Assert(err, NotNil)
+		dbt.MustExec("set @@tidb_dml_batch_size = 3")
+		_, err = dbt.GetDB().Exec("load data local infile '/tmp/nonexistence.csv' into table test")
+		require.NotNil(t, err)
 	})
 
 	err = fp.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = os.Remove(path)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	fp, err = os.Create(path)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 
 	// Test mixed unenclosed and enclosed fields.
 	_, err = fp.WriteString(
 		"\"abc\",123\n" +
 			"def,456,\n" +
 			"hig,\"789\",")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "LoadData", func(dbt *DBTest) {
-		dbt.mustExec("create table test (str varchar(10) default null, i int default null)")
-		dbt.mustExec("set @@tidb_dml_batch_size = 3")
-		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
-		dbt.Assert(err1, IsNil)
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table test (str varchar(10) default null, i int default null)")
+		dbt.MustExec("set @@tidb_dml_batch_size = 3")
+		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
+		require.NoError(t, err1)
 		var (
 			str string
 			id  int
 		)
-		rows := dbt.mustQuery("select * from test")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows := dbt.MustQuery("select * from test")
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&str, &id)
-		dbt.Check(err, IsNil)
-		dbt.Check(str, DeepEquals, "abc")
-		dbt.Check(id, DeepEquals, 123)
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, "abc", str)
+		require.Equal(t, 123, id)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&str, &id)
-		c.Assert(err, IsNil)
-		dbt.Check(str, DeepEquals, "def")
-		dbt.Check(id, DeepEquals, 456)
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, "def", str)
+		require.Equal(t, 456, id)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&str, &id)
-		c.Assert(err, IsNil)
-		dbt.Check(str, DeepEquals, "hig")
-		dbt.Check(id, DeepEquals, 789)
-		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
-		dbt.mustExec("delete from test")
+		require.NoError(t, err)
+		require.Equal(t, "hig", str)
+		require.Equal(t, 789, id)
+		require.Falsef(t, rows.Next(), "unexpected data")
+		dbt.MustExec("delete from test")
 	})
 
 	err = fp.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = os.Remove(path)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	fp, err = os.Create(path)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 
 	// Test irregular csv file.
 	_, err = fp.WriteString(
 		`,\N,NULL,,` + "\n" +
 			"00,0,000000,,\n" +
 			`2003-03-03, 20030303,030303,\N` + "\n")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "LoadData", func(dbt *DBTest) {
-		dbt.mustExec("create table test (a date, b date, c date not null, d date)")
-		dbt.mustExec("set @@tidb_dml_batch_size = 3")
-		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ','`)
-		dbt.Assert(err1, IsNil)
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table test (a date, b date, c date not null, d date)")
+		dbt.MustExec("set @@tidb_dml_batch_size = 3")
+		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ','`)
+		require.NoError(t, err1)
 		var (
 			a sql.NullString
 			b sql.NullString
 			d sql.NullString
 			c sql.NullString
 		)
-		rows := dbt.mustQuery("select * from test")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows := dbt.MustQuery("select * from test")
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &c, &d)
-		dbt.Check(err, IsNil)
-		dbt.Check(a.String, Equals, "0000-00-00")
-		dbt.Check(b.String, Equals, "")
-		dbt.Check(c.String, Equals, "0000-00-00")
-		dbt.Check(d.String, Equals, "0000-00-00")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, "0000-00-00", a.String)
+		require.Empty(t, b.String)
+		require.Equal(t, "0000-00-00", c.String)
+		require.Equal(t, "0000-00-00", d.String)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &c, &d)
-		dbt.Check(err, IsNil)
-		dbt.Check(a.String, Equals, "0000-00-00")
-		dbt.Check(b.String, Equals, "0000-00-00")
-		dbt.Check(c.String, Equals, "0000-00-00")
-		dbt.Check(d.String, Equals, "0000-00-00")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, "0000-00-00", a.String)
+		require.Equal(t, "0000-00-00", b.String)
+		require.Equal(t, "0000-00-00", c.String)
+		require.Equal(t, "0000-00-00", d.String)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &c, &d)
-		dbt.Check(err, IsNil)
-		dbt.Check(a.String, Equals, "2003-03-03")
-		dbt.Check(b.String, Equals, "2003-03-03")
-		dbt.Check(c.String, Equals, "2003-03-03")
-		dbt.Check(d.String, Equals, "")
-		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
-		dbt.mustExec("delete from test")
+		require.NoError(t, err)
+		require.Equal(t, "2003-03-03", a.String)
+		require.Equal(t, "2003-03-03", b.String)
+		require.Equal(t, "2003-03-03", c.String)
+		require.Equal(t, "", d.String)
+		require.Falsef(t, rows.Next(), "unexpected data")
+		dbt.MustExec("delete from test")
 	})
 
 	err = fp.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = os.Remove(path)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	fp, err = os.Create(path)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 
 	// Test double enclosed.
 	_, err = fp.WriteString(
 		`"field1","field2"` + "\n" +
 			`"a""b","cd""ef"` + "\n" +
 			`"a"b",c"d"e` + "\n")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "LoadData", func(dbt *DBTest) {
-		dbt.mustExec("create table test (a varchar(20), b varchar(20))")
-		dbt.mustExec("set @@tidb_dml_batch_size = 3")
-		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
-		dbt.Assert(err1, IsNil)
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table test (a varchar(20), b varchar(20))")
+		dbt.MustExec("set @@tidb_dml_batch_size = 3")
+		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
+		require.NoError(t, err1)
 		var (
 			a sql.NullString
 			b sql.NullString
 		)
-		rows := dbt.mustQuery("select * from test")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows := dbt.MustQuery("select * from test")
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b)
-		dbt.Check(err, IsNil)
-		dbt.Check(a.String, Equals, "field1")
-		dbt.Check(b.String, Equals, "field2")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, "field1", a.String)
+		require.Equal(t, "field2", b.String)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b)
-		c.Assert(err, IsNil)
-		dbt.Check(a.String, Equals, `a"b`)
-		dbt.Check(b.String, Equals, `cd"ef`)
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, `a"b`, a.String)
+		require.Equal(t, `cd"ef`, b.String)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b)
-		c.Assert(err, IsNil)
-		dbt.Check(a.String, Equals, `a"b`)
-		dbt.Check(b.String, Equals, `c"d"e`)
-		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
-		dbt.mustExec("delete from test")
+		require.NoError(t, err)
+		require.Equal(t, `a"b`, a.String)
+		require.Equal(t, `c"d"e`, b.String)
+		require.Falsef(t, rows.Next(), "unexpected data")
+		dbt.MustExec("delete from test")
 	})
 
 	err = fp.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = os.Remove(path)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	fp, err = os.Create(path)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 
 	// Test OPTIONALLY
 	_, err = fp.WriteString(
 		`"a,b,c` + "\n" +
 			`"1",2,"3"` + "\n")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-	}, "LoadData", func(dbt *DBTest) {
-		dbt.mustExec("create table test (id INT NOT NULL PRIMARY KEY,  b INT,  c varchar(10))")
-		dbt.mustExec("set @@tidb_dml_batch_size = 3")
-		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' IGNORE 1 LINES`)
-		dbt.Assert(err1, IsNil)
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table test (id INT NOT NULL PRIMARY KEY,  b INT,  c varchar(10))")
+		dbt.MustExec("set @@tidb_dml_batch_size = 3")
+		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' IGNORE 1 LINES`)
+		require.NoError(t, err1)
 		var (
 			a int
 			b int
 			c sql.NullString
 		)
-		rows := dbt.mustQuery("select * from test")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows := dbt.MustQuery("select * from test")
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &c)
-		dbt.Check(err, IsNil)
-		dbt.Check(a, Equals, 1)
-		dbt.Check(b, Equals, 2)
-		dbt.Check(c.String, Equals, "3")
-		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
-		dbt.mustExec("delete from test")
+		require.NoError(t, err)
+		require.Equal(t, 1, a)
+		require.Equal(t, 2, b)
+		require.Equal(t, "3", c.String)
+		require.Falsef(t, rows.Next(), "unexpected data")
+		dbt.MustExec("delete from test")
 	})
 
 	// unsupport ClientLocalFiles capability
 	server.capability ^= tmysql.ClientLocalFiles
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
-	}, "LoadData", func(dbt *DBTest) {
-		dbt.mustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
-		dbt.mustExec("set @@tidb_dml_batch_size = 3")
-		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test")
-		dbt.Assert(err, NotNil)
-		checkErrorCode(c, err, errno.ErrNotAllowedCommand)
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table test (a varchar(255), b varchar(255) default 'default value', c int not null auto_increment, primary key(c))")
+		dbt.MustExec("set @@tidb_dml_batch_size = 3")
+		_, err = dbt.GetDB().Exec("load data local infile '/tmp/load_data_test.csv' into table test")
+		require.Error(t, err)
+		checkErrorCode(t, err, errno.ErrNotAllowedCommand)
 	})
 	server.capability |= tmysql.ClientLocalFiles
 
 	err = fp.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = os.Remove(path)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	fp, err = os.Create(path)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 
 	// Test OPTIONALLY
 	_, err = fp.WriteString(
 		`1,2` + "\n" +
 			`3,4` + "\n")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "LoadData", func(dbt *DBTest) {
-		dbt.mustExec("drop table if exists pn")
-		dbt.mustExec("create table pn (c1 int, c2 int)")
-		dbt.mustExec("set @@tidb_dml_batch_size = 1")
-		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ','`)
-		dbt.Assert(err1, IsNil)
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("drop table if exists pn")
+		dbt.MustExec("create table pn (c1 int, c2 int)")
+		dbt.MustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ','`)
+		require.NoError(t, err1)
 		var (
 			a int
 			b int
 		)
-		rows := dbt.mustQuery("select * from pn")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows := dbt.MustQuery("select * from pn")
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b)
-		dbt.Check(err, IsNil)
-		dbt.Check(a, Equals, 1)
-		dbt.Check(b, Equals, 2)
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, 1, a)
+		require.Equal(t, 2, b)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b)
-		dbt.Check(err, IsNil)
-		dbt.Check(a, Equals, 3)
-		dbt.Check(b, Equals, 4)
-		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, 3, a)
+		require.Equal(t, 4, b)
+		require.Falsef(t, rows.Next(), "unexpected data")
 
 		// fail error processing test
-		dbt.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/commitOneTaskErr", "return"), IsNil)
-		_, err1 = dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ','`)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/commitOneTaskErr", "return"))
+		_, err1 = dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ','`)
 		mysqlErr, ok := err1.(*mysql.MySQLError)
-		dbt.Assert(ok, IsTrue)
-		dbt.Assert(mysqlErr.Message, Equals, "mock commit one task error")
-		dbt.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/commitOneTaskErr"), IsNil)
+		require.True(t, ok)
+		require.Equal(t, "mock commit one task error", mysqlErr.Message)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/commitOneTaskErr"))
 
-		dbt.mustExec("drop table if exists pn")
+		dbt.MustExec("drop table if exists pn")
 	})
 
 	err = fp.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = os.Remove(path)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	fp, err = os.Create(path)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 
 	// Test Column List Specification
 	_, err = fp.WriteString(
 		`1,2` + "\n" +
 			`3,4` + "\n")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "LoadData", func(dbt *DBTest) {
-		dbt.mustExec("drop table if exists pn")
-		dbt.mustExec("create table pn (c1 int, c2 int)")
-		dbt.mustExec("set @@tidb_dml_batch_size = 1")
-		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, c2)`)
-		dbt.Assert(err1, IsNil)
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("drop table if exists pn")
+		dbt.MustExec("create table pn (c1 int, c2 int)")
+		dbt.MustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, c2)`)
+		require.NoError(t, err1)
 		var (
 			a int
 			b int
 		)
-		rows := dbt.mustQuery("select * from pn")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows := dbt.MustQuery("select * from pn")
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b)
-		dbt.Check(err, IsNil)
-		dbt.Check(a, Equals, 1)
-		dbt.Check(b, Equals, 2)
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, 1, a)
+		require.Equal(t, 2, b)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b)
-		dbt.Check(err, IsNil)
-		dbt.Check(a, Equals, 3)
-		dbt.Check(b, Equals, 4)
-		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, 3, a)
+		require.Equal(t, 4, b)
+		require.Falsef(t, rows.Next(), "unexpected data")
 
-		dbt.mustExec("drop table if exists pn")
+		dbt.MustExec("drop table if exists pn")
 	})
 
 	err = fp.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = os.Remove(path)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	fp, err = os.Create(path)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 
 	// Test Column List Specification
 	_, err = fp.WriteString(
 		`1,2,3` + "\n" +
 			`4,5,6` + "\n")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "LoadData", func(dbt *DBTest) {
-		dbt.mustExec("drop table if exists pn")
-		dbt.mustExec("create table pn (c1 int, c2 int, c3 int)")
-		dbt.mustExec("set @@tidb_dml_batch_size = 1")
-		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, @dummy)`)
-		dbt.Assert(err1, IsNil)
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("drop table if exists pn")
+		dbt.MustExec("create table pn (c1 int, c2 int, c3 int)")
+		dbt.MustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, @dummy)`)
+		require.NoError(t, err1)
 		var (
 			a int
 			b sql.NullString
 			c sql.NullString
 		)
-		rows := dbt.mustQuery("select * from pn")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows := dbt.MustQuery("select * from pn")
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &c)
-		dbt.Check(err, IsNil)
-		dbt.Check(a, Equals, 1)
-		dbt.Check(b.String, Equals, "")
-		dbt.Check(c.String, Equals, "")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, 1, a)
+		require.Empty(t, b.String)
+		require.Empty(t, c.String)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &c)
-		dbt.Check(err, IsNil)
-		dbt.Check(a, Equals, 4)
-		dbt.Check(b.String, Equals, "")
-		dbt.Check(c.String, Equals, "")
-		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, 4, a)
+		require.Empty(t, b.String)
+		require.Empty(t, c.String)
+		require.Falsef(t, rows.Next(), "unexpected data")
 
-		dbt.mustExec("drop table if exists pn")
+		dbt.MustExec("drop table if exists pn")
 	})
 
 	err = fp.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = os.Remove(path)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	fp, err = os.Create(path)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 
 	// Test Input Preprocessing
 	_, err = fp.WriteString(
 		`1,2,3` + "\n" +
 			`4,5,6` + "\n")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params["sql_mode"] = "''"
-	}, "LoadData", func(dbt *DBTest) {
-		dbt.mustExec("drop table if exists pn")
-		dbt.mustExec("create table pn (c1 int, c2 int, c3 int)")
-		dbt.mustExec("set @@tidb_dml_batch_size = 1")
-		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, @val1, @val2) SET c3 = @val2 * 100, c2 = CAST(@val1 AS UNSIGNED)`)
-		dbt.Assert(err1, IsNil)
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("drop table if exists pn")
+		dbt.MustExec("create table pn (c1 int, c2 int, c3 int)")
+		dbt.MustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.GetDB().Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, @val1, @val2) SET c3 = @val2 * 100, c2 = CAST(@val1 AS UNSIGNED)`)
+		require.NoError(t, err1)
 		var (
 			a int
 			b int
 			c int
 		)
-		rows := dbt.mustQuery("select * from pn")
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows := dbt.MustQuery("select * from pn")
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &c)
-		dbt.Check(err, IsNil)
-		dbt.Check(a, Equals, 1)
-		dbt.Check(b, Equals, 2)
-		dbt.Check(c, Equals, 300)
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, 1, a)
+		require.Equal(t, 2, b)
+		require.Equal(t, 300, c)
+		require.Truef(t, rows.Next(), "unexpected data")
 		err = rows.Scan(&a, &b, &c)
-		dbt.Check(err, IsNil)
-		dbt.Check(a, Equals, 4)
-		dbt.Check(b, Equals, 5)
-		dbt.Check(c, Equals, 600)
-		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		require.NoError(t, err)
+		require.Equal(t, 4, a)
+		require.Equal(t, 5, b)
+		require.Equal(t, 600, c)
+		require.Falsef(t, rows.Next(), "unexpected data")
 
-		dbt.mustExec("drop table if exists pn")
+		dbt.MustExec("drop table if exists pn")
 	})
 }
 
@@ -1528,67 +1529,67 @@ func (cli *testServerClient) runTestExplainForConn(c *C) {
 	})
 }
 
-func (cli *testServerClient) runTestErrorCode(c *C) {
-	cli.runTestsOnNewDB(c, nil, "ErrorCode", func(dbt *DBTest) {
-		dbt.mustExec("create table test (c int PRIMARY KEY);")
-		dbt.mustExec("insert into test values (1);")
-		txn1, err := dbt.db.Begin()
-		c.Assert(err, IsNil)
+func (cli *testingServerClient) runTestErrorCode(t *testing.T) {
+	cli.runTestsOnNewDB(t, nil, "ErrorCode", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table test (c int PRIMARY KEY);")
+		dbt.MustExec("insert into test values (1);")
+		txn1, err := dbt.GetDB().Begin()
+		require.NoError(t, err)
 		_, err = txn1.Exec("insert into test values(1)")
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = txn1.Commit()
-		checkErrorCode(c, err, errno.ErrDupEntry)
+		checkErrorCode(t, err, errno.ErrDupEntry)
 
 		// Schema errors
-		txn2, err := dbt.db.Begin()
-		c.Assert(err, IsNil)
+		txn2, err := dbt.GetDB().Begin()
+		require.NoError(t, err)
 		_, err = txn2.Exec("use db_not_exists;")
-		checkErrorCode(c, err, errno.ErrBadDB)
+		checkErrorCode(t, err, errno.ErrBadDB)
 		_, err = txn2.Exec("select * from tbl_not_exists;")
-		checkErrorCode(c, err, errno.ErrNoSuchTable)
+		checkErrorCode(t, err, errno.ErrNoSuchTable)
 		_, err = txn2.Exec("create database test;")
 		// Make tests stable. Some times the error may be the ErrInfoSchemaChanged.
-		checkErrorCode(c, err, errno.ErrDBCreateExists, errno.ErrInfoSchemaChanged)
+		checkErrorCode(t, err, errno.ErrDBCreateExists, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;")
-		checkErrorCode(c, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
+		checkErrorCode(t, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table test (c int);")
-		checkErrorCode(c, err, errno.ErrTableExists, errno.ErrInfoSchemaChanged)
+		checkErrorCode(t, err, errno.ErrTableExists, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("drop table unknown_table;")
-		checkErrorCode(c, err, errno.ErrBadTable, errno.ErrInfoSchemaChanged)
+		checkErrorCode(t, err, errno.ErrBadTable, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("drop database unknown_db;")
-		checkErrorCode(c, err, errno.ErrDBDropExists, errno.ErrInfoSchemaChanged)
+		checkErrorCode(t, err, errno.ErrDBDropExists, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (a int);")
-		checkErrorCode(c, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
+		checkErrorCode(t, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("create table long_column_table (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int);")
-		checkErrorCode(c, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
+		checkErrorCode(t, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
 		_, err = txn2.Exec("alter table test add aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int;")
-		checkErrorCode(c, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
+		checkErrorCode(t, err, errno.ErrTooLongIdent, errno.ErrInfoSchemaChanged)
 
 		// Optimizer errors
 		_, err = txn2.Exec("select *, * from test;")
-		checkErrorCode(c, err, errno.ErrInvalidWildCard)
+		checkErrorCode(t, err, errno.ErrInvalidWildCard)
 		_, err = txn2.Exec("select row(1, 2) > 1;")
-		checkErrorCode(c, err, errno.ErrOperandColumns)
+		checkErrorCode(t, err, errno.ErrOperandColumns)
 		_, err = txn2.Exec("select * from test order by row(c, c);")
-		checkErrorCode(c, err, errno.ErrOperandColumns)
+		checkErrorCode(t, err, errno.ErrOperandColumns)
 
 		// Variable errors
 		_, err = txn2.Exec("select @@unknown_sys_var;")
-		checkErrorCode(c, err, errno.ErrUnknownSystemVariable)
+		checkErrorCode(t, err, errno.ErrUnknownSystemVariable)
 		_, err = txn2.Exec("set @@unknown_sys_var='1';")
-		checkErrorCode(c, err, errno.ErrUnknownSystemVariable)
+		checkErrorCode(t, err, errno.ErrUnknownSystemVariable)
 
 		// Expression errors
 		_, err = txn2.Exec("select greatest(2);")
-		checkErrorCode(c, err, errno.ErrWrongParamcountToNativeFct)
+		checkErrorCode(t, err, errno.ErrWrongParamcountToNativeFct)
 	})
 }
 
-func checkErrorCode(c *C, e error, codes ...uint16) {
+func checkErrorCode(t *testing.T, e error, codes ...uint16) {
 	me, ok := e.(*mysql.MySQLError)
-	c.Assert(ok, IsTrue, Commentf("err: %v", e))
+	require.Truef(t, ok, "err: %v", e)
 	if len(codes) == 1 {
-		c.Assert(me.Number, Equals, codes[0])
+		require.Equal(t, codes[0], me.Number)
 	}
 	isMatchCode := false
 	for _, code := range codes {
@@ -1597,7 +1598,7 @@ func checkErrorCode(c *C, e error, codes ...uint16) {
 			break
 		}
 	}
-	c.Assert(isMatchCode, IsTrue, Commentf("got err %v, expected err codes %v", me, codes))
+	require.Truef(t, isMatchCode, "got err %v, expected err codes %v", me, codes)
 }
 
 func (cli *testingServerClient) runTestAuth(t *testing.T) {
