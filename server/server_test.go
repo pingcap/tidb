@@ -1893,122 +1893,121 @@ func (cli *testingServerClient) runTestStatusAPI(t *testing.T) {
 // disabled by default for security reasons. Lets ensure that the behavior
 // is correct.
 
-func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
-	cli.runTestsOnNewDB(c, nil, "FailedMultiStatements", func(dbt *DBTest) {
+func (cli *testingServerClient) runFailedTestMultiStatements(t *testing.T) {
+	cli.runTestsOnNewDB(t, nil, "FailedMultiStatements", func(dbt *testkit.DBTestKit) {
 
 		// Default is now OFF in new installations.
 		// It is still WARN in upgrade installations (for now)
-		_, err := dbt.db.Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
-		c.Assert(err.Error(), Equals, "Error 8130: client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
+		_, err := dbt.GetDB().Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
+		require.Equal(t, "Error 8130: client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", err.Error())
 
 		// Change to WARN (legacy mode)
-		dbt.mustExec("SET tidb_multi_statement_mode='WARN'")
-		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
-		res := dbt.mustExec("INSERT INTO test VALUES (1, 1)")
+		dbt.MustExec("SET tidb_multi_statement_mode='WARN'")
+		dbt.MustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
+		res := dbt.MustExec("INSERT INTO test VALUES (1, 1)")
 		count, err := res.RowsAffected()
-		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
-		c.Assert(count, Equals, int64(1))
-		res = dbt.mustExec("UPDATE test SET value = 3 WHERE id = 1; UPDATE test SET value = 4 WHERE id = 1; UPDATE test SET value = 5 WHERE id = 1;")
+		require.NoErrorf(t, err, "res.RowsAffected() returned error")
+		require.Equal(t, int64(1), count)
+		res = dbt.MustExec("UPDATE test SET value = 3 WHERE id = 1; UPDATE test SET value = 4 WHERE id = 1; UPDATE test SET value = 5 WHERE id = 1;")
 		count, err = res.RowsAffected()
-		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
-		c.Assert(count, Equals, int64(1))
-		rows := dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows, "Warning 8130 client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
+		require.NoErrorf(t, err, "res.RowsAffected() returned error")
+		require.Equal(t, int64(1), count)
+		rows := dbt.MustQuery("show warnings")
+		cli.checkRows(t, rows, "Warning 8130 client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
 		var out int
-		rows = dbt.mustQuery("SELECT value FROM test WHERE id=1;")
+		rows = dbt.MustQuery("SELECT value FROM test WHERE id=1;")
 		if rows.Next() {
 			err = rows.Scan(&out)
-			c.Assert(err, IsNil)
-			c.Assert(out, Equals, 5)
+			require.NoError(t, err)
+			require.Equal(t, 5, out)
 
 			if rows.Next() {
-				dbt.Error("unexpected data")
+				require.Fail(t, "unexpected data")
 			}
 		} else {
-			dbt.Error("no data")
+			require.Fail(t, "no data")
 		}
 
 		// Change to ON = Fully supported, TiDB legacy. No warnings or Errors.
-		dbt.mustExec("SET tidb_multi_statement_mode='ON';")
-		dbt.mustExec("DROP TABLE IF EXISTS test")
-		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
-		res = dbt.mustExec("INSERT INTO test VALUES (1, 1)")
+		dbt.MustExec("SET tidb_multi_statement_mode='ON';")
+		dbt.MustExec("DROP TABLE IF EXISTS test")
+		dbt.MustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
+		res = dbt.MustExec("INSERT INTO test VALUES (1, 1)")
 		count, err = res.RowsAffected()
-		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
-		c.Assert(count, Equals, int64(1))
-		res = dbt.mustExec("update test SET value = 3 WHERE id = 1; UPDATE test SET value = 4 WHERE id = 1; UPDATE test SET value = 5 WHERE id = 1;")
+		require.NoErrorf(t, err, "res.RowsAffected() returned error")
+		require.Equal(t, int64(1), count)
+		res = dbt.MustExec("update test SET value = 3 WHERE id = 1; UPDATE test SET value = 4 WHERE id = 1; UPDATE test SET value = 5 WHERE id = 1;")
 		count, err = res.RowsAffected()
-		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
-		c.Assert(count, Equals, int64(1))
-		rows = dbt.mustQuery("SELECT value FROM test WHERE id=1;")
+		require.NoErrorf(t, err, "res.RowsAffected() returned error")
+		require.Equal(t, int64(1), count)
+		rows = dbt.MustQuery("SELECT value FROM test WHERE id=1;")
 		if rows.Next() {
 			err = rows.Scan(&out)
-			c.Assert(err, IsNil)
-			c.Assert(out, Equals, 5)
+			require.NoError(t, err)
+			require.Equal(t, 5, out)
 
 			if rows.Next() {
-				dbt.Error("unexpected data")
+				require.Fail(t, "unexpected data")
 			}
 		} else {
-			dbt.Error("no data")
+			require.Fail(t, "no data")
 		}
-
 	})
 }
 
-func (cli *testServerClient) runTestMultiStatements(c *C) {
+func (cli *testingServerClient) runTestMultiStatements(t *testing.T) {
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.Params["multiStatements"] = "true"
-	}, "MultiStatements", func(dbt *DBTest) {
+	}, "MultiStatements", func(dbt *testkit.DBTestKit) {
 		// Create Table
-		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
+		dbt.MustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
 
 		// Create Data
-		res := dbt.mustExec("INSERT INTO test VALUES (1, 1)")
+		res := dbt.MustExec("INSERT INTO test VALUES (1, 1)")
 		count, err := res.RowsAffected()
-		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
-		c.Assert(count, Equals, int64(1))
+		require.NoErrorf(t, err, "res.RowsAffected() returned error")
+		require.Equal(t, int64(1), count)
 
 		// Update
-		res = dbt.mustExec("UPDATE test SET value = 3 WHERE id = 1; UPDATE test SET value = 4 WHERE id = 1; UPDATE test SET value = 5 WHERE id = 1;")
+		res = dbt.MustExec("UPDATE test SET value = 3 WHERE id = 1; UPDATE test SET value = 4 WHERE id = 1; UPDATE test SET value = 5 WHERE id = 1;")
 		count, err = res.RowsAffected()
-		c.Assert(err, IsNil, Commentf("res.RowsAffected() returned error"))
-		c.Assert(count, Equals, int64(1))
+		require.NoErrorf(t, err, "res.RowsAffected() returned error")
+		require.Equal(t, int64(1), count)
 
 		// Read
 		var out int
-		rows := dbt.mustQuery("SELECT value FROM test WHERE id=1;")
+		rows := dbt.MustQuery("SELECT value FROM test WHERE id=1;")
 		if rows.Next() {
 			err = rows.Scan(&out)
-			c.Assert(err, IsNil)
-			c.Assert(out, Equals, 5)
+			require.NoError(t, err)
+			require.Equal(t, 5, out)
 
 			if rows.Next() {
-				dbt.Error("unexpected data")
+				require.Fail(t, "unexpected data")
 			}
 		} else {
-			dbt.Error("no data")
+			require.Fail(t, "no data")
 		}
 
 		// Test issue #26688
 		// First we "reset" the CurrentDB by using a database and then dropping it.
-		dbt.mustExec("CREATE DATABASE dropme")
-		dbt.mustExec("USE dropme")
-		dbt.mustExec("DROP DATABASE dropme")
+		dbt.MustExec("CREATE DATABASE dropme")
+		dbt.MustExec("USE dropme")
+		dbt.MustExec("DROP DATABASE dropme")
 		var usedb string
-		rows = dbt.mustQuery("SELECT IFNULL(DATABASE(),'success')")
+		rows = dbt.MustQuery("SELECT IFNULL(DATABASE(),'success')")
 		if rows.Next() {
 			err = rows.Scan(&usedb)
-			c.Assert(err, IsNil)
-			c.Assert(usedb, Equals, "success")
+			require.NoError(t, err)
+			require.Equal(t, "success", usedb)
 		} else {
-			dbt.Error("no database() result")
+			require.Fail(t, "no database() result")
 		}
 		// Because no DB is selected, if the use multistmtuse is not successful, then
 		// the create table + drop table statements will return errors.
-		dbt.mustExec("CREATE DATABASE multistmtuse")
-		dbt.mustExec("use multistmtuse; create table if not exists t1 (id int); drop table t1;")
+		dbt.MustExec("CREATE DATABASE multistmtuse")
+		dbt.MustExec("use multistmtuse; create table if not exists t1 (id int); drop table t1;")
 	})
 }
 

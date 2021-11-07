@@ -472,10 +472,13 @@ func newTLSHttpClient(t *testing.T, caFile, certFile, keyFile string) *http.Clie
 	return &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}
 }
 
-func (ts *tidbTestSuite) TestMultiStatements(c *C) {
-	c.Parallel()
-	ts.runFailedTestMultiStatements(c)
-	ts.runTestMultiStatements(c)
+func TestMultiStatements(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runFailedTestMultiStatements(t)
+	ts.runTestMultiStatements(t)
 }
 
 func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
