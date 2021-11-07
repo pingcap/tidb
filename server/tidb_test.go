@@ -1392,18 +1392,22 @@ func TestShowTablesFlen(t *testing.T) {
 	require.Equal(t, 26*tmysql.MaxBytesOfCharacter, int(cols[0].ColumnLength))
 }
 
-func checkColNames(c *C, columns []*ColumnInfo, names ...string) {
+func checkColNames(t *testing.T, columns []*ColumnInfo, names ...string) {
 	for i, name := range names {
-		c.Assert(columns[i].Name, Equals, name)
-		c.Assert(columns[i].OrgName, Equals, name)
+		require.Equal(t, name, columns[i].Name)
+		require.Equal(t, name, columns[i].OrgName)
 	}
 }
 
-func (ts *tidbTestSuite) TestFieldList(c *C) {
+func TestFieldList(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = Execute(context.Background(), qctx, "use test;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	testSQL := `create table t (
@@ -1428,22 +1432,22 @@ func (ts *tidbTestSuite) TestFieldList(c *C) {
 		c_year year
 	)`
 	_, err = Execute(ctx, qctx, testSQL)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	colInfos, err := qctx.FieldList("t")
-	c.Assert(err, IsNil)
-	c.Assert(len(colInfos), Equals, 19)
+	require.NoError(t, err)
+	require.Len(t, colInfos, 19)
 
-	checkColNames(c, colInfos, "c_bit", "c_int_d", "c_bigint_d", "c_float_d",
+	checkColNames(t, colInfos, "c_bit", "c_int_d", "c_bigint_d", "c_float_d",
 		"c_double_d", "c_decimal", "c_datetime", "c_time", "c_date", "c_timestamp",
 		"c_char", "c_varchar", "c_text_d", "c_binary", "c_blob_d", "c_set", "c_enum",
 		"c_json", "c_year")
 
 	for _, cols := range colInfos {
-		c.Assert(cols.Schema, Equals, "test")
+		require.Equal(t, "test", cols.Schema)
 	}
 
 	for _, cols := range colInfos {
-		c.Assert(cols.Table, Equals, "t")
+		require.Equal(t, "t", cols.Table)
 	}
 
 	for i, col := range colInfos {
@@ -1451,31 +1455,31 @@ func (ts *tidbTestSuite) TestFieldList(c *C) {
 		case 10, 11, 12, 15, 16:
 			// c_char char(20), c_varchar varchar(20), c_text_d text,
 			// c_set set('a', 'b', 'c'), c_enum enum('a', 'b', 'c')
-			c.Assert(col.Charset, Equals, uint16(tmysql.CharsetNameToID(tmysql.DefaultCharset)), Commentf("index %d", i))
+			require.Equalf(t, uint16(tmysql.CharsetNameToID(tmysql.DefaultCharset)), col.Charset, "index %d", i)
 			continue
 		}
 
-		c.Assert(col.Charset, Equals, uint16(tmysql.CharsetNameToID("binary")), Commentf("index %d", i))
+		require.Equalf(t, uint16(tmysql.CharsetNameToID("binary")), col.Charset, "index %d", i)
 	}
 
 	// c_decimal decimal(6, 3)
-	c.Assert(colInfos[5].Decimal, Equals, uint8(3))
+	require.Equal(t, uint8(3), colInfos[5].Decimal)
 
 	// for issue#10513
 	tooLongColumnAsName := "COALESCE(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)"
 	columnAsName := tooLongColumnAsName[:tmysql.MaxAliasIdentifierLen]
 
 	rs, err := Execute(ctx, qctx, "select "+tooLongColumnAsName)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	cols := rs.Columns()
-	c.Assert(cols[0].OrgName, Equals, tooLongColumnAsName)
-	c.Assert(cols[0].Name, Equals, columnAsName)
+	require.Equal(t, tooLongColumnAsName, cols[0].OrgName)
+	require.Equal(t, columnAsName, cols[0].Name)
 
 	rs, err = Execute(ctx, qctx, "select c_bit as '"+tooLongColumnAsName+"' from t")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	cols = rs.Columns()
-	c.Assert(cols[0].OrgName, Equals, "c_bit")
-	c.Assert(cols[0].Name, Equals, columnAsName)
+	require.Equal(t, "c_bit", cols[0].OrgName)
+	require.Equal(t, columnAsName, cols[0].Name)
 }
 
 func (ts *tidbTestSuite) TestClientErrors(c *C) {
