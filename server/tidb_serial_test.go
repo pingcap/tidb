@@ -49,3 +49,17 @@ func TestLoadDataAutoRandom(t *testing.T) {
 
 	ts.runTestLoadDataAutoRandom(t)
 }
+
+func TestLoadDataAutoRandomWithSpecialTerm(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestLoadDataAutoRandomWithSpecialTerm(t)
+}
+
+func TestExplainFor(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestExplainForConn(t)
+}

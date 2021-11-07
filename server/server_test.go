@@ -632,12 +632,12 @@ func (cli *testingServerClient) runTestLoadDataAutoRandom(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(c *C) {
+func (cli *testingServerClient) runTestLoadDataAutoRandomWithSpecialTerm(t *testing.T) {
 	path := "/tmp/load_data_txn_error_term.csv"
 
 	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 
 	defer func() {
 		_ = os.Remove(path)
@@ -652,11 +652,11 @@ func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(c *C) {
 		str2 := strconv.Itoa(n2)
 		row := "'" + str1 + "','" + str2 + "'"
 		_, err := fp.WriteString(row)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if i != 49999 {
 			_, err = fp.WriteString("|")
 		}
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		if i == 0 {
 			cksum1 = n1
@@ -668,24 +668,24 @@ func (cli *testServerClient) runTestLoadDataAutoRandomWithSpecialTerm(c *C) {
 	}
 
 	err = fp.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
 		config.AllowAllFiles = true
 		config.Params = map[string]string{"sql_mode": "''"}
-	}, "load_data_batch_dml", func(dbt *DBTest) {
+	}, "load_data_batch_dml", func(dbt *testkit.DBTestKit) {
 		// Set batch size, and check if load data got a invalid txn error.
-		dbt.mustExec("set @@session.tidb_dml_batch_size = 128")
-		dbt.mustExec("drop table if exists t1")
-		dbt.mustExec("create table t1(c1 bigint auto_random primary key, c2 bigint, c3 bigint)")
-		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t1 fields terminated by ',' enclosed by '\\'' lines terminated by '|' (c2, c3)", path))
-		rows := dbt.mustQuery("select count(*) from t1")
-		cli.checkRows(c, rows, "50000")
-		rows = dbt.mustQuery("select bit_xor(c2), bit_xor(c3) from t1")
+		dbt.MustExec("set @@session.tidb_dml_batch_size = 128")
+		dbt.MustExec("drop table if exists t1")
+		dbt.MustExec("create table t1(c1 bigint auto_random primary key, c2 bigint, c3 bigint)")
+		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t1 fields terminated by ',' enclosed by '\\'' lines terminated by '|' (c2, c3)", path))
+		rows := dbt.MustQuery("select count(*) from t1")
+		cli.checkRows(t, rows, "50000")
+		rows = dbt.MustQuery("select bit_xor(c2), bit_xor(c3) from t1")
 		res := strconv.Itoa(cksum1)
 		res = res + " "
 		res = res + strconv.Itoa(cksum2)
-		cli.checkRows(c, rows, res)
+		cli.checkRows(t, rows, res)
 	})
 }
 
@@ -1538,25 +1538,25 @@ func (cli *testingServerClient) runTestConcurrentUpdate(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestExplainForConn(c *C) {
-	cli.runTestsOnNewDB(c, nil, "explain_for_conn", func(dbt *DBTest) {
-		dbt.mustExec("drop table if exists t")
-		dbt.mustExec("create table t (a int key, b int)")
-		dbt.mustExec("insert t values (1, 1)")
-		rows := dbt.mustQuery("select connection_id();")
-		c.Assert(rows.Next(), IsTrue)
+func (cli *testingServerClient) runTestExplainForConn(t *testing.T) {
+	cli.runTestsOnNewDB(t, nil, "explain_for_conn", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("drop table if exists t")
+		dbt.MustExec("create table t (a int key, b int)")
+		dbt.MustExec("insert t values (1, 1)")
+		rows := dbt.MustQuery("select connection_id();")
+		require.True(t, rows.Next())
 		var connID int64
 		err := rows.Scan(&connID)
-		c.Assert(err, IsNil)
-		c.Assert(rows.Close(), IsNil)
-		dbt.mustQuery("select * from t where a=1")
-		rows = dbt.mustQuery("explain for connection " + strconv.Itoa(int(connID)))
-		c.Assert(rows.Next(), IsTrue)
+		require.NoError(t, err)
+		require.NoError(t, rows.Close())
+		dbt.MustQuery("select * from t where a=1")
+		rows = dbt.MustQuery("explain for connection " + strconv.Itoa(int(connID)))
+		require.True(t, rows.Next())
 		row := make([]string, 9)
 		err = rows.Scan(&row[0], &row[1], &row[2], &row[3], &row[4], &row[5], &row[6], &row[7], &row[8])
-		c.Assert(err, IsNil)
-		c.Assert(strings.Join(row, ","), Matches, "Point_Get_1,1.00,1,root,table:t,time.*loop.*handle:1.*")
-		c.Assert(rows.Close(), IsNil)
+		require.NoError(t, err)
+		require.Regexp(t, "Point_Get_1,1.00,1,root,table:t,time.*loop.*handle:1.*", strings.Join(row, ","))
+		require.NoError(t, rows.Close())
 	})
 }
 
