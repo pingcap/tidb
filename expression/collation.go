@@ -69,18 +69,7 @@ func (c *collationInfo) SetCharsetAndCollation(chs, coll string) {
 	c.charset, c.collation = chs, coll
 }
 
-func (c *collationInfo) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
-	if c.charset != "" || c.collation != "" {
-		return c.charset, c.collation
-	}
-
-	if ctx != nil && ctx.GetSessionVars() != nil {
-		c.charset, c.collation = ctx.GetSessionVars().GetCharsetInfo()
-	}
-	if c.charset == "" || c.collation == "" {
-		c.charset, c.collation = charset.GetDefaultCharsetAndCollate()
-	}
-	c.flen = types.UnspecifiedLength
+func (c *collationInfo) CharsetAndCollation() (string, string) {
 	return c.charset, c.collation
 }
 
@@ -102,7 +91,7 @@ type CollationInfo interface {
 	SetRepertoire(r Repertoire)
 
 	// CharsetAndCollation ...
-	CharsetAndCollation(ctx sessionctx.Context) (string, string)
+	CharsetAndCollation() (string, string)
 
 	// SetCharsetAndCollation ...
 	SetCharsetAndCollation(chs, coll string)
