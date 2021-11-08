@@ -25,7 +25,7 @@ file_should_exist bin/sync_diff_inspector
 trap stop_services EXIT
 start_services
 
-run_case_by_fullpath() {
+function run_case_by_fullpath() {
     script="$1"
     echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Running test $script..."
     DUMPLING_BASE_NAME="$(dirname "$script")"
@@ -34,9 +34,18 @@ run_case_by_fullpath() {
     DUMPLING_OUTPUT_DIR="$DUMPLING_TEST_DIR"/sql_res."$TEST_NAME"
     export DUMPLING_OUTPUT_DIR
 
-    PATH="tests/_utils:$PATH" \
-        bash "$script"
-    echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>TEST: $script Passed Cleaning up test output dir: $DUMPLING_OUTPUT_DIR"
+    VERBOSE=${VERBOSE-}
+    # run in verbose mode?
+    echo "Verbose mode = $VERBOSE"
+    if [ "$VERBOSE" = "true" ]; then
+      PATH="tests/_utils:$PATH" \
+        PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }' \
+        bash -x "$script"
+    else
+      PATH="tests/_utils:$PATH" \
+        bash +x "$script"
+    fi
+    echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> TEST: $script Passed Cleaning up test output dir: $DUMPLING_OUTPUT_DIR"
     rm -rf "$DUMPLING_OUTPUT_DIR"
 }
 
