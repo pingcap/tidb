@@ -2153,23 +2153,29 @@ func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	tk.MustGetErrCode(sql3, tmysql.ErrTooManyPartitions)
 }
 
-func checkPartitionDelRangeDone(c *C, tk *testkit.TestKit, s *testIntegrationSuite, oldPID int64) {
-	startTime := time.Now()
-	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
+func waitGCDeleteRangeDone(c *C, tk *testkit.TestKit, physicalID int64) bool {
 	var i int
 	for i = 0; i < waitForCleanDataRound; i++ {
-		rs, err := tk.Exec("select count(1) from mysql.gc_delete_range_done where element_id = ?", oldPID)
+		rs, err := tk.Exec("select count(1) from mysql.gc_delete_range_done where element_id = ?", physicalID)
 		c.Assert(err, IsNil)
 		rows, err := session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 		c.Assert(err, IsNil)
 		val := rows[0][0]
 		if val != "0" {
-			break
+			return true
 		}
 		time.Sleep(waitForCleanDataInterval)
 	}
 
-	if i == waitForCleanDataRound {
+	return false
+}
+
+func checkPartitionDelRangeDone(c *C, tk *testkit.TestKit, s *testIntegrationSuite, oldPID int64) {
+	startTime := time.Now()
+	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
+
+	done := waitGCDeleteRangeDone(c, tk, oldPID)
+	if !done {
 		// Takes too long, give up the check.
 		logutil.BgLogger().Info("truncate partition table",
 			zap.Int64("id", oldPID),
@@ -2981,11 +2987,12 @@ func (s *testIntegrationSuite5) TestDropSchemaWithPartitionTable(c *C) {
 	row := rows[0]
 	c.Assert(row.GetString(3), Equals, "drop schema")
 	jobID := row.GetInt64(0)
+
+	var tableIDs []int64
 	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(jobID)
 		c.Assert(err, IsNil)
-		var tableIDs []int64
 		err = historyJob.DecodeArgs(&tableIDs)
 		c.Assert(err, IsNil)
 		// There is 2 partitions.
@@ -2993,6 +3000,17 @@ func (s *testIntegrationSuite5) TestDropSchemaWithPartitionTable(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
+
+	startTime := time.Now()
+	done := waitGCDeleteRangeDone(c, tk, tableIDs[2])
+	if !done {
+		// Takes too long, give up the check.
+		logutil.BgLogger().Info("drop schema",
+			zap.Int64("id", tableIDs[0]),
+			zap.Stringer("duration", time.Since(startTime)),
+		)
+		return
+	}
 
 	// check records num after drop database.
 	for i := 0; i < waitForCleanDataRound; i++ {
