@@ -40,7 +40,6 @@ type collationInfo struct {
 
 	charset   string
 	collation string
-	flen      int
 }
 
 func (c *collationInfo) HasCoercibility() bool {

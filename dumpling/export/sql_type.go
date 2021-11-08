@@ -31,13 +31,16 @@ func initColTypeRowReceiverMap() {
 		"ENUM", "SET", "JSON", "NULL", "VAR_STRING",
 	}
 
-	dataTypeNumArr := []string{
+	dataTypeIntArr := []string{
 		"INTEGER", "BIGINT", "TINYINT", "SMALLINT", "MEDIUMINT",
 		"INT", "INT1", "INT2", "INT3", "INT8",
+	}
+
+	dataTypeNumArr := append(dataTypeIntArr, []string{
 		"FLOAT", "REAL", "DOUBLE", "DOUBLE PRECISION",
 		"DECIMAL", "NUMERIC", "FIXED",
 		"BOOL", "BOOLEAN",
-	}
+	}...)
 
 	dataTypeBinArr := []string{
 		"BLOB", "TINYBLOB", "MEDIUMBLOB", "LONGBLOB", "LONG",
@@ -49,8 +52,10 @@ func initColTypeRowReceiverMap() {
 		dataTypeString[s] = struct{}{}
 		colTypeRowReceiverMap[s] = SQLTypeStringMaker
 	}
+	for _, s := range dataTypeIntArr {
+		dataTypeInt[s] = struct{}{}
+	}
 	for _, s := range dataTypeNumArr {
-		dataTypeNum[s] = struct{}{}
 		colTypeRowReceiverMap[s] = SQLTypeNumberMaker
 	}
 	for _, s := range dataTypeBinArr {
@@ -59,7 +64,7 @@ func initColTypeRowReceiverMap() {
 	}
 }
 
-var dataTypeString, dataTypeNum, dataTypeBin = make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{})
+var dataTypeString, dataTypeInt, dataTypeBin = make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{})
 
 func escapeBackslashSQL(s []byte, bf *bytes.Buffer) {
 	var (
