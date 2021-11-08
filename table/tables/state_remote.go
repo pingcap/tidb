@@ -208,13 +208,11 @@ func (r *mockStateRemoteData) LockForRead(tid int64, now, ts uint64) (bool, erro
 		// Add the read lock
 		record.lockType = CachedTableLockRead
 		record.lockLease = ts
-		record.oldReadLease = ts
 		return true, nil
 	case CachedTableLockRead:
 		// Renew lease for this case.
 		if record.lockLease < ts {
 			record.lockLease = ts
-			record.oldReadLease = ts
 			return true, nil
 		}
 		// Already read locked.
@@ -224,7 +222,6 @@ func (r *mockStateRemoteData) LockForRead(tid int64, now, ts uint64) (bool, erro
 			// Outdated...clear orphan lock
 			record.lockType = CachedTableLockRead
 			record.lockLease = ts
-			record.oldReadLease = ts
 			return true, nil
 		}
 		return false, nil
@@ -269,6 +266,8 @@ func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, e
 		if now > record.oldReadLease {
 			record.lockType = CachedTableLockWrite
 			record.lockLease = ts
+		} else {
+			return record.oldReadLease, nil
 		}
 	default:
 		return 0, fmt.Errorf("wrong lock state %v", record.lockType)
