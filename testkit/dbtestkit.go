@@ -87,6 +87,7 @@ func (tk *DBTestKit) MustQuery(sql string, args ...interface{}) *sql.Rows {
 func (tk *DBTestKit) MustQueryRows(query string, args ...interface{}) {
 	rows := tk.MustQuery(query, args...)
 	tk.require.True(rows.Next())
+	tk.require.NoError(rows.Err())
 	rows.Close()
 }
 

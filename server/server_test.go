@@ -231,24 +231,6 @@ type DBTest struct {
 	db *sql.DB
 }
 
-func (dbt *DBTest) mustPrepare(query string) *sql.Stmt {
-	stmt, err := dbt.db.Prepare(query)
-	dbt.Assert(err, IsNil, Commentf("Prepare %s", query))
-	return stmt
-}
-
-func (dbt *DBTest) mustExecPrepared(stmt *sql.Stmt, args ...interface{}) sql.Result {
-	res, err := stmt.Exec(args...)
-	dbt.Assert(err, IsNil, Commentf("Execute prepared with args: %s", args))
-	return res
-}
-
-func (dbt *DBTest) mustQueryPrepared(stmt *sql.Stmt, args ...interface{}) *sql.Rows {
-	rows, err := stmt.Query(args...)
-	dbt.Assert(err, IsNil, Commentf("Query prepared with args: %s", args))
-	return rows
-}
-
 func (dbt *DBTest) mustExec(query string, args ...interface{}) (res sql.Result) {
 	res, err := dbt.db.Exec(query, args...)
 	dbt.Assert(err, IsNil, Commentf("Exec %s", query))
@@ -1863,18 +1845,6 @@ func (cli *testingServerClient) runTestResultFieldTableIsNull(t *testing.T) {
 		dbt.MustExec("create table test (c int);")
 		dbt.MustExec("explain select * from test;")
 	})
-}
-
-func (cli *testServerClient) runTestStatusAPI(c *C) {
-	resp, err := cli.fetchStatus("/status")
-	c.Assert(err, IsNil)
-	defer resp.Body.Close()
-	decoder := json.NewDecoder(resp.Body)
-	var data status
-	err = decoder.Decode(&data)
-	c.Assert(err, IsNil)
-	c.Assert(data.Version, Equals, tmysql.ServerVersion)
-	c.Assert(data.GitHash, Equals, versioninfo.TiDBGitHash)
 }
 
 func (cli *testingServerClient) runTestStatusAPI(t *testing.T) {
