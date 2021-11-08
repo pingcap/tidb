@@ -356,6 +356,24 @@ func BuildBackupRangeAndSchema(
 	return ranges, backupSchemas, nil
 }
 
+func skipUnsupportedDDLJob(job *model.Job) bool {
+	switch job.Type {
+	// TiDB V5.3.0 supports TableAttributes and TablePartitionAttributes.
+	// Backup guarantees data integrity but region placement, which is out of scope of backup
+	case model.ActionCreatePlacementPolicy,
+		model.ActionAlterPlacementPolicy,
+		model.ActionDropPlacementPolicy,
+		model.ActionAlterTablePartitionPolicy,
+		model.ActionModifySchemaDefaultPlacement,
+		model.ActionAlterTablePlacement,
+		model.ActionAlterTableAttributes,
+		model.ActionAlterTablePartitionAttributes:
+		return true
+	default:
+		return false
+	}
+}
+
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
 func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastBackupTS, backupTS uint64) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
@@ -388,6 +406,10 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 
 	count := 0
 	for _, job := range allJobs {
+		if skipUnsupportedDDLJob(job) {
+			continue
+		}
+
 		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
 			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion) {
 			jobBytes, err := json.Marshal(job)
