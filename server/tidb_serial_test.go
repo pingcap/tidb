@@ -15,9 +15,13 @@
 package server
 
 import (
+	"os"
 	"testing"
+	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 // this test will change `kv.TxnTotalSizeLimit` which may affect other test suites,
@@ -79,4 +83,35 @@ func TestLoadDataListPartition(t *testing.T) {
 	ts.runTestLoadDataForListPartition2(t)
 	ts.runTestLoadDataForListColumnPartition(t)
 	ts.runTestLoadDataForListColumnPartition2(t)
+}
+
+func TestTLSAuto(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	// Start the server without TLS configure, letting the server create these as AutoTLS is enabled
+	connOverrider := func(config *mysql.Config) {
+		config.TLSConfig = "skip-verify"
+	}
+	cli := newTestingServerClient()
+	cfg := newTestConfig()
+	cfg.Socket = ""
+	cfg.Port = cli.port
+	cfg.Status.ReportStatus = false
+	cfg.Security.AutoTLS = true
+	cfg.Security.RSAKeySize = 528 // Reduces unittest runtime
+	err := os.MkdirAll(cfg.TempStoragePath, 0700)
+	require.NoError(t, err)
+	server, err := NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	go func() {
+		err := server.Run()
+		require.NoError(t, err)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	err = cli.runTestTLSConnection(t, connOverrider) // Relying on automatically created TLS certificates
+	require.NoError(t, err)
+
+	server.Close()
 }

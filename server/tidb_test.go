@@ -960,34 +960,6 @@ func TestSystemTimeZone(t *testing.T) {
 	tk.MustQuery("select @@system_time_zone").Check(tz1)
 }
 
-func (ts *tidbTestSerialSuite) TestTLSAuto(c *C) {
-	// Start the server without TLS configure, letting the server create these as AutoTLS is enabled
-	connOverrider := func(config *mysql.Config) {
-		config.TLSConfig = "skip-verify"
-	}
-	cli := newTestServerClient()
-	cfg := newTestConfig()
-	cfg.Socket = ""
-	cfg.Port = cli.port
-	cfg.Status.ReportStatus = false
-	cfg.Security.AutoTLS = true
-	cfg.Security.RSAKeySize = 528 // Reduces unittest runtime
-	err := os.MkdirAll(cfg.TempStoragePath, 0700)
-	c.Assert(err, IsNil)
-	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go func() {
-		err := server.Run()
-		c.Assert(err, IsNil)
-	}()
-	time.Sleep(time.Millisecond * 100)
-	err = cli.runTestTLSConnection(c, connOverrider) // Relying on automatically created TLS certificates
-	c.Assert(err, IsNil)
-
-	server.Close()
-}
-
 func (ts *tidbTestSerialSuite) TestTLSBasic(c *C) {
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")

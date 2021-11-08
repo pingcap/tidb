@@ -2031,6 +2031,21 @@ func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverride
 	return err
 }
 
+func (cli *testingServerClient) runTestTLSConnection(t *testing.T, overrider configOverrider) error {
+	dsn := cli.getDSN(overrider)
+	db, err := sql.Open("mysql", dsn)
+	require.NoError(t, err)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	_, err = db.Exec("USE test")
+	if err != nil {
+		return errors.Annotate(err, "dsn:"+dsn)
+	}
+	return err
+}
+
 func (cli *testServerClient) runReloadTLS(t *C, overrider configOverrider, errorNoRollback bool) error {
 	db, err := sql.Open("mysql", cli.getDSN(overrider))
 	t.Assert(err, IsNil)
