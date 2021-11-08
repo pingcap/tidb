@@ -6115,7 +6115,7 @@ func (s *testIntegrationSuite) TestDecodetoChunkReuse(c *C) {
 	}()
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
-	req := rs.NewChunk(nil)
+	req := rs.NewChunk()
 	var count int
 	for {
 		err = rs.Next(context.TODO(), req)

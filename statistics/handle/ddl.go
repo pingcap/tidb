@@ -242,7 +242,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 			return
 		}
 		defer terror.Call(rs.Close)
-		req := rs.NewChunk(nil)
+		req := rs.NewChunk()
 		err = rs.Next(ctx, req)
 		if err != nil {
 			return

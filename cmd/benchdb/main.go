@@ -125,7 +125,7 @@ func (ut *benchDB) mustExec(sql string, args ...interface{}) {
 	}
 	if rs != nil {
 		ctx := context.Background()
-		req := rs.NewChunk(nil)
+		req := rs.NewChunk()
 		for {
 			err := rs.Next(ctx, req)
 			if err != nil {

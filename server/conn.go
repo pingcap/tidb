@@ -939,7 +939,7 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 		// init_connect does not care about the results,
 		// but they need to be drained because of lazy loading.
 		if rs != nil {
-			req := rs.NewChunk(nil)
+			req := rs.NewChunk()
 			for {
 				if err = rs.Next(ctx, req); err != nil {
 					return err
@@ -2072,7 +2072,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 // The first return value indicates whether error occurs at the first call of ResultSet.Next.
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) (bool, error) {
 	data := cc.alloc.AllocWithLen(4, 1024)
-	req := rs.NewChunk(cc.chunkAlloc)
+	req := rs.NewChunkFromAllocator(cc.chunkAlloc)
 	gotColumnInfo := false
 	firstNext := true
 	var stmtDetail *execdetails.StmtExecDetails
@@ -2142,9 +2142,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
+
+	req := rs.NewChunkFromAllocator(cc.chunkAlloc)
+	// if fetchedRows is not enough, getting data from recordSet.
 	for len(fetchedRows) < fetchSize {
-		// if fetchedRows is not enough, getting data from recordSet.
-		req := rs.NewChunk(cc.chunkAlloc)
 		// Here server.tidbResultSet implements Next method.
 		if err := rs.Next(ctx, req); err != nil {
 			return err

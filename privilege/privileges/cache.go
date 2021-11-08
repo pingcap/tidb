@@ -560,7 +560,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	}
 	defer terror.Call(rs.Close)
 	fs := rs.Fields()
-	req := rs.NewChunk(nil)
+	req := rs.NewChunk()
 	for {
 		err = rs.Next(context.TODO(), req)
 		if err != nil {
