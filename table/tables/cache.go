@@ -29,8 +29,10 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-var _ table.Table = &cachedTable{}
-var _ table.CachedTable = &cachedTable{}
+var (
+	_ table.Table       = &cachedTable{}
+	_ table.CachedTable = &cachedTable{}
+)
 
 type cachedTable struct {
 	TableCommon
@@ -161,7 +163,6 @@ func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		return nil, errors.Trace(err)
 	}
 	return c.TableCommon.AddRecord(ctx, r, opts...)
-
 }
 
 // UpdateRecord implements table.Table
