@@ -1267,7 +1267,6 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer pdCli.Close()
 
 	serviceID := "lightning-duplicate-resolution-" + uuid.New().String()
 	ttl := int64(pauseGCTTLForDupeRes / time.Second)
@@ -1283,10 +1282,12 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		}
 		minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, 1)
 		if err != nil {
+			pdCli.Close()
 			return nil, errors.Trace(err)
 		}
 		newMinSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, minSafePoint)
 		if err != nil {
+			pdCli.Close()
 			return nil, errors.Trace(err)
 		}
 		if newMinSafePoint <= minSafePoint {
@@ -1302,11 +1303,13 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		)
 	}
 	if !paused {
+		pdCli.Close()
 		return nil, errors.New("failed to pause GC for duplicate resolution after all retries")
 	}
 
 	exitCh := make(chan struct{})
 	go func(safePoint uint64) {
+		defer pdCli.Close()
 		defer close(exitCh)
 		ticker := time.NewTicker(pauseGCIntervalForDupeRes)
 		defer ticker.Stop()
