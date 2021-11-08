@@ -419,6 +419,41 @@ PARTITION BY RANGE (c) (
 	require.Equal(t, rows2[1][3], rows2[1][3])
 }
 
+func TestDropSchema(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer func() {
+		dom.Close()
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`)
+	tk.MustExec(`create table t2 (c int);`)
+
+	// add rules
+	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	require.NoError(t, err)
+	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
+	require.NoError(t, err)
+	_, err = tk.Exec(`alter table t2 attributes="key=value";`)
+	require.NoError(t, err)
+	rows := tk.MustQuery(`select * from information_schema.attributes;`).Rows()
+	require.Len(t, rows, 3)
+	// drop database
+	_, err = tk.Exec(`drop database test`)
+	require.NoError(t, err)
+	rows = tk.MustQuery(`select * from information_schema.attributes;`).Rows()
+	require.Len(t, rows, 0)
+}
+
 func TestDefaultKeyword(t *testing.T) {
 	t.Parallel()
 
