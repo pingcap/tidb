@@ -695,7 +695,8 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 		HistColl: pseudoHistColl,
 	}
 	for _, col := range tblInfo.Columns {
-		if col.State == model.StatePublic {
+		// The column is public to use. Also the column is not hidden since it's used by expression index or something else.
+		if col.State == model.StatePublic && !col.Hidden {
 			t.Columns[col.ID] = &Column{
 				PhysicalID: fakePhysicalID,
 				Info:       col,
