@@ -40,7 +40,6 @@ type collationInfo struct {
 
 	charset   string
 	collation string
-	flen      int
 }
 
 func (c *collationInfo) HasCoercibility() bool {
@@ -80,7 +79,6 @@ func (c *collationInfo) CharsetAndCollation(ctx sessionctx.Context) (string, str
 	if c.charset == "" || c.collation == "" {
 		c.charset, c.collation = charset.GetDefaultCharsetAndCollate()
 	}
-	c.flen = types.UnspecifiedLength
 	return c.charset, c.collation
 }
 
