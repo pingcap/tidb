@@ -163,3 +163,55 @@ select password(a), password(b), password(c) from t;
 password(a)	password(b)	password(c)
 *D13577D198CA3F0AF5C548195065991E0E3EE665	*A669F2B2DD49E2463FE62D8F72DDF4F858687EA5	*9FC0B2ABDF3EC9895E852B15BE432EE0EA0C26BA
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select sha1(a), sha1(b), sha1(c) from t;
+sha1(a)	sha1(b)	sha1(c)
+01c1743ce7a7e822454a659f659bad61375ff10c	30cda4eed59a2ff592f2881f39d42fed6e10cad8	a112317779176843452f88e5b1fdbf3092ad124a
+select sha(a), sha(b), sha(c) from t;
+sha(a)	sha(b)	sha(c)
+01c1743ce7a7e822454a659f659bad61375ff10c	30cda4eed59a2ff592f2881f39d42fed6e10cad8	a112317779176843452f88e5b1fdbf3092ad124a
+set @@tidb_enable_vectorized_expression = true;
+select sha1(a), sha1(b), sha1(c) from t;
+sha1(a)	sha1(b)	sha1(c)
+01c1743ce7a7e822454a659f659bad61375ff10c	30cda4eed59a2ff592f2881f39d42fed6e10cad8	a112317779176843452f88e5b1fdbf3092ad124a
+select sha(a), sha(b), sha(c) from t;
+sha(a)	sha(b)	sha(c)
+01c1743ce7a7e822454a659f659bad61375ff10c	30cda4eed59a2ff592f2881f39d42fed6e10cad8	a112317779176843452f88e5b1fdbf3092ad124a
+set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select sha2(a, 0), sha2(b, 0), sha2(c, 0) from t;
+sha2(a, 0)	sha2(b, 0)	sha2(c, 0)
+4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7	b6c1ae1f8d8a07426ddb13fca5124fb0b9f1f0ef1cca6730615099cf198ca8af	f98670d7ccdf803dfa2f24555cfd733d626dd24f5f2bb0b91e37cc4f54a0f359
+select sha2(a, 224), sha2(b, 224), sha2(c, 224) from t;
+sha2(a, 224)	sha2(b, 224)	sha2(c, 224)
+ae47a60dd96e1deed3988d8fff3d662165e0aac7ddf371f244d7c11e	2362f577783f6cd6cc10b0308f946f479fef868a39d6339b5d74cc6d	eb0de82dfada1205f65ac4aa6e4778d2f7730144f31688d42a316b9c
+select sha2(a, 256), sha2(b, 256), sha2(c, 256) from t;
+sha2(a, 256)	sha2(b, 256)	sha2(c, 256)
+4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7	b6c1ae1f8d8a07426ddb13fca5124fb0b9f1f0ef1cca6730615099cf198ca8af	f98670d7ccdf803dfa2f24555cfd733d626dd24f5f2bb0b91e37cc4f54a0f359
+select sha2(a, 384), sha2(b, 384), sha2(c, 384) from t;
+sha2(a, 384)	sha2(b, 384)	sha2(c, 384)
+cdb9c8d3e2579d021116ebe9d7d7bb4f5b3a489cae84768f7b3348c9b8d716897a409ea96fd92bfb95e3fd8aa91ffc74	54e75070f1faab03e7ce808ca2824ed4614ad1d58ee1409d8c1e4fd72ecab12c92ac3a2f919721c2aa09b23e5f3cc8aa	1b526bf926dbc53609628f145a6efe2b17eb29754ba2c6e0e33673dbd79d62ea50bbfc233252f06ba27712f8bd406963
+select sha2(a, 514), sha2(b, 514), sha2(c, 514) from t;
+sha2(a, 514)	sha2(b, 514)	sha2(c, 514)
+NULL	NULL	NULL
+set @@tidb_enable_vectorized_expression = true;
+select sha2(a, 0), sha2(b, 0), sha2(c, 0) from t;
+sha2(a, 0)	sha2(b, 0)	sha2(c, 0)
+4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7	4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7	f98670d7ccdf803dfa2f24555cfd733d626dd24f5f2bb0b91e37cc4f54a0f359
+select sha2(a, 224), sha2(b, 224), sha2(c, 224) from t;
+sha2(a, 224)	sha2(b, 224)	sha2(c, 224)
+ae47a60dd96e1deed3988d8fff3d662165e0aac7ddf371f244d7c11e	ae47a60dd96e1deed3988d8fff3d662165e0aac7ddf371f244d7c11e	eb0de82dfada1205f65ac4aa6e4778d2f7730144f31688d42a316b9c
+select sha2(a, 256), sha2(b, 256), sha2(c, 256) from t;
+sha2(a, 256)	sha2(b, 256)	sha2(c, 256)
+4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7	4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7	f98670d7ccdf803dfa2f24555cfd733d626dd24f5f2bb0b91e37cc4f54a0f359
+select sha2(a, 384), sha2(b, 384), sha2(c, 384) from t;
+sha2(a, 384)	sha2(b, 384)	sha2(c, 384)
+cdb9c8d3e2579d021116ebe9d7d7bb4f5b3a489cae84768f7b3348c9b8d716897a409ea96fd92bfb95e3fd8aa91ffc74	cdb9c8d3e2579d021116ebe9d7d7bb4f5b3a489cae84768f7b3348c9b8d716897a409ea96fd92bfb95e3fd8aa91ffc74	1b526bf926dbc53609628f145a6efe2b17eb29754ba2c6e0e33673dbd79d62ea50bbfc233252f06ba27712f8bd406963
+select sha2(a, 514), sha2(b, 514), sha2(c, 514) from t;
+sha2(a, 514)	sha2(b, 514)	sha2(c, 514)
+NULL	NULL	NULL
+set @@tidb_enable_vectorized_expression = false;
