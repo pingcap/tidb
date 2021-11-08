@@ -15,6 +15,7 @@
 package server
 
 import (
+	"crypto/x509"
 	"os"
 	"testing"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -192,4 +194,78 @@ func TestTLSBasic(t *testing.T) {
 	require.Equal(t, serverCert.NotBefore.Format("Jan _2 15:04:05 2006 MST"), stats["Ssl_server_not_before"])
 
 	server.Close()
+}
+
+func TestTLSVerify(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	// Generate valid TLS certificates.
+	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
+	require.NoError(t, err)
+	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
+	require.NoError(t, err)
+	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, "/tmp/client-key.pem", "/tmp/client-cert.pem")
+	require.NoError(t, err)
+	err = registerTLSConfig("client-certificate", "/tmp/ca-cert.pem", "/tmp/client-cert.pem", "/tmp/client-key.pem", "tidb-server", true)
+	require.NoError(t, err)
+
+	defer func() {
+		err := os.Remove("/tmp/ca-key.pem")
+		require.NoError(t, err)
+		err = os.Remove("/tmp/ca-cert.pem")
+		require.NoError(t, err)
+		err = os.Remove("/tmp/server-key.pem")
+		require.NoError(t, err)
+		err = os.Remove("/tmp/server-cert.pem")
+		require.NoError(t, err)
+		err = os.Remove("/tmp/client-key.pem")
+		require.NoError(t, err)
+		err = os.Remove("/tmp/client-cert.pem")
+		require.NoError(t, err)
+	}()
+
+	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
+	cli := newTestingServerClient()
+	cfg := newTestConfig()
+	cfg.Socket = ""
+	cfg.Port = cli.port
+	cfg.Status.ReportStatus = false
+	cfg.Security = config.Security{
+		SSLCA:   "/tmp/ca-cert.pem",
+		SSLCert: "/tmp/server-cert.pem",
+		SSLKey:  "/tmp/server-key.pem",
+	}
+	server, err := NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	go func() {
+		err := server.Run()
+		require.NoError(t, err)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	// The client does not provide a certificate, the connection should succeed.
+	err = cli.runTestTLSConnection(t, nil)
+	require.NoError(t, err)
+	connOverrider := func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate"
+	}
+	cli.runTestRegression(t, connOverrider, "TLSRegression")
+	// The client provides a valid certificate.
+	connOverrider = func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate"
+	}
+	err = cli.runTestTLSConnection(t, connOverrider)
+	require.NoError(t, err)
+	cli.runTestRegression(t, connOverrider, "TLSRegression")
+	server.Close()
+
+	require.False(t, util.IsTLSExpiredError(errors.New("unknown test")))
+	require.False(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}))
+	require.True(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}))
+
+	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true, 528)
+	require.Error(t, err)
+	_, _, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem", true, 528)
+	require.Error(t, err)
 }
