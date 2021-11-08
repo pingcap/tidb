@@ -136,7 +136,8 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if indexHandle.Compare(insertionHandle) != 0 {
+		// NOTE: handle type can be different, see issue 29520
+		if indexHandle.IsInt() == insertionHandle.IsInt() && indexHandle.Compare(insertionHandle) != 0 {
 			return errors.Errorf("inconsistent handles in row and index insertions. index handle = %v, "+
 				"row handle = %v, index = %+v, row = %+v",
 				indexHandle, insertionHandle, m, rowInsertion)
