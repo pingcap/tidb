@@ -10,9 +10,10 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
+
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 func TestDumpBlock(t *testing.T) {
