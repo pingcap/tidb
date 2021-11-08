@@ -3991,7 +3991,56 @@ func (s *testIntegrationSuite) TestIssue26559(c *C) {
 	tk.MustQuery("select greatest(a, b) from t union select null;").Sort().Check(testkit.Rows("2020-07-29 09:07:01", "<nil>"))
 }
 
+<<<<<<< HEAD
 func (s *testIntegrationSuite) TestIssue27797(c *C) {
+=======
+func (s *testIntegrationSuite) TestIssue29503(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Status.RecordQPSbyDB = true
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	err := tk.ExecToErr("create binding for select 1 using select 1;")
+	c.Assert(err, Equals, nil)
+	err = tk.ExecToErr("create binding for select a from t using select a from t;")
+	c.Assert(err, Equals, nil)
+	res := tk.MustQuery("show session bindings;")
+	c.Assert(len(res.Rows()), Equals, 2)
+}
+
+func (s *testIntegrationSuite) TestHeuristicIndexSelection(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int, d int, e int, f int, g int, primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g))")
+	tk.MustExec("create table t2(a int, b int, c int, d int, unique index idx_a (a), unique index idx_b_c (b, c), unique index idx_b_c_a_d (b, c, a, d))")
+	tk.MustExec("create table t3(a bigint, b varchar(255), c bigint, primary key(a, b) clustered)")
+	tk.MustExec("create table t4(a bigint, b varchar(255), c bigint, primary key(a, b) nonclustered)")
+
+	var input []string
+	var output []struct {
+		SQL      string
+		Plan     []string
+		Warnings []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'verbose' " + tt).Rows())
+			output[i].Warnings = s.testData.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery("explain format = 'verbose' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warnings...))
+	}
+}
+
+func (s *testIntegrationSuite) TestOutputSkylinePruningInfo(c *C) {
+>>>>>>> 7feb0e667... planner: fix create binding panic when status.record-db-qp enable (#29519)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t27797")
