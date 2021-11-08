@@ -232,8 +232,11 @@ func (r *mockStateRemoteData) LockForRead(tid int64, now, ts uint64) (bool, erro
 func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, error) {
 	record, ok := r.data[tid]
 	if !ok {
-		record.lockType = CachedTableLockWrite
-		record.lockLease = ts
+		record = &stateRecord{
+			lockType:  CachedTableLockWrite,
+			lockLease: ts,
+		}
+		r.data[tid] = record
 		return 0, nil
 	}
 
