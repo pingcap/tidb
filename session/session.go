@@ -1038,14 +1038,9 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 	}
 }
 
-func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, alloc chunk.Allocator) ([]chunk.Row, error) {
+func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	var req *chunk.Chunk
-	if alloc == nil {
-		req = rs.NewChunk()
-	} else {
-		req = rs.NewChunkFromAllocator(alloc)
-	}
+	req := rs.NewChunk()
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {
@@ -1510,7 +1505,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 		}
 	}()
 	var rows []chunk.Row
-	rows, err = drainRecordSet(ctx, se, rs, nil)
+	rows, err = drainRecordSet(ctx, se, rs)
 	if err != nil {
 		return nil, nil, err
 	}
