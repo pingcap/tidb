@@ -26,7 +26,6 @@ import (
 )
 
 func TestAlterTableAttributes(t *testing.T) {
-	t.Parallel()
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -61,7 +60,6 @@ func TestAlterTableAttributes(t *testing.T) {
 }
 
 func TestAlterTablePartitionAttributes(t *testing.T) {
-	t.Parallel()
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -102,7 +100,6 @@ PARTITION BY RANGE (c) (
 }
 
 func TestTruncateTable(t *testing.T) {
-	t.Parallel()
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -162,7 +159,6 @@ PARTITION BY RANGE (c) (
 }
 
 func TestRenameTable(t *testing.T) {
-	t.Parallel()
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -222,7 +218,6 @@ PARTITION BY RANGE (c) (
 }
 
 func TestRecoverTable(t *testing.T) {
-	t.Parallel()
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -276,7 +271,6 @@ PARTITION BY RANGE (c) (
 }
 
 func TestFlashbackTable(t *testing.T) {
-	t.Parallel()
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -347,7 +341,6 @@ PARTITION BY RANGE (c) (
 }
 
 func TestPartition(t *testing.T) {
-	t.Parallel()
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -455,7 +448,6 @@ PARTITION BY RANGE (c) (
 }
 
 func TestDefaultKeyword(t *testing.T) {
-	t.Parallel()
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
