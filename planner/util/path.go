@@ -79,7 +79,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx sessionctx.Context,
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
 		matched := false
 		for j, filter := range path.TableFilters {
-			if used[j] || !isColEqCorColOrConstant(ctx, filter, path.IdxCols[i]) {
+			if used[j] || !isColEqCorColOrConstant(ctx, filter, path.IdxCols[i]) || expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{filter}) {
 				continue
 			}
 			matched = true
