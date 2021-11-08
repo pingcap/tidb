@@ -734,18 +734,18 @@ func TestSpmUnion(t *testing.T) {
 	spmMap := map[string]string{}
 	spmMap["with `cte` as ( with `cte1` as ( select * from `test` . `t2` where `a` > ? and `b` > ? ) select * from `cte1` ) select * from `cte` union select * from `test` . `t1` where `a` > ?"] =
 		"WITH `cte` AS (WITH `cte1` AS (SELECT /*+ use_index(@`sel_2` `test`.`t2` `idx_ab`)*/ * FROM `test`.`t2` WHERE `a` > 1 AND `b` > 1) SELECT * FROM `cte1`) SELECT * FROM `cte` UNION SELECT /*+ use_index(@`sel_4` `test`.`t1` `idx_ab`)*/ * FROM `test`.`t1` WHERE `a` > 0"
-	spmMap["with recursive `cte` ( `a` , `b` ) as ( select * from `test` . `t` where `b` = ? union select `a` + ? , `b` + ? from `cte` where `a` < ? ) select * from `cte` union select * from `cte`"] =
-		"WITH RECURSIVE `cte` (`a`, `b`) AS (SELECT /*+ use_index(@`sel_1` `test`.`t` `b`)*/ * FROM `test`.`t` WHERE `b` = 1 UNION SELECT `a` + 1,`b` + 1 FROM `cte` WHERE `a` < 2) SELECT * FROM `cte` UNION SELECT * FROM `cte`"
-	spmMap["with `cte` as ( select * from `test` . `t` where `b` = ? ) select * from `cte` union select * from `cte`"] =
-		"WITH `cte` AS (SELECT /*+ use_index(@`sel_1` `test`.`t` `b`)*/ * FROM `test`.`t` WHERE `b` = 1) SELECT * FROM `cte` UNION SELECT * FROM `cte`"
+	spmMap["with recursive `cte` ( `a` , `b` ) as ( select * from `test` . `t1` where `b` = ? union select `a` + ? , `b` + ? from `cte` where `a` < ? ) select * from `cte` union select * from `cte`"] =
+		"WITH RECURSIVE `cte` (`a`, `b`) AS (SELECT /*+ use_index(@`sel_1` `test`.`t1` `idx_b`)*/ * FROM `test`.`t1` WHERE `b` = 1 UNION SELECT `a` + 1,`b` + 1 FROM `cte` WHERE `a` < 2) SELECT * FROM `cte` UNION SELECT * FROM `cte`"
+	spmMap["with `cte` as ( select * from `test` . `t1` where `b` = ? ) select * from `cte` union select * from `cte`"] =
+		"WITH `cte` AS (SELECT /*+ use_index(@`sel_1` `test`.`t1` `idx_b`)*/ * FROM `test`.`t1` WHERE `b` = 1) SELECT * FROM `cte` UNION SELECT * FROM `cte`"
 
-	tk.MustExec("with recursive cte(a,b) as (select /*+use_index(idx_b)*/ * from t where b = 1 union select a+1,b+1 from cte where a < 2) select * from cte union select * from cte")
-	tk.MustExec("with recursive cte(a,b) as (select /*+use_index(idx_b)*/ * from t where b = 1 union select a+1,b+1 from cte where a < 2) select * from cte union select * from cte")
-	tk.MustExec("with recursive cte(a,b) as (select /*+use_index(idx_b)*/ * from t where b = 1 union select a+1,b+1 from cte where a < 2) select * from cte union select * from cte")
+	tk.MustExec("with recursive cte(a,b) as (select /*+use_index(idx_b)*/ * from t1 where b = 1 union select a+1,b+1 from cte where a < 2) select * from cte union select * from cte")
+	tk.MustExec("with recursive cte(a,b) as (select /*+use_index(idx_b)*/ * from t1 where b = 1 union select a+1,b+1 from cte where a < 2) select * from cte union select * from cte")
+	tk.MustExec("with recursive cte(a,b) as (select /*+use_index(idx_b)*/ * from t1 where b = 1 union select a+1,b+1 from cte where a < 2) select * from cte union select * from cte")
 
-	tk.MustExec("with cte as (select /*+use_index(idx_b)*/ * from t where b = 1) select * from cte union select * from cte")
-	tk.MustExec("with cte as (select /*+use_index(idx_b)*/ * from t where b = 1) select * from cte union select * from cte")
-	tk.MustExec("with cte as (select /*+use_index(idx_b)*/ * from t where b = 1) select * from cte union select * from cte")
+	tk.MustExec("with cte as (select /*+use_index(idx_b)*/ * from t1 where b = 1) select * from cte union select * from cte")
+	tk.MustExec("with cte as (select /*+use_index(idx_b)*/ * from t1 where b = 1) select * from cte union select * from cte")
+	tk.MustExec("with cte as (select /*+use_index(idx_b)*/ * from t1 where b = 1) select * from cte union select * from cte")
 
 	tk.MustExec("with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte union select /*+use_index(idx_a)*/ * from t1 where a > 0")
 	tk.MustExec("with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte union select /*+use_index(idx_a)*/ * from t1 where a > 0")
