@@ -594,8 +594,8 @@ func TestAdminCleanupIndexForPartitionTable(t *testing.T) {
 		idxInfo3 := tbl.Meta().FindIndexByName("c3")
 		indexOpr3 := tables.NewIndex(pid, tbl.Meta(), idxInfo3)
 
-		ctx := mock.NewContext()
 		txn, err := store.Begin()
+		ctx := mock.NewContext()
 		require.NoError(t, err)
 		_, err = indexOpr2.Create(ctx, txn, types.MakeDatums(idxValue), kv.IntHandle(handle), nil)
 		require.NoError(t, err)
