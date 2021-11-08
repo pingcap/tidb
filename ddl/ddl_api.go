@@ -4806,7 +4806,23 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
+	// _update_cluster
+	tikvStats, err := tikvHelper.GetStoresStat()
+	if err != nil {
+		return allReplicaReady, errors.Trace(err)
+	}
+	tiflashStores := make(map[int64]helper.StoreStat)
+	for _, store := range tikvStats.Stores {
+		for _, l := range store.Store.Labels {
+			if l.Key == "engine" && l.Value == "tiflash" {
+				tiflashStores[store.Store.ID] = store
+				fmt.Printf("tiflashStores has tiflash %v %v\n", store.Store.ID, store.Store.Address)
+			}
+		}
+	}
+	// TODO are compute_cur_store and _update_http_port still necessary?
 
+	// main body of table_update
 	schema := d.GetInfoSchemaWithInterceptor(ctx)
 
 	// compute table_list
@@ -4824,6 +4840,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 				for _, p := range pi.Definitions {
 					tableList = append(tableList, PollTiFlashReplicaStatusContext{p.ID, tblInfo, false})
 				}
+				// partitions that in adding mid-state
 				for _, p := range pi.AddingDefinitions {
 					tableList = append(tableList, PollTiFlashReplicaStatusContext{p.ID, tblInfo, true})
 				}
@@ -4832,7 +4849,9 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 			}
 		}
 	}
+	// TODO cover getDropOrTruncateTableTiflash
 
+	// compute all_rules
 	allRulesArr, err := tikvHelper.GetGroupRules("tiflash")
 	if err != nil {
 		return allReplicaReady, errors.Trace(err)
@@ -4844,25 +4863,11 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 
 	fmt.Printf("allRules is %v\n", allRules)
 
-	tikvStats, err := tikvHelper.GetStoresStat()
-	if err != nil {
-		return allReplicaReady, errors.Trace(err)
-	}
-	tiflashStores := make(map[int64]helper.StoreStat)
-	for _, store := range tikvStats.Stores {
-		for _, l := range store.Store.Labels {
-			if l.Key == "engine" && l.Value == "tiflash" {
-				tiflashStores[store.Store.ID] = store
-				fmt.Printf("tiflashStores has tiflash %v %v\n", store.Store.ID, store.Store.Address)
-			}
-		}
-	}
-
 	for _, tb := range tableList {
 		// for every region in each table, if it has one replica, we reckon it ready
 		// TODO Can we batch request table?
 
-		// TODO implement _check_and_make_rule
+		// implement _check_and_make_rule
 		ruleId := fmt.Sprintf("table-%v-r", tb.ID)
 		rule, ok := allRules[ruleId]
 		if ok {
@@ -4875,6 +4880,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 		if !tb.TableInfo.TiFlashReplica.Available {
 			allReplicaReady = false
 
+			// set_accelerate_schedule
 			if tb.HighPriority {
 				tikvHelper.PostAccelerateSchedule(tb.ID)
 			}
@@ -4926,7 +4932,10 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 
 			regionCount := stats.Count
 			flashRegionCount := len(regionReplica)
+			available := regionCount == flashRegionCount
 			fmt.Printf("GetPDRegionStats output table %v RegionCount %v FlashRegionCount %v %v\n", tb.ID, regionCount, flashRegionCount, stats)
+
+			d.UpdateTableReplicaInfo(ctx, tb.TableInfo.ID, available)
 		}
 	}
 
