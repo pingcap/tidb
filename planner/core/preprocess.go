@@ -256,8 +256,37 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 			return
 		}
 	}
+<<<<<<< HEAD
 	originSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(originNode, defaultDB))
 	hintedSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(hintedNode, defaultDB))
+=======
+
+	// Check the bind operation is not on any temporary table.
+	tblNames := extractTableList(originNode, nil, false)
+	for _, tn := range tblNames {
+		tbl, err := p.tableByName(tn)
+		if err != nil {
+			// If the operation is order is: drop table -> drop binding
+			// The table doesn't  exist, it is not an error.
+			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				continue
+			}
+			p.err = err
+			return
+		}
+		if tbl.Meta().TempTableType != model.TempTableNone {
+			p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
+			return
+		}
+		tableInfo := tbl.Meta()
+		dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
+		tn.TableInfo = tableInfo
+		tn.DBInfo = dbInfo
+	}
+
+	originSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()))
+	hintedSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(hintedNode, defaultDB, hintedNode.Text()))
+>>>>>>> 7feb0e667... planner: fix create binding panic when status.record-db-qp enable (#29519)
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
 	}
