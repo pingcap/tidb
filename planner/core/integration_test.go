@@ -4405,7 +4405,7 @@ func (s *testIntegrationSuite) TestIssue29503(c *C) {
 	})
 
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists table t;")
+	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
 	err := tk.ExecToErr("create binding for select 1 using select 1;")
 	c.Assert(err, Equals, nil)
