@@ -1388,6 +1388,11 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 				newCol.(*CorrelatedColumn).RetType = col.RetType.Clone()
 				args[0] = newCol
 			}
+			if args[0].GetType().Tp == mysql.TypeNewDecimal {
+				if newDecimal > mysql.MaxDecimalScale {
+					newDecimal = mysql.MaxDecimalScale
+				}
+			}
 			args[0].GetType().Flen, args[0].GetType().Decimal = newFlen, newDecimal
 		}
 	}
