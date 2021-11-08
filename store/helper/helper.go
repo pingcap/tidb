@@ -1067,8 +1067,6 @@ func (h *Helper) GetPDRegionStats2(tableID int64, stats *PDRegionStats) error {
 		}
 	}()
 
-	//data, err := ioutil.ReadAll(resp.Body)
-	//fmt.Printf("GetPDRegionStats return %v\n", string(data))
 	dec := json.NewDecoder(resp.Body)
 
 	return dec.Decode(stats)

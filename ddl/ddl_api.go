@@ -4673,7 +4673,6 @@ type TiFlashReplicaStatusResult struct {
 	ReplicaDetail    map[int64]int
 }
 
-
 func MakeBaseRule() placement.Rule {
 	return placement.Rule{
 		GroupID:  "tiflash",
@@ -4740,6 +4739,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 	return nil
 }
 
+// Compare supposed rule, and we actually get from TableInfo
 func isRuleMatch(rule placement.Rule, tb PollTiFlashReplicaStatusContext) (bool, *placement.Rule) {
 
 	// Compute startKey
@@ -4750,7 +4750,7 @@ func isRuleMatch(rule placement.Rule, tb PollTiFlashReplicaStatusContext) (bool,
 
 	isMatch := true
 
-	if rule.Override && rule.StartKeyHex == startKey.String() && rule.EndKeyHex == endKey.String(){
+	if rule.Override && rule.StartKeyHex == startKey.String() && rule.EndKeyHex == endKey.String() {
 		ok := false
 		for _, c := range rule.Constraints {
 			if c.Key == "engine" && len(c.Values) == 1 && c.Values[0] == "tiflash" && c.Op == placement.In {
@@ -4762,22 +4762,29 @@ func isRuleMatch(rule placement.Rule, tb PollTiFlashReplicaStatusContext) (bool,
 			isMatch = false
 		}
 
-		// TODO
-		//if rule.LocationLabels != tb.TableInfo.TiFlashReplica.LocationLabels {
-		//	return false
-		//}
+		if len(rule.LocationLabels) != len(tb.TableInfo.TiFlashReplica.LocationLabels) {
+			isMatch = false
+		} else {
+			for i, lb := range tb.TableInfo.TiFlashReplica.LocationLabels {
+				if lb != rule.LocationLabels[i] {
+					isMatch = false
+					break
+				}
+			}
+		}
+
 		if isMatch && uint64(rule.Count) != tb.TableInfo.TiFlashReplica.Count {
 			isMatch = false
 		}
 		if isMatch && rule.Role != placement.Learner {
 			isMatch = false
 		}
-	}else{
+	} else {
 		isMatch = false
 	}
 	if isMatch {
 		return true, nil
-	}else{
+	} else {
 		ruleNew := MakeBaseRule()
 		ruleNew.StartKeyHex = startKey.String()
 		ruleNew.EndKeyHex = endKey.String()
@@ -4803,7 +4810,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 	schema := d.GetInfoSchemaWithInterceptor(ctx)
 
 	// compute table_list
-	var table_list []PollTiFlashReplicaStatusContext = make([]PollTiFlashReplicaStatusContext, 0)
+	var tableList []PollTiFlashReplicaStatusContext = make([]PollTiFlashReplicaStatusContext, 0)
 	for _, db := range schema.AllSchemas() {
 		fmt.Printf("PollTiFlashReplicaStatus has db %v\n", db.Name)
 		tbls := schema.SchemaTables(db.Name)
@@ -4815,13 +4822,13 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 			}
 			if pi := tblInfo.GetPartitionInfo(); pi != nil {
 				for _, p := range pi.Definitions {
-					table_list = append(table_list, PollTiFlashReplicaStatusContext{p.ID, tblInfo, false})
+					tableList = append(tableList, PollTiFlashReplicaStatusContext{p.ID, tblInfo, false})
 				}
 				for _, p := range pi.AddingDefinitions {
-					table_list = append(table_list, PollTiFlashReplicaStatusContext{p.ID, tblInfo, true})
+					tableList = append(tableList, PollTiFlashReplicaStatusContext{p.ID, tblInfo, true})
 				}
 			} else {
-				table_list = append(table_list, PollTiFlashReplicaStatusContext{tblInfo.ID, tblInfo, false})
+				tableList = append(tableList, PollTiFlashReplicaStatusContext{tblInfo.ID, tblInfo, false})
 			}
 		}
 	}
@@ -4851,10 +4858,9 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 		}
 	}
 
-	for _, tb := range table_list {
+	for _, tb := range tableList {
 		// for every region in each table, if it has one replica, we reckon it ready
 		// TODO Can we batch request table?
-
 
 		// TODO implement _check_and_make_rule
 		ruleId := fmt.Sprintf("table-%v-r", tb.ID)
@@ -4924,8 +4930,8 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 		}
 	}
 
-	// TODO remove needless rules
-	for _, v := range allRules{
+	// remove needless rules
+	for _, v := range allRules {
 		tikvHelper.DeletePlacementRule("tiflash", v.ID)
 	}
 	return allReplicaReady, nil
