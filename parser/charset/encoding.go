@@ -141,8 +141,8 @@ func (e *Encoding) EncodeInternal(dest, src []byte) []byte {
 	return dest
 }
 
-// Check whether there are illegal utf8 characters in []byte
-func (e *Encoding) vaildUTF8(src []byte) ([]byte, error) {
+// validUTF8 checks whether there are illegal utf8 characters in []byte.
+func (e *Encoding) validUTF8(src []byte) ([]byte, error) {
 	resultBytes := src
 	for len(src) > 0 {
 		r, size := utf8.DecodeRune(src)
@@ -155,8 +155,8 @@ func (e *Encoding) vaildUTF8(src []byte) ([]byte, error) {
 	return resultBytes, nil
 }
 
-// Check whether there are illegal utf8 characters in string
-func (e *Encoding) vaildUTF8String(src string) (string, error) {
+// validUTF8String checks whether there are illegal utf8 characters in string.
+func (e *Encoding) validUTF8String(src string) (string, error) {
 	resultStr := src
 	for len(src) > 0 {
 		r, size := utf8.DecodeRuneInString(src)
@@ -173,7 +173,7 @@ func (e *Encoding) vaildUTF8String(src string) (string, error) {
 func (e *Encoding) Decode(dest, src []byte) ([]byte, error) {
 	if !e.enabled() {
 		if e.name == "utf-8" {
-			return e.vaildUTF8(src)
+			return e.validUTF8(src)
 		}
 		return src, nil
 	}
@@ -184,7 +184,7 @@ func (e *Encoding) Decode(dest, src []byte) ([]byte, error) {
 func (e *Encoding) DecodeString(src string) (string, error) {
 	if !e.enabled() {
 		if e.name == "utf-8" {
-			return e.vaildUTF8String(src)
+			return e.validUTF8String(src)
 		}
 		return src, nil
 	}
