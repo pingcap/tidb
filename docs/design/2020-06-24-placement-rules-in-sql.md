@@ -229,8 +229,8 @@ SHOW PLACEMENT;
 +----------------------------+----------------------------------------------------------------------+------------------+
 | target                     | placement                                                            | scheduling_state |
 +----------------------------+----------------------------------------------------------------------+------------------+
-| POLICY system              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4 | SCHEDULED        |
-| POLICY default             | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | SCHEDULED        |
+| POLICY system              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4 | NULL             |
+| POLICY default             | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | NULL             |
 | DATABASE test              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | SCHEDULED        |
 | TABLE test.t1              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | SCHEDULED        |
 | TABLE test.t1 PARTITION p1 | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | INPROGRESS       |
@@ -241,8 +241,8 @@ SHOW PLACEMENT LIKE 'POLICY%';
 +----------------------------+----------------------------------------------------------------------+------------------+
 | target                     | placement                                                            | scheduling_state |
 +----------------------------+----------------------------------------------------------------------+------------------+
-| POLICY system              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4 | SCHEDULED        |
-| POLICY default             | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | SCHEDULED        |
+| POLICY system              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4 | NULL             |
+| POLICY default             | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | NULL             |
 +----------------------------+----------------------------------------------------------------------+------------------+
 2 rows in set (0.00 sec)
 
@@ -257,7 +257,6 @@ SHOW PLACEMENT FOR DATABASE test;
 3 rows in set (0.00 sec)
 ```
 
-
 TiDB will automatically find the effective rule based on the rule priorities.
 
 This statement outputs at most 1 line. For example, when querying a table, only the placement rule defined on the table itself is shown, and the partitions in it will not be shown.
@@ -265,12 +264,12 @@ This statement outputs at most 1 line. For example, when querying a table, only 
 The output of this statement contains these fields:
 
 * Target: The object queried. It can be a database, table, partition, or index.
-    * For policies, it is shown as the policy name.
-    * For database, it is shown in the format `DATABASE database_name`
-    * For table, it is shown in the format `TABLE database_name.table_name`
-    * For partition, it is shown in the format `TABLE database_name.table_name PARTITION partition_name`
+  * For policies, it is shown as the policy name.
+  * For database, it is shown in the format `DATABASE database_name`
+  * For table, it is shown in the format `TABLE database_name.table_name`
+  * For partition, it is shown in the format `TABLE database_name.table_name PARTITION partition_name`
 * Placement: An equivalent `ALTER` statement on `target` that defines the placement rule.
-* Scheduling state: The scheduling progress from the PD aspect.
+* Scheduling state: The scheduling progress from the PD aspect. It is always `NULL` for policies.
 
 For finding the current use of a placement policy, the following syntax can be used:
 
@@ -1040,6 +1039,9 @@ CREATE PLACEMENT POLICY europe CONSTRAINTS="+region=eu-west-1" RESTRICTED;
 This specific semantic will be the hardest to implement because of the other dependencies in the server.
 
 ## Changelog
+
+* 2021-10-29:
+  - Add more description to 'scheduling_state'.
 
 * 2021-09-13:
   - Removed support for `VOTER_CONSTRAINTS` and `VOTERS`. The motivation for this change is that dictionary syntax is ambiguous cases when both `VOTER_CONSTRAINTS` and `FOLLOWER_CONSTAINTS` are set. We can re-add this syntax if there is a clear use-case requirement in future.
