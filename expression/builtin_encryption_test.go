@@ -258,15 +258,20 @@ func fromHex(str interface{}) (d types.Datum) {
 }
 
 var sha1Tests = []struct {
+	chs    string
 	origin interface{}
 	crypt  string
 }{
-	{"test", "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3"},
-	{"c4pt0r", "034923dcabf099fc4c8917c0ab91ffcd4c2578a6"},
-	{"pingcap", "73bf9ef43a44f42e2ea2894d62f0917af149a006"},
-	{"foobar", "8843d7f92416211de9ebb963ff4ce28125932878"},
-	{1024, "128351137a9c47206c4507dcf2e6fbeeca3a9079"},
-	{123.45, "22f8b438ad7e89300b51d88684f3f0b9fa1d7a32"},
+	{mysql.DefaultCollationName, "test", "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3"},
+	{mysql.DefaultCollationName, "c4pt0r", "034923dcabf099fc4c8917c0ab91ffcd4c2578a6"},
+	{mysql.DefaultCollationName, "pingcap", "73bf9ef43a44f42e2ea2894d62f0917af149a006"},
+	{mysql.DefaultCollationName, "foobar", "8843d7f92416211de9ebb963ff4ce28125932878"},
+	{mysql.DefaultCollationName, 1024, "128351137a9c47206c4507dcf2e6fbeeca3a9079"},
+	{mysql.DefaultCollationName, 123.45, "22f8b438ad7e89300b51d88684f3f0b9fa1d7a32"},
+	{"gbk", 123.45, "22f8b438ad7e89300b51d88684f3f0b9fa1d7a32"},
+	{"gbk", "一二三", "01c1743ce7a7e822454a659f659bad61375ff10c"},
+	{"gbk", "一二三123", "7c9a76465a02c41d377596431ef29418e2f6a72c"},
+	{"gbk", "", "da39a3ee5e6b4b0d3255bfef95601890afd80709"},
 }
 
 func TestSha1Hash(t *testing.T) {
@@ -275,6 +280,8 @@ func TestSha1Hash(t *testing.T) {
 
 	fc := funcs[ast.SHA]
 	for _, tt := range sha1Tests {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
+		require.NoError(t, err)
 		in := types.NewDatum(tt.origin)
 		f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{in}))
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
@@ -292,24 +299,53 @@ func TestSha1Hash(t *testing.T) {
 }
 
 var sha2Tests = []struct {
+	chs        string
 	origin     interface{}
 	hashLength interface{}
 	crypt      interface{}
 	validCase  bool
 }{
-	{"pingcap", 0, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
-	{"pingcap", 224, "cd036dc9bec69e758401379c522454ea24a6327b48724b449b40c6b7", true},
-	{"pingcap", 256, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
-	{"pingcap", 384, "c50955b6b0c7b9919740d956849eedcb0f0f90bf8a34e8c1f4e071e3773f53bd6f8f16c04425ff728bed04de1b63db51", true},
-	{"pingcap", 512, "ea903c574370774c4844a83b7122105a106e04211673810e1baae7c2ae7aba2cf07465e02f6c413126111ef74a417232683ce7ba210052e63c15fc82204aad80", true},
-	{13572468, 0, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
-	{13572468, 224, "8ad67735bbf49576219f364f4640d595357a440358d15bf6815a16e4", true},
-	{13572468, 256, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
-	{13572468.123, 384, "3b4ee302435dc1e15251efd9f3982b1ca6fe4ac778d3260b7bbf3bea613849677eda830239420e448e4c6dc7c2649d89", true},
-	{13572468.123, 512, "4820aa3f2760836557dc1f2d44a0ba7596333fdb60c8a1909481862f4ab0921c00abb23d57b7e67a970363cc3fcb78b25b6a0d45cdcac0e87aa0c96bc51f7f96", true},
-	{nil, 224, nil, false},
-	{"pingcap", nil, nil, false},
-	{"pingcap", 123, nil, false},
+	{mysql.DefaultCollationName, "pingcap", 0, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
+	{mysql.DefaultCollationName, "pingcap", 224, "cd036dc9bec69e758401379c522454ea24a6327b48724b449b40c6b7", true},
+	{mysql.DefaultCollationName, "pingcap", 256, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
+	{mysql.DefaultCollationName, "pingcap", 384, "c50955b6b0c7b9919740d956849eedcb0f0f90bf8a34e8c1f4e071e3773f53bd6f8f16c04425ff728bed04de1b63db51", true},
+	{mysql.DefaultCollationName, "pingcap", 512, "ea903c574370774c4844a83b7122105a106e04211673810e1baae7c2ae7aba2cf07465e02f6c413126111ef74a417232683ce7ba210052e63c15fc82204aad80", true},
+	{mysql.DefaultCollationName, 13572468, 0, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
+	{mysql.DefaultCollationName, 13572468, 224, "8ad67735bbf49576219f364f4640d595357a440358d15bf6815a16e4", true},
+	{mysql.DefaultCollationName, 13572468, 256, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
+	{mysql.DefaultCollationName, 13572468.123, 384, "3b4ee302435dc1e15251efd9f3982b1ca6fe4ac778d3260b7bbf3bea613849677eda830239420e448e4c6dc7c2649d89", true},
+	{mysql.DefaultCollationName, 13572468.123, 512, "4820aa3f2760836557dc1f2d44a0ba7596333fdb60c8a1909481862f4ab0921c00abb23d57b7e67a970363cc3fcb78b25b6a0d45cdcac0e87aa0c96bc51f7f96", true},
+	{mysql.DefaultCollationName, nil, 224, nil, false},
+	{mysql.DefaultCollationName, "pingcap", nil, nil, false},
+	{mysql.DefaultCollationName, "pingcap", 123, nil, false},
+	{"gbk", "pingcap", 0, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
+	{"gbk", "pingcap", 224, "cd036dc9bec69e758401379c522454ea24a6327b48724b449b40c6b7", true},
+	{"gbk", "pingcap", 256, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
+	{"gbk", "pingcap", 384, "c50955b6b0c7b9919740d956849eedcb0f0f90bf8a34e8c1f4e071e3773f53bd6f8f16c04425ff728bed04de1b63db51", true},
+	{"gbk", "pingcap", 512, "ea903c574370774c4844a83b7122105a106e04211673810e1baae7c2ae7aba2cf07465e02f6c413126111ef74a417232683ce7ba210052e63c15fc82204aad80", true},
+	{"gbk", 13572468, 0, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
+	{"gbk", 13572468, 224, "8ad67735bbf49576219f364f4640d595357a440358d15bf6815a16e4", true},
+	{"gbk", 13572468, 256, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
+	{"gbk", 13572468.123, 384, "3b4ee302435dc1e15251efd9f3982b1ca6fe4ac778d3260b7bbf3bea613849677eda830239420e448e4c6dc7c2649d89", true},
+	{"gbk", 13572468.123, 512, "4820aa3f2760836557dc1f2d44a0ba7596333fdb60c8a1909481862f4ab0921c00abb23d57b7e67a970363cc3fcb78b25b6a0d45cdcac0e87aa0c96bc51f7f96", true},
+	{"gbk", nil, 224, nil, false},
+	{"gbk", "pingcap", nil, nil, false},
+	{"gbk", "pingcap", 123, nil, false},
+	{"gbk", "一二三", 0, "4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7", true},
+	{"gbk", "一二三", 224, "ae47a60dd96e1deed3988d8fff3d662165e0aac7ddf371f244d7c11e", true},
+	{"gbk", "一二三", 256, "4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7", true},
+	{"gbk", "一二三", 384, "cdb9c8d3e2579d021116ebe9d7d7bb4f5b3a489cae84768f7b3348c9b8d716897a409ea96fd92bfb95e3fd8aa91ffc74", true},
+	{"gbk", "一二三", 512, "f033786177a79c88567e39a44eef41b9da7a21912b4b64464fe5021f75c0e1da120e5018bb0d115746512e758966eff1aa6f7d6eca1617164189e4e1bd975908", true},
+	{"gbk", "一二三123", 0, "1d1494c249ac99db8ff845b1b53b468fbbf2fb2a67b7889e8a780aff78a2e43b", true},
+	{"gbk", "一二三123", 224, "7974f24c519c5a7b8a907b6e34b6a9830898ea5af46dc80e53892ee4", true},
+	{"gbk", "一二三123", 256, "1d1494c249ac99db8ff845b1b53b468fbbf2fb2a67b7889e8a780aff78a2e43b", true},
+	{"gbk", "一二三123", 384, "bddc0f0cf70dd9ecf0bb64c6039d178e3fd8e5b1ec0d57bd1ccd82889f83cd6d9ea8ea74ab37b8377369ebf922426519", true},
+	{"gbk", "一二三123", 512, "0fee43a57577416e0674e2de4cc9d43d96b81453b5b2c5d03c83f840ed420993535f3c54ad63b9bf7a4e02d5425fe1291770b0b2cca0624ca47ef8354dc651d6", true},
+	{"gbk", "", 0, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", true},
+	{"gbk", "", 224, "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f", true},
+	{"gbk", "", 256, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", true},
+	{"gbk", "", 384, "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b", true},
+	{"gbk", "", 512, "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e", true},
 }
 
 func TestSha2Hash(t *testing.T) {
@@ -318,6 +354,8 @@ func TestSha2Hash(t *testing.T) {
 
 	fc := funcs[ast.SHA2]
 	for _, tt := range sha2Tests {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
+		require.NoError(t, err)
 		str := types.NewDatum(tt.origin)
 		hashLength := types.NewDatum(tt.hashLength)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, hashLength}))

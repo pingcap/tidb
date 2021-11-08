@@ -84,3 +84,31 @@ select password(a), password(b), password(c) from t;
 set @@tidb_enable_vectorized_expression = true;
 select password(a), password(b), password(c) from t;
 set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function sha1()/sha()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select sha1(a), sha1(b), sha1(c) from t;
+select sha(a), sha(b), sha(c) from t;
+set @@tidb_enable_vectorized_expression = true;
+select sha1(a), sha1(b), sha1(c) from t;
+select sha(a), sha(b), sha(c) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function sha2()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select sha2(a, 0), sha2(b, 0), sha2(c, 0) from t;
+select sha2(a, 224), sha2(b, 224), sha2(c, 224) from t;
+select sha2(a, 256), sha2(b, 256), sha2(c, 256) from t;
+select sha2(a, 384), sha2(b, 384), sha2(c, 384) from t;
+select sha2(a, 514), sha2(b, 514), sha2(c, 514) from t;
+set @@tidb_enable_vectorized_expression = true;
+select sha2(a, 0), sha2(b, 0), sha2(c, 0) from t;
+select sha2(a, 224), sha2(b, 224), sha2(c, 224) from t;
+select sha2(a, 256), sha2(b, 256), sha2(c, 256) from t;
+select sha2(a, 384), sha2(b, 384), sha2(c, 384) from t;
+select sha2(a, 514), sha2(b, 514), sha2(c, 514) from t;
+set @@tidb_enable_vectorized_expression = false;
