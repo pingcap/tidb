@@ -234,7 +234,8 @@ func TestSlowLogFormat(t *testing.T) {
 # Backoff_total: 12
 # Write_sql_response_total: 1
 # Result_rows: 12345
-# Succ: true`
+# Succ: true
+# IsExplicitTxn: true`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
@@ -269,6 +270,7 @@ func TestSlowLogFormat(t *testing.T) {
 		},
 		ExecRetryCount: 3,
 		ExecRetryTime:  5*time.Second + time.Millisecond*100,
+		IsExplicitTxn:  true,
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)

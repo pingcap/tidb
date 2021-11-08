@@ -37,7 +37,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
@@ -504,6 +506,7 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		collation:  mysql.DefaultCollationID,
 		peerHost:   "localhost",
 		alloc:      arena.NewAllocator(512),
+		chunkAlloc: chunk.NewAllocator(),
 		ctx:        tc,
 		capability: capability,
 	}
@@ -581,8 +584,9 @@ func TestConnExecutionTimeout(t *testing.T) {
 		server: &Server{
 			capability: defaultCapability,
 		},
-		ctx:   tc,
-		alloc: arena.NewAllocator(32 * 1024),
+		ctx:        tc,
+		alloc:      arena.NewAllocator(32 * 1024),
+		chunkAlloc: chunk.NewAllocator(),
 	}
 	srv := &Server{
 		clients: map[uint64]*clientConn{
@@ -690,7 +694,8 @@ func TestPrefetchPointKeys(t *testing.T) {
 	defer clean()
 
 	cc := &clientConn{
-		alloc: arena.NewAllocator(1024),
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
@@ -762,7 +767,8 @@ func TestTiFlashFallback(t *testing.T) {
 	defer clean()
 
 	cc := &clientConn{
-		alloc: arena.NewAllocator(1024),
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
@@ -853,6 +859,16 @@ func TestTiFlashFallback(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/establishMppConnectionErr", "return(true)"))
 	testFallbackWork(t, tk, cc, "select * from t t1 join t t2 on t1.a = t2.a")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/establishMppConnectionErr"))
+
+	// When fallback is not set, TiFlash mpp will return the original error message
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "return(true)"))
+	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
+	tk.MustExec("set @@tidb_allow_mpp=ON")
+	tk.MustExec("set @@tidb_enforce_mpp=ON")
+	tk.MustExec("set @@tidb_isolation_read_engines='tiflash,tidb'")
+	err = cc.handleQuery(ctx, "select count(*) from t")
+	require.Error(t, err)
+	require.NotEqual(t, err.Error(), tikverr.ErrTiFlashServerTimeout.Error())
 }
 
 func testFallbackWork(t *testing.T, tk *testkit.TestKit, cc *clientConn, sql string) {
@@ -872,7 +888,8 @@ func TestShowErrors(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	cc := &clientConn{
-		alloc: arena.NewAllocator(1024),
+		alloc:      arena.NewAllocator(1024),
+		chunkAlloc: chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
@@ -909,6 +926,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	cc := &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},

@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,4 +32,27 @@ func TestInsertStatementMemoryAllocation(t *testing.T) {
 	require.NoError(t, err)
 	runtime.ReadMemStats(&newStats)
 	require.Less(t, int(newStats.TotalAlloc-oldStats.TotalAlloc), 1024*500)
+}
+
+func TestCharsetIntroducer(t *testing.T) {
+	p := parser.New()
+	// `_gbk` is treated as an identifier.
+	_, _, err := p.Parse("select _gbk 'a';", "", "")
+	require.NoError(t, err)
+
+	charset.AddCharset(&charset.Charset{
+		Name:             "gbk",
+		DefaultCollation: "gbk_bin",
+		Collations:       map[string]*charset.Collation{},
+		Desc:             "gbk",
+		Maxlen:           2,
+	})
+	defer charset.RemoveCharset("gbk")
+	// `_gbk` is treated as a character set.
+	_, _, err = p.Parse("select _gbk 'a';", "", "")
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	_, _, err = p.Parse("select _gbk 0x1234;", "", "")
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	_, _, err = p.Parse("select _gbk 0b101001;", "", "")
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 }

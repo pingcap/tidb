@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -925,14 +924,14 @@ type SessionVars struct {
 	// see https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_cte_max_recursion_depth
 	CTEMaxRecursionDepth int
 
-	// The temporary table size threshold
-	// In MySQL, when a temporary table exceed this size, it spills to disk.
-	// In TiDB, as we do not support spill to disk for now, an error is reported.
-	// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_tmp_table_size
+	// The temporary table size threshold, which is different from MySQL. See https://github.com/pingcap/tidb/issues/28691.
 	TMPTableSize int64
 
 	// EnableStableResultMode if stabilize query results.
 	EnableStableResultMode bool
+
+	// EnablePseudoForOutdatedStats if using pseudo for outdated stats
+	EnablePseudoForOutdatedStats bool
 
 	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
 	// It's nil if there is no local temporary table.
@@ -955,11 +954,6 @@ type SessionVars struct {
 		curr int8
 		data [2]stmtctx.StatementContext
 	}
-
-	// EnableMPPBalanceWithContinuousRegion indicates whether MPP balance logic will take account of region's continuity in TiFlash.
-	EnableMPPBalanceWithContinuousRegion bool
-	// EnableMPPBalanceWithContinuousRegionCount indicates the continuous region count that balance logic assigns to a TiFlash instance each time.
-	EnableMPPBalanceWithContinuousRegionCount int64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1189,7 +1183,7 @@ func NewSessionVars() *SessionVars {
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
-		TMPTableSize:                DefTMPTableSize,
+		TMPTableSize:                DefTiDBTmpTableMaxSize,
 		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 		EnablePlacementChecks:       DefEnablePlacementCheck,
@@ -1313,6 +1307,16 @@ func (s *SessionVars) SetEnableIndexMerge(val bool) {
 	s.enableIndexMerge = val
 }
 
+// GetEnablePseudoForOutdatedStats get EnablePseudoForOutdatedStats from SessionVars.EnablePseudoForOutdatedStats.
+func (s *SessionVars) GetEnablePseudoForOutdatedStats() bool {
+	return s.EnablePseudoForOutdatedStats
+}
+
+// SetEnablePseudoForOutdatedStats set SessionVars.EnablePseudoForOutdatedStats.
+func (s *SessionVars) SetEnablePseudoForOutdatedStats(val bool) {
+	s.EnablePseudoForOutdatedStats = val
+}
+
 // GetReplicaRead get ReplicaRead from sql hints and SessionVars.replicaRead.
 func (s *SessionVars) GetReplicaRead() kv.ReplicaReadType {
 	if s.StmtCtx.HasReplicaReadHint {
@@ -1384,10 +1388,10 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 // SetUserVar set the value and collation for user defined variable.
 func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
 	if len(collation) > 0 {
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
 	} else {
 		_, collation = s.GetCharsetInfo()
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation)
 	}
 }
 
@@ -1997,6 +2001,8 @@ const (
 	SlowLogBackoffDetail = "Backoff_Detail"
 	// SlowLogResultRows is the row count of the SQL result.
 	SlowLogResultRows = "Result_rows"
+	// SlowLogIsExplicitTxn is used to indicate whether this sql execute in explicit transaction or not.
+	SlowLogIsExplicitTxn = "IsExplicitTxn"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -2032,6 +2038,7 @@ type SlowQueryLogItems struct {
 	ExecRetryCount    uint
 	ExecRetryTime     time.Duration
 	ResultRows        int64
+	IsExplicitTxn     bool
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -2196,6 +2203,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogWriteSQLRespTotal, strconv.FormatFloat(logItems.WriteSQLRespTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogResultRows, strconv.FormatInt(logItems.ResultRows, 10))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
+	writeSlowLogItem(&buf, SlowLogIsExplicitTxn, strconv.FormatBool(logItems.IsExplicitTxn))
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
 	}
