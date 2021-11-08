@@ -157,13 +157,9 @@ func TestCacheCondition(t *testing.T) {
 
 	// Normal query should trigger cache.
 	tk.MustQuery("select * from t2")
-	var i int
-	for ; i < 10; i++ {
-		if tk.HasPlan("select * from t2 where id>0", "UnionScan") {
-			return
-		}
+	for !tk.HasPlan("select * from t2 where id>0", "UnionScan") {
+		tk.MustExec("select * from t2")
 	}
-	require.True(t, i < 10)
 }
 
 func TestCacheTableBasicReadAndWrite(t *testing.T) {
@@ -195,11 +191,13 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 	// write lock exists
 	require.False(t, tk.HasPlan("select *from write_tmp1", "UnionScan"))
 	// wait write lock expire and check cache can be used again
-	for tk.HasPlan("select *from write_tmp1", "UnionScan") {
+	for !tk.HasPlan("select *from write_tmp1", "UnionScan") {
+		tk.MustExec("select *from write_tmp1")
 	}
 	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 222", "3 113 1003"))
 	tk1.MustExec("update write_tmp1 set v = 3333 where id = 2")
-	for tk.HasPlan("select *from write_tmp1", "UnionScan") {
+	for !tk.HasPlan("select *from write_tmp1", "UnionScan") {
+		tk.MustExec("select *from write_tmp1")
 	}
 	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
 }
