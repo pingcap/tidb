@@ -312,11 +312,11 @@ func TestGreatestLeastFunc(t *testing.T) {
 		},
 		{
 			[]interface{}{tm, "invalid_time_1", "invalid_time_2", tmWithFsp},
-			curTimeWithFspString, curTimeString, false, false,
+			"invalid_time_2", curTimeString, false, false,
 		},
 		{
 			[]interface{}{tm, "invalid_time_2", "invalid_time_1", tmWithFsp},
-			curTimeWithFspString, curTimeString, false, false,
+			"invalid_time_2", curTimeString, false, false,
 		},
 		{
 			[]interface{}{tm, "invalid_time", nil, tmWithFsp},
@@ -328,7 +328,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 		},
 		{
 			[]interface{}{duration, duration},
-			"12:59:59", "12:59:59", false, false,
+			duration, duration, false, false,
 		},
 		{
 			[]interface{}{"123", nil, "123"},

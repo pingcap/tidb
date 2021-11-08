@@ -57,6 +57,11 @@ type Range struct {
 	HighExclude bool // High value is exclusive.
 }
 
+// Width returns the width of this range.
+func (ran *Range) Width() int {
+	return len(ran.LowVal)
+}
+
 // Clone clones a Range.
 func (ran *Range) Clone() *Range {
 	newRange := &Range{

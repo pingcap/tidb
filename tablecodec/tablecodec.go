@@ -980,6 +980,11 @@ func IsIndexKey(k []byte) bool {
 	return len(k) > 11 && k[0] == 't' && k[10] == 'i'
 }
 
+// IsTableKey is used to check whether the key is a table key.
+func IsTableKey(k []byte) bool {
+	return len(k) == 9 && k[0] == 't'
+}
+
 // IsUntouchedIndexKValue uses to check whether the key is index key, and the value is untouched,
 // since the untouched index key/value is no need to commit.
 func IsUntouchedIndexKValue(k, v []byte) bool {
