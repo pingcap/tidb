@@ -174,7 +174,7 @@ type mockStateRemoteData struct {
 
 type stateRecord struct {
 	lockLease        uint64
-	writeIntentLease uint64 // only use for intent lock
+	writeIntentLease uint64 // only use for intent lock, it means old read lease.
 	lockType         CachedTableLockType
 }
 
@@ -258,6 +258,7 @@ func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, e
 		oldLease := record.lockLease
 		record.lockType = CachedTableLockIntend
 		record.lockLease = leaseFromTS(ts)
+		record.writeIntentLease = oldLease
 		return oldLease, nil
 	case CachedTableLockWrite:
 		if ts > record.lockLease {
