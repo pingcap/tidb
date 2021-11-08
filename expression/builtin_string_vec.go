@@ -2301,6 +2301,8 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	for i := 0; i < l-1; i++ {
 		bufint[i] = buf[i].Int64s()
 	}
+	var resultBytes []byte
+	enc := charset.NewEncoding(b.tp.Charset)
 	for i := 0; i < n; i++ {
 		bigints = bigints[0:0]
 		for j := 0; j < l-1; j++ {
@@ -2312,7 +2314,7 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		}
 		dBytes := b.convertToBytes(bigints)
 
-		resultBytes, err := charset.NewEncoding(b.tp.Charset).Decode(nil, dBytes)
+		resultBytes, err := enc.Decode(resultBytes, dBytes)
 		if err != nil {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			result.AppendNull()
