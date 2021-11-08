@@ -1598,15 +1598,11 @@ func TestNO_DEFAULT_VALUEFlag(t *testing.T) {
 	require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
 }
 
-func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	session.DisableStats4Test()
-	dom, err := session.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer dom.Close()
-	ts.tidbdrv = NewTiDBDriver(ts.store)
+func TestGracefulShutdown(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
 	cli := newTestServerClient()
 	cfg := newTestConfig()
 	cfg.Socket = ""
@@ -1616,32 +1612,32 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	cfg.Status.ReportStatus = true
 	cfg.Performance.TCPKeepAlive = true
 	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
-	c.Assert(server, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, server)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
 		err := server.Run()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
 
 	resp, err := cli.fetchStatus("/status") // server is up
-	c.Assert(err, IsNil)
-	c.Assert(resp.Body.Close(), IsNil)
+	require.NoError(t, err)
+	require.Nil(t, resp.Body.Close())
 
 	go server.Close()
 	time.Sleep(time.Millisecond * 500)
 
 	resp, _ = cli.fetchStatus("/status") // should return 5xx code
-	c.Assert(resp.StatusCode, Equals, 500)
-	c.Assert(resp.Body.Close(), IsNil)
+	require.Equal(t, 500, resp.StatusCode)
+	require.Nil(t, resp.Body.Close())
 
 	time.Sleep(time.Second * 2)
 
 	// nolint: bodyclose
 	_, err = cli.fetchStatus("/status") // status is gone
-	c.Assert(err, ErrorMatches, ".*connect: connection refused")
+	require.Regexp(t, ".*connect: connection refused", err.Error())
 }
 
 func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
