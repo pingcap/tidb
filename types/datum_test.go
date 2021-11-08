@@ -151,28 +151,38 @@ func TestToInt64(t *testing.T) {
 	testDatumToInt64(t, v, int64(3))
 }
 
-func TestToUint32(t *testing.T) {
-	t.Parallel()
-
+func testDatumToUInt32(t *testing.T, val interface{}, expect uint32, hasError bool) {
+	d := NewDatum(val)
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
 
-	// test overflow
-	var datum = NewUintDatum(5000000000)
 	ft := NewFieldType(mysql.TypeLong)
 	ft.Flag |= mysql.UnsignedFlag
-	converted, err := datum.ConvertTo(sc, ft)
-	require.Error(t, err)
-	require.Equal(t, KindUint64, converted.Kind())
-	require.Equal(t, uint64(4294967295), converted.GetUint64())
+	converted, err := d.ConvertTo(sc, ft)
 
-	datum.SetUint64(12345)
-	ft = NewFieldType(mysql.TypeLong)
-	ft.Flag |= mysql.UnsignedFlag
-	converted, err = datum.ConvertTo(sc, ft)
-	require.NoError(t, err)
+	if hasError {
+		require.Error(t, err)
+	} else {
+		require.NoError(t, err)
+	}
+
 	require.Equal(t, KindUint64, converted.Kind())
-	require.Equal(t, uint64(12345), converted.GetUint64())
+	require.Equal(t, uint64(expect), converted.GetUint64())
+}
+
+func TestToUint32(t *testing.T) {
+	t.Parallel()
+
+	// test overflow
+	testDatumToUInt32(t, 5000000000, 4294967295, true)
+	testDatumToUInt32(t, int64(-1), 4294967295, true)
+	testDatumToUInt32(t, "5000000000", 4294967295, true)
+
+	testDatumToUInt32(t, 12345, 12345, false)
+	testDatumToUInt32(t, int64(0), 0, false)
+	testDatumToUInt32(t, 2147483648, 2147483648, false)
+	testDatumToUInt32(t, Enum{Name: "a", Value: 1}, 1, false)
+	testDatumToUInt32(t, Set{Name: "a", Value: 1}, 1, false)
 }
 
 func TestToFloat32(t *testing.T) {
