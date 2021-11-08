@@ -260,6 +260,7 @@ type CachedTable interface {
 	UpdateLockForRead(ctx sessionctx.Context, ts uint64) error
 }
 
+// CacheData pack the cache data and lease.
 type CacheData struct {
 	Lease uint64
 	kv.MemBuffer

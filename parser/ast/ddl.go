@@ -2484,7 +2484,9 @@ const (
 	AlterTableRenameIndex
 	AlterTableForce
 	AlterTableAddPartitions
-	AlterTableAlterPartition
+	// A tombstone for `AlterTableAlterPartition`. It will never be used anymore.
+	// Just left a tombstone here to keep the enum number unchanged.
+	__DEPRECATED_AlterTableAlterPartition
 	AlterTablePartitionAttributes
 	AlterTablePartitionOptions
 	AlterTableCoalescePartitions
@@ -2910,23 +2912,6 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		} else if n.Num != 0 {
 			ctx.WriteKeyWord(" PARTITIONS ")
 			ctx.WritePlainf("%d", n.Num)
-		}
-	case AlterTableAlterPartition:
-		if len(n.PartitionNames) != 1 {
-			return errors.Errorf("Maybe partition options are combined.")
-		}
-
-		ctx.WriteKeyWord("ALTER PARTITION ")
-		ctx.WriteName(n.PartitionNames[0].O)
-		ctx.WritePlain(" ")
-
-		for i, spec := range n.PlacementSpecs {
-			if i != 0 {
-				ctx.WritePlain(", ")
-			}
-			if err := spec.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.PlacementSpecs[%d]", i)
-			}
 		}
 	case AlterTablePartitionOptions:
 		ctx.WriteKeyWord("PARTITION ")

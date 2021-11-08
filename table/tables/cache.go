@@ -34,9 +34,16 @@ var _ table.CachedTable = &cachedTable{}
 
 type cachedTable struct {
 	TableCommon
-
-	handle    StateRemote
 	cacheData atomic.Value
+	handle    StateRemote
+}
+
+func leaseFromTS(ts uint64) uint64 {
+	// TODO make this configurable in the following PRs
+	const defaultLeaseDuration time.Duration = 3 * time.Second
+	physicalTime := oracle.GetTimeFromTS(ts)
+	lease := oracle.GoTimeToTS(physicalTime.Add(defaultLeaseDuration))
+	return lease
 }
 
 func (c *cachedTable) TryReadFromCache(ts uint64) *table.CacheData {
@@ -58,32 +65,13 @@ var mockStateRemote = struct {
 	Data *mockStateRemoteData
 }{}
 
-func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
-	// Here is a trick to get a MemBuffer data, because the internal API is not exposed.
-	// Create a transaction with start ts 0, and take the MemBuffer out.
-	buffTxn, err := store.BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
-	if err != nil {
-		return nil, err
-	}
-	return buffTxn.GetMemBuffer(), nil
-}
-
-func leaseFromTS(ts uint64) uint64 {
-	const defaultLeaseDuration time.Duration = 3 * time.Second
-	physicalTime := oracle.GetTimeFromTS(ts)
-	lease := oracle.GoTimeToTS(physicalTime.Add(defaultLeaseDuration))
-	return lease
-}
-
 // NewCachedTable creates a new CachedTable Instance
 func NewCachedTable(tbl *TableCommon) (table.Table, error) {
-	// Only for the first time.
 	if mockStateRemote.Data == nil {
 		mockStateRemote.Data = newMockStateRemoteData()
 		mockStateRemote.Ch = make(chan remoteTask, 100)
 		go mockRemoteService(mockStateRemote.Data, mockStateRemote.Ch)
 	}
-
 	ret := &cachedTable{
 		TableCommon: *tbl,
 		handle:      &mockStateRemoteHandle{mockStateRemote.Ch},
@@ -92,51 +80,52 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 	return ret, nil
 }
 
-func loadDataFromOriginalTable(sctx sessionctx.Context, tid int64, lease uint64) (kv.MemBuffer, error) {
-	prefix := tablecodec.GenTablePrefix(tid)
-	// TODO: Should use a new internal transaction here,
-	txn, err := sctx.Txn(true)
+func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context, lease uint64) (kv.MemBuffer, error) {
+	prefix := tablecodec.GenTablePrefix(c.tableID)
+	txn, err := ctx.Txn(true)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if txn.StartTS() >= lease {
 		return nil, errors.New("the loaded data is outdate for caching")
 	}
 
+	buffTxn, err := ctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
+	if err != nil {
+		return nil, err
+	}
+
+	buffer := buffTxn.GetMemBuffer()
 	it, err := txn.Iter(prefix, prefix.PrefixNext())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	defer it.Close()
-
-	mb, err := newMemBuffer(sctx.GetStore())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		value := it.Value()
-		err = mb.Set(it.Key(), value)
+		err = buffer.Set(it.Key(), value)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		err = it.Next()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
-	return mb, nil
+
+	return buffer, nil
 }
 
 func (c *cachedTable) UpdateLockForRead(ctx sessionctx.Context, ts uint64) error {
+	// Load data from original table and the update lock information.
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts)
 	succ, err := c.handle.LockForRead(tid, ts, lease)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	if succ {
-		mb, err := loadDataFromOriginalTable(ctx, tid, lease)
+		mb, err := c.loadDataFromOriginalTable(ctx, lease)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -146,11 +135,11 @@ func (c *cachedTable) UpdateLockForRead(ctx sessionctx.Context, ts uint64) error
 			MemBuffer: mb,
 		})
 	}
-
 	// Current status is not suitable to cache.
 	return nil
 }
 
+// AddRecord implements the AddRecord method for the table.Table interface.
 func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	txn, err := ctx.Txn(true)
 	if err != nil {
@@ -164,7 +153,7 @@ func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	return c.TableCommon.AddRecord(ctx, r, opts...)
 }
 
-// UpdateRecord updates a row which should contain only writable columns.
+// UpdateRecord implements table.Table
 func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
 	txn, err := sctx.Txn(true)
 	if err != nil {
@@ -178,7 +167,7 @@ func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	return c.TableCommon.UpdateRecord(ctx, sctx, h, oldData, newData, touched)
 }
 
-// RemoveRecord removes a row in the table.
+// RemoveRecord implements table.Table RemoveRecord interface.
 func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
