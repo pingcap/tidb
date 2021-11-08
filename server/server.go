@@ -619,6 +619,9 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
+		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
+			continue
+		}
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
 		}
@@ -685,10 +688,6 @@ func (s *Server) getTLSConfig() *tls.Config {
 func killConn(conn *clientConn) {
 	sessVars := conn.ctx.GetSessionVars()
 	atomic.StoreUint32(&sessVars.Killed, 1)
-	// 'killed' status can be showed in State field when show processlist
-	sessVars.SetStatusFlag(mysql.ServerStatusKilled, true)
-	// we need use the following function to Store the value into State, but it will also rewrite Info
-	conn.ctx.SetProcessInfo("", time.Now(), mysql.ComProcessKill, 0)
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
