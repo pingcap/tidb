@@ -439,6 +439,10 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 				return
 			}
 		}
+		tableInfo := tbl.Meta()
+		dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
+		tn.TableInfo = tableInfo
+		tn.DBInfo = dbInfo
 	}
 
 	originSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()))
