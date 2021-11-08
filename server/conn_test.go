@@ -581,8 +581,8 @@ func TestConnExecutionTimeout(t *testing.T) {
 		server: &Server{
 			capability: defaultCapability,
 		},
-		ctx:        tc,
-		alloc:      arena.NewAllocator(32 * 1024),
+		ctx:   tc,
+		alloc: arena.NewAllocator(32 * 1024),
 	}
 	srv := &Server{
 		clients: map[uint64]*clientConn{
@@ -690,7 +690,7 @@ func TestPrefetchPointKeys(t *testing.T) {
 	defer clean()
 
 	cc := &clientConn{
-		alloc:      arena.NewAllocator(1024),
+		alloc: arena.NewAllocator(1024),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
@@ -762,7 +762,7 @@ func TestTiFlashFallback(t *testing.T) {
 	defer clean()
 
 	cc := &clientConn{
-		alloc:      arena.NewAllocator(1024),
+		alloc: arena.NewAllocator(1024),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
@@ -872,7 +872,7 @@ func TestShowErrors(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	cc := &clientConn{
-		alloc:      arena.NewAllocator(1024),
+		alloc: arena.NewAllocator(1024),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
