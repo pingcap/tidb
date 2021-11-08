@@ -77,7 +77,7 @@ const (
 	ActionDropCheckConstraint           ActionType = 44
 	ActionAlterCheckConstraint          ActionType = 45
 
-	// `ActionAlterTableAlterPartition` is removed will never be used.
+	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
 	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46
 
@@ -151,7 +151,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterCacheTable:               "alter cache table",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 
-	// `ActionAlterTableAlterPartition` is removed will never be used.
+	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
 	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",
 }
