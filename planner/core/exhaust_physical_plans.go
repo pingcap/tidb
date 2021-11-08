@@ -1360,7 +1360,12 @@ func (mr *mutableIndexJoinRange) Rebuild() error {
 		return err
 	}
 	if empty { // empty ranges are dangerous for plan-cache, it's better to optimize the whole plan again in this case
-		return errors.New("rebuild range failed")
+		return errors.New("failed to rebuild range: empty range")
+	}
+	newRanges := mr.buildHelper.chosenRanges.Range()
+	if len(mr.ranges) != len(newRanges) || (len(mr.ranges) > 0 && mr.ranges[0].Width() != newRanges[0].Width()) {
+		// some access conditions cannot be used to calculate the range after parameters change, return an error in this case for safety.
+		return errors.New("failed to rebuild range: range width changed")
 	}
 	mr.ranges = mr.buildHelper.chosenRanges.Range()
 	return nil
