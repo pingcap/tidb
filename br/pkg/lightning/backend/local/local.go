@@ -2351,11 +2351,9 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
-	versionStr, err := local.g.GetSQLExecutor().ObtainStringWithLog(
-		ctx,
-		"SELECT version();",
-		"check TiDB version",
-		log.L())
+	// TODO: support lightning via SQL
+	db, _ := local.g.GetDB()
+	versionStr, err := version.FetchVersion(ctx, db)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2369,8 +2367,8 @@ func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.Che
 		return err
 	}
 
-	tidbVersion, _ := version.ExtractTiDBVersion(versionStr)
-	return checkTiFlashVersion(ctx, local.g, checkCtx, *tidbVersion)
+	serverInfo := version.ParseServerInfo(versionStr)
+	return checkTiFlashVersion(ctx, local.g, checkCtx, *serverInfo.ServerVersion)
 }
 
 func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
