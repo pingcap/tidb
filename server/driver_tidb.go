@@ -298,10 +298,6 @@ type tidbResultSet struct {
 	preparedStmt *core.CachedPrepareStmt
 }
 
-func (trs *tidbResultSet) NewChunkFromAllocator(alloc chunk.Allocator) *chunk.Chunk {
-	return trs.recordSet.NewChunkFromAllocator(alloc)
-}
-
 func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
 	return trs.recordSet.NewChunk()
 }
