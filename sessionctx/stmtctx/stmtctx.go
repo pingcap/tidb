@@ -355,6 +355,11 @@ func (sc *StatementContext) GetCacheTable(tblID int64) (bool, interface{}) {
 	return false, nil
 }
 
+// CacheTableUsed is used by test to check whether the last query use table cache.
+func (sc *StatementContext) CacheTableUsed() bool {
+	return len(sc.cachedTables) > 0
+}
+
 // TableEntry presents table in db.
 type TableEntry struct {
 	DB    string
