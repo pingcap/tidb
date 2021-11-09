@@ -269,3 +269,73 @@ func TestTLSVerify(t *testing.T) {
 	_, _, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem", true, 528)
 	require.Error(t, err)
 }
+
+func TestErrorNoRollback(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	// Generate valid TLS certificates.
+	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key-rollback.pem", "/tmp/ca-cert-rollback.pem")
+	require.NoError(t, err)
+	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key-rollback.pem", "/tmp/server-cert-rollback.pem")
+	require.NoError(t, err)
+	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, "/tmp/client-key-rollback.pem", "/tmp/client-cert-rollback.pem")
+	require.NoError(t, err)
+	err = registerTLSConfig("client-cert-rollback-test", "/tmp/ca-cert-rollback.pem", "/tmp/client-cert-rollback.pem", "/tmp/client-key-rollback.pem", "tidb-server", true)
+	require.NoError(t, err)
+
+	defer func() {
+		os.Remove("/tmp/ca-key-rollback.pem")
+		os.Remove("/tmp/ca-cert-rollback.pem")
+
+		os.Remove("/tmp/server-key-rollback.pem")
+		os.Remove("/tmp/server-cert-rollback.pem")
+		os.Remove("/tmp/client-key-rollback.pem")
+		os.Remove("/tmp/client-cert-rollback.pem")
+	}()
+
+	cli := newTestingServerClient()
+	cfg := newTestConfig()
+	cfg.Socket = ""
+	cfg.Port = cli.port
+	cfg.Status.ReportStatus = false
+
+	cfg.Security = config.Security{
+		RequireSecureTransport: true,
+		SSLCA:                  "wrong path",
+		SSLCert:                "wrong path",
+		SSLKey:                 "wrong path",
+	}
+	_, err = NewServer(cfg, ts.tidbdrv)
+	require.Error(t, err)
+
+	// test reload tls fail with/without "error no rollback option"
+	cfg.Security = config.Security{
+		SSLCA:   "/tmp/ca-cert-rollback.pem",
+		SSLCert: "/tmp/server-cert-rollback.pem",
+		SSLKey:  "/tmp/server-key-rollback.pem",
+	}
+	server, err := NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	go func() {
+		err := server.Run()
+		require.NoError(t, err)
+	}()
+	defer server.Close()
+	time.Sleep(time.Millisecond * 100)
+	connOverrider := func(config *mysql.Config) {
+		config.TLSConfig = "client-cert-rollback-test"
+	}
+	err = cli.runTestTLSConnection(t, connOverrider)
+	require.NoError(t, err)
+	os.Remove("/tmp/server-key-rollback.pem")
+	err = cli.runReloadTLS(t, connOverrider, false)
+	require.Error(t, err)
+	tlsCfg := server.getTLSConfig()
+	require.NotNil(t, tlsCfg)
+	err = cli.runReloadTLS(t, connOverrider, true)
+	require.NoError(t, err)
+	tlsCfg = server.getTLSConfig()
+	require.Nil(t, tlsCfg)
+}

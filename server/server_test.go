@@ -2062,6 +2062,21 @@ func (cli *testServerClient) runReloadTLS(t *C, overrider configOverrider, error
 	return err
 }
 
+func (cli *testingServerClient) runReloadTLS(t *testing.T, overrider configOverrider, errorNoRollback bool) error {
+	db, err := sql.Open("mysql", cli.getDSN(overrider))
+	require.NoError(t, err)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	sql := "alter instance reload tls"
+	if errorNoRollback {
+		sql += " no rollback on error"
+	}
+	_, err = db.Exec(sql)
+	return err
+}
+
 func (cli *testServerClient) runTestSumAvg(c *C) {
 	cli.runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec("create table sumavg (a int, b decimal, c double)")
