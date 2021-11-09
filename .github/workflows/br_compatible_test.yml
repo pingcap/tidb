@@ -15,7 +15,7 @@ on:
       - '!br/docs/**'
       - '!br/tests/**'
       - '!br/docker/**'
-  # disable pull request only keep the merge action since it is very cost to run those tests
+  # disable pull request only keep the merge action since it is very costly to run those tests
   # pull_request:
   #   branches:
   #     - master
