@@ -4163,7 +4163,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 					}
 				}()
 				if !b.inUpdateStmt && !b.inDeleteStmt && !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
-					err := cachedTable.UpdateLockForRead(b.ctx, txn.StartTS())
+					err := cachedTable.UpdateLockForRead(b.ctx.GetStore(), txn.StartTS())
 					if err != nil {
 						log.Warn("Update Lock Info Error")
 					}
