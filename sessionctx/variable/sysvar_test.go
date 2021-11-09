@@ -679,6 +679,11 @@ func TestSettersandGetters(t *testing.T) {
 		}
 		if !sv.HasGlobalScope() {
 			require.Nil(t, sv.SetGlobal)
+			if sv.Name == Timestamp {
+				// The Timestamp sysvar will have GetGlobal func even though it does not have global scope.
+				// It's GetGlobal func will only be called when "set timestamp = default".
+				continue
+			}
 			require.Nil(t, sv.GetGlobal)
 		}
 	}
