@@ -1836,7 +1836,7 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 	case types.ETJson:
 		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETString:
-		if tp.Flen == types.UnspecifiedLength || tp.Flen == types.ErrorLength {
+		if tp.Flen == types.UnspecifiedLength {
 			tp.Flen = expr.GetType().Flen
 		}
 		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
