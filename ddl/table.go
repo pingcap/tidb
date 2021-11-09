@@ -632,6 +632,21 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	}
 
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		oldIDs := make([]int64, 0, len(oldPartitionIDs))
+		newIDs := make([]int64, 0, len(oldPartitionIDs))
+		newDefs := pi.Definitions
+		for i := range oldPartitionIDs {
+			newDef := &newDefs[i]
+			newID := newDef.ID
+			if newDef.PlacementPolicyRef != nil || newDef.DirectPlacementOpts != nil {
+				oldIDs = append(oldIDs, oldPartitionIDs[i])
+				newIDs = append(newIDs, newID)
+			}
+		}
+		job.CtxVars = []interface{}{oldIDs, newIDs}
+	}
+
 	tblInfo.ID = newTableID
 
 	// build table & partition bundles if any.
