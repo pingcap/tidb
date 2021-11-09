@@ -911,14 +911,16 @@
           "PartitionUnion 59.97 root  ",
           "├─IndexMerge 19.99 root  ",
           "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:c(c) range:[\"8\",\"8\"], keep order:false, stats:pseudo",
+          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:c(c) range:[\"8\",\"8\"], keep order:false, stats:pseudo" ,
           "│ └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 19.99 root  data:Selection",
-          "│ └─Selection 19.99 cop[tiflash]  or(eq(test.t.b, 1), eq(test.t.c, \"8\"))",
-          "│   └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 19.99 root  data:Selection",
-          "  └─Selection 19.99 cop[tiflash]  or(eq(test.t.b, 1), eq(test.t.c, \"8\"))",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
+          "├─IndexMerge 19.99 root  ",
+          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p1, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p1, index:c(c) range:[\"8\",\"8\"], keep order:false, stats:pseudo" ,
+          "│ └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
+          "└─IndexMerge 19.99 root  ",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p2, index:c(c) range:[\"8\",\"8\"], keep order:false, stats:pseudo", 
+          "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -934,9 +936,10 @@
           "│ ├─TableRangeScan(Build) 1.00 cop[tikv] table:t, partition:p1 range:[1,1], keep order:false, stats:pseudo",
           "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 11.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 11.00 root  data:Selection",
-          "  └─Selection 11.00 cop[tiflash]  or(eq(test.t.a, 1), eq(test.t.b, 2))",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
+          "└─IndexMerge 11.00 root  ",
+          "  ├─TableRangeScan(Build) 1.00 cop[tikv] table:t, partition:p2 range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p2, index:b(b) range:[2,2], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 11.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
