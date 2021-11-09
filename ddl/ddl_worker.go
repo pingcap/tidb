@@ -71,11 +71,21 @@ const (
 	generalWorker workerType = 0
 	// addIdxWorker is the worker who handles the operation of adding indexes.
 	addIdxWorker workerType = 1
+	// pollTiflashWoker is the worker who handles the replica status poll.
+	pollTiflashWorker workerType = 2
 	// waitDependencyJobInterval is the interval when the dependency job doesn't be done.
 	waitDependencyJobInterval = 200 * time.Millisecond
 	// noneDependencyJob means a job has no dependency-job.
 	noneDependencyJob = 0
 )
+
+type Worker interface {
+	start(d *ddlCtx)
+	close()
+	Tp() workerType
+	wgAdd(delta int)
+	String() string
+}
 
 // worker is used for handling DDL jobs.
 // Now we have two kinds of workers.
@@ -93,6 +103,48 @@ type worker struct {
 	logCtx          context.Context
 
 	ddlJobCache
+}
+
+type pollWorker struct {
+	ddl             *ddl
+	id              int32
+	tp              workerType
+	sessPool        *sessionPool
+	wg              sync.WaitGroup
+	ctx             context.Context
+}
+
+func newPollWorker (ddl *ddl, ctx context.Context, tp workerType, sessPool *sessionPool) *pollWorker {
+	pw := &pollWorker{
+		ddl:                ddl,
+		ctx:                ctx,
+		id:                 atomic.AddInt32(&ddlWorkerID, 1),
+		tp:                 tp,
+		sessPool:           sessPool,
+	}
+	return pw
+}
+
+func (pw *pollWorker) start(d *ddlCtx){
+	fmt.Println("poll worker start")
+	// do something
+}
+
+func (pw *pollWorker) close(){
+	fmt.Println("poll worker close")
+	// do something
+}
+
+func (pw *pollWorker) wgAdd(delta int){
+	pw.wg.Add(delta)
+}
+
+func (pw *pollWorker) String() string {
+	return fmt.Sprintf("worker %d, tp %s", pw.id, "tiflash-poll")
+}
+
+func (pw *pollWorker) Tp() workerType {
+	return pw.tp
 }
 
 // ddlJobCache is a cache for each DDL job.
@@ -124,6 +176,18 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 	worker.addingDDLJobKey = addingDDLJobPrefix + worker.typeStr()
 	worker.logCtx = logutil.WithKeyValue(context.Background(), "worker", worker.String())
 	return worker
+}
+
+func (w *worker) wgAdd(delta int){
+	w.wg.Add(delta)
+}
+
+func (w *worker) GetDDLJobChan() chan struct{} {
+	return w.ddlJobCh
+}
+
+func (w *worker) Tp() workerType {
+	return w.tp
 }
 
 func (w *worker) typeStr() string {

@@ -192,7 +192,7 @@ type ddl struct {
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
-	workers     map[workerType]*worker
+	workers     map[workerType]Worker
 	sessPool    *sessionPool
 	delRangeMgr delRangeManager
 }
@@ -358,21 +358,23 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			return errors.Trace(err)
 		}
 
-		d.workers = make(map[workerType]*worker, 2)
+		d.workers = make(map[workerType]Worker, 3)
 		d.sessPool = newSessionPool(ctxPool)
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr)
-		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr)
-		for _, worker := range d.workers {
-			worker.wg.Add(1)
-			w := worker
+		d.workers[addIdxWorker] = newWorker( d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr)
+		d.workers[pollTiflashWorker] = newPollWorker(d, d.ctx, pollTiflashWorker, d.sessPool)
+		for _, w := range d.workers {
+			w.wgAdd(1)
 			go w.start(d.ddlCtx)
 
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
+			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, w.String())).Inc()
 
 			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.
-			asyncNotify(worker.ddlJobCh)
+			if w.Tp() != pollTiflashWorker {
+				asyncNotify(w.(*worker).ddlJobCh)
+			}
 		}
 
 		go d.schemaSyncer.StartCleanWork()
@@ -510,17 +512,17 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 		return
 	}
 
-	var worker *worker
+	var w Worker
 	jobTp := job.Type
 	if admin.MayNeedBackfill(jobTp) {
-		worker = d.workers[addIdxWorker]
+		w = d.workers[addIdxWorker]
 	} else {
-		worker = d.workers[generalWorker]
+		w = d.workers[generalWorker]
 	}
 	if d.ownerManager.IsOwner() {
-		asyncNotify(worker.ddlJobCh)
+		asyncNotify(w.(*worker).ddlJobCh)
 	} else {
-		d.asyncNotifyByEtcd(worker.addingDDLJobKey, job)
+		d.asyncNotifyByEtcd(w.(*worker).addingDDLJobKey, job)
 	}
 }
 
