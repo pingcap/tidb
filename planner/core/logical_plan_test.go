@@ -652,7 +652,7 @@ func (s *testPlanSuite) TestCS3389(c *C) {
 	c.Assert(err, IsNil)
 	p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 	c.Assert(err, IsNil)
-	p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection, p.(LogicalPlan))
+	p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection|flagJoinReOrder, p.(LogicalPlan))
 	c.Assert(err, IsNil)
 	proj, isProj := p.(*LogicalProjection)
 	c.Assert(isProj, IsTrue)
