@@ -34,8 +34,8 @@ var (
 	ErrInvalidArgumentForLogarithm = dbterror.ClassExpression.NewStd(mysql.ErrInvalidArgumentForLogarithm)
 	ErrIncorrectType               = dbterror.ClassExpression.NewStd(mysql.ErrIncorrectType)
 	ErrInvalidTableSample          = dbterror.ClassExpression.NewStd(mysql.ErrInvalidTableSample)
-	ErrInternal                    = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
-	ErrNoDB                        = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
+	ErrInternal                    = dbterror.ClassExpression.NewStd(mysql.ErrInternal)
+	ErrNoDB                        = dbterror.ClassExpression.NewStd(mysql.ErrNoDB)
 
 	// All the un-exported errors are defined here:
 	errFunctionNotExists             = dbterror.ClassExpression.NewStd(mysql.ErrSpDoesNotExist)
