@@ -787,7 +787,7 @@ func (tr *TableRestore) postProcess(
 			case hasDupe:
 				tr.logger.Info("skip checksum&analyze because duplicates were detected")
 				shouldSkipAnalyze = true
-			case needChecksum:
+			case !needChecksum:
 				tr.logger.Info("skip checksum&analyze because other lightning instance will do this")
 				shouldSkipAnalyze = true
 			}
