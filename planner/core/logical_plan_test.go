@@ -654,6 +654,8 @@ func (s *testPlanSuite) TestCS3389(c *C) {
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection|flagJoinReOrder, p.(LogicalPlan))
 	c.Assert(err, IsNil)
+
+	// Assert that all Projection is not empty and there is no Projection between Aggregation and Join.
 	proj, isProj := p.(*LogicalProjection)
 	c.Assert(isProj, IsTrue)
 	c.Assert(len(proj.Exprs) > 0, IsTrue)
