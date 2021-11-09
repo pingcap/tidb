@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
@@ -1403,29 +1402,6 @@ func TestGracefulShutdown(t *testing.T) {
 	// nolint: bodyclose
 	_, err = cli.fetchStatus("/status") // status is gone
 	require.Regexp(t, ".*connect: connection refused", err.Error())
-}
-
-func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
-	// issue #21194
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	// 255 is the collation id of mysql client 8 default collation_connection
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil)
-	c.Assert(err, IsNil)
-	testCase := []struct {
-		variable string
-		except   string
-	}{
-		{"collation_connection", "utf8mb4_bin"},
-		{"character_set_connection", "utf8mb4"},
-		{"character_set_client", "utf8mb4"},
-	}
-
-	for _, t := range testCase {
-		sVars, b := qctx.GetSessionVars().GetSystemVar(t.variable)
-		c.Assert(b, IsTrue)
-		c.Assert(sVars, Equals, t.except)
-	}
 }
 
 func TestPessimisticInsertSelectForUpdate(t *testing.T) {
