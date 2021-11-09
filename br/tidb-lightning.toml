@@ -101,13 +101,13 @@ addr = "127.0.0.1:8287"
 #on-duplicate = "replace"
 # Whether to detect and resolve duplicate records (unique key conflict) when the backend is 'local'.
 # Current supports three resolution algorithms:
-#  - record: only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB. Note that this
-#    required the version of target TiKV version is no less than v5.2.0, otherwise it will fallback to 'none'.
 #  - none: doesn't detect duplicate records, which has the best performance of the three algorithms, but probably leads to
 #    inconsistent data in the target TiDB.
+#  - record: only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB. Note that this
+#    required the version of target TiKV version is no less than v5.2.0, otherwise it will fallback to 'none'.
 #  - remove: records all duplicate records like the 'record' algorithm and remove all duplicate records to ensure a consistent
 #    state in the target TiDB.
-#duplicate-resolution = 'record'
+#duplicate-resolution = 'none'
 # Maximum KV size of SST files produced in the 'local' backend. This should be the same as
 # the TiKV region size to avoid further region splitting. The default value is 96 MiB.
 #region-split-size = '96MiB'
