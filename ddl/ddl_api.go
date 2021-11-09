@@ -4797,7 +4797,7 @@ func isRuleMatch(rule placement.Rule, tb PollTiFlashReplicaStatusContext) (bool,
 	}
 }
 
-func GetTiflashHttpAddr(statusAddr string) (string, error) {
+func GetTiflashHttpAddr(host string, statusAddr string) (string, error) {
 	configURL := fmt.Sprintf("%s://%s/config",
 		util.InternalHTTPSchema(),
 		statusAddr,
@@ -4832,21 +4832,8 @@ func GetTiflashHttpAddr(statusAddr string) (string, error) {
 		return "", errors.New("Error json")
 	}
 
-	flash, ok := engineStore["flash"].(map[string]interface{})
-	if !ok {
-		return "", errors.New("Error json")
-	}
-
-	serviceAddr, ok := flash["service_addr"].(string)
-	if !ok {
-		return "", errors.New("Error json")
-	}
-
-	// TODO How to read from flash['proxy']['config']
-	serviceAddrParts := strings.Split(serviceAddr, ":")
-	serviceAddrHost := serviceAddrParts[0]
-
-	return (fmt.Sprintf("%v:%v", serviceAddrHost, port), nil)
+	addr := fmt.Sprintf("%v:%v", host, port)
+	return (addr, nil)
 }
 
 func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
@@ -4877,7 +4864,16 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 	}
 	// TODO _update_http_port
 	for _, store := range tiflashStores {
-
+		addrAndPort := strings.Split(store.Store.StatusAddress, ":")
+		if len(addrAndPort) < 2 {
+			return allReplicaReady, errors.New("Can't get TiFlash Address from PD")
+		}
+		_, err := GetTiflashHttpAddr(addrAndPort[0], store.Store.StatusAddress)
+		if err != nil {
+			return allReplicaReady, errors.Trace(err)
+		}
+		// report to pd
+		// TODO How to update?
 
 	}
 
