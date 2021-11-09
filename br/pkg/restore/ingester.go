@@ -137,6 +137,7 @@ func (i *Ingester) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientCo
 		addr,
 		opt,
 		grpc.WithBlock(),
+		grpc.FailOnNonTempDialError(true),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                gRPCKeepAliveTime,
