@@ -5946,7 +5946,9 @@ func unfoldSelectList(list *ast.SetOprSelectList, unfoldList *ast.SetOprSelectLi
 func extractTableList(node ast.Node, input []*ast.TableName, asName bool) []*ast.TableName {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
-		input = extractTableList(x.From.TableRefs, input, asName)
+		if x.From != nil {
+			input = extractTableList(x.From.TableRefs, input, asName)
+		}
 		if x.Where != nil {
 			input = extractTableList(x.Where, input, asName)
 		}
