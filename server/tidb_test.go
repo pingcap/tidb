@@ -127,10 +127,6 @@ func createTiDBTest(t *testing.T) (*tidbTest, func()) {
 	return &tidbTest{base}, cleanup
 }
 
-type tidbTestSerialSuite struct {
-	*tidbTestSuiteBase
-}
-
 type tidbTestTopSQLSuite struct {
 	*tidbTestSuiteBase
 }
@@ -150,7 +146,6 @@ func newTiDBTestSuiteBase() *tidbTestSuiteBase {
 }
 
 var _ = Suite(&tidbTestSuite{newTiDBTestSuiteBase()})
-var _ = SerialSuites(&tidbTestSerialSuite{newTiDBTestSuiteBase()})
 var _ = SerialSuites(&tidbTestTopSQLSuite{newTiDBTestSuiteBase()})
 
 func (ts *tidbTestSuite) SetUpSuite(c *C) {
