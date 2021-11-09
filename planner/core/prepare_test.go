@@ -1322,6 +1322,32 @@ func (s *testPlanSerialSuite) TestIssue28867(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func (s *testPlanSerialSuite) TestIssue29565(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists PK_SIGNED_10094`)
+	tk.MustExec(`CREATE TABLE PK_SIGNED_10094 (COL1 decimal(55,0) NOT NULL, PRIMARY KEY (COL1))`)
+	tk.MustExec(`insert into PK_SIGNED_10094  values(-9999999999999999999999999999999999999999999999999999999)`)
+	tk.MustExec(`prepare stmt from 'select * from PK_SIGNED_10094 where col1 != ? and col1 + 10 <=> ? + 10'`)
+	tk.MustExec(`set @a=7309027171262036496, @b=-9798213896406520625`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
+	tk.MustExec(`set @a=5408499810319315618, @b=-9999999999999999999999999999999999999999999999999999999`)
+	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows("-9999999999999999999999999999999999999999999999999999999"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func (s *testPlanSerialSuite) TestIssue28828(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
