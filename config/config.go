@@ -704,7 +704,7 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
-		AutoTLS:                     true,
+		AutoTLS:                     false,
 		RSAKeySize:                  4096,
 	},
 	DeprecateIntegerDisplayWidth: false,

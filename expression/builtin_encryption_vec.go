@@ -645,6 +645,7 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	if err := b.args[0].VecEvalString(b.ctx, input, strBuf); err != nil {
 		return err
 	}
+	enc := charset.NewEncoding(b.args[0].GetType().Charset)
 
 	keyBuf, err := b.bufAllocator.get()
 	if err != nil {
@@ -662,7 +663,7 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 
 	isWarning := !b.ivRequired && len(b.args) == 3
 	isConst := b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx)
-	var key []byte
+	var key, dBytes []byte
 	if isConst {
 		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
 	}
@@ -685,6 +686,10 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		// NOTE: we can't use GetBytes, because in AESEncryptWithECB padding is automatically
 		//       added to str and this will damange the data layout in chunk.Column
 		str := []byte(strBuf.GetString(i))
+		str, err := enc.Encode(dBytes, str)
+		if err != nil {
+			return err
+		}
 		cipherText, err := encrypt.AESEncryptWithECB(str, key)
 		if err != nil {
 			result.AppendNull()
@@ -710,22 +715,32 @@ func (b *builtinPasswordSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
+
+	var dBytes []byte
+	enc := charset.NewEncoding(b.args[0].GetType().Charset)
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendString("")
 			continue
 		}
-		pass := buf.GetString(i)
-		if len(pass) == 0 {
+
+		passBytes := buf.GetBytes(i)
+		if len(passBytes) == 0 {
 			result.AppendString("")
 			continue
 		}
+
+		dBytes, err := enc.Encode(dBytes, passBytes)
+		if err != nil {
+			return err
+		}
+
 		// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 		// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
 
-		result.AppendString(auth.EncodePassword(pass))
+		result.AppendString(auth.EncodePasswordBytes(dBytes))
 	}
 	return nil
 }
@@ -744,6 +759,8 @@ func (b *builtinSHA1Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
+	var dBytes []byte
+	enc := charset.NewEncoding(b.args[0].GetType().Charset)
 	result.ReserveString(n)
 	hasher := sha1.New() // #nosec G401
 	for i := 0; i < n; i++ {
@@ -752,6 +769,10 @@ func (b *builtinSHA1Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 			continue
 		}
 		str := buf.GetBytes(i)
+		str, err := enc.Encode(dBytes, str)
+		if err != nil {
+			return err
+		}
 		_, err = hasher.Write(str)
 		if err != nil {
 			return err
