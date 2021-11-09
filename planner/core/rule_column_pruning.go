@@ -149,7 +149,17 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 			la.GroupByItems = []expression.Expression{expression.NewOne()}
 		}
 	}
-	return child.PruneColumns(selfUsedCols)
+	err := child.PruneColumns(selfUsedCols)
+	if err != nil {
+		return err
+	}
+	if childProjection, isProjection := child.(*LogicalProjection); isProjection {
+		if len(childProjection.Exprs) == 0 && childProjection.Schema().Len() == 0 {
+			childOfChild := childProjection.children[0]
+			la.SetChildren(childOfChild)
+		}
+	}
+	return nil
 }
 
 func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*expression.Column) {
