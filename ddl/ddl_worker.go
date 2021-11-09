@@ -126,13 +126,34 @@ func newPollWorker (ddl *ddl, ctx context.Context, tp workerType, sessPool *sess
 }
 
 func (pw *pollWorker) start(d *ddlCtx){
+	defer pw.wg.Done()
 	fmt.Println("poll worker start")
 	// do something
+	// when get the right time
+	sctx, err := pw.sessPool.get()
+	if err != nil {
+		panic(err)
+	}
+	defer pw.sessPool.put(sctx)
+	fmt.Println(sctx)
+	for {
+		// poll status
+		// ...
+
+
+		//if err := pw.ddl.CreateSchema(sctx, model.NewCIStr("testschema"), nil, nil, nil); err!= nil {
+		//	fmt.Println("internal create table fail")
+		//	panic(err)
+		//}
+		// just test success
+		fmt.Println("internal create table success")
+		break
+	}
 }
 
 func (pw *pollWorker) close(){
 	fmt.Println("poll worker close")
-	// do something
+	pw.wg.Wait()
 }
 
 func (pw *pollWorker) wgAdd(delta int){
