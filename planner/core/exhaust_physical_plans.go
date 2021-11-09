@@ -1360,19 +1360,24 @@ func (mr *mutableIndexJoinRange) Rebuild() error {
 		return err
 	}
 	if empty { // empty ranges are dangerous for plan-cache, it's better to optimize the whole plan again in this case
-		return errors.New("rebuild range failed")
+		return errors.New("failed to rebuild range: empty range")
+	}
+	newRanges := mr.buildHelper.chosenRanges.Range()
+	if len(mr.ranges) != len(newRanges) || (len(mr.ranges) > 0 && mr.ranges[0].Width() != newRanges[0].Width()) {
+		// some access conditions cannot be used to calculate the range after parameters change, return an error in this case for safety.
+		return errors.New("failed to rebuild range: range width changed")
 	}
 	mr.ranges = mr.buildHelper.chosenRanges.Range()
 	return nil
 }
 
-func (ijHelper *indexJoinBuildHelper) createMutableIndexJoinRange(notKeyEqAndIn []expression.Expression, ranges []*ranger.Range, path *util.AccessPath, innerKeys, outerKeys []*expression.Column) ranger.MutableRanges {
+func (ijHelper *indexJoinBuildHelper) createMutableIndexJoinRange(relatedExprs []expression.Expression, ranges []*ranger.Range, path *util.AccessPath, innerKeys, outerKeys []*expression.Column) ranger.MutableRanges {
 	// if the plan-cache is enabled and these ranges depend on some parameters, we have to rebuild these ranges after changing parameters
-	if expression.MaybeOverOptimized4PlanCache(ijHelper.join.ctx, notKeyEqAndIn) {
+	if expression.MaybeOverOptimized4PlanCache(ijHelper.join.ctx, relatedExprs) {
 		// assume that path, innerKeys and outerKeys will not be modified in the follow-up process
 		return &mutableIndexJoinRange{
 			ranges:        ranges,
-			buildHelper:   ijHelper,
+			buildHelper:   &indexJoinBuildHelper{innerPlan: ijHelper.innerPlan, join: ijHelper.join},
 			path:          path,
 			innerJoinKeys: innerKeys,
 			outerJoinKeys: outerKeys,
@@ -1386,6 +1391,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		return false, nil
 	}
 	accesses := make([]expression.Expression, 0, len(path.IdxCols))
+	relatedExprs := make([]expression.Expression, 0, len(path.IdxCols)) // all expressions related to the chosen range
 	ijHelper.resetContextForIndex(innerJoinKeys, path.IdxCols, path.IdxColLens, outerJoinKeys)
 	notKeyEqAndIn, remained, rangeFilterCandidates := ijHelper.findUsefulEqAndInFilters(innerPlan)
 	var remainedEqAndIn []expression.Expression
@@ -1396,6 +1402,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		return false, nil
 	}
 	accesses = append(accesses, notKeyEqAndIn...)
+	relatedExprs = append(relatedExprs, notKeyEqAndIn...)
 	remained = append(remained, remainedEqAndIn...)
 	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
 	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
@@ -1419,7 +1426,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		if emptyRange {
 			return true, nil
 		}
-		mutableRange := ijHelper.createMutableIndexJoinRange(notKeyEqAndIn, ranges, path, innerJoinKeys, outerJoinKeys)
+		mutableRange := ijHelper.createMutableIndexJoinRange(relatedExprs, ranges, path, innerJoinKeys, outerJoinKeys)
 		ijHelper.updateBestChoice(mutableRange, path, accesses, remained, nil, lastColPos, rebuildMode)
 		return false, nil
 	}
@@ -1446,6 +1453,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 			if err != nil {
 				return false, err
 			}
+			relatedExprs = append(relatedExprs, colAccesses...)
 		}
 		ranges, emptyRange, err = ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nextColRange, false)
 		if err != nil {
@@ -1462,7 +1470,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		if len(colAccesses) > 0 {
 			lastColPos = lastColPos + 1
 		}
-		mutableRange := ijHelper.createMutableIndexJoinRange(notKeyEqAndIn, ranges, path, innerJoinKeys, outerJoinKeys)
+		mutableRange := ijHelper.createMutableIndexJoinRange(relatedExprs, ranges, path, innerJoinKeys, outerJoinKeys)
 		ijHelper.updateBestChoice(mutableRange, path, accesses, remained, nil, lastColPos, rebuildMode)
 		return false, nil
 	}
@@ -1475,7 +1483,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	if emptyRange {
 		return true, nil
 	}
-	mutableRange := ijHelper.createMutableIndexJoinRange(notKeyEqAndIn, ranges, path, innerJoinKeys, outerJoinKeys)
+	mutableRange := ijHelper.createMutableIndexJoinRange(relatedExprs, ranges, path, innerJoinKeys, outerJoinKeys)
 	ijHelper.updateBestChoice(mutableRange, path, accesses, remained, lastColManager, lastColPos+1, rebuildMode)
 	return false, nil
 }
