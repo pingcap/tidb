@@ -59,6 +59,7 @@ type duplicateIter struct {
 	keyAdapter     KeyAdapter
 	writeBatch     *pebble.Batch
 	writeBatchSize int64
+	logger         log.Logger
 }
 
 func (d *duplicateIter) Seek(key []byte) bool {
@@ -111,11 +112,6 @@ func (d *duplicateIter) record(key []byte, val []byte) {
 }
 
 func (d *duplicateIter) Next() bool {
-	logger := log.With(
-		zap.String("table", common.UniqueTable(d.engineFile.tableInfo.DB, d.engineFile.tableInfo.Name)),
-		zap.Int64("tableID", d.engineFile.tableInfo.ID),
-		zap.Stringer("engineUUID", d.engineFile.UUID))
-
 	recordFirst := false
 	for d.err == nil && d.ctx.Err() == nil && d.iter.Next() {
 		d.nextKey, _, _, d.err = d.keyAdapter.Decode(d.nextKey[:0], d.iter.Key())
@@ -128,7 +124,7 @@ func (d *duplicateIter) Next() bool {
 			d.curVal = append(d.curVal[:0], d.iter.Value()...)
 			return true
 		}
-		logger.Debug("[detect-dupe] local duplicate key detected",
+		d.logger.Debug("[detect-dupe] local duplicate key detected",
 			logutil.Key("key", d.curKey),
 			logutil.Key("prevValue", d.curVal),
 			logutil.Key("value", d.iter.Value()))
@@ -182,12 +178,17 @@ func newDuplicateIter(ctx context.Context, engineFile *File, opts *pebble.IterOp
 	if len(opts.UpperBound) > 0 {
 		newOpts.UpperBound = codec.EncodeBytes(nil, opts.UpperBound)
 	}
+	logger := log.With(
+		zap.String("table", common.UniqueTable(engineFile.tableInfo.DB, engineFile.tableInfo.Name)),
+		zap.Int64("tableID", engineFile.tableInfo.ID),
+		zap.Stringer("engineUUID", engineFile.UUID))
 	return &duplicateIter{
 		ctx:        ctx,
 		iter:       engineFile.db.NewIter(newOpts),
 		engineFile: engineFile,
 		keyAdapter: engineFile.keyAdapter,
 		writeBatch: engineFile.duplicateDB.NewBatch(),
+		logger:     logger,
 	}
 }
 
