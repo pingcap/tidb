@@ -434,7 +434,6 @@ func (rc *Controller) Run(ctx context.Context) error {
 		rc.preCheckRequirements,
 		rc.restoreTables,
 		rc.fullCompact,
-		rc.switchToNormalMode,
 		rc.cleanCheckpoints,
 	}
 
@@ -1113,10 +1112,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 		cancelFuncs = append(cancelFuncs, func(bool) { switchModeTicker.Stop() })
 		cancelFuncs = append(cancelFuncs, func(do bool) {
 			if do {
-				log.L().Info("switch to normal mode")
-				if err := rc.switchToNormalMode(ctx); err != nil {
-					log.L().Warn("switch tikv to normal mode failed", zap.Error(err))
-				}
+				rc.switchToNormalMode(ctx)
 			}
 		})
 		switchModeChan = switchModeTicker.C
@@ -1686,12 +1682,13 @@ func (rc *Controller) doCompact(ctx context.Context, level int32) error {
 }
 
 func (rc *Controller) switchToImportMode(ctx context.Context) {
+	log.L().Info("switch to import mode")
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import)
 }
 
-func (rc *Controller) switchToNormalMode(ctx context.Context) error {
+func (rc *Controller) switchToNormalMode(ctx context.Context) {
+	log.L().Info("switch to normal mode")
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
-	return nil
 }
 
 func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
