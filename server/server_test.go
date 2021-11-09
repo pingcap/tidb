@@ -2017,21 +2017,6 @@ func (cli *testingServerClient) runTestStmtCount(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestTLSConnection(t *C, overrider configOverrider) error {
-	dsn := cli.getDSN(overrider)
-	db, err := sql.Open("mysql", dsn)
-	t.Assert(err, IsNil)
-	defer func() {
-		err := db.Close()
-		t.Assert(err, IsNil)
-	}()
-	_, err = db.Exec("USE test")
-	if err != nil {
-		return errors.Annotate(err, "dsn:"+dsn)
-	}
-	return err
-}
-
 func (cli *testingServerClient) runTestTLSConnection(t *testing.T, overrider configOverrider) error {
 	dsn := cli.getDSN(overrider)
 	db, err := sql.Open("mysql", dsn)
@@ -2044,21 +2029,6 @@ func (cli *testingServerClient) runTestTLSConnection(t *testing.T, overrider con
 	if err != nil {
 		return errors.Annotate(err, "dsn:"+dsn)
 	}
-	return err
-}
-
-func (cli *testServerClient) runReloadTLS(t *C, overrider configOverrider, errorNoRollback bool) error {
-	db, err := sql.Open("mysql", cli.getDSN(overrider))
-	t.Assert(err, IsNil)
-	defer func() {
-		err := db.Close()
-		t.Assert(err, IsNil)
-	}()
-	sql := "alter instance reload tls"
-	if errorNoRollback {
-		sql += " no rollback on error"
-	}
-	_, err = db.Exec(sql)
 	return err
 }
 
