@@ -81,12 +81,11 @@ const (
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 
-	// not sure if we really want to DISTINCT.
-	// having DISTINCT requires TiDB to introduce a HashAgg in memory but reduces response size.
 	selectConflictKeys = `
-		SELECT DISTINCT raw_handle, raw_row
+		SELECT _tidb_rowid, raw_handle, raw_row
 		FROM %s.` + conflictErrorTableName + `
-		WHERE task_id = ? AND table_name = ?;
+		WHERE table_name = ? AND _tidb_rowid > ?
+		ORDER BY _tidb_rowid LIMIT ?;
 	`
 )
 
@@ -272,28 +271,28 @@ func (em *ErrorManager) RecordIndexConflictError(
 
 // GetConflictKeys obtains all (distinct) conflicting rows (handle and their
 // values) from the current error report.
-func (em *ErrorManager) GetConflictKeys(ctx context.Context, tableName string) ([][2][]byte, error) {
+func (em *ErrorManager) GetConflictKeys(ctx context.Context, tableName string, prevRowID int64, limit int) (handleRows [][2][]byte, lastRowID int64, err error) {
 	if em.db == nil {
-		return nil, nil
+		return nil, 0, nil
 	}
 	rows, err := em.db.QueryContext(
 		ctx,
 		fmt.Sprintf(selectConflictKeys, em.schemaEscaped),
-		em.taskID,
 		tableName,
+		prevRowID,
+		limit,
 	)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	defer rows.Close()
 
-	var handleRows [][2][]byte
 	for rows.Next() {
 		var handleRow [2][]byte
-		if err := rows.Scan(&handleRow[0], &handleRow[1]); err != nil {
-			return nil, errors.Trace(err)
+		if err := rows.Scan(&lastRowID, &handleRow[0], &handleRow[1]); err != nil {
+			return nil, 0, errors.Trace(err)
 		}
 		handleRows = append(handleRows, handleRow)
 	}
-	return handleRows, errors.Trace(rows.Err())
+	return handleRows, lastRowID, errors.Trace(rows.Err())
 }

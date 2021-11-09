@@ -891,7 +891,11 @@ var bufferPool = membuf.NewPool(1024, manual.Allocator{})
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
 	// TODO: Optimize the opts for better write.
-	opts := &pebble.Options{}
+	opts := &pebble.Options{
+		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
+			newRangePropertiesCollector,
+		},
+	}
 	return pebble.Open(dbPath, opts)
 }
 
@@ -2162,13 +2166,24 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 		return err
 	}
 
-	// Collect all duplicating rows from downstream TiDB.
-	// TODO: what if there are 1,000,000 duplicate rows? need some pagination scheme.
-	handleRows, err := local.errorMgr.GetConflictKeys(ctx, tableName)
-	if err != nil {
-		return err
+	preRowID := int64(0)
+	for {
+		handleRows, lastRowID, err := local.errorMgr.GetConflictKeys(ctx, tableName, preRowID, 1000)
+		if err != nil {
+			return errors.Annotate(err, "cannot query conflict keys")
+		}
+		if len(handleRows) == 0 {
+			break
+		}
+		if err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder); err != nil {
+			return errors.Annotate(err, "cannot delete duplicated entries")
+		}
+		preRowID = lastRowID
 	}
+	return nil
+}
 
+func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, handleRows [][2][]byte, decoder *kv.TableKVDecoder) (err error) {
 	// Starts a Delete transaction.
 	txn, err := local.tikvCli.Begin()
 	if err != nil {
@@ -2176,8 +2191,12 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	}
 	txn.SetPessimistic(true)
 	defer func() {
-		if txn != nil && err != nil {
-			txn.Rollback()
+		if err == nil {
+			err = txn.Commit(ctx)
+		} else {
+			if rollbackErr := txn.Rollback(); rollbackErr != nil {
+				logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
+			}
 		}
 	}()
 
@@ -2210,11 +2229,7 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	}
 
 	logger.Info("[resolve-dupe] number of KV pairs to be deleted", zap.Int("count", txn.Len()))
-
-	// Commit the transaction.
-	err = txn.Commit(ctx)
-	txn = nil
-	return errors.Annotate(err, "cannot delete duplicated entries")
+	return nil
 }
 
 func (e *File) unfinishedRanges(ranges []Range) []Range {
