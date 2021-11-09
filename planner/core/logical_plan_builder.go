@@ -27,6 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -3793,11 +3794,13 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	// 3. statistics is outdated.
-	if statsTbl.IsOutdated() {
-		tbl := *statsTbl
-		tbl.Pseudo = true
-		statsTbl = &tbl
-		pseudoEstimationOutdate.Inc()
+	if ctx.GetSessionVars().GetEnablePseudoForOutdatedStats() {
+		if statsTbl.IsOutdated() {
+			tbl := *statsTbl
+			tbl.Pseudo = true
+			statsTbl = &tbl
+			pseudoEstimationOutdate.Inc()
+		}
 	}
 	return statsTbl
 }
@@ -4140,6 +4143,36 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		us.SetChildren(ds)
 		result = us
 	}
+	// If a table is a cache table, it is judged whether it satisfies the conditions of read cache.
+	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable && b.ctx.GetSessionVars().SnapshotTS == 0 && !b.ctx.GetSessionVars().StmtCtx.IsStaleness {
+		cachedTable := tbl.(table.CachedTable)
+		txn, err := b.ctx.Txn(true)
+		if err != nil {
+			return nil, err
+		}
+		// Use the txn of the transaction to determine whether the cache can be read.
+		buffer, cond := cachedTable.TryGetMemcache(txn.StartTS())
+		if cond {
+			b.ctx.GetSessionVars().StmtCtx.StoreCacheTable(tbl.Meta().ID, buffer)
+			us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
+			us.SetChildren(ds)
+			result = us
+		} else {
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+					}
+				}()
+				if !b.inUpdateStmt && !b.inDeleteStmt && !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+					err := cachedTable.UpdateLockForRead(b.ctx.GetStore(), txn.StartTS())
+					if err != nil {
+						log.Warn("Update Lock Info Error")
+					}
+				}
+			}()
+		}
+	}
+
 	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
 		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	}
@@ -5913,7 +5946,9 @@ func unfoldSelectList(list *ast.SetOprSelectList, unfoldList *ast.SetOprSelectLi
 func extractTableList(node ast.Node, input []*ast.TableName, asName bool) []*ast.TableName {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
-		input = extractTableList(x.From.TableRefs, input, asName)
+		if x.From != nil {
+			input = extractTableList(x.From.TableRefs, input, asName)
+		}
 		if x.Where != nil {
 			input = extractTableList(x.Where, input, asName)
 		}

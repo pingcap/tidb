@@ -22,7 +22,6 @@ const (
 	Regions        = "/pd/api/v1/regions"
 	RegionByID     = "/pd/api/v1/region/id/"
 	Stores         = "/pd/api/v1/stores"
-	ClusterVersion = "/pd/api/v1/config/cluster-version"
 	Status         = "/pd/api/v1/status"
 	Config         = "/pd/api/v1/config"
 )

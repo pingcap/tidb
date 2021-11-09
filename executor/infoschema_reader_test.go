@@ -587,7 +587,7 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")
 	tk.MustExec("insert into t1 values (1,2),(3,4)")
 	tk.MustExec("analyze table t1")
-	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warning
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t1.")) // 1 note.
 	c.Assert(s.dom.StatsHandle().LoadNeededHistograms(), IsNil)
 	tk.MustExec("CREATE ROLE r_t1 ;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
@@ -711,12 +711,13 @@ func (s *testInfoschemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Ser
 		}, nil
 	}))
 	// mock PD API
-	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
 	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
+			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
 			StartTimestamp int64  `json:"start_timestamp"`
 		}{
+			Version:        "4.0.0-alpha",
 			GitHash:        "mock-pd-githash",
 			StartTimestamp: s.startTime.Unix(),
 		}, nil

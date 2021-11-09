@@ -73,7 +73,6 @@ type ParserConfig struct {
 	EnableWindowFunction        bool
 	EnableStrictDoubleTypeCheck bool
 	SkipPositionRecording       bool
-	CharsetClient               string // CharsetClient indicates how to decode the original SQL.
 }
 
 // Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
@@ -134,21 +133,17 @@ func (parser *Parser) SetParserConfig(config ParserConfig) {
 	parser.EnableWindowFunc(config.EnableWindowFunction)
 	parser.SetStrictDoubleTypeCheck(config.EnableStrictDoubleTypeCheck)
 	parser.lexer.skipPositionRecording = config.SkipPositionRecording
-	parser.lexer.encoding = *charset.NewEncoding(config.CharsetClient)
 }
 
-// Parse parses a query string to raw ast.StmtNode.
-// If charset or collation is "", default charset and collation will be used.
-func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode, warns []error, err error) {
+// ParseSQL parses a query string to raw ast.StmtNode.
+func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.StmtNode, warns []error, err error) {
+	resetParams(parser)
+	for _, p := range params {
+		if err := p.ApplyOn(parser); err != nil {
+			return nil, nil, err
+		}
+	}
 	sql = parser.lexer.tryDecodeToUTF8String(sql)
-	if charset == "" {
-		charset = mysql.DefaultCharset
-	}
-	if collation == "" {
-		collation = mysql.DefaultCollationName
-	}
-	parser.charset = charset
-	parser.collation = collation
 	parser.src = sql
 	parser.result = parser.result[:0]
 
@@ -172,6 +167,12 @@ func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode
 	return parser.result, warns, nil
 }
 
+// Parse parses a query string to raw ast.StmtNode.
+// If charset or collation is "", default charset and collation will be used.
+func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode, warns []error, err error) {
+	return parser.ParseSQL(sql, CharsetConnection(charset), CollationConnection(collation))
+}
+
 func (parser *Parser) lastErrorAsWarn() {
 	parser.lexer.lastErrorAsWarn()
 }
@@ -179,7 +180,7 @@ func (parser *Parser) lastErrorAsWarn() {
 // ParseOneStmt parses a query and returns an ast.StmtNode.
 // The query must have one statement, otherwise ErrSyntax is returned.
 func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode, error) {
-	stmts, _, err := parser.Parse(sql, charset, collation)
+	stmts, _, err := parser.ParseSQL(sql, CharsetConnection(charset), CollationConnection(collation))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -373,4 +374,57 @@ func convertToPriv(roleOrPrivList []*ast.RoleOrPriv) ([]*ast.PrivElem, error) {
 		privileges = append(privileges, priv)
 	}
 	return privileges, nil
+}
+
+var (
+	_ ParseParam = CharsetConnection("")
+	_ ParseParam = CollationConnection("")
+	_ ParseParam = CharsetClient("")
+)
+
+func resetParams(p *Parser) {
+	p.charset = mysql.DefaultCharset
+	p.collation = mysql.DefaultCollationName
+	p.lexer.encoding = charset.Encoding{}
+}
+
+// ParseParam represents the parameter of parsing.
+type ParseParam interface {
+	ApplyOn(*Parser) error
+}
+
+// CharsetConnection is used for literals specified without a character set.
+type CharsetConnection string
+
+// ApplyOn implements ParseParam interface.
+func (c CharsetConnection) ApplyOn(p *Parser) error {
+	if c == "" {
+		p.charset = mysql.DefaultCharset
+	} else {
+		p.charset = string(c)
+	}
+	return nil
+}
+
+// CollationConnection is used for literals specified without a collation.
+type CollationConnection string
+
+// ApplyOn implements ParseParam interface.
+func (c CollationConnection) ApplyOn(p *Parser) error {
+	if c == "" {
+		p.collation = mysql.DefaultCollationName
+	} else {
+		p.collation = string(c)
+	}
+	return nil
+}
+
+// CharsetClient specifies the charset of a SQL.
+// This is used to decode the SQL into a utf-8 string.
+type CharsetClient string
+
+// ApplyOn implements ParseParam interface.
+func (c CharsetClient) ApplyOn(p *Parser) error {
+	p.lexer.encoding = *charset.NewEncoding(string(c))
+	return nil
 }

@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl
+.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling
 
 default: server buildsucc
 
@@ -44,7 +44,8 @@ goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
 check-static: tools/bin/golangci-lint
-	tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES_WITHOUT_BR))
+	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES_TIDB_TESTS)) --config .golangci.yml
+	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(BR_PACKAGE_DIRECTORIES)) --config .golangci_br.yml
 
 unconvert:tools/bin/unconvert
 	@echo "unconvert check(skip check the genenrated or copied code in lightning)"
@@ -60,11 +61,11 @@ errdoc:tools/bin/errdoc-gen
 
 lint:tools/bin/revive
 	@echo "linting"
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_WITHOUT_BR)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
 
 vet:
 	@echo "vet"
-	$(GO) vet -all $(PACKAGES_WITHOUT_BR) 2>&1 | $(FAIL_ON_STDOUT)
+	$(GO) vet -all $(PACKAGES_TIDB_TESTS) 2>&1 | $(FAIL_ON_STDOUT)
 
 tidy:
 	@echo "go mod tidy"
@@ -83,7 +84,7 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: test_part_parser gotest gogenerate br_unit_test
+test_part_2: test_part_parser gotest gogenerate br_unit_test dumpling_unit_test
 
 test_part_parser: parser_yacc test_part_parser_dev
 
@@ -100,6 +101,8 @@ parser_unit_test:
 
 test_part_br: br_unit_test br_integration_test
 
+test_part_dumpling: dumpling_unit_test dumpling_integration_test
+
 explaintest: server_check
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
@@ -114,44 +117,19 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 endif
 
 devgotest: failpoint-enable
-ifeq ("$(TRAVIS_COVERAGE)", "1")
-	@echo "Running in TRAVIS_COVERAGE mode."
-	$(GO) get github.com/go-playground/overalls
-	@export log_level=info; \
-	$(OVERALLS) -project=github.com/pingcap/tidb \
-			-covermode=count \
-			-ignore='.git,br,vendor,cmd,docs,tests,LICENSES' \
-			-concurrency=4 \
-			-- -coverpkg=./... \
-			|| { $(FAILPOINT_DISABLE); exit 1; }
-else
 # grep regex: Filter out all tidb logs starting with:
 # - '[20' (like [2021/09/15 ...] [INFO]..)
 # - 'PASS:' to ignore passed tests
 # - 'ok ' to ignore passed directories
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
-endif
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
-
 gotest: failpoint-enable
-ifeq ("$(TRAVIS_COVERAGE)", "1")
-	@echo "Running in TRAVIS_COVERAGE mode."
-	$(GO) get github.com/go-playground/overalls
-	@export log_level=info; \
-	$(OVERALLS) -project=github.com/pingcap/tidb \
-			-covermode=count \
-			-ignore='.git,br,vendor,cmd,docs,tests,LICENSES' \
-			-concurrency=4 \
-			-- -coverpkg=./... \
-			|| { $(FAILPOINT_DISABLE); exit 1; }
-else
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_WITHOUT_BR) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
-endif
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
 race: failpoint-enable
@@ -383,3 +361,30 @@ br_bins:
 data_parsers: tools/bin/vfsgendev br/pkg/lightning/mydump/parser_generated.go br_web
 	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOPATH)/src" br/pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
 	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/br/pkg/lightning/web".Res' && mv res_vfsdata.go br/pkg/lightning/web/
+
+build_dumpling:
+	$(DUMPLING_GOBUILD) $(RACE_FLAG) -tags codes -o $(DUMPLING_BIN) dumpling/cmd/dumpling/main.go
+
+dumpling_unit_test: export DUMPLING_ARGS=$$($(DUMPLING_PACKAGES))
+dumpling_unit_test: failpoint-enable
+	$(DUMPLING_GOTEST) $(RACE_FLAG) -coverprofile=coverage.txt -covermode=atomic -tags leak $(DUMPLING_ARGS) || ( make failpoint-disable && exit 1 )
+	@make failpoint-disable
+
+dumpling_integration_test: dumpling_bins failpoint-enable build_dumpling
+	@make failpoint-disable
+	./dumpling/tests/run.sh $(CASE)
+
+dumpling_tools:
+	@echo "install dumpling tools..."
+	@cd dumpling/tools && make
+
+dumpling_tidy:
+	@echo "go mod tidy"
+	GO111MODULE=on go mod tidy
+	git diff --exit-code go.mod go.sum dumpling/tools/go.mod dumpling/tools/go.sum
+
+dumpling_bins:
+	@which bin/tidb-server
+	@which bin/minio
+	@which bin/tidb-lightning
+	@which bin/sync_diff_inspector

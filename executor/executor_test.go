@@ -15,12 +15,14 @@
 package executor_test
 
 import (
+	"archive/zip"
 	"context"
 	"flag"
 	"fmt"
 	"math"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -115,7 +117,6 @@ var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
 var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testPointGetSuite{})
-var _ = Suite(&testBatchPointGetSuite{})
 var _ = SerialSuites(&testRecoverTable{})
 var _ = SerialSuites(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
@@ -166,6 +167,22 @@ type baseTestSuite struct {
 	ctx *mock.Context // nolint:structcheck
 }
 
+func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
+	store, err := mockstore.NewMockStore()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	session.SetSchemaLease(0)
+	session.DisableStats4Test()
+
+	dom, err := session.BootstrapSession(store)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, dom, errors.Trace(err)
+}
+
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *baseTestSuite) SetUpSuite(c *C) {
@@ -186,6 +203,11 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	}
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set @@global.tidb_enable_alter_placement=1")
+	c.Assert(err, IsNil)
+	se.Close()
 	d.SetStatsUpdating(true)
 	s.domain = d
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -370,7 +392,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	// cancel DDL jobs test
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
-	req := r.NewChunk()
+	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row := req.GetRow(0)
@@ -381,7 +403,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	// show ddl test;
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
-	req = r.NewChunk()
+	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
@@ -400,7 +422,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	c.Assert(row.GetString(2), Equals, serverInfo.IP+":"+
 		strconv.FormatUint(uint64(serverInfo.Port), 10))
 	c.Assert(row.GetString(3), Equals, "")
-	req = r.NewChunk()
+	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows() == 0, IsTrue)
@@ -410,7 +432,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
-	req = r.NewChunk()
+	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
@@ -426,7 +448,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 
 	r, err = tk.Exec("admin show ddl jobs 20")
 	c.Assert(err, IsNil)
-	req = r.NewChunk()
+	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
@@ -1145,7 +1167,7 @@ func (s *testSuiteP1) TestIssue2612(c *C) {
 	tk.MustExec(`insert into t values ('2016-02-13 15:32:24',  '2016-02-11 17:23:22');`)
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).GetDuration(0, 0).String(), Equals, "-46:09:02")
@@ -3628,7 +3650,7 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, NotNil)
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
-	req := r.NewChunk()
+	req := r.NewChunk(nil)
 	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(types.BinaryLiteral(req.GetRow(0).GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
@@ -4529,7 +4551,7 @@ func (s *testSuite3) TestMaxOneRow(c *C) {
 	rs, err := tk.Exec(`select (select t1.a from t1 where t1.a > t2.a) as a from t2;`)
 	c.Assert(err, IsNil)
 
-	err = rs.Next(context.TODO(), rs.NewChunk())
+	err = rs.Next(context.TODO(), rs.NewChunk(nil))
 	c.Assert(err.Error(), Equals, "[executor:1242]Subquery returns more than 1 row")
 
 	c.Assert(rs.Close(), IsNil)
@@ -5673,7 +5695,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustQuery("show charset").Check(testkit.Rows(
 		"ascii US ASCII ascii_bin 1",
 		"binary binary binary 1",
-		"gbk Chinese Internal Code Specification gbk_bin 2",
+		"gbk Chinese Internal Code Specification gbk_chinese_ci 2",
 		"latin1 Latin1 latin1_bin 1",
 		"utf8 UTF-8 Unicode utf8_bin 3",
 		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
@@ -5682,6 +5704,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 		"ascii_bin ascii 65 Yes Yes 1",
 		"binary binary 63 Yes Yes 1",
 		"gbk_bin gbk 87  Yes 1",
+		"gbk_chinese_ci gbk 28 Yes Yes 1",
 		"latin1_bin latin1 47 Yes Yes 1",
 		"utf8_bin utf8 83 Yes Yes 1",
 		"utf8_general_ci utf8 33  Yes 1",
@@ -5693,13 +5716,13 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 
 	tk.MustExec("set names gbk;")
 	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
-	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_bin"))
+	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_chinese_ci"))
 	tk.MustExec("set @@character_set_client=gbk;")
 	tk.MustQuery("select @@character_set_client;").Check(testkit.Rows("gbk"))
 	tk.MustExec("set names utf8mb4;")
 	tk.MustExec("set @@character_set_connection=gbk;")
 	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
-	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_bin"))
+	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_chinese_ci"))
 
 	tk.MustGetErrCode("select _gbk 'a';", errno.ErrUnknownCharacterSet)
 
@@ -5711,13 +5734,13 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
 		"  `a` char(10) DEFAULT NULL,\n" +
 		"  `b` char(10) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin",
+		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci",
 	))
 	tk.MustExec("create table t4(a char(10));")
 	tk.MustExec("alter table t4 add column b char(10) charset gbk;")
 	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n" +
 		"  `a` char(10) DEFAULT NULL,\n" +
-		"  `b` char(10) CHARACTER SET gbk COLLATE gbk_bin DEFAULT NULL\n" +
+		"  `b` char(10) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -5726,7 +5749,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustExec("create table t1(a char(10));")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `a` char(10) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin",
+		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci",
 	))
 }
 
@@ -8862,7 +8885,6 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
 
-	tk.MustExec("set @@tidb_enable_global_temporary_table=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tmp1")
 	tk.MustExec("create global temporary table tmp1 " +
@@ -8973,6 +8995,109 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	}
 }
 
+func (s *testStaleTxnSuite) TestInvalidReadCacheTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists cache_tmp1")
+	tk.MustExec("create table cache_tmp1 " +
+		"(id int not null primary key, code int not null, value int default null, unique key code(code))")
+	tk.MustExec("alter table cache_tmp1 cache")
+	tk.MustExec("drop table if exists cache_tmp2")
+	tk.MustExec("create table cache_tmp2 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+	tk.MustExec("alter table cache_tmp2 cache")
+	tk.MustExec("drop table if exists cache_tmp3 , cache_tmp4, cache_tmp5")
+	tk.MustExec("create table cache_tmp3 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+	tk.MustExec("create table cache_tmp4 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+	tk.MustExec("create table cache_tmp5 (id int primary key);")
+	// sleep 1us to make test stale
+	time.Sleep(time.Microsecond)
+
+	queries := []struct {
+		sql string
+	}{
+		{
+			sql: "select * from cache_tmp1 where id=1",
+		},
+		{
+			sql: "select * from cache_tmp1 where code=1",
+		},
+		{
+			sql: "select * from cache_tmp1 where id in (1, 2, 3)",
+		},
+		{
+			sql: "select * from cache_tmp1 where code in (1, 2, 3)",
+		},
+		{
+			sql: "select * from cache_tmp1 where id > 1",
+		},
+		{
+			sql: "select /*+use_index(cache_tmp1, code)*/ * from cache_tmp1 where code > 1",
+		},
+		{
+			sql: "select /*+use_index(cache_tmp1, code)*/ code from cache_tmp1 where code > 1",
+		},
+	}
+
+	addStaleReadToSQL := func(sql string) string {
+		idx := strings.Index(sql, " where ")
+		if idx < 0 {
+			return ""
+		}
+		return sql[0:idx] + " as of timestamp NOW(6)" + sql[idx:]
+	}
+	for _, query := range queries {
+		sql := addStaleReadToSQL(query.sql)
+		if sql != "" {
+			tk.MustGetErrMsg(sql, "can not stale read cache table")
+		}
+	}
+
+	tk.MustExec("start transaction read only as of timestamp NOW(6)")
+	for _, query := range queries {
+		tk.MustGetErrMsg(query.sql, "can not stale read cache table")
+	}
+	tk.MustExec("commit")
+
+	for _, query := range queries {
+		tk.MustExec(query.sql)
+	}
+
+	// Test normal table when cache table exits.
+	tk.MustExec("insert into cache_tmp5 values(1);")
+	tk.MustExec("set @a=now(6);")
+	time.Sleep(time.Microsecond)
+	tk.MustExec("drop table cache_tmp5")
+	tk.MustExec("create table cache_tmp5 (id int primary key);")
+	tk.MustQuery("select * from cache_tmp5 as of timestamp(@a) where id=1;").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from cache_tmp4 as of timestamp(@a), cache_tmp3 as of timestamp(@a) where cache_tmp3.id=1;")
+	tk.MustGetErrMsg("select * from cache_tmp4 as of timestamp(@a), cache_tmp2 as of timestamp(@a) where cache_tmp2.id=1;", "can not stale read cache table")
+	tk.MustExec("set transaction read only as of timestamp NOW(6)")
+	tk.MustExec("start transaction")
+	for _, query := range queries {
+		tk.MustGetErrMsg(query.sql, "can not stale read cache table")
+	}
+	tk.MustExec("commit")
+
+	for _, query := range queries {
+		tk.MustExec(query.sql)
+	}
+
+	tk.MustExec("set @@tidb_snapshot=NOW(6)")
+	for _, query := range queries {
+		// enable historical read cache table
+		tk.MustExec(query.sql)
+
+	}
+}
+
 func (s *testSuite) TestTableSampleTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
@@ -8984,7 +9109,6 @@ func (s *testSuite) TestTableSampleTemporaryTable(c *C) {
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
 
-	tk.MustExec("set @@tidb_enable_global_temporary_table=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tmp1")
 	tk.MustExec("create global temporary table tmp1 " +
@@ -9142,6 +9266,42 @@ func (s *testSuite) TestGetResultRowsCount(c *C) {
 	}
 }
 
+func checkFileName(s string) bool {
+	files := []string{
+		"config.toml",
+		"meta.txt",
+		"stats/test.t_dump_single.json",
+		"schema/test.t_dump_single.schema.txt",
+		"variables.toml",
+		"sqls.sql",
+		"session_bindings.sql",
+		"global_bindings.sql",
+		"explain.txt",
+	}
+	for _, f := range files {
+		if strings.Compare(f, s) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *testSuiteWithData) TestPlanReplayerDumpSingle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_dump_single")
+	tk.MustExec("create table t_dump_single(a int)")
+	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
+	path := s.testData.ConvertRowsToStrings(res.Rows())
+
+	reader, err := zip.OpenReader(filepath.Join(domain.GetPlanReplayerDirName(), path[0]))
+	c.Assert(err, IsNil)
+	defer reader.Close()
+	for _, file := range reader.File {
+		c.Assert(checkFileName(file.Name), IsTrue)
+	}
+}
+
 func (s *testSuiteP1) TestIssue28935(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_enable_vectorized_expression=true")
@@ -9153,4 +9313,15 @@ func (s *testSuiteP1) TestIssue28935(c *C) {
 	tk.MustQuery(`select trim(leading from " a "), trim(both from " a "), trim(trailing from " a ")`).Check(testkit.Rows("a  a  a"))
 	tk.MustQuery(`select trim(leading null from " a "), trim(both null from " a "), trim(trailing null from " a ")`).Check(testkit.Rows("<nil> <nil> <nil>"))
 	tk.MustQuery(`select trim(null from " a ")`).Check(testkit.Rows("<nil>"))
+}
+
+func (s *testSuiteP1) TestIssue29412(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t29142_1")
+	tk.MustExec("drop table if exists t29142_2")
+	tk.MustExec("create table t29142_1(a int);")
+	tk.MustExec("create table t29142_2(a double);")
+	tk.MustExec("insert into t29142_1 value(20);")
+	tk.MustQuery("select sum(distinct a) as x from t29142_1 having x > some ( select a from t29142_2 where x in (a));").Check(nil)
 }
