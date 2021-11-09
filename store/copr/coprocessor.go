@@ -666,6 +666,11 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	remainTasks := []*copTask{task}
 	backoffermap := make(map[uint64]*Backoffer)
 	for len(remainTasks) > 0 {
+		select {
+		case <-worker.finishCh:
+			break
+		default:
+		}
 		curTask := remainTasks[0]
 		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
 		tasks, err := worker.handleTaskOnce(bo, curTask, respCh)
@@ -759,11 +764,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if len(worker.req.MatchStoreLabels) > 0 {
 		ops = append(ops, tikv.WithMatchLabels(worker.req.MatchStoreLabels))
 	}
-	//if task.paging {
-	//	logutil.BgLogger().Info("MYLOG before send cop req",
-	//		zap.Uint64("page size", task.pagingSize),
-	//		zap.Stringer("key ranges", task.ranges))
-	//}
 	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region, tikv.ReadTimeoutMedium, getEndPointType(task.storeType), task.storeAddr, ops...)
 	err = derr.ToTiDBErr(err)
 	if err != nil {
@@ -790,9 +790,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	var lastRange *coprocessor.KeyRange
 	if task.paging {
 		lastRange = resp.Resp.(*coprocessor.Response).Range
-		//if lastRange == nil {
-		//	return nil, errors.New("unexpected nil range in paging mode")
-		//}
 	}
 	// Handles the response for non-streaming copTask.
 	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, lastRange, costTime)
@@ -1037,10 +1034,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	if lastRange == nil {
 		return nil, nil
 	}
-	//logutil.BgLogger().Info("MYLOG before build remain tasks",
-	//	zap.Stringer("key ranges", task.ranges),
-	//	zap.Stringer("last start", kv.Key(lastRange.Start)),
-	//	zap.Stringer("last end", kv.Key(lastRange.End)))
 	tasks, err := worker.buildCopTasksFromRemain(bo, lastRange, task)
 	if err != nil {
 		return nil, err
