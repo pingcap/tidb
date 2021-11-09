@@ -20,8 +20,11 @@ package ddl
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/coreos/etcd/store"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
@@ -4794,6 +4797,58 @@ func isRuleMatch(rule placement.Rule, tb PollTiFlashReplicaStatusContext) (bool,
 	}
 }
 
+func GetTiflashHttpAddr(statusAddr string) (string, error) {
+	configURL := fmt.Sprintf("%s://%s/config",
+		util.InternalHTTPSchema(),
+		statusAddr,
+	)
+	resp, err := util.InternalHTTPClient().Get(configURL)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	defer func() {
+		resp.Body.Close()
+	}()
+
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(resp.Body)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	var j map[string]interface{}
+	err = json.Unmarshal(buf.Bytes(), &j)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+
+	engineStore, ok := j["engine-store"].(map[string]interface{})
+	if !ok {
+		return "", errors.New("Error json")
+	}
+	port, ok := engineStore["http_port"].(int)
+	if !ok {
+		return "", errors.New("Error json")
+	}
+
+	flash, ok := engineStore["flash"].(map[string]interface{})
+	if !ok {
+		return "", errors.New("Error json")
+	}
+
+	serviceAddr, ok := flash["service_addr"].(string)
+	if !ok {
+		return "", errors.New("Error json")
+	}
+
+	// TODO How to read from flash['proxy']['config']
+	serviceAddrParts := strings.Split(serviceAddr, ":")
+	serviceAddrHost := serviceAddrParts[0]
+
+	return (fmt.Sprintf("%v:%v", serviceAddrHost, port), nil)
+}
+
 func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 	// Should we escape table update?
 
@@ -4820,7 +4875,12 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 			}
 		}
 	}
-	// TODO are compute_cur_store and _update_http_port still necessary?
+	// TODO _update_http_port
+	for _, store := range tiflashStores {
+
+
+	}
+
 
 	// main body of table_update
 	schema := d.GetInfoSchemaWithInterceptor(ctx)
@@ -4849,7 +4909,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 			}
 		}
 	}
-	// TODO cover getDropOrTruncateTableTiflash
+	// TODO should we cover getDropOrTruncateTableTiflash
 
 	// compute all_rules
 	allRulesArr, err := tikvHelper.GetGroupRules("tiflash")
@@ -4939,7 +4999,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 		}
 	}
 
-	// remove needless rules
+	// remove rules of non-existing table
 	for _, v := range allRules {
 		tikvHelper.DeletePlacementRule("tiflash", v.ID)
 	}
