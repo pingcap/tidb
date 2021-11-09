@@ -686,11 +686,6 @@ error = '''
 CREATE/ALTER table with insert method option is not supported
 '''
 
-["ddl:8234"]
-error = '''
-Invalid placement policy '%s': %s
-'''
-
 ["ddl:8236"]
 error = '''
 Placement policy didn't meet the constraint, reason: %s
