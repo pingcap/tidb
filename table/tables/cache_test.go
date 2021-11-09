@@ -16,6 +16,7 @@ package tables_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -220,7 +221,13 @@ func TestCacheTableComplexRead(t *testing.T) {
 	go func() {
 		tk2.MustExec("begin")
 		tk2.MustQuery("select *from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
-		tk2.HasPlan("select *from complex_cache where id > 7", "UnionScan")
+		var i int
+		for i = 0; i < 10; i++ {
+			time.Sleep(100 * time.Millisecond)
+			if tk2.HasPlan("select *from complex_cache where id > 7", "UnionScan") {
+				break
+			}
+		}
 		tk2.MustExec("commit")
 		doneCh <- struct{}{}
 	}()
