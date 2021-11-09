@@ -647,21 +647,6 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.CtxVars = []interface{}{oldIDs, newIDs}
 	}
 
-	tblInfo.ID = newTableID
-
-	// build table & partition bundles if any.
-	bundles, err := fullBundlesFromTblInfo(t, job, tblInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	err = infosync.PutRuleBundles(context.TODO(), bundles)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
-	}
-
 	tableRuleID, partRuleIDs, _, oldRules, err := getOldLabelRules(tblInfo, job.SchemaName, tblInfo.Name.L)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -678,6 +663,21 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	if tblInfo.TiFlashReplica != nil {
 		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
 		tblInfo.TiFlashReplica.Available = false
+	}
+
+	tblInfo.ID = newTableID
+
+	// build table & partition bundles if any.
+	bundles, err := fullBundlesFromTblInfo(t, job, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = infosync.PutRuleBundles(context.TODO(), bundles)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
 	err = t.CreateTableOrView(schemaID, tblInfo)
