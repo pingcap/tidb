@@ -443,38 +443,39 @@ func (cli *testingServerClient) runTestSpecialType(t *testing.T) {
 	})
 }
 
-func (cli *testServerClient) runTestClientWithCollation(t *C) {
+func (cli *testingServerClient) runTestClientWithCollation(t *testing.T) {
 	cli.runTests(t, func(config *mysql.Config) {
 		config.Collation = "utf8mb4_general_ci"
-	}, func(dbt *DBTest) {
+	}, func(dbt *testkit.DBTestKit) {
 		var name, charset, collation string
 		// check session variable collation_connection
-		rows := dbt.mustQuery("show variables like 'collation_connection'")
-		t.Assert(rows.Next(), IsTrue)
+		rows := dbt.MustQuery("show variables like 'collation_connection'")
+		require.True(t, rows.Next())
+
 		err := rows.Scan(&name, &collation)
-		t.Assert(err, IsNil)
-		t.Assert(collation, Equals, "utf8mb4_general_ci")
+		require.NoError(t, err)
+		require.Equal(t, "utf8mb4_general_ci", collation)
 
 		// check session variable character_set_client
-		rows = dbt.mustQuery("show variables like 'character_set_client'")
-		t.Assert(rows.Next(), IsTrue)
+		rows = dbt.MustQuery("show variables like 'character_set_client'")
+		require.True(t, rows.Next())
 		err = rows.Scan(&name, &charset)
-		t.Assert(err, IsNil)
-		t.Assert(charset, Equals, "utf8mb4")
+		require.NoError(t, err)
+		require.Equal(t, "utf8mb4", charset)
 
 		// check session variable character_set_results
-		rows = dbt.mustQuery("show variables like 'character_set_results'")
-		t.Assert(rows.Next(), IsTrue)
+		rows = dbt.MustQuery("show variables like 'character_set_results'")
+		require.True(t, rows.Next())
 		err = rows.Scan(&name, &charset)
-		t.Assert(err, IsNil)
-		t.Assert(charset, Equals, "utf8mb4")
+		require.NoError(t, err)
+		require.Equal(t, "utf8mb4", charset)
 
 		// check session variable character_set_connection
-		rows = dbt.mustQuery("show variables like 'character_set_connection'")
-		t.Assert(rows.Next(), IsTrue)
+		rows = dbt.MustQuery("show variables like 'character_set_connection'")
+		require.True(t, rows.Next())
 		err = rows.Scan(&name, &charset)
-		t.Assert(err, IsNil)
-		t.Assert(charset, Equals, "utf8mb4")
+		require.NoError(t, err)
+		require.Equal(t, "utf8mb4", charset)
 	})
 }
 

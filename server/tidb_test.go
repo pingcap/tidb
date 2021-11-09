@@ -1129,9 +1129,12 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 	c.Assert(tlsCfg, IsNil)
 }
 
-func (ts *tidbTestSuite) TestClientWithCollation(c *C) {
-	c.Parallel()
-	ts.runTestClientWithCollation(c)
+func TestClientWithCollation(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	ts.runTestClientWithCollation(t)
 }
 
 func TestCreateTableFlen(t *testing.T) {
