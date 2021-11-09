@@ -668,6 +668,11 @@ var defaultSysVars = []*SysVar{
 		}
 		timestamp := s.StmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time)
 		return types.ToString(float64(timestamp.UnixNano()) / float64(time.Second))
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		// Setting timestamp to DEFAULT causes its value to be the current date and time as of the time it is accessed.
+		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_timestamp
+		defaultTimestamp := GetSysVar(Timestamp).Value
+		return defaultTimestamp, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
