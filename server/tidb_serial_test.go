@@ -392,3 +392,108 @@ func TestDefaultCharacterAndCollation(t *testing.T) {
 		require.Equal(t, tc.except, sVars)
 	}
 }
+
+func TestReloadTLS(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	// Generate valid TLS certificates.
+	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key-reload.pem", "/tmp/ca-cert-reload.pem")
+	require.NoError(t, err)
+	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key-reload.pem", "/tmp/server-cert-reload.pem")
+	require.NoError(t, err)
+	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, "/tmp/client-key-reload.pem", "/tmp/client-cert-reload.pem")
+	require.NoError(t, err)
+	err = registerTLSConfig("client-certificate-reload", "/tmp/ca-cert-reload.pem", "/tmp/client-cert-reload.pem", "/tmp/client-key-reload.pem", "tidb-server", true)
+	require.NoError(t, err)
+
+	defer func() {
+		os.Remove("/tmp/ca-key-reload.pem")
+		os.Remove("/tmp/ca-cert-reload.pem")
+
+		os.Remove("/tmp/server-key-reload.pem")
+		os.Remove("/tmp/server-cert-reload.pem")
+		os.Remove("/tmp/client-key-reload.pem")
+		os.Remove("/tmp/client-cert-reload.pem")
+	}()
+
+	// try old cert used in startup configuration.
+	cli := newTestingServerClient()
+	cfg := newTestConfig()
+	cfg.Socket = ""
+	cfg.Port = cli.port
+	cfg.Status.ReportStatus = false
+	cfg.Security = config.Security{
+		SSLCA:   "/tmp/ca-cert-reload.pem",
+		SSLCert: "/tmp/server-cert-reload.pem",
+		SSLKey:  "/tmp/server-key-reload.pem",
+	}
+	server, err := NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	go func() {
+		err := server.Run()
+		require.NoError(t, err)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	// The client provides a valid certificate.
+	connOverrider := func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate-reload"
+	}
+	err = cli.runTestTLSConnection(t, connOverrider)
+	require.NoError(t, err)
+
+	// try reload a valid cert.
+	tlsCfg := server.getTLSConfig()
+	cert, err := x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
+	require.NoError(t, err)
+	oldExpireTime := cert.NotAfter
+	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key-reload2.pem", "/tmp/server-cert-reload2.pem", func(c *x509.Certificate) {
+		c.NotBefore = time.Now().Add(-24 * time.Hour).UTC()
+		c.NotAfter = time.Now().Add(1 * time.Hour).UTC()
+	})
+	require.NoError(t, err)
+	err = os.Rename("/tmp/server-key-reload2.pem", "/tmp/server-key-reload.pem")
+	require.NoError(t, err)
+	err = os.Rename("/tmp/server-cert-reload2.pem", "/tmp/server-cert-reload.pem")
+	require.NoError(t, err)
+	connOverrider = func(config *mysql.Config) {
+		config.TLSConfig = "skip-verify"
+	}
+	err = cli.runReloadTLS(t, connOverrider, false)
+	require.NoError(t, err)
+	connOverrider = func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate-reload"
+	}
+	err = cli.runTestTLSConnection(t, connOverrider)
+	require.NoError(t, err)
+
+	tlsCfg = server.getTLSConfig()
+	cert, err = x509.ParseCertificate(tlsCfg.Certificates[0].Certificate[0])
+	require.NoError(t, err)
+	newExpireTime := cert.NotAfter
+	require.True(t, newExpireTime.After(oldExpireTime))
+
+	// try reload a expired cert.
+	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key-reload3.pem", "/tmp/server-cert-reload3.pem", func(c *x509.Certificate) {
+		c.NotBefore = time.Now().Add(-24 * time.Hour).UTC()
+		c.NotAfter = c.NotBefore.Add(1 * time.Hour).UTC()
+	})
+	require.NoError(t, err)
+	err = os.Rename("/tmp/server-key-reload3.pem", "/tmp/server-key-reload.pem")
+	require.NoError(t, err)
+	err = os.Rename("/tmp/server-cert-reload3.pem", "/tmp/server-cert-reload.pem")
+	require.NoError(t, err)
+	connOverrider = func(config *mysql.Config) {
+		config.TLSConfig = "skip-verify"
+	}
+	err = cli.runReloadTLS(t, connOverrider, false)
+	require.NoError(t, err)
+	connOverrider = func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate-reload"
+	}
+	err = cli.runTestTLSConnection(t, connOverrider)
+	require.NotNil(t, err)
+	require.Truef(t, util.IsTLSExpiredError(err), "real error is %+v", err)
+	server.Close()
+}
