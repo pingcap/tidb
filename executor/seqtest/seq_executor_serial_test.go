@@ -597,14 +597,10 @@ func TestShow(t *testing.T) {
 		"show global variables",
 		"show session variables"}
 
-	// make timestamp constant, so it won't change between queries
-	tk.MustExec("set @@timestamp = 123456")
-
 	for _, sql := range sqls {
 		res := tk.MustQuery(sql)
 		require.NotNil(t, res)
-		sorted := tk.MustQuery(sql).Sort()
-		require.NotNil(t, sorted)
+		sorted := res.Sort()
 		require.Equal(t, sorted, res)
 	}
 }

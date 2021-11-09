@@ -661,20 +661,13 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
-	{Scope: ScopeSession, Name: Timestamp, Value: "", skipInit: true, MinValue: 1, MaxValue: 2147483647, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: Timestamp, Value: "0", skipInit: true, MinValue: 0, MaxValue: 2147483647, Type: TypeFloat, GetSession: func(s *SessionVars) (string, error) {
 		defaultTimestamp := GetSysVar(Timestamp).Value
 		if timestamp, ok := s.systems[Timestamp]; ok && timestamp != defaultTimestamp {
 			return timestamp, nil
 		}
 		timestamp := s.StmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time)
 		return types.ToString(float64(timestamp.UnixNano()) / float64(time.Second))
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		sv := GetSysVar(Timestamp)
-		defaultTimestamp := sv.Value
-		if normalizedValue == defaultTimestamp || normalizedValue == "0" {
-			return defaultTimestamp, nil
-		}
-		return sv.checkFloatSystemVar(normalizedValue, vars)
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
