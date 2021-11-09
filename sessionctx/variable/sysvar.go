@@ -661,9 +661,8 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
-	{Scope: ScopeSession, Name: Timestamp, Value: "0", skipInit: true, MinValue: 0, MaxValue: 2147483647, Type: TypeFloat, GetSession: func(s *SessionVars) (string, error) {
-		defaultTimestamp := GetSysVar(Timestamp).Value
-		if timestamp, ok := s.systems[Timestamp]; ok && timestamp != defaultTimestamp {
+	{Scope: ScopeSession, Name: Timestamp, Value: DefTimestamp, skipInit: true, MinValue: 0, MaxValue: 2147483647, Type: TypeFloat, GetSession: func(s *SessionVars) (string, error) {
+		if timestamp, ok := s.systems[Timestamp]; ok && timestamp != DefTimestamp {
 			return timestamp, nil
 		}
 		timestamp := s.StmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time)
@@ -673,8 +672,7 @@ var defaultSysVars = []*SysVar{
 		// It's GetGlobal func will only be called when "set timestamp = default".
 		// Setting timestamp to DEFAULT causes its value to be the current date and time as of the time it is accessed.
 		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_timestamp
-		defaultTimestamp := GetSysVar(Timestamp).Value
-		return defaultTimestamp, nil
+		return DefTimestamp, nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
