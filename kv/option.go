@@ -64,7 +64,7 @@ const (
 	MatchStoreLabels
 	// ResourceGroupTag indicates the resource group tag of the kv request.
 	ResourceGroupTag
-	// ResourceGroupTagger is used when ResourceGroupTag is nil.
+	// ResourceGroupTagger can be used to set the ResourceGroupTag dynamically according to the request content. It will be used only when ResourceGroupTag is nil.
 	ResourceGroupTagger
 	// KVFilter indicates the filter to ignore key-values in the transaction's memory buffer.
 	KVFilter
