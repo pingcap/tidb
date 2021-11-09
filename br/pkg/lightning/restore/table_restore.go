@@ -702,10 +702,15 @@ func (tr *TableRestore) postProcess(
 		return false, errors.Trace(err)
 	}
 
+	if !forcePostProcess && rc.cfg.PostRestore.PostProcessAtLast {
+		return true, nil
+	}
+
 	w := rc.checksumWorks.Apply()
 	defer rc.checksumWorks.Recycle(w)
 
-	if cp.Status < checkpoints.CheckpointStatusChecksummed {
+	shouldSkipAnalyze := false
+	if cp.Status < checkpoints.CheckpointStatusChecksumSkipped {
 		// 4. do table checksum
 		var localChecksum verify.KVChecksum
 		for _, engine := range cp.Engines {
@@ -737,10 +742,6 @@ func (tr *TableRestore) postProcess(
 			return false, err
 		}
 
-		if !forcePostProcess && rc.cfg.PostRestore.PostProcessAtLast {
-			return true, nil
-		}
-
 		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			opts := &kv.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
@@ -753,22 +754,14 @@ func (tr *TableRestore) postProcess(
 			} else {
 				hasDupe = hasDupe || hasRemoteDupe
 			}
-		}
-
-		nextStage := checkpoints.CheckpointStatusChecksummed
-		if hasDupe {
 			if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
 				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
 				return false, err
 			}
-		} else if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
-			tr.logger.Info("skip checksum")
-			err = nil
-			nextStage = checkpoints.CheckpointStatusChecksumSkipped
-		} else {
-			if !needChecksum {
-				return false, nil
-			}
+		}
+
+		nextStage := checkpoints.CheckpointStatusChecksummed
+		if rc.cfg.PostRestore.Checksum != config.OpLevelOff && !hasDupe && needChecksum {
 			if cp.Checksum.SumKVS() > 0 || baseTotalChecksum.SumKVS() > 0 {
 				localChecksum.Add(&cp.Checksum)
 				localChecksum.Add(baseTotalChecksum)
@@ -787,6 +780,19 @@ func (tr *TableRestore) postProcess(
 					err = nil
 				}
 			}
+		} else {
+			switch {
+			case rc.cfg.PostRestore.Checksum == config.OpLevelOff:
+				tr.logger.Info("skip checksum because the checksum option is off")
+			case hasDupe:
+				tr.logger.Info("skip checksum&analyze because duplicates were detected")
+				shouldSkipAnalyze = true
+			case !needChecksum:
+				tr.logger.Info("skip checksum&analyze because other lightning instance will do this")
+				shouldSkipAnalyze = true
+			}
+			err = nil
+			nextStage = checkpoints.CheckpointStatusChecksumSkipped
 		}
 
 		if err == nil {
@@ -801,14 +807,14 @@ func (tr *TableRestore) postProcess(
 	}
 
 	// 5. do table analyze
-	if cp.Status < checkpoints.CheckpointStatusAnalyzed {
+	if cp.Status < checkpoints.CheckpointStatusAnalyzeSkipped {
 		switch {
-		case rc.cfg.PostRestore.Analyze == config.OpLevelOff:
+		case shouldSkipAnalyze || rc.cfg.PostRestore.Analyze == config.OpLevelOff:
 			tr.logger.Info("skip analyze")
 			if err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped); err != nil {
 				return false, errors.Trace(err)
 			}
-			cp.Status = checkpoints.CheckpointStatusAnalyzed
+			cp.Status = checkpoints.CheckpointStatusAnalyzeSkipped
 		case forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast:
 			err := tr.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
 			// witch post restore level 'optional', we will skip analyze error

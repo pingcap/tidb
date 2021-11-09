@@ -698,8 +698,12 @@ func (b *builtinSHA1Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+	bytes, err := charset.NewEncoding(b.args[0].GetType().Charset).Encode(nil, []byte(str))
+	if err != nil {
+		return "", false, err
+	}
 	hasher := sha1.New() // #nosec G401
-	_, err = hasher.Write([]byte(str))
+	_, err = hasher.Write(bytes)
 	if err != nil {
 		return "", true, err
 	}
@@ -751,10 +755,15 @@ func (b *builtinSHA2Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+	bytes, err := charset.NewEncoding(b.args[0].GetType().Charset).Encode(nil, []byte(str))
+	if err != nil {
+		return "", false, err
+	}
 	hashLength, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
 	var hasher hash.Hash
 	switch int(hashLength) {
 	case SHA0, SHA256:
@@ -770,7 +779,7 @@ func (b *builtinSHA2Sig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, nil
 	}
 
-	_, err = hasher.Write([]byte(str))
+	_, err = hasher.Write(bytes)
 	if err != nil {
 		return "", true, err
 	}
