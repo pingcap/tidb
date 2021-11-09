@@ -143,7 +143,6 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeDAG
 		builder.Request.Cacheable = true
-		builder.Request.DAG = dag
 		builder.Request.Data, builder.err = dag.Marshal()
 	}
 	// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.

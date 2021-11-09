@@ -18,8 +18,6 @@ import (
 	"context"
 	"unsafe"
 
-	"github.com/pingcap/tidb/store/copr"
-
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -119,7 +117,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	if canUseChunkRPC(sctx) {
 		encodetype = tipb.EncodeType_TypeChunk
 	}
-	rs := &selectResult{
+	return &selectResult{
 		label:      "dag",
 		resp:       resp,
 		rowLen:     len(fieldTypes),
@@ -130,11 +128,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		memTracker: kvReq.MemTracker,
 		encodeType: encodetype,
 		storeType:  kvReq.StoreType,
-	}
-	if it, ok := resp.(*copr.CopIterator); ok {
-		rs.respRanges = it.GetRespRanges()
-	}
-	return rs, nil
+	}, nil
 }
 
 // SelectWithRuntimeStats sends a DAG request, returns SelectResult.

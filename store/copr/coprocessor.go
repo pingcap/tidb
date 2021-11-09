@@ -284,16 +284,6 @@ type copIterator struct {
 	resolvedLocks util.TSSet
 
 	actionOnExceed *rateLimitAction
-
-	respRanges []*coprocessor.KeyRange
-}
-
-type CopIterator struct {
-	*copIterator
-}
-
-func (c *CopIterator) GetRespRanges() []*coprocessor.KeyRange {
-	return c.respRanges
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -598,9 +588,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				it.sendRate.PutToken()
 			})
 			return it.Next(ctx)
-		}
-		if resp.pbResp.Range != nil {
-			it.respRanges = append(it.respRanges, resp.pbResp.Range)
 		}
 	} else {
 		for {
@@ -1098,7 +1085,7 @@ func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRang
 	return buildCopTasks(bo, worker.store.GetRegionCache(), remainedRanges, worker.req, task.eventCb)
 }
 
-// CalculateRemain splits the input ranges into two, and take one of them according to desc flag.
+// calculateRemain splits the input ranges into two, and take one of them according to desc flag.
 // It's used in streaming API, to calculate which range is consumed and what needs to be retry.
 // For example:
 // ranges: [r1 --> r2) [r3 --> r4)
@@ -1114,6 +1101,7 @@ func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *copro
 	return right
 }
 
+// calculateTodo is similar to calculateRemain, which calculates the rest ranges to be done instead of the ranges to be retried.
 func (worker *copIteratorWorker) calculateTodo(ranges *KeyRanges, split *coprocessor.KeyRange, desc bool) *KeyRanges {
 	if desc {
 		left, _ := ranges.Split(split.Start)

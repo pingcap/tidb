@@ -23,8 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/coprocessor"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -155,8 +153,6 @@ type selectResult struct {
 	memTracker       *memory.Tracker
 
 	stats *selectResultRuntimeStats
-
-	respRanges []*coprocessor.KeyRange
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
