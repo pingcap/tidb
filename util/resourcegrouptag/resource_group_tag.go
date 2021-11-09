@@ -19,10 +19,12 @@ import (
 	"encoding/binary"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // EncodeResourceGroupTag encodes sql digest and plan digest into resource group tag.
@@ -60,6 +62,9 @@ func DecodeResourceGroupTag(data []byte) (sqlDigest []byte, err error) {
 
 // GetResourceGroupLabelByKey determines the label of the resource group based on the content of the key.
 func GetResourceGroupLabelByKey(key []byte) tipb.ResourceGroupTagLabel {
+	if len(key) == 0 {
+		return tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown
+	}
 	_, _, isRow, err := decodeKeyHead(key)
 	if err != nil {
 		return tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown
@@ -68,6 +73,48 @@ func GetResourceGroupLabelByKey(key []byte) tipb.ResourceGroupTagLabel {
 		return tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow
 	}
 	return tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex
+}
+
+// GetFirstKeyFromRequest gets the first Key of the request from tikvrpc.Request.
+func GetFirstKeyFromRequest(req *tikvrpc.Request) (firstKey []byte) {
+	if req == nil {
+		return
+	}
+	switch req.Req.(type) {
+	case *kvrpcpb.GetRequest:
+		r := req.Req.(*kvrpcpb.GetRequest)
+		if r != nil {
+			firstKey = r.Key
+		}
+	case *kvrpcpb.BatchGetRequest:
+		r := req.Req.(*kvrpcpb.BatchGetRequest)
+		if r != nil && len(r.Keys) > 0 {
+			firstKey = r.Keys[0]
+		}
+	case *kvrpcpb.ScanRequest:
+		r := req.Req.(*kvrpcpb.ScanRequest)
+		if r != nil {
+			firstKey = r.StartKey
+		}
+	case *kvrpcpb.PrewriteRequest:
+		r := req.Req.(*kvrpcpb.PrewriteRequest)
+		if r != nil && len(r.Mutations) > 0 {
+			if mutation := r.Mutations[0]; mutation != nil {
+				firstKey = mutation.Key
+			}
+		}
+	case *kvrpcpb.CommitRequest:
+		r := req.Req.(*kvrpcpb.CommitRequest)
+		if r != nil && len(r.Keys) > 0 {
+			firstKey = r.Keys[0]
+		}
+	case *kvrpcpb.BatchRollbackRequest:
+		r := req.Req.(*kvrpcpb.BatchRollbackRequest)
+		if r != nil && len(r.Keys) > 0 {
+			firstKey = r.Keys[0]
+		}
+	}
+	return
 }
 
 // variables needed by decodeKeyHead.

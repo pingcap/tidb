@@ -46,8 +46,10 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/bindinfo"
@@ -546,8 +548,8 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
-	s.txn.SetOption(kv.ResourceGroupTagFactory, tikvutil.ResourceGroupTagFactory(func(params tikvutil.ResourceGroupTagParams) []byte {
-		return sessVars.StmtCtx.GetResourceGroupTagByFirstKey(params.FirstKey)
+	s.txn.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(func(req *tikvrpc.Request) {
+		req.ResourceGroupTag = sessVars.StmtCtx.GetResourceGroupTagByFirstKey(resourcegrouptag.GetFirstKeyFromRequest(req))
 	}))
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
 	if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {

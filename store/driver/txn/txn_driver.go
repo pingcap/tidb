@@ -31,8 +31,8 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
-	"github.com/tikv/client-go/v2/util"
 )
 
 type tikvTxn struct {
@@ -222,8 +222,10 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
-	case kv.ResourceGroupTagFactory:
-		txn.KVTxn.SetResourceGroupTagFactory(val.(util.ResourceGroupTagFactory))
+	case kv.ResourceGroupTag:
+		txn.KVTxn.SetResourceGroupTag(val.([]byte))
+	case kv.ResourceGroupTagger:
+		txn.KVTxn.SetResourceGroupTagger(val.(tikvrpc.ResourceGroupTagger))
 	case kv.KVFilter:
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
 	case kv.SnapInterceptor:

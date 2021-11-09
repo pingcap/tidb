@@ -19,10 +19,12 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func TestResourceGroupTagEncoding(t *testing.T) {
@@ -103,6 +105,64 @@ func TestGetResourceGroupLabelByKey(t *testing.T) {
 	require.Equal(t, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex, label)
 	label = GetResourceGroupLabelByKey([]byte(""))
 	require.Equal(t, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown, label)
+}
+
+func TestGetFirstKeyFromRequest(t *testing.T) {
+	var testK1 = []byte("TEST-1")
+	var testK2 = []byte("TEST-2")
+	var req *tikvrpc.Request
+
+	require.Equal(t, nil, GetFirstKeyFromRequest(nil))
+
+	req = &tikvrpc.Request{Req: (*kvrpcpb.GetRequest)(nil)}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.GetRequest{Key: nil}}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.GetRequest{Key: testK1}}
+	require.Equal(t, testK1, GetFirstKeyFromRequest(req))
+
+	req = &tikvrpc.Request{Req: (*kvrpcpb.BatchGetRequest)(nil)}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.BatchGetRequest{Keys: nil}}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.BatchGetRequest{Keys: [][]byte{}}}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.BatchGetRequest{Keys: [][]byte{testK2, testK1}}}
+	require.Equal(t, testK2, GetFirstKeyFromRequest(req))
+
+	req = &tikvrpc.Request{Req: (*kvrpcpb.ScanRequest)(nil)}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.ScanRequest{StartKey: nil}}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.ScanRequest{StartKey: testK1}}
+	require.Equal(t, testK1, GetFirstKeyFromRequest(req))
+
+	req = &tikvrpc.Request{Req: (*kvrpcpb.PrewriteRequest)(nil)}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.PrewriteRequest{Mutations: nil}}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.PrewriteRequest{Mutations: []*kvrpcpb.Mutation{}}}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.PrewriteRequest{Mutations: []*kvrpcpb.Mutation{{Key: testK2}, {Key: testK1}}}}
+	require.Equal(t, testK2, GetFirstKeyFromRequest(req))
+
+	req = &tikvrpc.Request{Req: (*kvrpcpb.CommitRequest)(nil)}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.CommitRequest{Keys: nil}}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.CommitRequest{Keys: [][]byte{}}}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.CommitRequest{Keys: [][]byte{testK1, testK1}}}
+	require.Equal(t, testK1, GetFirstKeyFromRequest(req))
+
+	req = &tikvrpc.Request{Req: (*kvrpcpb.BatchRollbackRequest)(nil)}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.BatchRollbackRequest{Keys: nil}}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.BatchRollbackRequest{Keys: [][]byte{}}}
+	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &kvrpcpb.BatchRollbackRequest{Keys: [][]byte{testK2, testK1}}}
+	require.Equal(t, testK2, GetFirstKeyFromRequest(req))
 }
 
 func genRandHex(length int) []byte {

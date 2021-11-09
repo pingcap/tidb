@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/txnkv/txnutil"
-	"github.com/tikv/client-go/v2/util"
 )
 
 type tikvSnapshot struct {
@@ -112,8 +112,10 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetIsStatenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
-	case kv.ResourceGroupTagFactory:
-		s.KVSnapshot.SetResourceGroupTagFactory(val.(util.ResourceGroupTagFactory))
+	case kv.ResourceGroupTag:
+		s.KVSnapshot.SetResourceGroupTag(val.([]byte))
+	case kv.ResourceGroupTagger:
+		s.KVSnapshot.SetResourceGroupTagger(val.(tikvrpc.ResourceGroupTagger))
 	case kv.ReadReplicaScope:
 		s.KVSnapshot.SetReadReplicaScope(val.(string))
 	case kv.SnapInterceptor:

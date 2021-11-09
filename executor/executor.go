@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -1897,8 +1898,8 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 
 func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 	if snapshot != nil && variable.TopSQLEnabled() {
-		snapshot.SetOption(kv.ResourceGroupTagFactory, tikvutil.ResourceGroupTagFactory(func(params tikvutil.ResourceGroupTagParams) []byte {
-			return sc.GetResourceGroupTagByFirstKey(params.FirstKey)
+		snapshot.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(func(req *tikvrpc.Request) {
+			req.ResourceGroupTag = sc.GetResourceGroupTagByFirstKey(resourcegrouptag.GetFirstKeyFromRequest(req))
 		}))
 	}
 }

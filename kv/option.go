@@ -62,8 +62,10 @@ const (
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels
-	// ResourceGroupTagFactory indicates the resource group tag factory of the kv request.
-	ResourceGroupTagFactory
+	// ResourceGroupTag indicates the resource group tag of the kv request.
+	ResourceGroupTag
+	// ResourceGroupTagger is used when ResourceGroupTag is nil.
+	ResourceGroupTagger
 	// KVFilter indicates the filter to ignore key-values in the transaction's memory buffer.
 	KVFilter
 
