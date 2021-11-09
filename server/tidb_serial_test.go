@@ -15,14 +15,17 @@
 package server
 
 import (
+	"context"
 	"crypto/x509"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -338,4 +341,27 @@ func TestErrorNoRollback(t *testing.T) {
 	require.NoError(t, err)
 	tlsCfg = server.getTLSConfig()
 	require.Nil(t, tlsCfg)
+}
+
+func TestPrepareCount(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	require.NoError(t, err)
+	prepareCnt := atomic.LoadInt64(&variable.PreparedStmtCount)
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test;")
+	require.NoError(t, err)
+	_, err = Execute(ctx, qctx, "drop table if exists t1")
+	require.NoError(t, err)
+	_, err = Execute(ctx, qctx, "create table t1 (id int)")
+	require.NoError(t, err)
+	stmt, _, _, err := qctx.Prepare("insert into t1 values (?)")
+	require.NoError(t, err)
+	require.Equal(t, prepareCnt+1, atomic.LoadInt64(&variable.PreparedStmtCount))
+	require.NoError(t, err)
+	err = qctx.GetStatement(stmt.ID()).Close()
+	require.NoError(t, err)
+	require.Equal(t, prepareCnt, atomic.LoadInt64(&variable.PreparedStmtCount))
 }
