@@ -42,9 +42,10 @@ func TestGetTimeValue(t *testing.T) {
 	require.Equal(t, types.KindMysqlTime, v.Kind())
 	timeValue := v.GetMysqlTime()
 	require.Equal(t, "2012-12-12 00:00:00", timeValue.String())
+
 	sessionVars := ctx.GetSessionVars()
-	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "")
-	require.Error(t, err, "Incorrect argument type to variable 'timestamp'")
+	err = variable.SetSessionSystemVar(sessionVars, "timestamp", "default")
+	require.NoError(t, err)
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	require.NoError(t, err)
 
