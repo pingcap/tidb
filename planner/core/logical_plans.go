@@ -146,10 +146,10 @@ type LogicalJoin struct {
 	// Currently, only `aggregation push down` phase will set this.
 	DefaultValues []types.Datum
 
-	// redundantSchema contains columns which are eliminated in join.
-	// For select * from a join b using (c); a.c will in output schema, and b.c will only in redundantSchema.
-	redundantSchema *expression.Schema
-	redundantNames  types.NameSlice
+	// fullSchema contains columns which are eliminated in join.
+	// For select * from a join b using (c); a.c will in output schema, and b.c will only in fullSchema.
+	fullSchema     *expression.Schema
+	redundantNames types.NameSlice
 
 	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	equalCondOutCnt float64
