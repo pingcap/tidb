@@ -69,22 +69,10 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	// build table & partition bundles if any.
-	var bundles []*placement.Bundle
-	tableBundle, err := newBundleFromTblInfo(t, job, tbInfo)
+	bundles, err := fullBundlesFromTblInfo(t, job, tbInfo)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-
-	if tableBundle != nil {
-		bundles = append(bundles, tableBundle)
-	}
-
-	if tbInfo.Partition != nil {
-		partitionBundles, err := newBundlesFromPartitionDefs(t, job, tbInfo.Partition.Definitions)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		bundles = append(bundles, partitionBundles...)
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -121,6 +109,29 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	default:
 		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
+}
+
+// fullBundlesFromTblInfo returns a bundle list with both table bundle and partition bundles
+func fullBundlesFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) ([]*placement.Bundle, error) {
+	var bundles []*placement.Bundle
+	tableBundle, err := newBundleFromTblInfo(t, job, tbInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if tableBundle != nil {
+		bundles = append(bundles, tableBundle)
+	}
+
+	if tbInfo.Partition != nil {
+		partitionBundles, err := newBundlesFromPartitionDefs(t, job, tbInfo.Partition.Definitions)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		bundles = append(bundles, partitionBundles...)
+	}
+
+	return bundles, nil
 }
 
 func newBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) (*placement.Bundle, error) {
@@ -621,26 +632,13 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	}
 
-	is := d.infoCache.GetLatest()
+	tblInfo.ID = newTableID
 
-	bundles := make([]*placement.Bundle, 0, len(oldPartitionIDs)+1)
-	if oldBundle, ok := is.BundleByName(placement.GroupID(tableID)); ok {
-		bundles = append(bundles, oldBundle.Clone().Reset(placement.RuleIndexTable, []int64{newTableID}))
-	}
-
-	if pi := tblInfo.GetPartitionInfo(); pi != nil {
-		oldIDs := make([]int64, 0, len(oldPartitionIDs))
-		newIDs := make([]int64, 0, len(oldPartitionIDs))
-		newDefs := pi.Definitions
-		for i := range oldPartitionIDs {
-			newID := newDefs[i].ID
-			if oldBundle, ok := is.BundleByName(placement.GroupID(oldPartitionIDs[i])); ok && !oldBundle.IsEmpty() {
-				oldIDs = append(oldIDs, oldPartitionIDs[i])
-				newIDs = append(newIDs, newID)
-				bundles = append(bundles, oldBundle.Clone().Reset(placement.RuleIndexPartition, []int64{newID}))
-			}
-		}
-		job.CtxVars = []interface{}{oldIDs, newIDs}
+	// build table & partition bundles if any.
+	bundles, err := fullBundlesFromTblInfo(t, job, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
 
 	err = infosync.PutRuleBundles(context.TODO(), bundles)
@@ -667,7 +665,6 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		tblInfo.TiFlashReplica.Available = false
 	}
 
-	tblInfo.ID = newTableID
 	err = t.CreateTableOrView(schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled

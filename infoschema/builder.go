@@ -168,13 +168,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			case model.ActionDropTable, model.ActionDropTablePartition:
 				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
 				continue
-			case model.ActionTruncateTable:
-				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
-				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				continue
 			case model.ActionRecoverTable:
 				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
 				if err != nil {
