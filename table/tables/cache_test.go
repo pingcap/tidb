@@ -228,6 +228,7 @@ func TestCacheTableComplexRead(t *testing.T) {
 				break
 			}
 		}
+		require.True(t, i < 10)
 		tk2.MustExec("commit")
 		doneCh <- struct{}{}
 	}()
