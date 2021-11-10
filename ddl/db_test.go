@@ -1991,8 +1991,9 @@ func setupJobIDExtCallback(ctx sessionctx.Context) (jobExt *testDDLJobIDCallback
 }
 
 func checkDelRangeAdded(tk *testkit.TestKit, jobID int64, elemID int64) {
-	query := "(select count(1) from mysql.gc_delete_range where job_id = ? and element_id = ?) union " +
-		"(select count(1) from mysql.gc_delete_range_done where job_id = ? and element_id = ?);"
+	query := `select sum(cnt) from
+	(select count(1) cnt from mysql.gc_delete_range where job_id = ? and element_id = ? union
+	select count(1) cnt from mysql.gc_delete_range_done where job_id = ? and element_id = ?) as gdr;`
 	tk.MustQuery(query, jobID, elemID, jobID, elemID).Check(testkit.Rows("1"))
 }
 
