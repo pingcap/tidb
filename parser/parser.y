@@ -9262,6 +9262,25 @@ SubSelect:
 		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
+|   '(' SubSelect ')'
+	{
+		var sel ast.ResultSetNode
+		switch x := $2.(*ast.SubqueryExpr).Query.(type) {
+		case *ast.SelectStmt:
+			rs := $2.(*ast.SelectStmt)
+        	endOffset := parser.endOffset(&yyS[yypt])
+        	parser.setLastSelectFieldText(rs, endOffset)
+        	src := parser.src
+        	// See the implementation of yyParse function
+        	rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+        	$$ = &ast.SubqueryExpr{Query: rs}
+		case *ast.SetOprStmt:
+			rs := $2.(*ast.SetOprStmt)
+			src := parser.src
+			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			$$ = &ast.SubqueryExpr{Query: rs}
+		}
+	}
 
 // See https://dev.mysql.com/doc/refman/8.0/en/innodb-locking-reads.html
 SelectLockOpt:

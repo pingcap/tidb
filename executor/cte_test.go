@@ -354,3 +354,21 @@ func TestCTEWithLimit(t *testing.T) {
 	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 4 offset 4) select * from cte1;")
 	rows.Check(testkit.Rows("3", "4", "3", "4"))
 }
+
+
+
+// See https://github.com/pingcap/tidb/issues/29416
+func TestIssue29416(t *testing.T) {
+	t.Parallel()
+	store, close := testkit.CreateMockStore(t)
+	defer close()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+
+	tk.MustExec("create table t1 (a int not null, b char (10) not null);")
+	tk.MustExec("insert into t1 values (1, 'a')")
+	tk.MustQuery("((select * from t1)) union (select * from t1);")
+	tk.MustQuery("select * from (((select * from t1)) union (select * from t1) union (select * from t1)) a;")
+}
