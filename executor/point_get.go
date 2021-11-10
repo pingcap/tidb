@@ -402,7 +402,13 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		}
 		// fallthrough to snapshot get.
 	}
-
+	// Cache table first try to get value from cacheBuffer
+	if e.tblInfo.TableCacheStatusType == model.TableCacheStatusEnable  {
+		cond, buffer := e.ctx.GetSessionVars().StmtCtx.GetCacheTable(e.tblInfo.ID)
+		if cond {
+			return buffer.(kv.MemBuffer).Get(ctx, key)
+		}
+	}
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
 		if e.ctx.GetSessionVars().EnablePointGetCache {

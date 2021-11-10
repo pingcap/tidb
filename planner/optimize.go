@@ -132,6 +132,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			// point plan is already tried in a multi-statement query.
 			fp = fpv.Plan
 		} else {
+			sctx.GetInfoSchema()
 			fp = plannercore.TryFastPlan(sctx, node)
 		}
 		if fp != nil {
@@ -504,7 +505,9 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 	if !plannercore.IsAutoCommitTxn(ctx) {
 		return false
 	}
-
+	if ctx.GetSessionVars().StmtCtx.CacheTableUsed() {
+		return false
+	}
 	v, ok := p.(*plannercore.PointGetPlan)
 	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle))
 }

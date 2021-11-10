@@ -234,3 +234,37 @@ func TestCacheTableComplexRead(t *testing.T) {
 	tk1.HasPlan("select *from complex_cache where id > 7", "UnionScan")
 	tk1.MustExec("commit")
 }
+
+func  TestCacheTablePointGet(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cache_point (id int primary key auto_increment, u int unique, v int)")
+	tk.MustExec("insert into cache_point values(1, 11, 101)")
+	tk.MustExec("insert into cache_point values(2, 12, 102)")
+	tk.MustExec("alter table cache_point cache")
+	// check point get out transaction
+	tk.MustQuery("select * from cache_point where id=1").Check(testkit.Rows("1 11 101"))
+	tk.MustQuery("select * from cache_point where u=11").Check(testkit.Rows("1 11 101"))
+	tk.MustQuery("select * from cache_point where id=2").Check(testkit.Rows("2 12 102"))
+	tk.MustQuery("select * from cache_point where u=12").Check(testkit.Rows("2 12 102"))
+
+	// check point get in transaction
+	tk.MustExec("begin")
+	tk.MustQuery("select * from cache_point where id=1").Check(testkit.Rows("1 11 101"))
+	tk.MustQuery("select * from cache_point where u=11").Check(testkit.Rows("1 11 101"))
+	tk.MustQuery("select * from cache_point where id=2").Check(testkit.Rows("2 12 102"))
+	tk.MustQuery("select * from cache_point where u=12").Check(testkit.Rows("2 12 102"))
+	tk.MustExec("insert into cache_point values(3, 13, 103)")
+	tk.MustQuery("select * from cache_point where id=3").Check(testkit.Rows("3 13 103"))
+	tk.MustQuery("select * from cache_point where u=13").Check(testkit.Rows("3 13 103"))
+	tk.MustExec("update cache_point set v=999 where id=2")
+	tk.MustQuery("select * from cache_point where id=2").Check(testkit.Rows("2 12 999"))
+	tk.MustExec("commit")
+
+	// check point get after transaction
+	tk.MustQuery("select * from cache_point where id=3").Check(testkit.Rows("3 13 103"))
+	tk.MustQuery("select * from cache_point where u=13").Check(testkit.Rows("3 13 103"))
+	tk.MustQuery("select * from cache_point where id=2").Check(testkit.Rows("2 12 999"))
+}
