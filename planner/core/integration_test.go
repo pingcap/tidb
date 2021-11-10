@@ -4750,3 +4750,25 @@ func (s *testIntegrationSerialSuite) TestRejectSortForMPP(c *C) {
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func (s *testIntegrationSuite) TestIssue26945(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (c int, d int)")
+	tk.MustExec("insert into t1 values(1, 1), (1,2),(2,1),(2,2)")
+	tk.MustExec("insert into t2 values(1, 3), (1,4),(2,5),(2,6)")
+
+	tk.MustQuery("explain select one.a from t1 one order by (select two.d from t2 two where two.c = one.b)").Check(testkit.Rows(
+		"Projection_11 10000.00 root  test.t1.a",
+	    "└─Sort_12 10000.00 root  test.t2.d",
+	    "  └─HashJoin_14 10000.00 root  CARTESIAN left outer join",
+	    "    ├─MaxOneRow_18(Build) 1.00 root  ",
+	    "    │ └─TableReader_21 2.00 root  data:Selection_20",
+	    "    │   └─Selection_20 2.00 cop[tikv]  eq(test.t2.c, test.t1.b)",
+	    "    │     └─TableFullScan_19 2000.00 cop[tikv] table:two keep order:false, stats:pseudo",
+	    "    └─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
+	    "      └─TableFullScan_16 10000.00 cop[tikv] table:one keep order:false, stats:pseudo"))
+}

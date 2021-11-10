@@ -1829,12 +1829,15 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.ctxStackAppend(column, er.names[idx])
 		return
 	}
-	for i := len(er.b.outerSchemas) - 1; i >= 0; i-- {
-		outerSchema, outerName := er.b.outerSchemas[i], er.b.outerNames[i]
-		idx, err = expression.FindFieldName(outerName, v)
+	// Here we need use er.b.allSchema and er.b.allNames instead of er.b.outerSchema and er.b.outerNames.
+	// For example, select one.a from t1 one order by (select two.d from t2 two where two.c = one.b), the column one.b
+	// will not in select fields.
+	for i := len(er.b.allSchemas) - 1; i >= 0; i-- {
+		allSchema, allName := er.b.allSchemas[i], er.b.allNames[i]
+		idx, err = expression.FindFieldName(allName, v)
 		if idx >= 0 {
-			column := outerSchema.Columns[idx]
-			er.ctxStackAppend(&expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)}, outerName[idx])
+			column := allSchema.Columns[idx]
+			er.ctxStackAppend(&expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)}, allName[idx])
 			return
 		}
 		if err != nil {

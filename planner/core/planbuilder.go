@@ -498,8 +498,11 @@ type PlanBuilder struct {
 	isCreateView bool
 
 	// evalDefaultExpr needs this information to find the corresponding column.
-	// It stores the OutputNames before buildProjection.
+	// build subquery in OrderBy needs allNames and allSchemas.
+	// allNames stores the OutputNames before buildProjection.
+	// allSchemas stores the Schema before buildProjection.
 	allNames [][]*types.FieldName
+	allSchemas []*expression.Schema
 
 	// isSampling indicates whether the query is sampling.
 	isSampling bool

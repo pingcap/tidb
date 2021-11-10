@@ -3575,8 +3575,16 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	// buildSort is after buildProjection, so we need get OutputNames before BuildProjection and store in allNames.
 	// Otherwise, we will get select fields instead of all OutputNames, so that we can't find the column b in the
 	// above example.
+	//
+	// b.allNames and b.allSchemas will be used for build subquery in OrderBy.
+	// For example, select one.a from t1 one order by (select two.d from t2 two where two.c = one.b), the column one.b
+	// will not in select fields.
 	b.allNames = append(b.allNames, p.OutputNames())
-	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
+	b.allSchemas = append(b.allSchemas, p.Schema().Clone())
+	defer func() {
+		b.allNames = b.allNames[:len(b.allNames)-1];
+		b.allSchemas = b.allSchemas[:len(b.allSchemas)-1];
+	}()
 
 	if sel.Where != nil {
 		p, err = b.buildSelection(ctx, p, sel.Where, nil)
