@@ -101,7 +101,7 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) 
 		return nil, 0, err
 	}
 	var startTS uint64
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		prefix := tablecodec.GenTablePrefix(c.tableID)
 		if err != nil {
 			return errors.Trace(err)
