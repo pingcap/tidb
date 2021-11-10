@@ -523,6 +523,12 @@ func (s *testSuite7) TestUser(c *C) {
 		Check(testkit.Rows("engineering india"))
 	tk.MustQuery("select user,host from mysql.user where user='engineering' and host = 'us'").
 		Check(testkit.Rows("engineering us"))
+
+	tk.MustExec("drop role engineering@INDIA;")
+	tk.MustExec("drop role engineering@US;")
+
+	tk.MustQuery("select user from mysql.user where user='engineering' and host = 'india'").Check(testkit.Rows())
+	tk.MustQuery("select user from mysql.user where user='engineering' and host = 'us'").Check(testkit.Rows())
 }
 
 func (s *testSuite3) TestSetPwd(c *C) {
