@@ -295,17 +295,21 @@ func characterLengthGBK1(bs []byte) int {
 }
 
 func characterLengthUTF81(bs []byte) int {
-	if !utf8.Valid(bs) {
+	l := 0
+	if len(bs) == 0 || bs[0] < 0x80 {
+		l = 0
+	} else if bs[0] < 0xe0 {
+		l = 2
+	} else if bs[0] < 0xf0 {
+		l = 3
+	} else {
+		l = 4
+	}
+
+	if len(bs) < l || !utf8.Valid(bs[:l]) {
 		return 0
 	}
-	if len(bs) == 0 || bs[0] < 0x80 {
-		return 1
-	} else if bs[0] < 0xe0 {
-		return 2
-	} else if bs[0] < 0xf0 {
-		return 3
-	}
-	return 4
+	return l
 }
 
 // FindNextCharacterLength is used in lexer.peek() to determine the next character length.
@@ -326,7 +330,7 @@ var encodingNextCharacterLength = map[string]func([]byte) int{
 }
 
 func characterLengthGBK(bs []byte) int {
-	if len(bs) == 0 || bs[0] < 0x80 {
+	if len(bs) == 0 || bs[0] <= 0x80 {
 		// A byte in the range 00–7F is a single byte that means the same thing as it does in ASCII.
 		return 1
 	}

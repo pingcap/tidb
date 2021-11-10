@@ -131,6 +131,7 @@ func (e *Encoding) EncodeInternal(dest, src []byte) []byte {
 		_, _, err := transformer.Transform(buf[:], src[srcOffset:srcOffset+length], true)
 		if err != nil {
 			dest = append(dest, byte('?'))
+			length = 1
 		} else {
 			dest = append(dest, src[srcOffset:srcOffset+length]...)
 		}
@@ -169,6 +170,9 @@ func (e *Encoding) transform(transformer transform.Transformer, dest, src []byte
 		nDest, nSrc, err := transformer.Transform(dest[destOffset:], src[srcOffset:srcEnd], false)
 		if err == transform.ErrShortDst {
 			dest = enlargeCapacity(dest)
+		} else if err == transform.ErrShortSrc {
+			// no enough character, return directly.
+			return dest[:destOffset], encodingErr
 		} else if err != nil || isDecoding && beginWithReplacementChar(dest[destOffset:destOffset+nDest]) {
 			if encodingErr == nil {
 				encodingErr = e.generateErr(src[srcOffset:], srcNextLen)
