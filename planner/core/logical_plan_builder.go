@@ -4153,7 +4153,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			return nil, err
 		}
 		// Use the txn of the transaction to determine whether the cache can be read.
-		// About read lock and read condition feature. will add in the next pr.
 		buffer, cond := cachedTable.TryGetMemcache(txn.StartTS())
 		if cond {
 			b.ctx.GetSessionVars().StmtCtx.StoreCacheTable(tbl.Meta().ID, buffer)
@@ -4167,7 +4166,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 					}
 				}()
 				if !b.inUpdateStmt && !b.inDeleteStmt && !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
-					err := cachedTable.UpdateLockForRead(b.ctx, txn.StartTS())
+					err := cachedTable.UpdateLockForRead(b.ctx.GetStore(), txn.StartTS())
 					if err != nil {
 						log.Warn("Update Lock Info Error")
 					}
@@ -5949,7 +5948,9 @@ func unfoldSelectList(list *ast.SetOprSelectList, unfoldList *ast.SetOprSelectLi
 func extractTableList(node ast.Node, input []*ast.TableName, asName bool) []*ast.TableName {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
-		input = extractTableList(x.From.TableRefs, input, asName)
+		if x.From != nil {
+			input = extractTableList(x.From.TableRefs, input, asName)
+		}
 		if x.Where != nil {
 			input = extractTableList(x.Where, input, asName)
 		}
