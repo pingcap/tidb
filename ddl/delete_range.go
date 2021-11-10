@@ -24,10 +24,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -234,7 +234,12 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 				logutil.BgLogger().Error("[ddl] delRange emulator complete task failed", zap.Error(err))
 				return errors.Trace(err)
 			}
-			logutil.BgLogger().Info("[ddl] delRange emulator complete task", zap.Int64("jobID", r.JobID), zap.Int64("elementID", r.ElementID))
+			startKey, endKey := r.Range()
+			logutil.BgLogger().Info("[ddl] delRange emulator complete task",
+				zap.Int64("jobID", r.JobID),
+				zap.Int64("elementID", r.ElementID),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey))
 			break
 		}
 		if err := util.UpdateDeleteRange(ctx, r, newStartKey, oldStartKey); err != nil {
@@ -345,6 +350,24 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 			return doInsert(ctx, s, job.ID, indexID, startKey, endKey, now)
+		}
+	case model.ActionDropIndexes:
+		var indexIDs []int64
+		var partitionIDs []int64
+		if err := job.DecodeArgs(&[]model.CIStr{}, &[]bool{}, &indexIDs, &partitionIDs); err != nil {
+			return errors.Trace(err)
+		}
+		// Remove data in TiKV.
+		if len(indexIDs) == 0 {
+			return nil
+		}
+		if len(partitionIDs) == 0 {
+			return doBatchDeleteIndiceRange(ctx, s, job.ID, job.TableID, indexIDs, now)
+		}
+		for _, pID := range partitionIDs {
+			if err := doBatchDeleteIndiceRange(ctx, s, job.ID, pID, indexIDs, now); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	case model.ActionDropColumn:
 		var colName model.CIStr

@@ -38,12 +38,12 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -129,6 +129,7 @@ func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = ts.port
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -274,6 +275,7 @@ func (ts *tidbTestSuite) TestStatusPort(c *C) {
 	defer dom.Close()
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -300,6 +302,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = "/tmp/ca-cert-2.pem"
@@ -320,7 +323,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 
 	// but plain http connection should fail.
 	cli.statusScheme = "http"
-	_, err = cli.fetchStatus("/status")
+	_, err = cli.fetchStatus("/status") // nolint: bodyclose
 	c.Assert(err, NotNil)
 
 	server.Close()
@@ -351,6 +354,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = caPath
@@ -372,15 +376,16 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 		client1CertPath,
 		client1KeyPath,
 	)
-	_, err = hc.Get(cli.statusURL("/status"))
+	_, err = hc.Get(cli.statusURL("/status")) // nolint: bodyclose
 	c.Assert(err, NotNil)
 
 	hc = newTLSHttpClient(c, caPath,
 		client2CertPath,
 		client2KeyPath,
 	)
-	_, err = hc.Get(cli.statusURL("/status"))
+	resp, err := hc.Get(cli.statusURL("/status"))
 	c.Assert(err, IsNil)
+	c.Assert(resp.Body.Close(), IsNil)
 }
 
 func newTLSHttpClient(c *C, caFile, certFile, keyFile string) *http.Client {
@@ -865,6 +870,7 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, ts.store)
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -882,6 +888,7 @@ func (ts *tidbTestSerialSuite) TestTLSAuto(c *C) {
 	}
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
@@ -934,6 +941,7 @@ func (ts *tidbTestSerialSuite) TestTLSBasic(c *C) {
 	}
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -1000,6 +1008,7 @@ func (ts *tidbTestSerialSuite) TestTLSVerify(c *C) {
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -1065,6 +1074,7 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 	// try old cert used in startup configuration.
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -1165,6 +1175,7 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
@@ -1404,17 +1415,68 @@ func (ts *tidbTestSuite) TestSumAvg(c *C) {
 }
 
 func (ts *tidbTestSuite) TestNullFlag(c *C) {
-	// issue #9689
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	rs, err := Execute(ctx, qctx, "select 1")
-	c.Assert(err, IsNil)
-	cols := rs.Columns()
-	c.Assert(len(cols), Equals, 1)
-	expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
-	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	{
+		// issue #9689
+		rs, err := Execute(ctx, qctx, "select 1")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
+
+	{
+		// issue #19025
+		rs, err := Execute(ctx, qctx, "select convert('{}', JSON)")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
+
+	{
+		// issue #18488
+		_, err := Execute(ctx, qctx, "use test")
+		c.Assert(err, IsNil)
+		_, err = Execute(ctx, qctx, "CREATE TABLE `test` (`iD` bigint(20) NOT NULL, `INT_TEST` int(11) DEFAULT NULL);")
+		c.Assert(err, IsNil)
+		rs, err := Execute(ctx, qctx, `SELECT id + int_test as res FROM test  GROUP BY res ORDER BY res;`)
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
+	{
+
+		rs, err := Execute(ctx, qctx, "select if(1, null, 1) ;")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
+	{
+		rs, err := Execute(ctx, qctx, "select CASE 1 WHEN 2 THEN 1 END ;")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
+	{
+		rs, err := Execute(ctx, qctx, "select NULL;")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
 }
 
 func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
@@ -1448,6 +1510,7 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.GracefulWaitBeforeShutdown = 2 // wait before shutdown
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
@@ -1464,17 +1527,20 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	}()
 	time.Sleep(time.Millisecond * 100)
 
-	_, err = cli.fetchStatus("/status") // server is up
+	resp, err := cli.fetchStatus("/status") // server is up
 	c.Assert(err, IsNil)
+	c.Assert(resp.Body.Close(), IsNil)
 
 	go server.Close()
 	time.Sleep(time.Millisecond * 500)
 
-	resp, _ := cli.fetchStatus("/status") // should return 5xx code
+	resp, _ = cli.fetchStatus("/status") // should return 5xx code
 	c.Assert(resp.StatusCode, Equals, 500)
+	c.Assert(resp.Body.Close(), IsNil)
 
 	time.Sleep(time.Second * 2)
 
+	// nolint: bodyclose
 	_, err = cli.fetchStatus("/status") // status is gone
 	c.Assert(err, ErrorMatches, ".*connect: connection refused")
 }
@@ -1576,7 +1642,9 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	dbt.mustExec("create table t1 (a int auto_increment, b int, unique index idx(a));")
 	dbt.mustExec("create table t2 (a int auto_increment, b int, unique index idx(a));")
 	dbt.mustExec("set @@global.tidb_enable_top_sql='On';")
-	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:4001';")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TopSQL.ReceiverAddress = "127.0.0.1:4001"
+	})
 	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
 	dbt.mustExec("set @@global.tidb_txn_mode = 'pessimistic'")
 
@@ -1805,8 +1873,13 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 			dbt.mustExec(fmt.Sprintf("insert into t%v (b) values (%v);", i, j))
 		}
 	}
+	setTopSQLReceiverAddress := func(addr string) {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TopSQL.ReceiverAddress = addr
+		})
+	}
 	dbt.mustExec("set @@global.tidb_enable_top_sql='On';")
-	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
+	setTopSQLReceiverAddress("")
 	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
 	dbt.mustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
@@ -1849,21 +1922,22 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// case 1: dynamically change agent endpoint
 	cancel := runWorkload(0, 10)
 	// Test with null agent address, the agent server can't receive any record.
-	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
+	setTopSQLReceiverAddress("")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
-	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	setTopSQLReceiverAddress(agentServer.Address())
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(5)
 	// Test with wrong agent address, the agent server can't receive any record.
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=8;")
-	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:65530';")
+	setTopSQLReceiverAddress("127.0.0.1:65530")
+
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
-	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	setTopSQLReceiverAddress(agentServer.Address())
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(8)
 	cancel() // cancel case 1
@@ -1872,11 +1946,11 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	cancel2 := runWorkload(0, 10)
 	// empty agent address, should not collect records
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
-	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
+	setTopSQLReceiverAddress("")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// set correct address, should collect records
-	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	setTopSQLReceiverAddress(agentServer.Address())
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(5)
 	// agent server hangs for a while
@@ -1892,11 +1966,11 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// case 3: agent restart
 	cancel4 := runWorkload(0, 10)
 	// empty agent address, should not collect records
-	dbt.mustExec("set @@tidb_top_sql_agent_address='';")
+	setTopSQLReceiverAddress("")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// set correct address, should collect records
-	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	setTopSQLReceiverAddress(agentServer.Address())
 	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
 	// run another set of SQL queries
@@ -1908,7 +1982,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// agent server restart
 	agentServer, err = mockTopSQLReporter.StartMockAgentServer()
 	c.Assert(err, IsNil)
-	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
+	setTopSQLReceiverAddress(agentServer.Address())
 	// check result
 	agentServer.WaitCollectCnt(2, time.Second*8)
 	checkFn(5)

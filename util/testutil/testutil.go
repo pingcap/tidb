@@ -31,8 +31,8 @@ import (
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
@@ -86,6 +86,7 @@ type datumEqualsChecker struct {
 // the expected value.
 // For example:
 //     c.Assert(value, DatumEquals, NewDatum(42))
+// TODO: please use trequire.DatumEqual to replace this function to migrate to testify
 var DatumEquals check.Checker = &datumEqualsChecker{
 	&check.CheckerInfo{Name: "DatumEquals", Params: []string{"obtained", "expected"}},
 }

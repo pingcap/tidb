@@ -22,10 +22,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -150,9 +150,6 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 			switch priv {
 			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 				return false
-			// TODO: remove this and update the test cases.
-			case mysql.SelectPriv:
-				return true
 			}
 		}
 	case util.MetricSchemaName.L:
@@ -213,6 +210,10 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		return false
 	}
 
+	if record.AuthPlugin == mysql.AuthSocket {
+		return true
+	}
+
 	logutil.BgLogger().Error("user password from system DB not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 	return false
 }
@@ -243,7 +244,10 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	if record == nil {
 		return "", errors.New("Failed to get user record")
 	}
-	if len(record.AuthenticationString) == 0 {
+	// zero-length auth string means no password for native and caching_sha2 auth.
+	// but for auth_socket it means there should be a 1-to-1 mapping between the TiDB user
+	// and the OS user.
+	if record.AuthenticationString == "" && record.AuthPlugin != mysql.AuthSocket {
 		return "", nil
 	}
 	if p.isValidHash(record) {
@@ -330,7 +334,9 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	}
 
 	if len(pwd) == 0 || len(authentication) == 0 {
-		return
+		if record.AuthPlugin != mysql.AuthSocket {
+			return
+		}
 	}
 
 	if record.AuthPlugin == mysql.AuthNativePassword {
@@ -350,6 +356,13 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 		}
 
 		if !authok {
+			return
+		}
+	} else if record.AuthPlugin == mysql.AuthSocket {
+		if string(authentication) != user && string(authentication) != pwd {
+			logutil.BgLogger().Error("Failed socket auth", zap.String("user", user),
+				zap.String("socket_user", string(authentication)),
+				zap.String("authentication_string", pwd))
 			return
 		}
 	} else {

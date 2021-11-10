@@ -20,10 +20,10 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -82,18 +82,18 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	return &ExecStmt{
-		GoCtx:         ctx,
-		SnapshotTS:    ret.LastSnapshotTS,
-		IsStaleness:   ret.IsStaleness,
-		TxnScope:      ret.TxnScope,
-		InfoSchema:    ret.InfoSchema,
-		Plan:          finalPlan,
-		LowerPriority: lowerPriority,
-		Text:          stmtNode.Text(),
-		StmtNode:      stmtNode,
-		Ctx:           c.Ctx,
-		OutputNames:   names,
-		Ti:            &TelemetryInfo{},
+		GoCtx:            ctx,
+		SnapshotTS:       ret.LastSnapshotTS,
+		IsStaleness:      ret.IsStaleness,
+		ReplicaReadScope: ret.ReadReplicaScope,
+		InfoSchema:       ret.InfoSchema,
+		Plan:             finalPlan,
+		LowerPriority:    lowerPriority,
+		Text:             stmtNode.Text(),
+		StmtNode:         stmtNode,
+		Ctx:              c.Ctx,
+		OutputNames:      names,
+		Ti:               &TelemetryInfo{},
 	}, nil
 }
 

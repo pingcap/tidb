@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/dbterror"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
@@ -153,6 +154,10 @@ func ToTiDBErr(err error) error {
 
 	if errors.ErrorEqual(err, tikverr.ErrUnknown) {
 		return ErrUnknown
+	}
+
+	if tikverr.IsErrorUndetermined(err) {
+		return terror.ErrResultUndetermined
 	}
 
 	return errors.Trace(originErr)

@@ -22,14 +22,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -133,11 +133,12 @@ func testCreateColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInf
 
 func buildDropColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
 	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionDropColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{model.NewCIStr(colName)},
+		SchemaID:        dbInfo.ID,
+		TableID:         tblInfo.ID,
+		Type:            model.ActionDropColumn,
+		BinlogInfo:      &model.HistoryInfo{},
+		MultiSchemaInfo: &model.MultiSchemaInfo{},
+		Args:            []interface{}{model.NewCIStr(colName)},
 	}
 }
 
@@ -148,7 +149,7 @@ func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 		c.Assert(err, NotNil)
 		return nil
 	}
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
@@ -177,13 +178,13 @@ func testDropColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 		c.Assert(err, NotNil)
 		return nil
 	}
-	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
-func (s *testColumnSuite) TestColumn(c *C) {
+func (s *testColumnSuite) TestColumnAAA(c *C) {
 	d := testNewDDLAndStart(
 		context.Background(),
 		c,
@@ -904,7 +905,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	c.Assert(errors.ErrorStack(hErr), Equals, "")
+	c.Assert(hErr, IsNil)
 	c.Assert(ok, IsTrue)
 
 	err = ctx.NewTxn(context.Background())
@@ -998,7 +999,7 @@ func (s *testColumnSuite) TestAddColumns(c *C) {
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	c.Assert(errors.ErrorStack(hErr), Equals, "")
+	c.Assert(hErr, IsNil)
 	c.Assert(ok, IsTrue)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)

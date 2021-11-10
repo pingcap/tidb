@@ -18,9 +18,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/testkit/testdata"
@@ -484,6 +484,29 @@ func TestInjectProj(t *testing.T) {
 		},
 		memo.OperandTopN: {
 			NewRuleInjectProjectionBelowTopN(),
+		},
+	})
+	defer func() {
+		optimizer.ResetTransformationRules(DefaultRuleBatches...)
+	}()
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	transformationRulesSuiteData.GetTestCases(t, &input, &output)
+	testGroupToString(t, input, output, optimizer)
+}
+
+func TestMergeAdjacentWindow(t *testing.T) {
+	optimizer := NewOptimizer()
+	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+		memo.OperandProjection: {
+			NewRuleMergeAdjacentProjection(),
+			NewRuleEliminateProjection(),
+		},
+		memo.OperandWindow: {
+			NewRuleMergeAdjacentWindow(),
 		},
 	})
 	defer func() {
