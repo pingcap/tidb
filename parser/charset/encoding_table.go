@@ -295,9 +295,12 @@ func characterLengthGBK1(bs []byte) int {
 }
 
 func characterLengthUTF81(bs []byte) int {
+	if len(bs) == 0 {
+		return 0
+	}
 	l := 0
-	if len(bs) == 0 || bs[0] < 0x80 {
-		l = 0
+	if bs[0] < 0x80 {
+		l = 1
 	} else if bs[0] < 0xe0 {
 		l = 2
 	} else if bs[0] < 0xf0 {
@@ -307,7 +310,7 @@ func characterLengthUTF81(bs []byte) int {
 	}
 
 	if len(bs) < l || !utf8.Valid(bs[:l]) {
-		return 0
+		return 1
 	}
 	return l
 }
