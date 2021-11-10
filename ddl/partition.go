@@ -1401,23 +1401,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// the follow code is a swap function for rules of two partitions
 	// though partitions has exchanged their ID, swap still take effect
-	bundles := make([]*placement.Bundle, 0, 2)
-	ptBundle, ptOK := d.infoCache.GetLatest().BundleByName(placement.GroupID(partDef.ID))
-	ptOK = ptOK && !ptBundle.IsEmpty()
-	ntBundle, ntOK := d.infoCache.GetLatest().BundleByName(placement.GroupID(nt.ID))
-	ntOK = ntOK && !ntBundle.IsEmpty()
-	if ptOK && ntOK {
-		bundles = append(bundles, ptBundle.Clone().Reset(placement.RuleIndexPartition, []int64{nt.ID}))
-		bundles = append(bundles, ntBundle.Clone().Reset(placement.RuleIndexPartition, []int64{partDef.ID}))
-	} else if ptOK {
-		bundles = append(bundles, placement.NewBundle(partDef.ID))
-		bundles = append(bundles, ptBundle.Clone().Reset(placement.RuleIndexPartition, []int64{nt.ID}))
-	} else if ntOK {
-		bundles = append(bundles, placement.NewBundle(nt.ID))
-		bundles = append(bundles, ntBundle.Clone().Reset(placement.RuleIndexPartition, []int64{partDef.ID}))
-	}
-	err = infosync.PutRuleBundles(context.TODO(), bundles)
+
+	bundles, err := exchangePartitionPlacementBundles(t, job, pt, partDef, nt)
 	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	if err = infosync.PutRuleBundles(context.TODO(), bundles); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
@@ -1465,6 +1456,44 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
 	return ver, nil
+}
+
+func exchangePartitionPlacementBundles(t *meta.Meta, job *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
+	bundles := make([]*placement.Bundle, 0, 3)
+
+	ptBundle, err := newBundleFromTblInfo(t, job, pt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if ptBundle != nil {
+		bundles = append(bundles, ptBundle)
+	}
+
+	parBundle, err := newBundleFromPartitionDef(t, job, *newPar)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if parBundle != nil {
+		bundles = append(bundles, ptBundle)
+	}
+
+	ntBundle, err := newBundleFromTblInfo(t, job, nt)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if ntBundle != nil {
+		bundles = append(bundles, ntBundle)
+	}
+
+	if parBundle == nil && ntBundle != nil {
+		bundles = append(bundles, placement.NewBundle(newPar.ID))
+	}
+
+	if parBundle != nil && ntBundle == nil {
+		bundles = append(bundles, placement.NewBundle(nt.ID))
+	}
+
+	return bundles, nil
 }
 
 func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, index int, schemaName, tableName model.CIStr) error {
