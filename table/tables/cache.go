@@ -93,7 +93,7 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) 
 	if err != nil {
 		return nil, err
 	}
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		prefix := tablecodec.GenTablePrefix(c.tableID)
 		if err != nil {
 			return err

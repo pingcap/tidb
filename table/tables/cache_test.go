@@ -164,7 +164,6 @@ func TestCacheCondition(t *testing.T) {
 }
 
 func TestCacheTableBasicReadAndWrite(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -204,7 +203,6 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 }
 
 func TestCacheTableComplexRead(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	doneCh := make(chan struct{}, 1)
@@ -231,6 +229,7 @@ func TestCacheTableComplexRead(t *testing.T) {
 		require.True(t, i < 10)
 		tk2.MustExec("commit")
 		doneCh <- struct{}{}
+		return
 	}()
 	<-doneCh
 	tk1.HasPlan("select *from complex_cache where id > 7", "UnionScan")
