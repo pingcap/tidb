@@ -76,7 +76,11 @@ const (
 	ActionAddCheckConstraint            ActionType = 43
 	ActionDropCheckConstraint           ActionType = 44
 	ActionAlterCheckConstraint          ActionType = 45
-	ActionAlterTableAlterPartition      ActionType = 46
+
+	// `ActionAlterTableAlterPartition` is removed and will never be used.
+	// Just left a tombstone here for compatibility.
+	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46
+
 	ActionRenameTables                  ActionType = 47
 	ActionDropIndexes                   ActionType = 48
 	ActionAlterTableAttributes          ActionType = 49
@@ -86,6 +90,9 @@ const (
 	ActionDropPlacementPolicy           ActionType = 53
 	ActionAlterTablePartitionPolicy     ActionType = 54
 	ActionModifySchemaDefaultPlacement  ActionType = 55
+	ActionAlterTablePlacement           ActionType = 56
+	ActionAlterCacheTable               ActionType = 57
+	ActionAlterTableStatsOptions        ActionType = 58
 )
 
 var actionMap = map[ActionType]string{
@@ -134,7 +141,6 @@ var actionMap = map[ActionType]string{
 	ActionAddCheckConstraint:            "add check constraint",
 	ActionDropCheckConstraint:           "drop check constraint",
 	ActionAlterCheckConstraint:          "alter check constraint",
-	ActionAlterTableAlterPartition:      "alter partition",
 	ActionDropIndexes:                   "drop multi-indexes",
 	ActionAlterTableAttributes:          "alter table attributes",
 	ActionAlterTablePartitionAttributes: "alter table partition attributes",
@@ -142,6 +148,12 @@ var actionMap = map[ActionType]string{
 	ActionAlterPlacementPolicy:          "alter placement policy",
 	ActionDropPlacementPolicy:           "drop placement policy",
 	ActionModifySchemaDefaultPlacement:  "modify schema default placement",
+	ActionAlterCacheTable:               "alter cache table",
+	ActionAlterTableStatsOptions:        "alter table statistics options",
+
+	// `ActionAlterTableAlterPartition` is removed and will never be used.
+	// Just left a tombstone here for compatibility.
+	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",
 }
 
 // String return current ddl action in string
