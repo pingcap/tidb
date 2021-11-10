@@ -3582,8 +3582,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	b.allNames = append(b.allNames, p.OutputNames())
 	b.allSchemas = append(b.allSchemas, p.Schema().Clone())
 	defer func() {
-		b.allNames = b.allNames[:len(b.allNames)-1];
-		b.allSchemas = b.allSchemas[:len(b.allSchemas)-1];
+		b.allNames = b.allNames[:len(b.allNames)-1]
+		b.allSchemas = b.allSchemas[:len(b.allSchemas)-1]
 	}()
 
 	if sel.Where != nil {

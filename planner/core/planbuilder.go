@@ -501,7 +501,7 @@ type PlanBuilder struct {
 	// build subquery in OrderBy needs allNames and allSchemas.
 	// allNames stores the OutputNames before buildProjection.
 	// allSchemas stores the Schema before buildProjection.
-	allNames [][]*types.FieldName
+	allNames   [][]*types.FieldName
 	allSchemas []*expression.Schema
 
 	// isSampling indicates whether the query is sampling.
