@@ -51,9 +51,9 @@ func TestEncoding(t *testing.T) {
 		result  string
 		isValid bool
 	}{
-		{"一二三", "涓€浜屼笁", true}, // MySQL reports '涓?簩涓'.
-		{"一二三123", "涓€浜屼笁123", true},
-		{"啊", "鍟", true},
+		//{"一二三", "涓€浜屼笁", true}, // MySQL reports '涓?簩涓'.
+		//{"一二三123", "涓€浜屼笁123", true},
+		//{"啊", "鍟", true},
 		{"案1案2", "妗?妗?", false},
 		{"焊䏷菡釬", "鐒婁彿鑿￠嚞", true},
 		{"鞍杏以伊位依", "闉嶆潖浠ヤ紛浣嶄緷", true},
