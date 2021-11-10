@@ -17,12 +17,12 @@ package core
 import (
 	"context"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
 )
 
@@ -149,7 +149,21 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 			la.GroupByItems = []expression.Expression{expression.NewOne()}
 		}
 	}
-	return child.PruneColumns(selfUsedCols)
+	err := child.PruneColumns(selfUsedCols)
+	if err != nil {
+		return err
+	}
+	// Do an extra Projection Elimination here. This is specially for empty Projection below Aggregation.
+	// This kind of Projection would cause some bugs for MPP plan and is safe to be removed.
+	// This kind of Projection should be removed in Projection Elimination, but currently PrunColumnsAgain is
+	// the last rule. So we specially handle this case here.
+	if childProjection, isProjection := child.(*LogicalProjection); isProjection {
+		if len(childProjection.Exprs) == 0 && childProjection.Schema().Len() == 0 {
+			childOfChild := childProjection.children[0]
+			la.SetChildren(childOfChild)
+		}
+	}
+	return nil
 }
 
 func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*expression.Column) {
@@ -304,6 +318,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) erro
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && p.schema.Len() > 1 {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			p.names = append(p.names[:i], p.names[i+1:]...)
 			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
 		}
 	}

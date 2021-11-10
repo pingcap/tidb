@@ -21,15 +21,15 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -2489,6 +2489,106 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML(c *C) {
 	checkExplain("BatchGet")
 }
 
+func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	cases := []struct {
+		prepare    string
+		sql        string
+		planRegexp string
+	}{
+		// Test for alloc auto ID.
+		{
+			sql:        "insert into t () values ()",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
+		},
+		// Test for rebase ID.
+		{
+			sql:        "insert into t (a) values (99000000000)",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
+		},
+		// Test for alloc auto ID and rebase ID.
+		{
+			sql:        "insert into t (a) values (null), (99000000000)",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
+		},
+		// Test for insert ignore.
+		{
+			sql:        "insert ignore into t values (null,1), (2, 2), (99000000000, 3), (100000000000, 4)",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 2, Get.*num_rpc.*total_time.*commit_txn.*count: 3, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
+		},
+		// Test for insert on duplicate.
+		{
+			sql:        "insert into t values (null,null), (1,1),(2,2) on duplicate key update a = a + 100000000000",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*count: 2, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
+		},
+		// Test for replace with alloc ID.
+		{
+			sql:        "replace into t () values ()",
+			planRegexp: ".*auto_id_allocator.*alloc_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
+		},
+		// Test for replace with alloc ID and rebase ID.
+		{
+			sql:        "replace into t (a) values (null), (99000000000)",
+			planRegexp: ".*auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
+		},
+		// Test for update with rebase ID.
+		{
+			prepare:    "insert into t values (1,1),(2,2)",
+			sql:        "update t set a=a*100000000000",
+			planRegexp: ".*auto_id_allocator.*rebase_cnt: 2, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
+		},
+	}
+
+	for _, ca := range cases {
+		for i := 0; i < 3; i++ {
+			tk.MustExec("drop table if exists t")
+			switch i {
+			case 0:
+				tk.MustExec("create table t (a bigint auto_increment, b int, primary key (a));")
+			case 1:
+				tk.MustExec("create table t (a bigint unsigned auto_increment, b int, primary key (a));")
+			case 2:
+				if strings.Contains(ca.sql, "on duplicate key") {
+					continue
+				}
+				tk.MustExec("create table t (a bigint primary key auto_random(5), b int);")
+				tk.MustExec("set @@allow_auto_random_explicit_insert=1;")
+			default:
+				panic("should never happen")
+			}
+			if ca.prepare != "" {
+				tk.MustExec(ca.prepare)
+			}
+			res := tk.MustQuery("explain analyze " + ca.sql)
+			resBuff := bytes.NewBufferString("")
+			for _, row := range res.Rows() {
+				fmt.Fprintf(resBuff, "%s\t", row)
+			}
+			explain := resBuff.String()
+			c.Assert(explain, Matches, ca.planRegexp, Commentf("idx: %v,sql: %v", i, ca.sql))
+		}
+	}
+
+	// Test for table without auto id.
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a bigint, b int);")
+		tk.MustExec("insert into t () values ()")
+		if ca.prepare != "" {
+			tk.MustExec(ca.prepare)
+		}
+		res := tk.MustQuery("explain analyze " + ca.sql)
+		resBuff := bytes.NewBufferString("")
+		for _, row := range res.Rows() {
+			fmt.Fprintf(resBuff, "%s\t", row)
+		}
+		explain := resBuff.String()
+		c.Assert(strings.Contains(explain, "auto_id_allocator"), IsFalse, Commentf("sql: %v, explain: %v", ca.sql, explain))
+	}
+}
+
 func (s *testIntegrationSuite) TestPartitionExplain(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3237,7 +3337,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 	tk.MustExec("analyze table t")
 	tk.MustExec("set session tidb_allow_mpp=OFF")
 
@@ -3277,7 +3377,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForMPP(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, value decimal(6,3))")
+	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
 	tk.MustExec("analyze table t")
 
 	// Create virtual tiflash replica info.
@@ -3897,9 +3997,10 @@ func (s *testIntegrationSuite) TestIncrementalAnalyzeStatsVer2(c *C) {
 	c.Assert(rows[0][0], Equals, "3")
 	tk.MustExec("insert into t values(4,4),(5,5),(6,6)")
 	tk.MustExec("analyze incremental table t index idx_b")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 2)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 3)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "The version 2 would collect all statistics not only the selected indexes")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[1].Err.Error(), Equals, "The version 2 stats would ignore the INCREMENTAL keyword and do full sampling")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[2].Err.Error(), Equals, "Analyze use auto adjusted sample rate 1.000000 for table test.t.")
 	rows = tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1", tblID)).Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "6")
@@ -3960,6 +4061,43 @@ func (s *testIntegrationSuite) TestSequenceAsDataSource(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestIssue27167(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set names utf8mb4")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists all_types")
+
+	tk.MustExec("CREATE TABLE `all_types` (" +
+		"`id` int(11) NOT NULL," +
+		"`d_tinyint` tinyint(4) DEFAULT NULL," +
+		"`d_smallint` smallint(6) DEFAULT NULL," +
+		"`d_int` int(11) DEFAULT NULL," +
+		"`d_bigint` bigint(20) DEFAULT NULL," +
+		"`d_float` float DEFAULT NULL," +
+		"`d_double` double DEFAULT NULL," +
+		"`d_decimal` decimal(10,2) DEFAULT NULL," +
+		"`d_bit` bit(10) DEFAULT NULL," +
+		"`d_binary` binary(10) DEFAULT NULL," +
+		"`d_date` date DEFAULT NULL," +
+		"`d_datetime` datetime DEFAULT NULL," +
+		"`d_timestamp` timestamp NULL DEFAULT NULL," +
+		"`d_varchar` varchar(20) NULL default NULL," +
+		"PRIMARY KEY (`id`));",
+	)
+
+	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("utf8mb4_bin"))
+
+	tk.MustExec(`insert into all_types values(0, 0, 1, 2, 3, 1.5, 2.2, 10.23, 12, 'xy', '2021-12-12', '2021-12-12 12:00:00', '2021-12-12 12:00:00', '123');`)
+
+	tk.MustQuery("select collation(c) from (select d_date c from all_types union select d_int c from all_types) t").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
+	tk.MustQuery("select collation(c) from (select d_date c from all_types union select d_int collate binary c from all_types) t").Check(testkit.Rows("binary", "binary"))
+	tk.MustQuery("select collation(c) from (select d_date c from all_types union select d_float c from all_types) t").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
+	// timestamp also OK
+	tk.MustQuery("select collation(c) from (select d_timestamp c from all_types union select d_float c from all_types) t").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue25300(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -3968,11 +4106,11 @@ func (s *testIntegrationSerialSuite) TestIssue25300(c *C) {
 	tk.MustExec(`create table t (a char(65) collate utf8_unicode_ci, b text collate utf8_general_ci not null);`)
 	tk.MustExec(`insert into t values ('a', 'A');`)
 	tk.MustExec(`insert into t values ('b', 'B');`)
-	tk.MustGetErrCode(`(select a from t) union ( select b from t);`, mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode(`(select 'a' collate utf8mb4_unicode_ci) union (select 'b' collate utf8mb4_general_ci);`, mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode(`(select a from t) union ( select b from t) union all select 'a';`, mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a';`, mysql.ErrCantAggregate3collations)
-	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a' except select 'd';`, mysql.ErrCantAggregate3collations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t);`, mysql.ErrCantAggregateNcollations)
+	tk.MustGetErrCode(`(select 'a' collate utf8mb4_unicode_ci) union (select 'b' collate utf8mb4_general_ci);`, mysql.ErrCantAggregateNcollations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union all select 'a';`, mysql.ErrCantAggregateNcollations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a';`, mysql.ErrCantAggregateNcollations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a' except select 'd';`, mysql.ErrCantAggregateNcollations)
 }
 
 func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
@@ -4018,7 +4156,6 @@ func (s *testIntegrationSerialSuite) TestSelectIgnoreTemporaryTableInView(c *C) 
 	tk.MustExec("use test")
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("create table t2 (c int, d int)")
 	tk.MustExec("create view v1 as select * from t1 order by a")
@@ -4174,6 +4311,50 @@ func (s *testIntegrationSuite) TestCreateViewWithWindowFunc(c *C) {
 	rows.Check(testkit.Rows("1 1"))
 }
 
+func (s *testIntegrationSuite) TestIssue29221(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_index_merge=on;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("set @@session.sql_select_limit=3;")
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1;").Check(testkit.Rows(
+		"Limit 3.00 root  offset:0, count:3",
+		"└─IndexMerge 3.00 root  ",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;").Check(testkit.Rows(
+		"Limit 3.00 root  offset:0, count:3",
+		"└─IndexMerge 3.00 root  ",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustExec("set @@session.sql_select_limit=18446744073709551615;")
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1;").Check(testkit.Rows(
+		"IndexMerge 19.99 root  ",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1 limit 3;").Check(testkit.Rows(
+		"Limit 3.00 root  offset:0, count:3",
+		"└─IndexMerge 3.00 root  ",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;").Check(testkit.Rows(
+		"IndexMerge 19.99 root  ",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1 limit 3;").Check(testkit.Rows(
+		"Limit 3.00 root  offset:0, count:3",
+		"└─IndexMerge 3.00 root  ",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+}
+
 func (s *testIntegrationSerialSuite) TestLimitPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4214,6 +4395,24 @@ func (s *testIntegrationSuite) TestIssue26559(c *C) {
 	tk.MustExec("create table t(a timestamp, b datetime);")
 	tk.MustExec("insert into t values('2020-07-29 09:07:01', '2020-07-27 16:57:36');")
 	tk.MustQuery("select greatest(a, b) from t union select null;").Sort().Check(testkit.Rows("2020-07-29 09:07:01", "<nil>"))
+}
+
+func (s *testIntegrationSuite) TestIssue29503(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Status.RecordQPSbyDB = true
+	})
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	err := tk.ExecToErr("create binding for select 1 using select 1;")
+	c.Assert(err, Equals, nil)
+	err = tk.ExecToErr("create binding for select a from t using select a from t;")
+	c.Assert(err, Equals, nil)
+	res := tk.MustQuery("show session bindings;")
+	c.Assert(len(res.Rows()), Equals, 2)
 }
 
 func (s *testIntegrationSuite) TestHeuristicIndexSelection(c *C) {
@@ -4381,7 +4580,6 @@ func (s *testIntegrationSerialSuite) TestTemporaryTableForCte(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("create temporary table tmp1(a int, b int, c int);")
 	tk.MustExec("insert into tmp1 values (1,1,1),(2,2,2),(3,3,3),(4,4,4);")
 	rows := tk.MustQuery("with cte1 as (with cte2 as (select * from tmp1) select * from cte2) select * from cte1 left join tmp1 on cte1.c=tmp1.c;")
@@ -4486,4 +4684,69 @@ func (s *testIntegrationSuite) TestIssue27797(c *C) {
 	tk.MustExec("insert into IDT_HP24172(col1) values(8388607);")
 	result = tk.MustQuery("select col2 from IDT_HP24172 where col1 = 8388607 and col1 in (select col1 from IDT_HP24172);")
 	result.Check(testkit.Rows("<nil>"))
+}
+
+func (s *testIntegrationSuite) TestIssue28154(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer func() {
+		tk.Exec("drop table if exists t")
+	}()
+	tk.MustExec("create table t(a TEXT)")
+	tk.MustExec("insert into t values('abc')")
+	result := tk.MustQuery("select * from t where from_base64('')")
+	result.Check(testkit.Rows())
+	_, err := tk.Exec("update t set a = 'def' where from_base64('')")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect DOUBLE value: ''")
+	result = tk.MustQuery("select * from t where from_base64('invalidbase64')")
+	result.Check(testkit.Rows())
+	tk.MustExec("update t set a = 'hig' where from_base64('invalidbase64')")
+	result = tk.MustQuery("select * from t where from_base64('test')")
+	result.Check(testkit.Rows())
+	_, err = tk.Exec("update t set a = 'xyz' where from_base64('test')")
+	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, "\\[types:1292\\]Truncated incorrect DOUBLE value.*")
+	result = tk.MustQuery("select * from t")
+	result.Check(testkit.Rows("abc"))
+}
+
+func (s *testIntegrationSerialSuite) TestRejectSortForMPP(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
+	tk.MustExec("analyze table t")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_enforce_mpp=1;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
 }

@@ -18,8 +18,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"gopkg.in/yaml.v2"
@@ -28,8 +29,18 @@ import (
 const (
 	// IDPrefix is the prefix for label rule ID.
 	IDPrefix = "schema"
-
 	ruleType = "key-range"
+)
+
+const (
+	// RuleIndexDefault is the default index for a rule.
+	RuleIndexDefault int = iota
+	// RuleIndexDatabase is the index for a rule of database.
+	RuleIndexDatabase
+	// RuleIndexTable is the index for a rule of table.
+	RuleIndexTable
+	// RuleIndexPartition is the index for a rule of partition.
+	RuleIndexPartition
 )
 
 var (
@@ -43,10 +54,11 @@ var (
 
 // Rule is used to establish the relationship between labels and a key range.
 type Rule struct {
-	ID       string      `json:"id"`
-	Labels   Labels      `json:"labels"`
-	RuleType string      `json:"rule_type"`
-	Rule     interface{} `json:"rule"`
+	ID       string        `json:"id"`
+	Index    int           `json:"index"`
+	Labels   Labels        `json:"labels"`
+	RuleType string        `json:"rule_type"`
+	Data     []interface{} `json:"data"`
 }
 
 // NewRule creates a rule.
@@ -88,10 +100,10 @@ func (r *Rule) Clone() *Rule {
 }
 
 // Reset will reset the label rule for a table/partition with a given ID and names.
-func (r *Rule) Reset(id int64, dbName, tableName string, partName ...string) *Rule {
-	isPartition := len(partName) != 0
+func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
+	isPartition := partName != ""
 	if isPartition {
-		r.ID = fmt.Sprintf(PartitionIDFormat, IDPrefix, dbName, tableName, partName[0])
+		r.ID = fmt.Sprintf(PartitionIDFormat, IDPrefix, dbName, tableName, partName)
 	} else {
 		r.ID = fmt.Sprintf(TableIDFormat, IDPrefix, dbName, tableName)
 	}
@@ -109,7 +121,7 @@ func (r *Rule) Reset(id int64, dbName, tableName string, partName ...string) *Ru
 			hasTableKey = true
 		case partitionKey:
 			if isPartition {
-				r.Labels[i].Value = partName[0]
+				r.Labels[i].Value = partName
 				hasPartitionKey = true
 			}
 		default:
@@ -125,12 +137,22 @@ func (r *Rule) Reset(id int64, dbName, tableName string, partName ...string) *Ru
 	}
 
 	if isPartition && !hasPartitionKey {
-		r.Labels = append(r.Labels, Label{Key: partitionKey, Value: partName[0]})
+		r.Labels = append(r.Labels, Label{Key: partitionKey, Value: partName})
 	}
 	r.RuleType = ruleType
-	r.Rule = map[string]string{
-		"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id))),
-		"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id+1))),
+	r.Data = []interface{}{}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	for i := 0; i < len(ids); i++ {
+		data := map[string]string{
+			"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(ids[i]))),
+			"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(ids[i]+1))),
+		}
+		r.Data = append(r.Data, data)
+	}
+	// We may support more types later.
+	r.Index = RuleIndexTable
+	if isPartition {
+		r.Index = RuleIndexPartition
 	}
 	return r
 }

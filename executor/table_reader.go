@@ -19,11 +19,11 @@ import (
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -179,7 +179,8 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	// cached table and temporary table are similar
+	if (e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone) || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
 		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
 		if err != nil {
 			return err
@@ -217,7 +218,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	if (e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone) || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
 		// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 		req.Reset()
 		return nil
@@ -262,7 +263,7 @@ func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID in
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	if (e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone) || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
 		return nil
 	}
 

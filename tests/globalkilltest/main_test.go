@@ -15,13 +15,13 @@
 package globalkilltest
 
 import (
+	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/util/testbridge"
-	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-	goleak.VerifyTestMain(m)
+	os.Exit(m.Run())
 }

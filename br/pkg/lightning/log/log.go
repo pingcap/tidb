@@ -116,6 +116,11 @@ func InitLogger(cfg *Config, tidbLoglevel string) error {
 	return nil
 }
 
+// SetAppLogger replaces the default logger in this package to given one
+func SetAppLogger(l *zap.Logger) {
+	appLogger = Logger{l.WithOptions(zap.AddStacktrace(zap.DPanicLevel))}
+}
+
 // L returns the current logger for Lightning.
 func L() Logger {
 	return appLogger

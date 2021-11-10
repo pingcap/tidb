@@ -31,8 +31,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/parser/mysql"
 )
 
 func Test(t *testing.T) {
@@ -507,6 +507,20 @@ func (s *configTestSuite) TestDurationMarshalJSON(c *C) {
 	c.Assert(string(result), Equals, `"13m20s"`)
 }
 
+func (s *configTestSuite) TestDuplicateResolutionAlgorithm(c *C) {
+	var dra config.DuplicateResolutionAlgorithm
+	dra.FromStringValue("record")
+	c.Assert(dra, Equals, config.DupeResAlgRecord)
+	dra.FromStringValue("none")
+	c.Assert(dra, Equals, config.DupeResAlgNone)
+	dra.FromStringValue("remove")
+	c.Assert(dra, Equals, config.DupeResAlgRemove)
+
+	c.Assert(config.DupeResAlgRecord.String(), Equals, "record")
+	c.Assert(config.DupeResAlgNone.String(), Equals, "none")
+	c.Assert(config.DupeResAlgRemove.String(), Equals, "remove")
+}
+
 func (s *configTestSuite) TestLoadConfig(c *C) {
 	cfg, err := config.LoadGlobalConfig([]string{"-tidb-port", "sss"}, nil)
 	c.Assert(err, ErrorMatches, `invalid value "sss" for flag -tidb-port: parse error`)
@@ -792,5 +806,51 @@ func (s *configTestSuite) TestDataCharacterSet(c *C) {
 		} else {
 			c.Assert(err, IsNil, comment)
 		}
+	}
+}
+
+func (s *configTestSuite) TestCheckpointKeepStrategy(c *C) {
+	tomlCases := map[interface{}]config.CheckpointKeepStrategy{
+		true:     config.CheckpointRename,
+		false:    config.CheckpointRemove,
+		"remove": config.CheckpointRemove,
+		"rename": config.CheckpointRename,
+		"origin": config.CheckpointOrigin,
+	}
+	var cp config.CheckpointKeepStrategy
+	for key, strategy := range tomlCases {
+		err := cp.UnmarshalTOML(key)
+		c.Assert(err, IsNil)
+		c.Assert(cp, Equals, strategy)
+	}
+
+	defaultCp := "enable = true\r\n"
+	cpCfg := &config.Checkpoint{}
+	_, err := toml.Decode(defaultCp, cpCfg)
+	c.Assert(err, IsNil)
+	c.Assert(cpCfg.KeepAfterSuccess, Equals, config.CheckpointRemove)
+
+	cpFmt := "keep-after-success = %v\r\n"
+	for key, strategy := range tomlCases {
+		cpValue := key
+		if strVal, ok := key.(string); ok {
+			cpValue = `"` + strVal + `"`
+		}
+		tomlStr := fmt.Sprintf(cpFmt, cpValue)
+		cpCfg := &config.Checkpoint{}
+		_, err := toml.Decode(tomlStr, cpCfg)
+		c.Assert(err, IsNil)
+		c.Assert(cpCfg.KeepAfterSuccess, Equals, strategy)
+	}
+
+	marshalTextCases := map[config.CheckpointKeepStrategy]string{
+		config.CheckpointRemove: "remove",
+		config.CheckpointRename: "rename",
+		config.CheckpointOrigin: "origin",
+	}
+	for strategy, value := range marshalTextCases {
+		res, err := strategy.MarshalText()
+		c.Assert(err, IsNil)
+		c.Assert(res, DeepEquals, []byte(value))
 	}
 }

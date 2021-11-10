@@ -23,12 +23,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/types"
@@ -978,6 +978,11 @@ func IsRecordKey(k []byte) bool {
 // IsIndexKey is used to check whether the key is an index key.
 func IsIndexKey(k []byte) bool {
 	return len(k) > 11 && k[0] == 't' && k[10] == 'i'
+}
+
+// IsTableKey is used to check whether the key is a table key.
+func IsTableKey(k []byte) bool {
+	return len(k) == 9 && k[0] == 't'
 }
 
 // IsUntouchedIndexKValue uses to check whether the key is index key, and the value is untouched,

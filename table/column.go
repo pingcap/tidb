@@ -26,14 +26,14 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	field_types "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -554,7 +554,7 @@ func EvalColDefaultExpr(ctx sessionctx.Context, col *model.ColumnInfo, defaultEx
 func getColDefaultExprValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultValue string) (types.Datum, error) {
 	var defaultExpr ast.ExprNode
 	expr := fmt.Sprintf("select %s", defaultValue)
-	stmts, _, err := parser.New().Parse(expr, "", "")
+	stmts, _, err := parser.New().ParseSQL(expr)
 	if err == nil {
 		defaultExpr = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	}

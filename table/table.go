@@ -22,10 +22,10 @@ import (
 	"context"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/parser/model"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -185,11 +185,6 @@ type Table interface {
 	// Allocators returns all allocators.
 	Allocators(ctx sessionctx.Context) autoid.Allocators
 
-	// RebaseAutoID rebases the auto_increment ID base.
-	// If allocIDs is true, it will allocate some IDs and save to the cache.
-	// If allocIDs is false, it will not allocate IDs.
-	RebaseAutoID(ctx sessionctx.Context, newBase int64, allocIDs bool, tp autoid.AllocatorType) error
-
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
 
@@ -250,3 +245,24 @@ var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (
 
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table
+
+// CachedTable is a Table, and it has a UpdateLockForRead() method
+// UpdateLockForRead() according to the reasons for not meeting the read conditions, update the lock information,
+// And at the same time reload data from the original table.
+type CachedTable interface {
+	Table
+
+	// TryGetMemcache Check if the cache table is readable, if it is readable,
+	// Return the pointer to the MemBuffer and true otherwise return nil and false
+	TryGetMemcache(ts uint64) (kv.MemBuffer, bool)
+
+	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
+	// you need to update the lock information and read the data from the original table
+	UpdateLockForRead(store kv.Storage, ts uint64) error
+}
+
+// CacheData pack the cache data and lease
+type CacheData struct {
+	Lease uint64
+	kv.MemBuffer
+}

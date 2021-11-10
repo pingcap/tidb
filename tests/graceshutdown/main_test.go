@@ -23,5 +23,8 @@ import (
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-	goleak.VerifyTestMain(m)
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("syscall.syscall6"),
+	}
+	goleak.VerifyTestMain(m, opts...)
 }

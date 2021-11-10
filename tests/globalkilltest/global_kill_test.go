@@ -27,7 +27,6 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
@@ -83,7 +82,7 @@ func createGloabalKillSuite(t *testing.T) (s *GlobalKillSuite, clean func()) {
 		if s.pdCli != nil {
 			require.NoError(t, err)
 		}
-		require.NoError(t, s.cleanCluster)
+		require.NoError(t, s.cleanCluster())
 	}
 
 	return
@@ -443,16 +442,14 @@ func TestWithoutPD(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	sleepTime := 2
-
 	// Test mysql client CTRL-C
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
-	elapsed := s.killByCtrlC(t, port, sleepTime)
-	require.GreaterOrEqual(t, elapsed, sleepTime*time.Second)
+	elapsed := s.killByCtrlC(t, port, 2)
+	require.GreaterOrEqual(t, elapsed, 2*time.Second)
 
 	// Test KILL statement
-	elapsed = s.killByKillStatement(t, db, db, sleepTime)
-	require.Less(t, elapsed, sleepTime*time.Second)
+	elapsed = s.killByKillStatement(t, db, db, 2)
+	require.Less(t, elapsed, 2*time.Second)
 }
 
 // [Test Scenario 2] One TiDB with PD, killed by Ctrl+C, and killed by KILL.
@@ -488,7 +485,7 @@ func TestOneTiDB(t *testing.T) {
 func TestMultipleTiDB(t *testing.T) {
 	s, clean := createGloabalKillSuite(t)
 	defer clean()
-	require.NoError(t, s.pdErr, Commentf(msgErrConnectPD, s.pdErr))
+	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1 & conn1a,conn1b
 	port1 := *tidbStartPort + 1
@@ -536,7 +533,7 @@ func TestLostConnection(t *testing.T) {
 	t.Skip("unstable, skip race test")
 	s, clean := createGloabalKillSuite(t)
 	defer clean()
-	require.NoError(t, s.pdErr, Commentf(msgErrConnectPD, s.pdErr))
+	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1
 	port1 := *tidbStartPort + 1
@@ -629,11 +626,10 @@ func TestLostConnection(t *testing.T) {
 		}()
 
 		// [Test Scenario 7] Connections can be killed after PD lost connection for long time and then recovered.
-		sleepTime := 2
-		elapsed := s.killByKillStatement(t, db1, db1, sleepTime)
-		require.Less(t, elapsed, sleepTime*time.Second)
+		elapsed := s.killByKillStatement(t, db1, db1, 2)
+		require.Less(t, elapsed, 2*time.Second)
 
-		elapsed = s.killByKillStatement(t, db1, db2, sleepTime)
-		require.Less(t, elapsed, sleepTime*time.Second)
+		elapsed = s.killByKillStatement(t, db1, db2, 2)
+		require.Less(t, elapsed, 2*time.Second)
 	}
 }
