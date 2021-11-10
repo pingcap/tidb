@@ -26,7 +26,7 @@ func TestDDLVisitorCover(t *testing.T) {
 	ce := &checkExpr{}
 	constraint := &Constraint{Keys: []*IndexPartSpecification{{Column: &ColumnName{}}, {Column: &ColumnName{}}}, Refer: &ReferenceDef{}, Option: &IndexOption{}}
 
-	alterTableSpec := &AlterTableSpec{Constraint: constraint, Options: []*TableOption{{}}, NewTable: &TableName{}, NewColumns: []*ColumnDef{{Name: &ColumnName{}}}, OldColumnName: &ColumnName{}, Position: &ColumnPosition{RelativeColumn: &ColumnName{}}, PlacementSpecs: []*PlacementSpec{{}, {}}, AttributesSpec: &AttributesSpec{}}
+	alterTableSpec := &AlterTableSpec{Constraint: constraint, Options: []*TableOption{{}}, NewTable: &TableName{}, NewColumns: []*ColumnDef{{Name: &ColumnName{}}}, OldColumnName: &ColumnName{}, Position: &ColumnPosition{RelativeColumn: &ColumnName{}}, AttributesSpec: &AttributesSpec{}}
 
 	stmts := []struct {
 		node             Node

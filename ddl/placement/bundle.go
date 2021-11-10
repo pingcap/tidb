@@ -25,7 +25,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -235,59 +234,6 @@ func NewBundleFromOptions(options *model.PlacementSettings) (bundle *Bundle, err
 		return nil, err
 	}
 	return bundle, err
-}
-
-// ApplyPlacementSpec will apply actions defined in PlacementSpec to the bundle.
-func (b *Bundle) ApplyPlacementSpec(specs []*ast.PlacementSpec) error {
-	for _, spec := range specs {
-		var role PeerRoleType
-		switch spec.Role {
-		case ast.PlacementRoleFollower:
-			role = Follower
-		case ast.PlacementRoleLeader:
-			if spec.Replicas == 0 {
-				spec.Replicas = 1
-			}
-			if spec.Replicas > 1 {
-				return ErrLeaderReplicasMustOne
-			}
-			role = Leader
-		case ast.PlacementRoleLearner:
-			role = Learner
-		case ast.PlacementRoleVoter:
-			role = Voter
-		default:
-			return ErrMissingRoleField
-		}
-
-		if spec.Tp == ast.PlacementAlter || spec.Tp == ast.PlacementDrop {
-			origLen := len(b.Rules)
-			newRules := b.Rules[:0]
-			for _, r := range b.Rules {
-				if r.Role != role {
-					newRules = append(newRules, r)
-				}
-			}
-			b.Rules = newRules
-
-			// alter == drop + add new rules
-			if spec.Tp == ast.PlacementDrop {
-				// error if no rules will be dropped
-				if len(b.Rules) == origLen {
-					return fmt.Errorf("%w: %s", ErrNoRulesToDrop, role)
-				}
-				continue
-			}
-		}
-
-		newRules, err := NewRules(role, spec.Replicas, spec.Constraints)
-		if err != nil {
-			return err
-		}
-		b.Rules = append(b.Rules, newRules...)
-	}
-
-	return nil
 }
 
 // String implements fmt.Stringer.
