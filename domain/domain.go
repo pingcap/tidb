@@ -1446,8 +1446,8 @@ const (
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
 func (do *Domain) NotifyUpdatePrivilege() error {
-	// No matter skip-grant-table is configured or not, send etcd message is required.
-	// Because we need to tell other TiDB instances to update privilege data, say, we're change the
+	// No matter skip-grant-table is configured or not, sending an etcd message is required.
+	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
 	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
