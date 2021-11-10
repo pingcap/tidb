@@ -26,11 +26,11 @@ type WaitGroupWrapper struct {
 // Run run a function in a goroutine, add 1 to WaitGroup
 // and call done when function return. Please not use panic
 // in the cb function.
-func (w *WaitGroupWrapper) Run(cb func()) {
+func (w *WaitGroupWrapper) Run(exec func()) {
 	w.Add(1)
 	go func() {
 		defer w.Done()
-		cb()
+		exec()
 	}()
 }
 
