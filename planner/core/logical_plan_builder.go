@@ -748,7 +748,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	} else if joinNode.Tp == ast.RightJoin {
 		resetNotNullFlag(joinPlan.fullSchema, 0, lFullSchema.Len())
 	}
-	joinPlan.fullNames = make([]*types.FieldName,0, len(lFullNames)+len(rFullNames))
+	joinPlan.fullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
 	for _, lName := range lFullNames {
 		name := *lName
 		name.Redundant = true
