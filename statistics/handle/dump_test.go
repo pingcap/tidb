@@ -176,7 +176,7 @@ func TestLoadGlobalStats(t *testing.T) {
 	// load global-stats back
 	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(dom.InfoSchema(), globalStats))
 	loadedStats := getStatsJSON(t, dom, "test", "t")
-	require.Equal(t, 3, len(loadedStats.Partitions))
+	require.Equal(t, 3, len(loadedStats.Partitions)) // p0, p1, global
 }
 
 func TestDumpPartitions(t *testing.T) {
