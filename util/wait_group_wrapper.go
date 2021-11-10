@@ -23,8 +23,8 @@ type WaitGroupWrapper struct {
 	sync.WaitGroup
 }
 
-// Run run a function in a goroutine, add 1 to WaitGroup
-// and call done when function return. Please not use panic
+// Run runs a function in a goroutine, adds 1 to WaitGroup
+// and calls done when function returns. Please DO NOT use panic
 // in the cb function.
 func (w *WaitGroupWrapper) Run(exec func()) {
 	w.Add(1)
