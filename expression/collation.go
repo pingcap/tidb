@@ -89,10 +89,10 @@ type CollationInfo interface {
 	// SetRepertoire sets a specified repertoire for this expression.
 	SetRepertoire(r Repertoire)
 
-	// CharsetAndCollation ...
+	// CharsetAndCollation gets charset and collation.
 	CharsetAndCollation() (string, string)
 
-	// SetCharsetAndCollation ...
+	// SetCharsetAndCollation sets charset and collation.
 	SetCharsetAndCollation(chs, coll string)
 }
 
