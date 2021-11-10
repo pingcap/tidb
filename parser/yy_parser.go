@@ -402,6 +402,7 @@ func (c CharsetConnection) ApplyOn(p *Parser) error {
 	} else {
 		p.charset = string(c)
 	}
+	p.lexer.connection = *charset.NewEncoding(p.charset)
 	return nil
 }
 
@@ -415,7 +416,6 @@ func (c CollationConnection) ApplyOn(p *Parser) error {
 	} else {
 		p.collation = string(c)
 	}
-	p.lexer.connection = *charset.NewEncoding(p.collation)
 	return nil
 }
 
