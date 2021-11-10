@@ -1486,10 +1486,14 @@ func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.Ta
 	}
 
 	if parBundle == nil && ntBundle != nil {
+		// newPar.ID is the ID of old table to exchange, so ntBundle != nil means it has some old placement settings.
+		// We should remove it in this situation
 		bundles = append(bundles, placement.NewBundle(newPar.ID))
 	}
 
 	if parBundle != nil && ntBundle == nil {
+		// nt.ID is the ID of old partition to exchange, so parBundle != nil means it has some old placement settings.
+		// We should remove it in this situation
 		bundles = append(bundles, placement.NewBundle(nt.ID))
 	}
 
