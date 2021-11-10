@@ -820,6 +820,11 @@ func (rc *Client) GoValidateChecksum(
 				}
 
 				workers.ApplyOnErrorGroup(eg, func() error {
+					start := time.Now()
+					defer func() {
+						elapsed := time.Since(start)
+						summary.CollectSuccessUnit("table checksum", 1, elapsed)
+					}()
 					err := rc.execChecksum(ectx, tbl, kvClient, concurrency, loadStatCh)
 					if err != nil {
 						return errors.Trace(err)
