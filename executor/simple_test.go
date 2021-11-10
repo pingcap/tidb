@@ -953,3 +953,18 @@ func (s *testSuite3) TestSetCurrentUserPwd(c *C) {
 	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="issue28534"`)
 	result.Check(testkit.Rows(auth.EncodePassword("43582eussi")))
 }
+
+func (s *testSuite3) TestShowGrantsAfterDropRole(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER u29473")
+	defer tk.MustExec("DROP USER IF EXISTS u29473")
+
+	tk.MustExec("CREATE ROLE r29473")
+	tk.MustExec("GRANT r29473 TO u29473")
+	tk.MustExec("GRANT CREATE USER ON *.* TO u29473")
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "u29473", Hostname: "%"}, nil, nil)
+	tk.MustExec("SET ROLE r29473")
+	tk.MustExec("DROP ROLE r29473")
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT CREATE USER ON *.* TO 'u29473'@'%'"))
+}
