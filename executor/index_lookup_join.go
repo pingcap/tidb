@@ -73,7 +73,7 @@ type IndexLookUpJoin struct {
 
 	requiredRows int64
 
-	indexRanges   []*ranger.Range
+	indexRanges   ranger.MutableRanges
 	keyOff2IdxOff []int
 	innerPtrBytes [][]byte
 
@@ -86,10 +86,11 @@ type IndexLookUpJoin struct {
 }
 
 type outerCtx struct {
-	rowTypes []*types.FieldType
-	keyCols  []int
-	hashCols []int
-	filter   expression.CNFExprs
+	rowTypes  []*types.FieldType
+	keyCols   []int
+	hashTypes []*types.FieldType
+	hashCols  []int
+	filter    expression.CNFExprs
 }
 
 type innerCtx struct {
@@ -97,6 +98,7 @@ type innerCtx struct {
 	rowTypes      []*types.FieldType
 	keyCols       []int
 	keyColIDs     []int64 // the original ID in its table, used by dynamic partition pruning
+	hashTypes     []*types.FieldType
 	hashCols      []int
 	colLens       []int
 	hasPrefixCol  bool
@@ -202,8 +204,8 @@ func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask)
 
 func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWorker {
 	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
-	copiedRanges := make([]*ranger.Range, 0, len(e.indexRanges))
-	for _, ran := range e.indexRanges {
+	copiedRanges := make([]*ranger.Range, 0, len(e.indexRanges.Range()))
+	for _, ran := range e.indexRanges.Range() {
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
 

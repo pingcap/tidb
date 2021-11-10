@@ -341,7 +341,6 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 	ctx := context.Background()
 	execSQLList := []string{
 		"use test",
-		"set tidb_enable_global_temporary_table=true",
 		"create table tb(id int);",
 		"create global temporary table temp(id int) on commit delete rows;",
 		"create global temporary table temp1(id int) on commit delete rows;",

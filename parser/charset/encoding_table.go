@@ -273,24 +273,28 @@ func FindNextCharacterLength(label string) func([]byte) int {
 
 var encodingNextCharacterLength = map[string]func([]byte) int{
 	// https://en.wikipedia.org/wiki/GBK_(character_encoding)#Layout_diagram
-	"gbk": func(bs []byte) int {
-		if len(bs) == 0 || bs[0] < 0x80 {
-			// A byte in the range 00–7F is a single byte that means the same thing as it does in ASCII.
-			return 1
-		}
-		return 2
-	},
-	"utf-8": func(bs []byte) int {
-		if len(bs) == 0 || bs[0] < 0x80 {
-			return 1
-		} else if bs[0] < 0xe0 {
-			return 2
-		} else if bs[0] < 0xf0 {
-			return 3
-		}
-		return 4
-	},
+	"gbk":   characterLengthGBK,
+	"utf-8": characterLengthUTF8,
 	"binary": func(bs []byte) int {
 		return 1
 	},
+}
+
+func characterLengthGBK(bs []byte) int {
+	if len(bs) == 0 || bs[0] < 0x80 {
+		// A byte in the range 00–7F is a single byte that means the same thing as it does in ASCII.
+		return 1
+	}
+	return 2
+}
+
+func characterLengthUTF8(bs []byte) int {
+	if len(bs) == 0 || bs[0] < 0x80 {
+		return 1
+	} else if bs[0] < 0xe0 {
+		return 2
+	} else if bs[0] < 0xf0 {
+		return 3
+	}
+	return 4
 }

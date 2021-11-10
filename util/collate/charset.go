@@ -84,8 +84,9 @@ var (
 func init() {
 	experimentalCollation = make(map[string]Collator)
 	experimentalCharsetInfo = append(experimentalCharsetInfo,
-		&charset.Charset{Name: charset.CharsetGBK, DefaultCollation: charset.CollationGBKBin, Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2},
+		&charset.Charset{Name: charset.CharsetGBK, DefaultCollation: "gbk_chinese_ci", Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2},
 	)
 	e, _ := charset.Lookup(charset.CharsetGBK)
 	experimentalCollation[charset.CollationGBKBin] = &gbkBinCollator{e.NewEncoder()}
+	experimentalCollation["gbk_chinese_ci"] = &gbkChineseCICollator{}
 }

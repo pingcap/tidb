@@ -986,8 +986,8 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 	db, sqlMock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	g.EXPECT().GetDB().Return(db, nil).AnyTimes()
-	sqlMock.ExpectQuery("SELECT version\\(\\);").WillReturnRows(sqlmock.NewRows([]string{"version()"}).
-		AddRow("5.7.25-TiDB-v5.0.1"))
+	sqlMock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.NewRows([]string{"tidb_version()"}).
+		AddRow("Release Version: v5.2.1\nEdition: Community\n"))
 
 	web.BroadcastInitProgress(rc.dbMetas)
 
@@ -1553,8 +1553,23 @@ func (s *restoreSchemaSuite) TearDownTest(c *C) {
 }
 
 func (s *restoreSchemaSuite) TestRestoreSchemaSuccessful(c *C) {
+	// before restore, if sysVars is initialized by other test, the time_zone should be default value
+	if len(s.rc.sysVars) > 0 {
+		tz, ok := s.rc.sysVars["time_zone"]
+		c.Assert(ok, IsTrue)
+		c.Assert(tz, Equals, "SYSTEM")
+	}
+
+	s.rc.cfg.TiDB.Vars = map[string]string{
+		"time_zone": "UTC",
+	}
 	err := s.rc.restoreSchema(s.ctx)
 	c.Assert(err, IsNil)
+
+	// test after restore schema, sysVars has been updated
+	tz, ok := s.rc.sysVars["time_zone"]
+	c.Assert(ok, IsTrue)
+	c.Assert(tz, Equals, "UTC")
 }
 
 func (s *restoreSchemaSuite) TestRestoreSchemaFailed(c *C) {

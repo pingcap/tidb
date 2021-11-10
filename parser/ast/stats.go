@@ -39,7 +39,10 @@ type AnalyzeTableStmt struct {
 	Incremental bool
 	// HistogramOperation is set in "ANALYZE TABLE ... UPDATE/DROP HISTOGRAM ..." statement.
 	HistogramOperation HistogramOperationType
-	ColumnNames        []*ColumnName
+	// ColumnNames indicate the columns whose statistics need to be collected.
+	ColumnNames []*ColumnName
+	// PredicateColumns is true when we only collect statistics of predicate columns and indexed columns.
+	PredicateColumns bool
 }
 
 // AnalyzeOptType is the type for analyze options.
@@ -52,6 +55,7 @@ const (
 	AnalyzeOptCMSketchDepth
 	AnalyzeOptCMSketchWidth
 	AnalyzeOptNumSamples
+	AnalyzeOptSampleRate
 )
 
 // AnalyzeOptionString stores the string form of analyze options.
@@ -61,6 +65,7 @@ var AnalyzeOptionString = map[AnalyzeOptionType]string{
 	AnalyzeOptCMSketchWidth: "CMSKETCH WIDTH",
 	AnalyzeOptCMSketchDepth: "CMSKETCH DEPTH",
 	AnalyzeOptNumSamples:    "SAMPLES",
+	AnalyzeOptSampleRate:    "SAMPLERATE",
 }
 
 // HistogramOperationType is the type for histogram operation.
@@ -88,7 +93,7 @@ func (hot HistogramOperationType) String() string {
 // AnalyzeOpt stores the analyze option type and value.
 type AnalyzeOpt struct {
 	Type  AnalyzeOptionType
-	Value uint64
+	Value ValueExpr
 }
 
 // Restore implements Node interface.
@@ -119,15 +124,25 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(" ")
 		ctx.WriteKeyWord(n.HistogramOperation.String())
 		ctx.WritePlain(" ")
-	}
-	if len(n.ColumnNames) > 0 {
-		ctx.WriteKeyWord("ON ")
+		if len(n.ColumnNames) > 0 {
+			ctx.WriteKeyWord("ON ")
+			for i, columnName := range n.ColumnNames {
+				if i != 0 {
+					ctx.WritePlain(",")
+				}
+				ctx.WriteName(columnName.Name.O)
+			}
+		}
+	} else if len(n.ColumnNames) > 0 {
+		ctx.WriteKeyWord(" COLUMNS ")
 		for i, columnName := range n.ColumnNames {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
 			ctx.WriteName(columnName.Name.O)
 		}
+	} else if n.PredicateColumns {
+		ctx.WriteKeyWord(" PREDICATE COLUMNS")
 	}
 	if n.IndexFlag {
 		ctx.WriteKeyWord(" INDEX")
@@ -146,7 +161,7 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WritePlainf(" %d ", opt.Value)
+			ctx.WritePlainf(" %v ", opt.Value.GetValue())
 			ctx.WritePlain(AnalyzeOptionString[opt.Type])
 		}
 	}

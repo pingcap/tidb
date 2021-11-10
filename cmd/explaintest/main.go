@@ -445,7 +445,12 @@ func (t *tester) create(tableName string, qText string) error {
 		return err
 	}
 
-	return os.WriteFile(t.statsFileName(tableName), js, 0644)
+	err = resp.Body.Close()
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(t.statsFileName(tableName), js, 0600)
 }
 
 func (t *tester) commit() error {
@@ -544,7 +549,7 @@ func (t *tester) flushResult() error {
 	if !record {
 		return nil
 	}
-	return os.WriteFile(t.resultFileName(), t.buf.Bytes(), 0644)
+	return os.WriteFile(t.resultFileName(), t.buf.Bytes(), 0600)
 }
 
 func (t *tester) statsFileName(tableName string) string {

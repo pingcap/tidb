@@ -17,6 +17,7 @@ package infosync
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -333,13 +335,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		res, err = util2.InternalHTTPClient().Do(req)
-		failpoint.Inject("FailPlacement", func(val failpoint.Value) {
-			if val.(bool) {
-				res = &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}
-				err = nil
-			}
-		})
+		res, err = doRequestWithFailpoint(req)
 		if err == nil {
 			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
@@ -357,6 +353,45 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		}
 	}
 	return nil, err
+}
+
+func doRequestWithFailpoint(req *http.Request) (resp *http.Response, err error) {
+	fpEnabled := false
+	failpoint.Inject("FailPlacement", func(val failpoint.Value) {
+		if val.(bool) {
+			fpEnabled = true
+			resp = &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}
+			err = nil
+		}
+	})
+	if fpEnabled {
+		return
+	}
+	return util2.InternalHTTPClient().Do(req)
+}
+
+// GetReplicationState is used to check if regions in the given keyranges are replicated from PD.
+func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (bool, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return false, err
+	}
+
+	if is.etcdCli == nil {
+		return false, nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return false, errors.Errorf("pd unavailable")
+	}
+
+	res, err := doRequest(ctx, addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pdapi.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
+	if err == nil && res != nil {
+		return string(res) == "true\n", nil
+	}
+	return false, err
 }
 
 // GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
@@ -478,25 +513,28 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	}
 }
 
-type topologyInfo struct {
+// TopologyInfo is the topology info
+type TopologyInfo struct {
 	ServerVersionInfo
+	IP             string            `json:"ip"`
 	StatusPort     uint              `json:"status_port"`
 	DeployPath     string            `json:"deploy_path"`
 	StartTimestamp int64             `json:"start_timestamp"`
 	Labels         map[string]string `json:"labels"`
 }
 
-func (is *InfoSyncer) getTopologyInfo() topologyInfo {
+func (is *InfoSyncer) getTopologyInfo() TopologyInfo {
 	s, err := os.Executable()
 	if err != nil {
 		s = ""
 	}
 	dir := path.Dir(s)
-	return topologyInfo{
+	return TopologyInfo{
 		ServerVersionInfo: ServerVersionInfo{
 			Version: mysql.TiDBReleaseVersion,
 			GitHash: is.info.ServerVersionInfo.GitHash,
 		},
+		IP:             is.info.IP,
 		StatusPort:     is.info.StatusPort,
 		DeployPath:     dir,
 		StartTimestamp: is.info.StartTimestamp,
@@ -609,6 +647,27 @@ func (is *InfoSyncer) RestartTopology(ctx context.Context) error {
 	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
 
+// GetAllTiDBTopology gets all tidb topology
+func (is *InfoSyncer) GetAllTiDBTopology(ctx context.Context) ([]*TopologyInfo, error) {
+	topos := make([]*TopologyInfo, 0)
+	response, err := is.etcdCli.Get(ctx, TopologyInformationPath, clientv3.WithPrefix())
+	if err != nil {
+		return nil, err
+	}
+	for _, kv := range response.Kvs {
+		if !strings.HasSuffix(string(kv.Key), "/info") {
+			continue
+		}
+		var topo *TopologyInfo
+		err = json.Unmarshal(kv.Value, &topo)
+		if err != nil {
+			return nil, err
+		}
+		topos = append(topos, topo)
+	}
+	return topos, nil
+}
+
 // newSessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
 func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt int) error {
 	if is.etcdCli == nil {
@@ -696,6 +755,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer resp.Body.Close()
 	var metricStorage metricStorage
 	dec := json.NewDecoder(resp.Body)
 	err = dec.Decode(&metricStorage)

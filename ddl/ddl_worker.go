@@ -611,9 +611,6 @@ func skipWriteBinlog(job *model.Job) bool {
 	// it's used to update table's TiFlash replica available status.
 	case model.ActionUpdateTiFlashReplicaStatus:
 		return true
-	// It is done without modifying table info, bin log is not needed
-	case model.ActionAlterTableAlterPartition:
-		return true
 	}
 
 	return false
@@ -818,8 +815,6 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onCreateSequence(d, t, job)
 	case model.ActionAlterIndexVisibility:
 		ver, err = onAlterIndexVisibility(t, job)
-	case model.ActionAlterTableAlterPartition:
-		ver, err = onAlterTableAlterPartition(t, job)
 	case model.ActionAlterSequence:
 		ver, err = onAlterSequence(t, job)
 	case model.ActionRenameTables:
@@ -835,7 +830,11 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionAlterPlacementPolicy:
 		ver, err = onAlterPlacementPolicy(d, t, job)
 	case model.ActionAlterTablePartitionPolicy:
-		ver, err = onAlterTablePartitionOptions(t, job)
+		ver, err = onAlterTablePartitionOptions(d, t, job)
+	case model.ActionAlterTablePlacement:
+		ver, err = onAlterTablePlacement(d, t, job)
+	case model.ActionAlterCacheTable:
+		ver, err = onAlterCacheTable(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -1054,15 +1053,6 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		if len(job.CtxVars) > 0 {
 			if oldIDs, ok := job.CtxVars[0].([]int64); ok {
 				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
-			}
-		}
-	case model.ActionAlterTableAlterPartition:
-		diff.TableID = job.TableID
-		if len(job.CtxVars) > 0 {
-			diff.AffectedOpts = []*model.AffectedOption{
-				{
-					TableID: job.CtxVars[0].(int64),
-				},
 			}
 		}
 	default:
