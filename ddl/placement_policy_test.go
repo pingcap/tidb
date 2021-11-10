@@ -1249,3 +1249,72 @@ func (s *testDBSuite6) TestAddPartitionWithPlacement(c *C) {
 		"  PARTITION `p4` VALUES LESS THAN (1000000)\n" +
 		")"))
 }
+
+func (s *testDBSuite6) TestTruncateTableWithPlacement(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, tp")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+
+	tk.MustExec("create placement policy p1 primary_region='r1' regions='r1'")
+	defer tk.MustExec("drop placement policy p1")
+
+	tk.MustExec("create placement policy p2 primary_region='r2' regions='r2'")
+	defer tk.MustExec("drop placement policy p2")
+
+	policy1, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p1"))
+	c.Assert(ok, IsTrue)
+
+	policy2, ok := tk.Se.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(model.NewCIStr("p2"))
+	c.Assert(ok, IsTrue)
+
+	tk.MustExec(`CREATE TABLE t1 (id INT) primary_region="r1" regions="r1"`)
+	defer tk.MustExec("drop table t1")
+
+	// test for normal table
+	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1\" */"))
+
+	t1, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tk.MustExec("TRUNCATE TABLE t1")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1\" */"))
+	newT1, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(newT1.Meta().ID != t1.Meta().ID, IsTrue)
+
+	// test for partitioned table
+	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p1 PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100),
+        PARTITION p1 VALUES LESS THAN (1000) placement policy p2,
+        PARTITION p2 VALUES LESS THAN (10000) primary_region="r1" regions="r1,r2"
+	);`)
+	defer tk.MustExec("drop table tp")
+
+	tp, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	c.Assert(err, IsNil)
+	c.Assert(tp.Meta().PlacementPolicyRef.ID, Equals, policy1.ID)
+	c.Assert(tp.Meta().Partition.Definitions[1].PlacementPolicyRef.ID, Equals, policy2.ID)
+	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */\n" +
+		"PARTITION BY RANGE ( `id` ) (\n" +
+		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
+		"  PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
+		"  PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" */\n" +
+		")"))
+
+	tk.MustExec("TRUNCATE TABLE tp")
+	newTp, err := tk.Se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	c.Assert(err, IsNil)
+	c.Assert(newTp.Meta().ID != tp.Meta().ID, IsTrue)
+	c.Assert(newTp.Meta().PlacementPolicyRef.ID, Equals, policy1.ID)
+	c.Assert(newTp.Meta().Partition.Definitions[1].PlacementPolicyRef.ID, Equals, policy2.ID)
+}

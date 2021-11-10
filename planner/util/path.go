@@ -73,7 +73,14 @@ func (path *AccessPath) IsTablePath() bool {
 }
 
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
+// The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
+// It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx sessionctx.Context, eqOrInCount int) (access, remained []expression.Expression) {
+	// The plan cache do not support subquery now. So we skip this function when
+	// 'MaybeOverOptimized4PlanCache' function return true .
+	if expression.MaybeOverOptimized4PlanCache(ctx, path.TableFilters) {
+		return nil, path.TableFilters
+	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {

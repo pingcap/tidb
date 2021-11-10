@@ -184,7 +184,7 @@ func testDropColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 	return job
 }
 
-func (s *testColumnSuite) TestColumnAAA(c *C) {
+func (s *testColumnSuite) TestColumnBasic(c *C) {
 	d := testNewDDLAndStart(
 		context.Background(),
 		c,

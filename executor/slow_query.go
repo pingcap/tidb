@@ -738,7 +738,7 @@ func getColumnValueFactoryByName(sctx sessionctx.Context, colName string, column
 			return true, nil
 		}, nil
 	case variable.SlowLogPrepared, variable.SlowLogSucc, variable.SlowLogPlanFromCache, variable.SlowLogPlanFromBinding,
-		variable.SlowLogIsInternalStr:
+		variable.SlowLogIsInternalStr, variable.SlowLogIsExplicitTxn:
 		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseBool(value)
 			if err != nil {
