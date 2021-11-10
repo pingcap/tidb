@@ -2644,26 +2644,15 @@ func testPartitionDropIndex(c *C, store kv.Storage, lease time.Duration, idxName
 	tk.MustExec(addIdxSQL)
 
 	ctx := tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	t, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("partition_drop_idx"))
-	c.Assert(err, IsNil)
-
-	var idx1 table.Index
-	for _, pidx := range t.Indices() {
-		if pidx.Meta().Name.L == idxName {
-			idx1 = pidx
-			break
-		}
-	}
-	c.Assert(idx1, NotNil)
-
+	indexID := findIndexID(c, ctx, "test_db", "partition_drop_idx", idxName)
+	assertDeleteRangeAdded := setDeleteRangeChecker(ctx)
 	testutil.SessionExecInGoroutine(store, dropIdxSQL, done)
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
 		select {
-		case err = <-done:
+		case err := <-done:
 			if err == nil {
 				break LOOP
 			}
@@ -2679,23 +2668,7 @@ LOOP:
 			num += step
 		}
 	}
-
-	is = domain.GetDomain(ctx).InfoSchema()
-	t, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("partition_drop_idx"))
-	c.Assert(err, IsNil)
-	// Only one partition id test is taken here.
-	pid := t.Meta().Partition.Definitions[0].ID
-	var idxn table.Index
-	t.Indices()
-	for _, idx := range t.Indices() {
-		if idx.Meta().Name.L == idxName {
-			idxn = idx
-			break
-		}
-	}
-	c.Assert(idxn, IsNil)
-	idx := tables.NewIndex(pid, t.Meta(), idx1.Meta())
-	checkDelRangeDone(c, ctx, idx)
+	assertDeleteRangeAdded(c, tk, indexID)
 	tk.MustExec("drop table partition_drop_idx;")
 }
 
@@ -2744,6 +2717,7 @@ func testPartitionCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.D
 	originHook := d.GetHook()
 	defer d.(ddl.DDLForTest).SetHook(originHook)
 	d.(ddl.DDLForTest).SetHook(hook)
+	assertDeleteRangeAdded := setDeleteRangeChecker(ctx)
 	done := make(chan error, 1)
 	go backgroundExec(store, addIdxSQL, done)
 
@@ -2774,17 +2748,7 @@ LOOP:
 			times++
 		}
 	}
-
-	t := testGetTableByName(c, ctx, "test_db", "t1")
-	// Only one partition id test is taken here.
-	pid := t.Meta().Partition.Definitions[0].ID
-	for _, tidx := range t.Indices() {
-		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsFalse)
-	}
-
-	idx := tables.NewIndex(pid, t.Meta(), c3IdxInfo)
-	checkDelRangeDone(c, ctx, idx)
-
+	assertDeleteRangeAdded(c, tk, c3IdxInfo.ID)
 	tk.MustExec("drop table t1")
 }
 
@@ -2800,7 +2764,7 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
 		if !addIndexNotFirstReorg {
 			// Get the index's meta.
-			if c3IdxInfo != nil {
+			if c3IdxInfo.ID != 0 {
 				return
 			}
 			t := testGetTableByName(c, ctx, "test_db", "t1")
@@ -2809,7 +2773,7 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 					continue
 				}
 				if index.Meta().Name.L == idxName {
-					c3IdxInfo = index.Meta()
+					*c3IdxInfo = *index.Meta()
 				}
 			}
 			return

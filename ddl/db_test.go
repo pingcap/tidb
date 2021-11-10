@@ -617,6 +617,7 @@ func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, 
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, store, ctx, hook, idxName)
 	originalHook := d.GetHook()
 	d.(ddl.DDLForTest).SetHook(hook)
+	assertDeleteRangeAdded := setDeleteRangeChecker(ctx)
 	done := make(chan error, 1)
 	go backgroundExec(store, addIdxSQL, done)
 
@@ -646,14 +647,7 @@ LOOP:
 			times++
 		}
 	}
-
-	t := testGetTableByName(c, ctx, "test_db", "t1")
-	for _, tidx := range t.Indices() {
-		c.Assert(strings.EqualFold(tidx.Meta().Name.L, idxName), IsFalse)
-	}
-
-	idx := tables.NewIndex(t.Meta().ID, t.Meta(), c3IdxInfo)
-	checkDelRangeDone(c, ctx, idx)
+	assertDeleteRangeAdded(c, tk, c3IdxInfo.ID)
 	d.(ddl.DDLForTest).SetHook(originalHook)
 }
 
@@ -1713,16 +1707,8 @@ func testDropIndex(c *C, store kv.Storage, lease time.Duration, createSQL, dropI
 		tk.MustExec("insert into test_drop_index values (?, ?, ?)", i, i, i)
 	}
 	ctx := tk.Se.(sessionctx.Context)
-	t := testGetTableByName(c, ctx, "test_db", "test_drop_index")
-	var c3idx table.Index
-	for _, tidx := range t.Indices() {
-		if tidx.Meta().Name.L == idxName {
-			c3idx = tidx
-			break
-		}
-	}
-	c.Assert(c3idx, NotNil)
-
+	indexID := findIndexID(c, ctx, "test_db", "test_drop_index", idxName)
+	assertDeleteRangeAdded := setDeleteRangeChecker(ctx)
 	testddlutil.SessionExecInGoroutine(store, dropIdxSQL, done)
 
 	ticker := time.NewTicker(lease / 2)
@@ -1750,20 +1736,7 @@ LOOP:
 	rows := tk.MustQuery("explain select c1 from test_drop_index where c3 >= 0")
 	c.Assert(strings.Contains(fmt.Sprintf("%v", rows), idxName), IsFalse)
 
-	// Check in index, it must be no index in KV.
-	// Make sure there is no index with name c3_index.
-	t = testGetTableByName(c, ctx, "test_db", "test_drop_index")
-	var nidx table.Index
-	for _, tidx := range t.Indices() {
-		if tidx.Meta().Name.L == idxName {
-			nidx = tidx
-			break
-		}
-	}
-	c.Assert(nidx, IsNil)
-
-	idx := tables.NewIndex(t.Meta().ID, t.Meta(), c3idx.Meta())
-	checkDelRangeDone(c, ctx, idx)
+	assertDeleteRangeAdded(c, tk, indexID)
 	tk.MustExec("drop table test_drop_index")
 }
 
@@ -1977,6 +1950,48 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	s.mustExec(tk, c, "alter table test_drop_column add column c3 int, add column c4 int")
 	s.mustExec(tk, c, "alter table test_drop_column drop column c3, drop column c4")
+}
+
+func findIndexID(c *C, ctx sessionctx.Context, dbName, tblName, idxName string) int64 {
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+	c.Assert(err, IsNil)
+
+	for _, idx := range t.Indices() {
+		if idx.Meta().Name.L == idxName {
+			return idx.Meta().ID
+		}
+	}
+	c.Fatalf("index %s not found(db: %s, tbl: %s)", idxName, dbName, tblName)
+	return -1
+}
+
+func setDeleteRangeChecker(ctx sessionctx.Context) (assert func(c *C, tk *testkit.TestKit, elemID int64)) {
+	dom := domain.GetDomain(ctx)
+	originHook := dom.DDL().GetHook()
+	var jobID int64
+
+	hook := &ddl.TestDDLCallback{
+		Do: dom,
+		OnJobUpdatedExported: func(job *model.Job) {
+			if jobID == 0 {
+				jobID = job.ID
+			}
+			originHook.OnJobUpdated(job)
+		}}
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	return func(c *C, tk *testkit.TestKit, elemID int64) {
+		dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+		queryTempl := "select count(1) from mysql.%s where job_id = ? and element_id = ?;"
+		rs := tk.MayQuery(fmt.Sprintf(queryTempl, "gc_delete_range_done"), jobID, elemID).Rows()
+		cnt := rs[0][0].(string)
+		if cnt == "0" {
+			tk.MustQuery(fmt.Sprintf(queryTempl, "gc_delete_range"), jobID, elemID).
+				Check(testkit.Rows("1"))
+			return
+		}
+		c.Assert(cnt, Equals, "1")
+	}
 }
 
 func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
