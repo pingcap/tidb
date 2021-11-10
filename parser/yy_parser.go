@@ -143,7 +143,6 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 			return nil, nil, err
 		}
 	}
-	sql = parser.lexer.tryDecodeToUTF8String(sql)
 	parser.src = sql
 	parser.result = parser.result[:0]
 
@@ -385,7 +384,7 @@ var (
 func resetParams(p *Parser) {
 	p.charset = mysql.DefaultCharset
 	p.collation = mysql.DefaultCollationName
-	p.lexer.encoding = charset.Encoding{}
+	p.lexer.client = charset.Encoding{}
 }
 
 // ParseParam represents the parameter of parsing.
@@ -416,6 +415,7 @@ func (c CollationConnection) ApplyOn(p *Parser) error {
 	} else {
 		p.collation = string(c)
 	}
+	p.lexer.connection = *charset.NewEncoding(p.collation)
 	return nil
 }
 
@@ -425,6 +425,6 @@ type CharsetClient string
 
 // ApplyOn implements ParseParam interface.
 func (c CharsetClient) ApplyOn(p *Parser) error {
-	p.lexer.encoding = *charset.NewEncoding(string(c))
+	p.lexer.client = *charset.NewEncoding(string(c))
 	return nil
 }

@@ -116,22 +116,23 @@ func TestLiteral(t *testing.T) {
 	t.Parallel()
 
 	table := []testCaseItem{
-		{`'''a'''`, stringLit},
-		{`''a''`, stringLit},
-		{`""a""`, stringLit},
-		{`\'a\'`, int('\\')},
-		{`\"a\"`, int('\\')},
-		{"0.2314", decLit},
-		{"1234567890123456789012345678901234567890", decLit},
-		{"132.313", decLit},
-		{"132.3e231", floatLit},
-		{"132.3e-231", floatLit},
-		{"001e-12", floatLit},
-		{"23416", intLit},
-		{"123test", identifier},
-		{"123" + string(unicode.ReplacementChar) + "xxx", identifier},
-		{"0", intLit},
-		{"0x3c26", hexLit},
+		//{`'''a'''`, stringLit},
+		//{`''a''`, stringLit},
+		//{`""a""`, stringLit},
+		//{`\'a\'`, int('\\')},
+		//{`\"a\"`, int('\\')},
+		//{"0.2314", decLit},
+		//{"1234567890123456789012345678901234567890", decLit},
+		//{"132.313", decLit},
+		//{"132.3e231", floatLit},
+		//{"132.3e-231", floatLit},
+		//{"001e-12", floatLit},
+		//{"23416", intLit},
+		//{"123test", identifier},
+		//{"123" + string(unicode.ReplacementChar) + "xxx", identifier},
+		//{"0", intLit},
+		//{"0x3c26", hexLit},
+		{"0x3czz", identifier},
 		{"x'13181C76734725455A'", hexLit},
 		{"0b01", bitLit},
 		{fmt.Sprintf("t1%c", 0), identifier},
@@ -308,8 +309,8 @@ func TestScanString(t *testing.T) {
 		l := NewScanner(v.raw)
 		tok, pos, lit := l.scan()
 		requires.Zero(t, pos.Offset)
-		requires.Equal(t, stringLit, tok)
-		requires.Equal(t, v.expect, lit)
+		requires.Equal(t, stringLit, tok, v.raw)
+		requires.Equal(t, v.expect, lit, v.raw)
 	}
 }
 

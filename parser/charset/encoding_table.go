@@ -15,6 +15,7 @@ package charset
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
@@ -261,6 +262,50 @@ var encodings = map[string]struct {
 	"utf-16":              {unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM), "utf-16le"},
 	"utf-16le":            {unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM), "utf-16le"},
 	"x-user-defined":      {charmap.XUserDefined, "x-user-defined"},
+}
+
+func FindNextCharacterLength1(label string) func([]byte) int {
+	if f, ok := encodingNextCharacterLength1[label]; ok {
+		return f
+	}
+	return characterLengthUTF81
+}
+
+var encodingNextCharacterLength1 = map[string]func([]byte) int{
+	// https://en.wikipedia.org/wiki/GBK_(character_encoding)#Layout_diagram
+	"gbk":   characterLengthGBK1,
+	"utf-8": characterLengthUTF81,
+	"binary": func(bs []byte) int {
+		return 1
+	},
+}
+
+func characterLengthGBK1(bs []byte) int {
+	if len(bs) < 2 {
+		return 0
+	}
+
+	if 0x81 <= bs[0] && bs[0] <= 0xf4 {
+		if (0x40 <= bs[1] && bs[1] <= 0x7e) || (0x80 <= bs[1] && bs[1] <= 0xf4) {
+			return 2
+		}
+	}
+
+	return 0
+}
+
+func characterLengthUTF81(bs []byte) int {
+	if !utf8.Valid(bs) {
+		return 0
+	}
+	if len(bs) == 0 || bs[0] < 0x80 {
+		return 1
+	} else if bs[0] < 0xe0 {
+		return 2
+	} else if bs[0] < 0xf0 {
+		return 3
+	}
+	return 4
 }
 
 // FindNextCharacterLength is used in lexer.peek() to determine the next character length.

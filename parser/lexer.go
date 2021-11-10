@@ -39,7 +39,8 @@ type Scanner struct {
 	r   reader
 	buf bytes.Buffer
 
-	encoding charset.Encoding
+	client     charset.Encoding
+	connection charset.Encoding
 
 	errs         []error
 	warns        []error
@@ -88,7 +89,7 @@ func (s *Scanner) Errors() (warns []error, errs []error) {
 
 // reset resets the sql string to be scanned.
 func (s *Scanner) reset(sql string) {
-	s.r = reader{s: sql, p: Pos{Line: 1}}
+	s.r = reader{s: sql, p: Pos{Line: 1}, f: charset.FindNextCharacterLength1(s.client.Name())}
 	s.buf.Reset()
 	s.errs = s.errs[:0]
 	s.warns = s.warns[:0]
@@ -137,7 +138,7 @@ func (s *Scanner) AppendError(err error) {
 }
 
 func (s *Scanner) tryDecodeToUTF8String(sql string) string {
-	utf8Lit, err := s.encoding.DecodeString(sql)
+	utf8Lit, err := s.client.DecodeString(sql)
 	if err != nil {
 		s.AppendError(err)
 		s.lastErrorAsWarn()
@@ -223,6 +224,10 @@ func (s *Scanner) Lex(v *yySymType) int {
 	case quotedIdentifier, identifier:
 		tok = identifier
 		s.identifierDot = s.r.peek() == '.'
+		v.ident, _ = s.client.DecodeString(lit)
+	case stringLit:
+		lit, _ = s.client.DecodeString(lit)
+		v.ident = string(s.connection.EncodeInternal(nil, []byte(lit)))
 	}
 
 	return tok
@@ -257,7 +262,7 @@ func (s *Scanner) EnableWindowFunc(val bool) {
 func (s *Scanner) InheritScanner(sql string) *Scanner {
 	return &Scanner{
 		r:                 reader{s: sql},
-		encoding:          s.encoding,
+		client:            s.client,
 		sqlMode:           s.sqlMode,
 		supportWindowFunc: s.supportWindowFunc,
 	}
@@ -265,7 +270,7 @@ func (s *Scanner) InheritScanner(sql string) *Scanner {
 
 // NewScanner returns a new scanner object.
 func NewScanner(s string) *Scanner {
-	return &Scanner{r: reader{s: s}}
+	return &Scanner{r: reader{s: s, f: charset.FindNextCharacterLength1("")}}
 }
 
 func (s *Scanner) handleIdent(lval *yySymType) int {
@@ -546,7 +551,15 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 
 func scanIdentifier(s *Scanner) (int, Pos, string) {
 	pos := s.r.pos()
-	s.r.incAsLongAs(isIdentChar)
+	for !s.r.eof() {
+		if s.r.skipRune() {
+			continue
+		}
+		if !isIdentChar(s.r.peek()) {
+			break
+		}
+		s.r.inc()
+	}
 	return identifier, pos, s.r.data(&pos)
 }
 
@@ -576,18 +589,28 @@ var (
 func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
-	s.buf.Reset()
+	fountDoubleQuote := false
 	for !s.r.eof() {
+		if s.r.skipRune() {
+			continue
+		}
 		ch := s.r.readByte()
 		if ch == '`' {
-			if s.r.peek() != '`' {
-				// don't return identifier in case that it's interpreted as keyword token later.
-				tok, lit = quotedIdentifier, s.buf.String()
-				return
+			if s.r.peek() == '`' {
+				s.r.inc()
+				fountDoubleQuote = true
+				continue
 			}
-			s.r.inc()
+
+			// don't return identifier in case that it's interpreted as keyword token later.
+			lit = s.r.data(&pos)
+			lit = lit[1 : len(lit)-1]
+			if fountDoubleQuote {
+				lit = strings.ReplaceAll(lit, "``", "`")
+			}
+			tok = quotedIdentifier
+			return
 		}
-		s.buf.WriteByte(ch)
 	}
 	tok = invalid
 	return
@@ -642,6 +665,9 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 	ending := s.r.readByte()
 	foundEscape := false
 	for !s.r.eof() {
+		if s.r.skipRune() {
+			continue
+		}
 		ch0 := s.r.readByte()
 		if ch0 == ending {
 			if s.r.peek() == ending {
@@ -650,11 +676,10 @@ func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 				continue
 			}
 			str := s.r.data(&pos)
-			if foundEscape {
-				lit = handleEscape(str[1:len(str)-1], ending)
-				return
-			}
 			lit = str[1 : len(str)-1]
+			if foundEscape {
+				lit = handleEscape(lit, ending)
+			}
 			return
 		} else if ch0 == '\\' && !s.sqlMode.HasNoBackslashEscapesMode() {
 			if s.r.eof() {
@@ -732,7 +757,7 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 			p2 := s.r.pos()
 			// 0x, 0x7fz3 are identifier
 			if p1 == p2 || isDigit(s.r.peek()) {
-				s.r.incAsLongAs(isIdentChar)
+				scanIdentifier(s)
 				return identifier, pos, s.r.data(&pos)
 			}
 			tok = hexLit
@@ -743,14 +768,14 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 			p2 := s.r.pos()
 			// 0b, 0b123, 0b1ab are identifier
 			if p1 == p2 || isDigit(s.r.peek()) {
-				s.r.incAsLongAs(isIdentChar)
+				scanIdentifier(s)
 				return identifier, pos, s.r.data(&pos)
 			}
 			tok = bitLit
 		case ch1 == '.':
 			return s.scanFloat(&pos)
 		case ch1 == 'B':
-			s.r.incAsLongAs(isIdentChar)
+			scanIdentifier(s)
 			return identifier, pos, s.r.data(&pos)
 		}
 	}
@@ -763,7 +788,7 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 
 	// Identifiers may begin with a digit but unless quoted may not consist solely of digits.
 	if !s.r.eof() && isIdentChar(ch0) {
-		s.r.incAsLongAs(isIdentChar)
+		scanIdentifier(s)
 		return identifier, pos, s.r.data(&pos)
 	}
 	lit = s.r.data(&pos)
@@ -831,7 +856,7 @@ func (s *Scanner) scanFloat(beg *Pos) (tok int, pos Pos, lit string) {
 			// 9e9e = 9e9(float) + e(identifier)
 			// 9est = 9est(identifier)
 			s.r.updatePos(*beg)
-			s.r.incAsLongAs(isIdentChar)
+			scanIdentifier(s)
 			tok = identifier
 		}
 	} else {
@@ -922,6 +947,8 @@ type reader struct {
 	s string
 	p Pos
 	w int
+
+	f func([]byte) int
 }
 
 var eof = Pos{-1, -1, -1}
@@ -990,4 +1017,14 @@ func (r *reader) incAsLongAs(fn func(b byte) bool) byte {
 		}
 		r.inc()
 	}
+}
+
+// skipRune skip mb character, return true indicate something has been skipped.
+func (r *reader) skipRune() bool {
+	c := r.f([]byte(r.s[r.p.Offset:]))
+	if c > 1 {
+		r.incN(c)
+		return true
+	}
+	return false
 }
