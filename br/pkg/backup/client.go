@@ -429,7 +429,14 @@ func (bc *Client) BackupRanges(
 			elctx := logutil.ContextWithField(ectx, logutil.RedactAny("range-sn", id))
 			err := bc.BackupRange(elctx, sk, ek, req, metaWriter, progressCallBack)
 			if err != nil {
-				return errors.Trace(err)
+				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
+				if errors.Cause(err) == context.Canceled {
+					errors.SuspendStack(err)
+					return err
+				} else {
+					return errors.Trace(err)
+				}
+
 			}
 			return nil
 		})
