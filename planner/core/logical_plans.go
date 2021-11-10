@@ -148,8 +148,8 @@ type LogicalJoin struct {
 
 	// fullSchema contains columns which are eliminated in join.
 	// For select * from a join b using (c); a.c will in output schema, and b.c will only in fullSchema.
-	fullSchema     *expression.Schema
-	redundantNames types.NameSlice
+	fullSchema *expression.Schema
+	fullNames  types.NameSlice
 
 	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	equalCondOutCnt float64

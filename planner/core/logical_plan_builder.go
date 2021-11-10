@@ -290,7 +290,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 			newCol, _ := col.Clone().(*expression.Column)
 			newCol.RetType = newFunc.RetTp
 			schema4Agg.Append(newCol)
-			names = append(names, join.redundantNames[i])
+			names = append(names, join.fullNames[i])
 		}
 	}
 	hasGroupBy := len(gbyItems) > 0
@@ -725,32 +725,40 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	// select t2.a from (t1 join t2 using (a)) join t3 using (a);
 	// we can simply search in the top level join plan to find redundant column.
 	var (
-		lFullSchema, rFullSchema         *expression.Schema
-		lRedundantNames, rRedundantNames types.NameSlice
+		lFullSchema, rFullSchema *expression.Schema
+		lFullNames, rFullNames   types.NameSlice
 	)
 	if left, ok := leftPlan.(*LogicalJoin); ok && left.fullSchema != nil {
 		lFullSchema = left.fullSchema
-		lRedundantNames = left.redundantNames
+		lFullNames = left.fullNames
 	} else {
 		lFullSchema = leftPlan.Schema()
-		lRedundantNames = leftPlan.OutputNames()
+		lFullNames = leftPlan.OutputNames()
 	}
 	if right, ok := rightPlan.(*LogicalJoin); ok && right.fullSchema != nil {
 		rFullSchema = right.fullSchema
-		rRedundantNames = right.redundantNames
+		rFullNames = right.fullNames
 	} else {
 		rFullSchema = rightPlan.Schema()
-		rRedundantNames = rightPlan.OutputNames()
+		rFullNames = rightPlan.OutputNames()
 	}
 	joinPlan.fullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
 	if joinNode.Tp == ast.LeftJoin {
-		resetNotNullFlag(joinPlan.fullSchema, 0, lFullSchema.Len())
-	} else if joinNode.Tp == ast.RightJoin {
 		resetNotNullFlag(joinPlan.fullSchema, lFullSchema.Len(), joinPlan.fullSchema.Len())
+	} else if joinNode.Tp == ast.RightJoin {
+		resetNotNullFlag(joinPlan.fullSchema, 0, lFullSchema.Len())
 	}
-	joinPlan.redundantNames = make([]*types.FieldName, len(lRedundantNames)+len(rRedundantNames))
-	copy(joinPlan.redundantNames, lRedundantNames)
-	copy(joinPlan.redundantNames[len(lRedundantNames):], rRedundantNames)
+	joinPlan.fullNames = make([]*types.FieldName,0, len(lFullNames)+len(rFullNames))
+	for _, lName := range lFullNames {
+		name := *lName
+		name.Redundant = true
+		joinPlan.fullNames = append(joinPlan.fullNames, &name)
+	}
+	for _, rName := range rFullNames {
+		name := *rName
+		name.Redundant = true
+		joinPlan.fullNames = append(joinPlan.fullNames, &name)
+	}
 
 	// Set preferred join algorithm if some join hints is specified by user.
 	joinPlan.setPreferredJoinType(b.TableHints())
@@ -953,21 +961,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.names = names
-	// We record the full `rightPlan.Schema` as `fullSchema` in order to
-	// record the redundant column in `rightPlan` and the output columns order
-	// of the `rightPlan`.
-	// For SQL like `select t1.*, t2.* from t1 left join t2 using(a)`, we can
-	// retrieve the column order of `t2.*` from the `fullSchema`.
-	//p.fullSchema = expression.MergeSchema(p.fullSchema, expression.NewSchema(rightPlan.Schema().Clone().Columns...))
-	//p.redundantNames = p.redundantNames.Shallow()
-	//for _, name := range rightPlan.OutputNames() {
-	//	cpyName := *name
-	//	cpyName.Redundant = true
-	//	p.redundantNames = append(p.redundantNames, &cpyName)
-	//}
-	//if joinTp == ast.RightJoin || joinTp == ast.LeftJoin {
-	//	resetNotNullFlag(p.fullSchema, 0, p.fullSchema.Len())
-	//}
+
 	p.OtherConditions = append(conds, p.OtherConditions...)
 
 	return nil
@@ -1222,7 +1216,7 @@ func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *t
 	case *LogicalJoin:
 		if x.fullSchema != nil {
 			idx := x.fullSchema.ColumnIndex(col)
-			return x.redundantNames[idx]
+			return x.fullNames[idx]
 		}
 	}
 	return nil
@@ -2008,9 +2002,9 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 		case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 			return a.resolveFromPlan(v, p.Children()[0])
 		case *LogicalJoin:
-			if len(x.redundantNames) != 0 {
-				idx, err = expression.FindFieldName(x.redundantNames, v.Name)
-				schemaCols, outputNames = x.fullSchema.Columns, x.redundantNames
+			if len(x.fullNames) != 0 {
+				idx, err = expression.FindFieldName(x.fullNames, v.Name)
+				schemaCols, outputNames = x.fullSchema.Columns, x.fullNames
 			}
 		}
 		if err != nil || idx < 0 {
@@ -3162,7 +3156,7 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		// not coalesce the `t2.a` in the output result. Thus we need to unfold
 		// the wildstar from the underlying join.fullSchema.
 		if isJoin && join.fullSchema != nil && field.WildCard.Table.L != "" {
-			list = unfoldWildStar(field, join.redundantNames, join.fullSchema.Columns)
+			list = unfoldWildStar(field, join.fullNames, join.fullSchema.Columns)
 		}
 		if len(list) == 0 {
 			return nil, ErrBadTable.GenWithStackByArgs(field.WildCard.Table)
