@@ -2681,7 +2681,7 @@ func (s *testIntegrationSuite2) TestPartitionCancelAddPrimaryKey(c *C) {
 }
 
 func (s *testIntegrationSuite4) TestPartitionCancelAddIndex(c *C) {
-	idxName := "idx1"
+	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c1)"
 	testPartitionCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL)
 }
@@ -2718,8 +2718,8 @@ func testPartitionCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.D
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, store, ctx, hook, idxName)
 	originHook := d.GetHook()
 	defer d.(ddl.DDLForTest).SetHook(originHook)
-	jobExt := wrapJobIDExtCallback(hook)
-	d.(ddl.DDLForTest).SetHook(jobExt)
+	jobIDExt := wrapJobIDExtCallback(hook)
+	d.(ddl.DDLForTest).SetHook(jobIDExt)
 	done := make(chan error, 1)
 	go backgroundExec(store, addIdxSQL, done)
 
@@ -2750,7 +2750,7 @@ LOOP:
 			times++
 		}
 	}
-	checkDelRangeAdded(c, tk, jobExt.jobID, c3IdxInfo.ID)
+	checkDelRangeAdded(c, tk, jobIDExt.jobID, c3IdxInfo.ID)
 	tk.MustExec("drop table t1")
 }
 

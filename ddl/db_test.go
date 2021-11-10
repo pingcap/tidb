@@ -573,7 +573,7 @@ func (s *testDBSuite8) TestCancelAddPrimaryKey(c *C) {
 }
 
 func (s *testDBSuite7) TestCancelAddIndex(c *C) {
-	idxName := "c3_index "
+	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "", s.dom)
 
@@ -617,7 +617,7 @@ func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, 
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, store, ctx, hook, idxName)
 	originalHook := d.GetHook()
 	jobIDExt := wrapJobIDExtCallback(hook)
-	d.(ddl.DDLForTest).SetHook(hook)
+	d.(ddl.DDLForTest).SetHook(jobIDExt)
 	done := make(chan error, 1)
 	go backgroundExec(store, addIdxSQL, done)
 
@@ -1991,15 +1991,9 @@ func setupJobIDExtCallback(ctx sessionctx.Context) (jobExt *testDDLJobIDCallback
 }
 
 func checkDelRangeAdded(c *C, tk *testkit.TestKit, jobID int64, elemID int64) {
-	queryTempl := "select count(1) from mysql.%s where job_id = ? and element_id = ?;"
-	rs := tk.MayQuery(fmt.Sprintf(queryTempl, "gc_delete_range_done"), jobID, elemID).Rows()
-	cnt := rs[0][0].(string)
-	if cnt == "0" {
-		tk.MustQuery(fmt.Sprintf(queryTempl, "gc_delete_range"), jobID, elemID).
-			Check(testkit.Rows("1"))
-		return
-	}
-	c.Assert(cnt, Equals, "1")
+	query := "(select count(1) from mysql.gc_delete_range where job_id = ? and element_id = ?)" +
+		"union (select count(1) from mysql.gc_delete_range where job_id = ? and element_id = ?);"
+	tk.MustQuery(query, jobID, elemID, jobID, elemID).Check(testkit.Rows("1"))
 }
 
 func checkGlobalIndexCleanUpDone(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
