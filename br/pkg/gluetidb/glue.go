@@ -108,6 +108,11 @@ func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
 	return errors.Trace(err)
 }
 
+func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
+	_, err := gs.se.ExecuteInternal(ctx, sql, args...)
+	return errors.Trace(err)
+}
+
 // CreateDatabase implements glue.Session.
 func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
