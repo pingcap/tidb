@@ -15,13 +15,9 @@
 package executor
 
 import (
-	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/distsql"
-	// "github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
-	// "github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -50,7 +46,7 @@ type memIndexReader struct {
 	outputOffset  []int
 	// belowHandleCols is the handle's position of the below scan plan.
 	belowHandleCols plannercore.HandleCols
-	cacheTable      *table.CacheData
+	cacheTable      kv.MemBuffer
 }
 
 func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
@@ -158,7 +154,7 @@ type memTableReader struct {
 	colIDs        map[int64]int
 	buffer        allocBuf
 	pkColIDs      []int64
-	cacheTable    *table.CacheData
+	cacheTable    kv.MemBuffer
 }
 
 type allocBuf struct {
@@ -327,7 +323,7 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 
 type processKVFunc func(key, value []byte) error
 
-func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable *table.CacheData, kvRanges []kv.KeyRange, fn processKVFunc) error {
+func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, fn processKVFunc) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
@@ -353,7 +349,6 @@ func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable *table.CacheData, kvRan
 			if len(iter.Value()) == 0 {
 				continue
 			}
-			fmt.Println("iterTxnMemBuffer...get record:", iter.Key(), iter.Value())
 			err = fn(iter.Key(), iter.Value())
 			if err != nil {
 				return err
@@ -363,7 +358,7 @@ func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable *table.CacheData, kvRan
 	return nil
 }
 
-func getSnapIter(ctx sessionctx.Context, cacheTable *table.CacheData, rg kv.KeyRange) (kv.Iterator, error) {
+func getSnapIter(ctx sessionctx.Context, cacheTable kv.MemBuffer, rg kv.KeyRange) (kv.Iterator, error) {
 	var snapCacheIter kv.Iterator
 	tempTableData := ctx.GetSessionVars().TemporaryTableData
 	if tempTableData != nil {
@@ -426,7 +421,7 @@ type memIndexLookUpReader struct {
 	partitionTables   []table.PhysicalTable // partition tables to access
 	partitionKVRanges [][]kv.KeyRange       // kv ranges for these partition tables
 
-	cacheTable *table.CacheData
+	cacheTable kv.MemBuffer
 }
 
 func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpExecutor) *memIndexLookUpReader {

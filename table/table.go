@@ -253,15 +253,9 @@ type CachedTable interface {
 	Table
 
 	// TryReadFromCache Check if the cache table is readable
-	TryReadFromCache(ts uint64) *CacheData
+	TryReadFromCache(ts uint64) kv.MemBuffer
 
 	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
 	// you need to update the lock information and read the data from the original table
 	UpdateLockForRead(store kv.Storage, ts uint64) error
-}
-
-// CacheData pack the cache data and lease.
-type CacheData struct {
-	Lease uint64
-	kv.MemBuffer
 }

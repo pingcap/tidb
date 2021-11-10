@@ -1180,7 +1180,7 @@ type PhysicalUnionScan struct {
 
 	HandleCols HandleCols
 
-	CacheTable *table.CacheData
+	CacheTable kv.MemBuffer
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.

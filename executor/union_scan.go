@@ -58,7 +58,7 @@ type UnionScanExec struct {
 	virtualColumnIndex []int
 
 	// cacheTable not nil means it's reading from cached table.
-	cacheTable *table.CacheData
+	cacheTable kv.MemBuffer
 }
 
 // Open implements the Executor Open interface.
@@ -207,7 +207,6 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, error) {
 	if us.cacheTable != nil {
 		// From cache table, so the snapshot is nil
-		fmt.Println("from cache table ... snapshot row nil")
 		return nil, nil
 	}
 	if us.cursor4SnapshotRows < len(us.snapshotRows) {
