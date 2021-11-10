@@ -278,6 +278,12 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
+	if val.Kind() == types.KindNull && col.FieldType.Tp == mysql.TypeTimestamp {
+		if v, err := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, int8(col.Decimal)); err == nil {
+			// convert null value to timestamp should be substituted with current timestamp.
+			val = v
+		}
+	}
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
