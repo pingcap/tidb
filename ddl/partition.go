@@ -1402,7 +1402,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	// the follow code is a swap function for rules of two partitions
 	// though partitions has exchanged their ID, swap still take effect
 
-	bundles, err := exchangePartitionPlacementBundles(t, job, pt, partDef, nt)
+	bundles, err := bundlesForExchangeTablePartition(t, job, pt, partDef, nt)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1458,7 +1458,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	return ver, nil
 }
 
-func exchangePartitionPlacementBundles(t *meta.Meta, job *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
+func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
 	bundles := make([]*placement.Bundle, 0, 3)
 
 	ptBundle, err := newBundleFromTblInfo(t, job, pt)
