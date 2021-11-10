@@ -443,7 +443,6 @@ func checkTableNoCacheTest(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.Ta
 		info, err := t.GetTable(dbInfo.ID, tblInfo.ID)
 		c.Assert(err, IsNil)
 		c.Assert(info, NotNil)
-		c.Assert(info.TableCacheStatusType, NotNil)
 		c.Assert(info.TableCacheStatusType, Equals, model.TableCacheStatusDisable)
 		return nil
 	})
