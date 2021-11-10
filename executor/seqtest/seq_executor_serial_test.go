@@ -600,8 +600,7 @@ func TestShow(t *testing.T) {
 	for _, sql := range sqls {
 		res := tk.MustQuery(sql)
 		require.NotNil(t, res)
-		sorted := tk.MustQuery(sql).Sort()
-		require.NotNil(t, sorted)
+		sorted := res.Sort()
 		require.Equal(t, sorted, res)
 	}
 }
