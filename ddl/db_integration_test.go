@@ -1530,7 +1530,7 @@ func (s *testSerialDBSuite1) TestCreateSecondaryIndexInCluster(c *C) {
 	tk.MustExec("use test")
 
 	// test create table with non-unique key
-	tk.MustGetErrCode(`
+	tk.MustExec(`
 CREATE TABLE t (
   c01 varchar(255) NOT NULL,
   c02 varchar(255) NOT NULL,
@@ -1540,7 +1540,8 @@ CREATE TABLE t (
   c06 varchar(255) DEFAULT NULL,
   PRIMARY KEY (c01,c02,c03) clustered,
   KEY c04 (c04)
-)`, errno.ErrTooLongKey)
+)`)
+	tk.MustExec("drop table t")
 
 	// test create long clustered primary key.
 	tk.MustGetErrCode(`
@@ -1580,7 +1581,7 @@ CREATE TABLE t (
   PRIMARY KEY (c01,c02) clustered
 )`)
 	tk.MustExec("create index idx1 on t(c03)")
-	tk.MustGetErrCode("create index idx2 on t(c03, c04)", errno.ErrTooLongKey)
+	tk.MustExec("create index idx2 on t(c03, c04)")
 	tk.MustExec("create unique index uk2 on t(c03, c04)")
 	tk.MustExec("drop table t")
 
@@ -1599,9 +1600,9 @@ CREATE TABLE t (
 )`)
 	tk.MustExec("alter table t change c03 c10 varchar(256) default null")
 	tk.MustGetErrCode("alter table t change c10 c100 varchar(1024) default null", errno.ErrTooLongKey)
-	tk.MustGetErrCode("alter table t modify c10 varchar(600) default null", errno.ErrTooLongKey)
+	tk.MustExec("alter table t modify c10 varchar(600) default null")
 	tk.MustExec("alter table t modify c06 varchar(600) default null")
-	tk.MustGetErrCode("alter table t modify c01 varchar(510)", errno.ErrTooLongKey)
+	tk.MustExec("alter table t modify c01 varchar(510)")
 	tk.MustExec("create table t2 like t")
 }
 
