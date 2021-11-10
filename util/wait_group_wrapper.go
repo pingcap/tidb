@@ -35,10 +35,9 @@ func (w *WaitGroupWrapper) Run(exec func()) {
 }
 
 // RunWithRecover wraps goroutine startup call with force recovery, add 1 to WaitGroup
-// and call done when function return.
-// it will dump current goroutine stack into log if catch any recover result.
-// exec is that execute logic function.
-// recoverFn is that handler will be called after recover and before dump stack, passing `nil` means noop.
+// and call done when function return. it will dump current goroutine stack into log if catch any recover result.
+// exec is that execute logic function. recoverFn is that handler will be called after recover and before dump stack,
+// passing `nil` means noop.
 func (w *WaitGroupWrapper) RunWithRecover(exec func(), recoverFn func(r interface{})) {
 	w.Add(1)
 	go func() {
