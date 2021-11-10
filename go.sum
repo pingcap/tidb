@@ -514,8 +514,7 @@ github.com/modern-go/reflect2 v1.0.1 h1:9f412s+6RmYXLWZSEzVVgPGK7C2PphHj5RJrvfx9
 github.com/modern-go/reflect2 v1.0.1/go.mod h1:bx2lNnkwVCuqBIxFjflWJWanXIb3RllmbCylyMrvgv0=
 github.com/montanaflynn/stats v0.5.0 h1:2EkzeTSqBB4V4bJwWrt5gIIrZmpJBcoIRGS2kWLgzmk=
 github.com/montanaflynn/stats v0.5.0/go.mod h1:wL8QJuTMNUDYhXwkmfOly8iTdp5TEcJFWZD2D7SIkUc=
-github.com/mornyx/client-go/v2 v2.0.0-alpha.0.20211103140512-5458bd243f07 h1:1HMI8SgNTqbmQOMDru/NCswBVyvrFPcwztoIwandYrs=
-github.com/mornyx/client-go/v2 v2.0.0-alpha.0.20211103140512-5458bd243f07/go.mod h1:iiwtsCxcbNLK5i9VRYGvdcihgHXTKy2ukWjoaJsrphg=
+github.com/mornyx/client-go/v2 v2.0.0-alpha.0.20211109115741-89ab950d13d8 h1:uG92q2gz4vxCh/lmBo4EPC3vIAyJQDKSUDoAltBJ5vU=
 github.com/mornyx/client-go/v2 v2.0.0-alpha.0.20211109115741-89ab950d13d8/go.mod h1:iiwtsCxcbNLK5i9VRYGvdcihgHXTKy2ukWjoaJsrphg=
 github.com/moul/http2curl v1.0.0/go.mod h1:8UbvGypXm98wA/IqH45anm5Y2Z6ep6O31QGOAZ3H0fQ=
 github.com/mwitkow/go-conntrack v0.0.0-20161129095857-cc309e4a2223/go.mod h1:qRWi+5nqEBWmkhHvq77mSJWrCKwh8bxhgT7d/eI7P4U=
