@@ -2644,8 +2644,10 @@ func testPartitionDropIndex(c *C, store kv.Storage, lease time.Duration, idxName
 	tk.MustExec(addIdxSQL)
 
 	ctx := tk.Se.(sessionctx.Context)
-	indexID := findIndexID(c, ctx, "test_db", "partition_drop_idx", idxName)
-	assertDeleteRangeAdded := setDeleteRangeChecker(ctx)
+	indexID := testGetIndexID(c, ctx, "test_db", "partition_drop_idx", idxName)
+
+	jobIDExt, reset := setupJobIDExtCallback(ctx)
+	defer reset()
 	testutil.SessionExecInGoroutine(store, dropIdxSQL, done)
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
@@ -2668,7 +2670,7 @@ LOOP:
 			num += step
 		}
 	}
-	assertDeleteRangeAdded(c, tk, indexID)
+	checkDelRangeAdded(c, tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table partition_drop_idx;")
 }
 
@@ -2716,8 +2718,8 @@ func testPartitionCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.D
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, store, ctx, hook, idxName)
 	originHook := d.GetHook()
 	defer d.(ddl.DDLForTest).SetHook(originHook)
-	d.(ddl.DDLForTest).SetHook(hook)
-	assertDeleteRangeAdded := setDeleteRangeChecker(ctx)
+	jobExt := wrapJobIDExtCallback(hook)
+	d.(ddl.DDLForTest).SetHook(jobExt)
 	done := make(chan error, 1)
 	go backgroundExec(store, addIdxSQL, done)
 
@@ -2748,7 +2750,7 @@ LOOP:
 			times++
 		}
 	}
-	assertDeleteRangeAdded(c, tk, c3IdxInfo.ID)
+	checkDelRangeAdded(c, tk, jobExt.jobID, c3IdxInfo.ID)
 	tk.MustExec("drop table t1")
 }
 
