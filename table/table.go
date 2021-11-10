@@ -258,7 +258,7 @@ type CachedTable interface {
 
 	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
 	// you need to update the lock information and read the data from the original table
-	UpdateLockForRead(ctx sessionctx.Context, ts uint64) error
+	UpdateLockForRead(store kv.Storage, ts uint64) error
 }
 
 // CacheData pack the cache data and lease
