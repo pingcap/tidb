@@ -647,7 +647,7 @@ LOOP:
 			times++
 		}
 	}
-	checkDelRangeAdded(c, tk, jobIDExt.jobID, c3IdxInfo.ID)
+	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
 	d.(ddl.DDLForTest).SetHook(originalHook)
 }
 
@@ -1737,7 +1737,7 @@ LOOP:
 	rows := tk.MustQuery("explain select c1 from test_drop_index where c3 >= 0")
 	c.Assert(strings.Contains(fmt.Sprintf("%v", rows), idxName), IsFalse)
 
-	checkDelRangeAdded(c, tk, jobIDExt.jobID, indexID)
+	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table test_drop_index")
 }
 
@@ -1835,7 +1835,7 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
 			if c3IdxID != 0 {
 				// Check index is deleted
-				checkDelRangeAdded(c, tk, jobID, c3IdxID)
+				checkDelRangeAdded(tk, jobID, c3IdxID)
 			}
 		}
 	}
@@ -1936,7 +1936,7 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
 			if c3IdxID != 0 {
 				// Check index is deleted
-				checkDelRangeAdded(c, tk, jobID, c3IdxID)
+				checkDelRangeAdded(tk, jobID, c3IdxID)
 			}
 		}
 	}
@@ -1990,9 +1990,9 @@ func setupJobIDExtCallback(ctx sessionctx.Context) (jobExt *testDDLJobIDCallback
 	}
 }
 
-func checkDelRangeAdded(c *C, tk *testkit.TestKit, jobID int64, elemID int64) {
-	query := "(select count(1) from mysql.gc_delete_range where job_id = ? and element_id = ?)" +
-		"union (select count(1) from mysql.gc_delete_range where job_id = ? and element_id = ?);"
+func checkDelRangeAdded(tk *testkit.TestKit, jobID int64, elemID int64) {
+	query := "(select count(1) from mysql.gc_delete_range where job_id = ? and element_id = ?) union " +
+		"(select count(1) from mysql.gc_delete_range_done where job_id = ? and element_id = ?);"
 	tk.MustQuery(query, jobID, elemID, jobID, elemID).Check(testkit.Rows("1"))
 }
 
@@ -7316,7 +7316,7 @@ LOOP:
 		}
 	}
 	for _, idxID := range idxIDs {
-		checkDelRangeAdded(c, tk, jobIDExt.jobID, idxID)
+		checkDelRangeAdded(tk, jobIDExt.jobID, idxID)
 	}
 }
 

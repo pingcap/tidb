@@ -2670,7 +2670,7 @@ LOOP:
 			num += step
 		}
 	}
-	checkDelRangeAdded(c, tk, jobIDExt.jobID, indexID)
+	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table partition_drop_idx;")
 }
 
@@ -2750,7 +2750,7 @@ LOOP:
 			times++
 		}
 	}
-	checkDelRangeAdded(c, tk, jobIDExt.jobID, c3IdxInfo.ID)
+	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
 	tk.MustExec("drop table t1")
 }
 
