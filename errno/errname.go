@@ -683,7 +683,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrFailedReadFromParFile:                                 mysql.Message("Failed to read from the .par file", nil),
 	ErrValuesIsNotIntType:                                    mysql.Message("VALUES value for partition '%-.64s' must have type INT", nil),
 	ErrAccessDeniedNoPassword:                                mysql.Message("Access denied for user '%-.48s'@'%-.255s'", nil),
-	ErrSetPasswordAuthPlugin:                                 mysql.Message("SET PASSWORD has no significance for users authenticating via plugins", nil),
+	ErrSetPasswordAuthPlugin:                                 mysql.Message("SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication plugin does not support it.", nil),
 	ErrGrantPluginUserExists:                                 mysql.Message("GRANT with IDENTIFIED WITH is illegal because the user %-.*s already exists", nil),
 	ErrTruncateIllegalFk:                                     mysql.Message("Cannot truncate a table referenced in a foreign key constraint (%.192s)", nil),
 	ErrPluginIsPermanent:                                     mysql.Message("Plugin '%s' is forcePlusPermanent and can not be unloaded", nil),
@@ -1051,7 +1051,6 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPartitionStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
 	ErrNotSupportedWithSem:   mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
-	ErrInvalidPlacementSpec:            mysql.Message("Invalid placement policy '%s': %s", nil),
 	ErrPlacementPolicyCheck:            mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 	ErrMultiStatementDisabled:          mysql.Message("client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", nil),
 	ErrAsOf:                            mysql.Message("invalid as of timestamp: %s", nil),
