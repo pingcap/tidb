@@ -1194,14 +1194,10 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
-	bundles := make([]*placement.Bundle, 0, len(oldIDs))
-
-	for i, oldID := range oldIDs {
-		oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(oldID))
-		if ok && !oldBundle.IsEmpty() {
-			bundles = append(bundles, placement.NewBundle(oldID))
-			bundles = append(bundles, oldBundle.Clone().Reset(placement.RuleIndexPartition, []int64{newPartitions[i].ID}))
-		}
+	bundles, err := newBundlesFromPartitionDefs(t, job, newPartitions)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
 
 	err = infosync.PutRuleBundles(context.TODO(), bundles)
@@ -1851,53 +1847,6 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	}
 	tblInfo.Partition.Definitions = newDefs
 	return nil
-}
-
-func onAlterTableAlterPartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	var partitionID int64
-	bundle := &placement.Bundle{}
-	err = job.DecodeArgs(&partitionID, bundle)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return 0, errors.Trace(err)
-	}
-
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
-	if err != nil {
-		return 0, err
-	}
-
-	ptInfo := tblInfo.GetPartitionInfo()
-	if ptInfo.GetNameByID(partitionID) == "" {
-		job.State = model.JobStateCancelled
-		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
-	}
-
-	pstate := ptInfo.GetStateByID(partitionID)
-	switch pstate {
-	case model.StatePublic:
-		ptInfo.SetStateByID(partitionID, model.StateGlobalTxnOnly)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateGlobalTxnOnly
-	case model.StateGlobalTxnOnly:
-		err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
-		ptInfo.SetStateByID(partitionID, model.StatePublic)
-		// used by ApplyDiff in updateSchemaVersion
-		job.CtxVars = []interface{}{partitionID}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	}
-	return ver, nil
 }
 
 type partitionExprProcessor func(sessionctx.Context, *model.TableInfo, ast.ExprNode) error
