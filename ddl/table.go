@@ -69,22 +69,10 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	// build table & partition bundles if any.
-	var bundles []*placement.Bundle
-	tableBundle, err := newBundleFromTblInfo(t, job, tbInfo)
+	bundles, err := fullBundlesFromTblInfo(t, job, tbInfo)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-
-	if tableBundle != nil {
-		bundles = append(bundles, tableBundle)
-	}
-
-	if tbInfo.Partition != nil {
-		partitionBundles, err := newBundlesFromPartitionDefs(t, job, tbInfo.Partition.Definitions)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		bundles = append(bundles, partitionBundles...)
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -121,6 +109,29 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	default:
 		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
+}
+
+// fullBundlesFromTblInfo returns a bundle list with both table bundle and partition bundles
+func fullBundlesFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) ([]*placement.Bundle, error) {
+	var bundles []*placement.Bundle
+	tableBundle, err := newBundleFromTblInfo(t, job, tbInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if tableBundle != nil {
+		bundles = append(bundles, tableBundle)
+	}
+
+	if tbInfo.Partition != nil {
+		partitionBundles, err := newBundlesFromPartitionDefs(t, job, tbInfo.Partition.Definitions)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		bundles = append(bundles, partitionBundles...)
+	}
+
+	return bundles, nil
 }
 
 func newBundleFromTblInfo(t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) (*placement.Bundle, error) {
@@ -621,32 +632,19 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	}
 
-	is := d.infoCache.GetLatest()
-
-	bundles := make([]*placement.Bundle, 0, len(oldPartitionIDs)+1)
-	if oldBundle, ok := is.BundleByName(placement.GroupID(tableID)); ok {
-		bundles = append(bundles, oldBundle.Clone().Reset(placement.RuleIndexTable, []int64{newTableID}))
-	}
-
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		oldIDs := make([]int64, 0, len(oldPartitionIDs))
 		newIDs := make([]int64, 0, len(oldPartitionIDs))
 		newDefs := pi.Definitions
 		for i := range oldPartitionIDs {
-			newID := newDefs[i].ID
-			if oldBundle, ok := is.BundleByName(placement.GroupID(oldPartitionIDs[i])); ok && !oldBundle.IsEmpty() {
+			newDef := &newDefs[i]
+			newID := newDef.ID
+			if newDef.PlacementPolicyRef != nil || newDef.DirectPlacementOpts != nil {
 				oldIDs = append(oldIDs, oldPartitionIDs[i])
 				newIDs = append(newIDs, newID)
-				bundles = append(bundles, oldBundle.Clone().Reset(placement.RuleIndexPartition, []int64{newID}))
 			}
 		}
 		job.CtxVars = []interface{}{oldIDs, newIDs}
-	}
-
-	err = infosync.PutRuleBundles(context.TODO(), bundles)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
 	tableRuleID, partRuleIDs, _, oldRules, err := getOldLabelRules(tblInfo, job.SchemaName, tblInfo.Name.L)
@@ -668,6 +666,20 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	}
 
 	tblInfo.ID = newTableID
+
+	// build table & partition bundles if any.
+	bundles, err := fullBundlesFromTblInfo(t, job, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = infosync.PutRuleBundles(context.TODO(), bundles)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
 	err = t.CreateTableOrView(schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -1280,7 +1292,7 @@ func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD label rule")
+		return 0, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
@@ -1318,7 +1330,7 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD region label")
+		return 0, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
@@ -1474,6 +1486,14 @@ func onAlterCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	if tbInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		return ver, nil
+	}
+
+	if tbInfo.TempTableType != model.TempTableNone {
+		return ver, errors.Trace(ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache"))
+	}
+
+	if tbInfo.Partition != nil {
+		return ver, errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("partition mode"))
 	}
 
 	switch tbInfo.TableCacheStatusType {

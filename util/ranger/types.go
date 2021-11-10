@@ -26,6 +26,28 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
+// MutableRanges represents a range may change after it is created.
+// It's mainly designed for plan-cache, since some ranges in a cached plan have to be rebuild when reusing.
+type MutableRanges interface {
+	// Range returns the underlying range values.
+	Range() []*Range
+	// Rebuild rebuilds the underlying ranges again.
+	Rebuild() error
+}
+
+// Ranges implements the MutableRanges interface for range array.
+type Ranges []*Range
+
+// Range returns the range array.
+func (rs Ranges) Range() []*Range {
+	return rs
+}
+
+// Rebuild rebuilds this range.
+func (rs Ranges) Rebuild() error {
+	return nil
+}
+
 // Range represents a range generated in physical plan building phase.
 type Range struct {
 	LowVal  []types.Datum
@@ -33,6 +55,11 @@ type Range struct {
 
 	LowExclude  bool // Low value is exclusive.
 	HighExclude bool // High value is exclusive.
+}
+
+// Width returns the width of this range.
+func (ran *Range) Width() int {
+	return len(ran.LowVal)
 }
 
 // Clone clones a Range.
