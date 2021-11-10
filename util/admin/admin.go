@@ -379,17 +379,17 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 				return tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 			},
 			IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
-				var idx table.Index
+				var matchingIdx table.Index
 				for _, v := range t.Indices() {
 					if strings.EqualFold(v.Meta().Name.String(), idx.Meta().Name.O) {
-						idx = v
+						matchingIdx = v
 						break
 					}
 				}
-				if idx == nil {
+				if matchingIdx == nil {
 					return nil
 				}
-				k, _, err := idx.GenIndexKey(sessCtx.GetSessionVars().StmtCtx, idxRow.Values, idxRow.Handle, nil)
+				k, _, err := matchingIdx.GenIndexKey(sessCtx.GetSessionVars().StmtCtx, idxRow.Values, idxRow.Handle, nil)
 				if err != nil {
 					return nil
 				}
