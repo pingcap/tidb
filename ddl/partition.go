@@ -1474,7 +1474,7 @@ func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.Ta
 		return nil, errors.Trace(err)
 	}
 	if parBundle != nil {
-		bundles = append(bundles, ptBundle)
+		bundles = append(bundles, parBundle)
 	}
 
 	ntBundle, err := newBundleFromTblInfo(t, job, nt)
