@@ -46,15 +46,16 @@ func Formatted(label string) EncodingLabel {
 
 // Encoding provide a interface to encode/decode a string with specific encoding.
 type Encoding struct {
-	enc         encoding.Encoding
-	name        string
-	charLength  func([]byte) int
-	specialCase unicode.SpecialCase
+	enc          encoding.Encoding
+	name         string
+	charLength   func([]byte) int
+	mbCharLength func([]byte) int
+	specialCase  unicode.SpecialCase
 }
 
 // enabled indicates whether the non-utf8 encoding is used.
 func (e *Encoding) enabled() bool {
-	return e.enc != nil && e.charLength != nil
+	return e != UTF8Encoding
 }
 
 // Name returns the name of the current encoding.
@@ -62,35 +63,28 @@ func (e *Encoding) Name() string {
 	return e.name
 }
 
+// CharLength returns the name of the current encoding.
+func (e *Encoding) CharLength(bs []byte) int {
+	return e.charLength(bs)
+}
+
+// MbCharLength returns the name of the current encoding.
+func (e *Encoding) MbCharLength(bs []byte) int {
+	return e.mbCharLength(bs)
+}
+
 // NewEncoding creates a new Encoding.
 func NewEncoding(label string) *Encoding {
 	if len(label) == 0 {
-		return &Encoding{}
+		return UTF8Encoding
 	}
-	e, name := Lookup(label)
-	if e != nil && name != encodingLegacy {
-		return &Encoding{
-			enc:         e,
-			name:        name,
-			charLength:  FindNextCharacterLength(name),
-			specialCase: LookupSpecialCase(name),
-		}
-	}
-	return &Encoding{name: name}
+
+	return encodingMap[Format(label)]
 }
 
 // UpdateEncoding updates to a new Encoding.
-func (e *Encoding) UpdateEncoding(label EncodingLabel) {
-	enc, name := lookup(label)
-	e.name = name
-	if enc != nil && name != encodingLegacy {
-		e.enc = enc
-		e.charLength = FindNextCharacterLength(name)
-	} else {
-		e.enc = nil
-		e.charLength = nil
-	}
-	e.specialCase = LookupSpecialCase(e.name)
+func UpdateEncoding(label string) *Encoding {
+	return NewEncoding(label)
 }
 
 // Encode convert bytes from utf-8 charset to a specific charset.
@@ -127,7 +121,7 @@ func (e *Encoding) EncodeInternal(dest, src []byte) []byte {
 	var buf [4]byte
 	transformer := e.enc.NewEncoder()
 	for srcOffset < len(src) {
-		length := characterLengthUTF8(src[srcOffset:])
+		length := UTF8Encoding.CharLength(src[srcOffset:])
 		_, _, err := transformer.Transform(buf[:], src[srcOffset:srcOffset+length], true)
 		if err != nil {
 			dest = append(dest, byte('?'))
@@ -160,6 +154,9 @@ func (e *Encoding) DecodeString(src string) (string, error) {
 func (e *Encoding) transform(transformer transform.Transformer, dest, src []byte, isDecoding bool) ([]byte, error) {
 	if len(dest) < len(src) {
 		dest = make([]byte, len(src)*2)
+	}
+	if len(src) == 0 {
+		return src, nil
 	}
 	var destOffset, srcOffset int
 	var encodingErr error
@@ -195,7 +192,7 @@ func (e *Encoding) nextCharLenInSrc(srcRest []byte, isDecoding bool) int {
 		}
 		return len(srcRest)
 	}
-	return characterLengthUTF8(srcRest)
+	return UTF8Encoding.CharLength(srcRest)
 }
 
 func enlargeCapacity(dest []byte) []byte {

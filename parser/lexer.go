@@ -39,8 +39,8 @@ type Scanner struct {
 	r   reader
 	buf bytes.Buffer
 
-	client     charset.Encoding
-	connection charset.Encoding
+	client     *charset.Encoding
+	connection *charset.Encoding
 
 	errs         []error
 	warns        []error
@@ -89,7 +89,7 @@ func (s *Scanner) Errors() (warns []error, errs []error) {
 
 // reset resets the sql string to be scanned.
 func (s *Scanner) reset(sql string) {
-	s.r = reader{s: sql, p: Pos{Line: 1}, f: charset.FindNextCharacterLength1(s.client.Name())}
+	s.r = reader{s: sql, p: Pos{Line: 1}, f: s.client.MbCharLength}
 	s.buf.Reset()
 	s.errs = s.errs[:0]
 	s.warns = s.warns[:0]
@@ -270,7 +270,9 @@ func (s *Scanner) InheritScanner(sql string) *Scanner {
 
 // NewScanner returns a new scanner object.
 func NewScanner(s string) *Scanner {
-	return &Scanner{r: reader{s: s, f: charset.FindNextCharacterLength1("")}}
+	sc := &Scanner{r: reader{s: s}, client: charset.UTF8Encoding, connection: charset.UTF8Encoding}
+	sc.reset(s)
+	return sc
 }
 
 func (s *Scanner) handleIdent(lval *yySymType) int {

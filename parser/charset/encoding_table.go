@@ -14,9 +14,6 @@
 package charset
 
 import (
-	"strings"
-	"unicode/utf8"
-
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/japanese"
@@ -24,7 +21,16 @@ import (
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/encoding/traditionalchinese"
 	"golang.org/x/text/encoding/unicode"
+	"strings"
 )
+
+var encodingMap = map[EncodingLabel]*Encoding{
+	"utf8mb4": UTF8Encoding,
+	"utf8":    UTF8Encoding,
+	"gbk":     GBKEncoding,
+	"latin1":  LatinEncoding,
+	"binary":  BinaryEncoding,
+}
 
 // Lookup returns the encoding with the specified label, and its canonical
 // name. It returns nil and the empty string if label is not one of the
@@ -262,82 +268,4 @@ var encodings = map[string]struct {
 	"utf-16":              {unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM), "utf-16le"},
 	"utf-16le":            {unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM), "utf-16le"},
 	"x-user-defined":      {charmap.XUserDefined, "x-user-defined"},
-}
-
-// FindNextCharacterLength return the next char length according to the charset, the caller should make sure the length of input bytes must not 0.
-func FindNextCharacterLength(label string) func([]byte) int {
-	if f, ok := encodingNextCharacterLength[label]; ok {
-		return f
-	}
-	return nil
-}
-
-var encodingNextCharacterLength = map[string]func([]byte) int{
-	// https://en.wikipedia.org/wiki/GBK_(character_encoding)#Layout_diagram
-	"gbk":   characterLengthGBK,
-	"utf-8": characterLengthUTF8,
-	"binary": func(bs []byte) int {
-		return 1
-	},
-}
-
-func characterLengthGBK1(bs []byte) int {
-	if len(bs) < 2 {
-		return 1
-	}
-
-	if 0x81 <= bs[0] && bs[0] <= 0xf4 {
-		if (0x40 <= bs[1] && bs[1] <= 0x7e) || (0x80 <= bs[1] && bs[1] <= 0xfe) {
-			return 2
-		}
-	}
-
-	return 1
-}
-
-func characterLengthUTF8(bs []byte) int {
-	l := 0
-	if bs[0] < 0x80 {
-		l = 1
-	} else if bs[0] < 0xe0 {
-		l = 2
-	} else if bs[0] < 0xf0 {
-		l = 3
-	} else {
-		l = 4
-	}
-
-	if len(bs) < l || !utf8.Valid(bs[:l]) {
-		return 1
-	}
-	return l
-}
-
-// FindNextCharacterLength1 return the next char length according to the charset, the caller should make sure the length of input bytes must not 0.
-func FindNextCharacterLength1(label string) func([]byte) int {
-	if f, ok := encodingNextCharacterLength1[label]; ok {
-		return f
-	}
-	return characterLengthUTF8
-}
-
-var encodingNextCharacterLength1 = map[string]func([]byte) int{
-	// https://en.wikipedia.org/wiki/GBK_(character_encoding)#Layout_diagram
-	"gbk":   characterLengthGBK1,
-	"utf-8": characterLengthUTF8,
-	"binary": func(bs []byte) int {
-		return 1
-	},
-}
-
-func characterLengthGBK(bs []byte) int {
-	if len(bs) < 2 {
-		return 1
-	}
-
-	if bs[0] < 0x80 {
-		return 1
-	}
-
-	return 2
 }

@@ -14,6 +14,7 @@
 package parser
 
 import (
+	"github.com/pingcap/tidb/parser/charset"
 	"strconv"
 	"strings"
 
@@ -126,6 +127,8 @@ func newHintParser() *hintParser {
 
 func (hp *hintParser) parse(input string, sqlMode mysql.SQLMode, initPos Pos) ([]*ast.TableOptimizerHint, []error) {
 	hp.result = nil
+	hp.lexer.client = charset.UTF8Encoding
+	hp.lexer.connection = charset.UTF8Encoding
 	hp.lexer.reset(input[3:])
 	hp.lexer.SetSQLMode(sqlMode)
 	hp.lexer.r.updatePos(Pos{
