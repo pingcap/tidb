@@ -138,7 +138,7 @@ func TestCacheTableBasicScan(t *testing.T) {
 			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
 		))
 
-		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
 	}
 	assertSelect()
 
