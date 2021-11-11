@@ -1194,14 +1194,10 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
-	bundles := make([]*placement.Bundle, 0, len(oldIDs))
-
-	for i, oldID := range oldIDs {
-		oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(oldID))
-		if ok && !oldBundle.IsEmpty() {
-			bundles = append(bundles, placement.NewBundle(oldID))
-			bundles = append(bundles, oldBundle.Clone().Reset(placement.RuleIndexPartition, []int64{newPartitions[i].ID}))
-		}
+	bundles, err := newBundlesFromPartitionDefs(t, job, newPartitions)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
 
 	err = infosync.PutRuleBundles(context.TODO(), bundles)
