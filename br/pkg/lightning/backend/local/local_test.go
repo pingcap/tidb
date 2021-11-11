@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -584,14 +583,16 @@ func (s *localSuite) TestLocalIngestLoop(c *C) {
 	go f.ingestSSTLoop()
 
 	// add some routines to add ssts
-	var wg util.WaitGroupWrapper
+	var wg sync.WaitGroup
+	wg.Add(4)
 	totalSize := int64(0)
 	concurrency := 4
 	count := 500
 	var metaSeqLock sync.Mutex
 	maxMetaSeq := int32(0)
 	for i := 0; i < concurrency; i++ {
-		wg.Run(func() {
+		go func() {
+			defer wg.Done()
 			flushCnt := rand.Int31n(10) + 1
 			seq := int32(0)
 			for i := 0; i < count; i++ {
@@ -614,7 +615,7 @@ func (s *localSuite) TestLocalIngestLoop(c *C) {
 				atomic.StoreInt32(&maxMetaSeq, seq)
 			}
 			metaSeqLock.Unlock()
-		})
+		}()
 	}
 	wg.Wait()
 
