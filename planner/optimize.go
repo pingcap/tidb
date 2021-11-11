@@ -506,7 +506,7 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 		return false
 	}
 	v, ok := p.(*plannercore.PointGetPlan)
-	isCacheTable := v.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable
+	isCacheTable := v.TblInfo != nil && (v.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable)
 	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)) && !isCacheTable
 }
 
