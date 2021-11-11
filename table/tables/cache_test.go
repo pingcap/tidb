@@ -164,7 +164,6 @@ func TestCacheCondition(t *testing.T) {
 }
 
 func TestCacheTableBasicReadAndWrite(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -204,7 +203,6 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 }
 
 func TestCacheTableComplexRead(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	doneCh := make(chan struct{}, 1)
