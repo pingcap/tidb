@@ -284,12 +284,12 @@ func TestBeginSleepABA(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-
 	require.True(t, cacheUsed)
 
 	// tk1 should not use the staled cache, because the data is changed.
 	require.False(t, tk1.HasPlan("select * from aba", "UnionScan"))
 }
+
 
 func  TestCacheTablePointGet(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
