@@ -1819,9 +1819,9 @@ func (b *PlanBuilder) getAnalyzeColumnsInfo(as *ast.AnalyzeTableStmt, tbl *ast.T
 	}
 	columnIDs := make(map[int64]struct{}, len(tblInfo.Columns))
 	for _, colName := range as.ColumnNames {
-		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
+		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 		if colInfo == nil {
-			return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.Name.O, tblInfo.Name.O)
+			return nil, ErrAnalyzeMissColumn.GenWithStackByArgs(colName.O, tblInfo.Name.O)
 		}
 		columnIDs[colInfo.ID] = struct{}{}
 	}
