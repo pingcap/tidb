@@ -116,8 +116,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	// For session
 	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("0"))
 	tk.MustExec(`set @@global.low_priority_updates="ON";`)
-	tk.MustExec(`set @@session.low_priority_updates=DEFAULT;`) // It will be set to global var value.
-	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("1"))
+	tk.MustExec(`set @@session.low_priority_updates=DEFAULT;`) // It will be set to compiled-in default value.
+	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("0"))
 
 	// For mysql jdbc driver issue.
 	tk.MustQuery(`select @@session.tx_read_only;`).Check(testkit.Rows("0"))
@@ -1372,6 +1372,32 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	_, err = tk.Exec("set global read_only = abc")
 	c.Assert(err, NotNil)
 
+}
+
+// https://github.com/pingcap/tidb/issues/29670
+func (s *testSuite5) TestDefaultBehavior(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustQuery("SELECT @@default_storage_engine").Check(testkit.Rows("InnoDB"))
+	tk.MustExec("SET GLOBAL default_storage_engine = 'somethingweird'")
+	tk.MustExec("SET default_storage_engine = 'MyISAM'")
+	tk.MustQuery("SELECT @@default_storage_engine").Check(testkit.Rows("MyISAM"))
+	tk.MustExec("SET default_storage_engine = DEFAULT") // reads from compiled default
+	tk.MustQuery("SELECT @@default_storage_engine").Check(testkit.Rows("InnoDB"))
+	tk.MustExec("SET @@SESSION.default_storage_engine = @@GLOBAL.default_storage_engine") // example from MySQL manual
+	tk.MustQuery("SELECT @@default_storage_engine").Check(testkit.Rows("somethingweird"))
+	tk.MustExec("SET GLOBAL default_storage_engine = 'somethingweird2'")
+	tk.MustExec("SET default_storage_engine = @@GLOBAL.default_storage_engine") // variation of example
+	tk.MustQuery("SELECT @@default_storage_engine").Check(testkit.Rows("somethingweird2"))
+	tk.MustExec("SET default_storage_engine = DEFAULT")        // restore default again for session global
+	tk.MustExec("SET GLOBAL default_storage_engine = DEFAULT") // restore default for global
+	tk.MustQuery("SELECT @@SESSION.default_storage_engine, @@GLOBAL.default_storage_engine").Check(testkit.Rows("InnoDB InnoDB"))
+
+	// Try sql_mode option which has validation
+	err := tk.ExecToErr("SET GLOBAL sql_mode = 'DEFAULT'") // illegal now
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'DEFAULT'`)
+	tk.MustExec("SET GLOBAL sql_mode = DEFAULT")
 }
 
 func (s *testSuite5) TestRemovedSysVars(c *C) {
