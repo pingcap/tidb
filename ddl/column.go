@@ -1745,7 +1745,7 @@ func isColumnCanDropWithIndex(isMultiSchemaChange bool, colName string, indices 
 			}
 		}
 		if len(indexInfo.Columns) == 1 && indexInfo.Columns[0].Name.L == colName && !isMultiSchemaChange {
-			return errCantDropColWithIndex.GenWithStack("can't drop column %s with tidb_enable_change_multi_schema = off", colName)
+			return errCantDropColWithIndex.GenWithStack("can't drop column %s with tidb_enable_change_multi_schema is disable", colName)
 		}
 	}
 	return nil
