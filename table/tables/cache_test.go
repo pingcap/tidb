@@ -132,13 +132,13 @@ func TestCacheTableBasicScan(t *testing.T) {
 		))
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 
-		// For IndexMerge, temporary table should not use index merge
+		// For IndexMerge, cache table should not use index merge
 		tk.MustQuery("select /*+ use_index_merge(tmp1, primary, u) */ * from tmp1 where id>5 or u>110 order by u").Check(testkit.Rows(
 			"9 109 1009", "10 110 1010",
 			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
 		))
 
-		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
 	}
 	assertSelect()
 
