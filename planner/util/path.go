@@ -103,7 +103,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx sessionctx.Context,
 	}
 	for i, ok := range used {
 		if !ok {
-			remained = append(remained, path.TableFilters[i])
+			remained = append(remained, path.TableFilters[i]) // nozero
 		}
 	}
 	return access, remained
