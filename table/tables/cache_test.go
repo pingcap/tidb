@@ -290,7 +290,6 @@ func TestBeginSleepABA(t *testing.T) {
 	require.False(t, tk1.HasPlan("select * from aba", "UnionScan"))
 }
 
-
 func  TestCacheTablePointGet(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -323,6 +322,5 @@ func  TestCacheTablePointGet(t *testing.T) {
 	tk.MustQuery("select * from cache_point where id=3").Check(testkit.Rows("3 13 103"))
 	tk.MustQuery("select * from cache_point where u=13").Check(testkit.Rows("3 13 103"))
 	tk.MustQuery("select * from cache_point where id=2").Check(testkit.Rows("2 12 999"))
-
 }
 
