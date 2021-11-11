@@ -75,7 +75,6 @@ type PointGetPlan struct {
 	partitionColumnPos int
 	Columns            []*model.ColumnInfo
 	cost               float64
-	IsCacheTable       bool
 }
 
 type nameValuePair struct {
@@ -878,13 +877,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		return nil
 	}
 
-	isCacheTable := tbl.TableCacheStatusType == model.TableCacheStatusEnable
 	var partitionInfo *model.PartitionDefinition
 	var pos int
 	if pi != nil {
 		partitionInfo, pos, isTableDual = getPartitionInfo(ctx, tbl, pairs)
 		if isTableDual {
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names, isCacheTable)
+			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
@@ -894,7 +892,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		// Take partition selection into consideration.
 		if len(tblName.PartitionNames) > 0 {
 			if !partitionNameInSet(partitionInfo.Name, tblName.PartitionNames) {
-				p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names, isCacheTable)
+				p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 				p.IsTableDual = true
 				return p
 			}
@@ -904,12 +902,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 && indexIsAvailableByHints(nil, tblName.IndexHints) {
 		if isTableDual {
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names, isCacheTable)
+			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
 
-		p := newPointGetPlan(ctx, dbName, schema, tbl, names, isCacheTable)
+		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.Handle = kv.IntHandle(handlePair.value.GetInt64())
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.Flag)
 		p.HandleParam = handlePair.param
@@ -941,7 +939,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 					continue
 				}
 			}
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names, isCacheTable)
+			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
@@ -961,7 +959,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 				continue
 			}
 		}
-		p := newPointGetPlan(ctx, dbName, schema, tbl, names, isCacheTable)
+		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		p.IndexValueParams = idxValueParams
@@ -1022,7 +1020,7 @@ func partitionNameInSet(name model.CIStr, pnames []model.CIStr) bool {
 	return false
 }
 
-func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName, isCacheTable bool) *PointGetPlan {
+func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
 		basePlan:     newBasePlan(ctx, plancodec.TypePointGet, 0),
 		dbName:       dbName,
@@ -1030,7 +1028,6 @@ func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.S
 		TblInfo:      tbl,
 		outputNames:  names,
 		LockWaitTime: ctx.GetSessionVars().LockWaitTimeout,
-		IsCacheTable: isCacheTable,
 	}
 	ctx.GetSessionVars().StmtCtx.Tables = []stmtctx.TableEntry{{DB: dbName, Table: tbl.Name.L}}
 	return p

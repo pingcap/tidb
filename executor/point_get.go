@@ -59,7 +59,8 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 	}
-	if p.IsCacheTable {
+
+	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		tbl, ok := b.is.TableByID(p.TblInfo.ID)
 		if !ok {
 			b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, p.TblInfo.Name))
