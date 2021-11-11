@@ -29,8 +29,10 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-var _ table.Table = &cachedTable{}
-var _ table.CachedTable = &cachedTable{}
+var (
+	_ table.Table       = &cachedTable{}
+	_ table.CachedTable = &cachedTable{}
+)
 
 type cachedTable struct {
 	TableCommon
@@ -44,6 +46,16 @@ func leaseFromTS(ts uint64) uint64 {
 	physicalTime := oracle.GetTimeFromTS(ts)
 	lease := oracle.GoTimeToTS(physicalTime.Add(defaultLeaseDuration))
 	return lease
+}
+
+func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
+	// Here is a trick to get a MemBuffer data, because the internal API is not exposed.
+	// Create a transaction with start ts 0, and take the MemBuffer out.
+	buffTxn, err := store.Begin(tikv.WithStartTS(0))
+	if err != nil {
+		return nil, err
+	}
+	return buffTxn.GetMemBuffer(), nil
 }
 
 func (c *cachedTable) TryGetMemcache(ts uint64) (kv.MemBuffer, bool) {
@@ -78,43 +90,45 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 	return ret, nil
 }
 
-func (c *cachedTable) loadDataFromOriginalTable(ctx sessionctx.Context, lease uint64) (kv.MemBuffer, error) {
-	prefix := tablecodec.GenTablePrefix(c.tableID)
-	txn, err := ctx.Txn(true)
+func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) (kv.MemBuffer, error) {
+	buffer, err := newMemBuffer(store)
 	if err != nil {
 		return nil, err
 	}
-	if txn.StartTS() >= lease {
-		return nil, errors.New("the loaded data is outdate for caching")
-	}
-
-	buffTxn, err := ctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
-	if err != nil {
-		return nil, err
-	}
-
-	buffer := buffTxn.GetMemBuffer()
-	it, err := txn.Iter(prefix, prefix.PrefixNext())
-	if err != nil {
-		return nil, err
-	}
-	defer it.Close()
-	for it.Valid() && it.Key().HasPrefix(prefix) {
-		value := it.Value()
-		err = buffer.Set(it.Key(), value)
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		prefix := tablecodec.GenTablePrefix(c.tableID)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		err = it.Next()
+		if txn.StartTS() >= lease {
+			return errors.New("the loaded data is outdated for caching")
+		}
+		it, err := txn.Iter(prefix, prefix.PrefixNext())
 		if err != nil {
-			return nil, err
+			return err
 		}
+		defer it.Close()
+		for it.Valid() && it.Key().HasPrefix(prefix) {
+			value := it.Value()
+			err = buffer.Set(it.Key(), value)
+			if err != nil {
+				return err
+			}
+			err = it.Next()
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return buffer, nil
 }
 
-func (c *cachedTable) UpdateLockForRead(ctx sessionctx.Context, ts uint64) error {
+func (c *cachedTable) UpdateLockForRead(store kv.Storage, ts uint64) error {
 	// Load data from original table and the update lock information.
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts)
@@ -123,7 +137,7 @@ func (c *cachedTable) UpdateLockForRead(ctx sessionctx.Context, ts uint64) error
 		return errors.Trace(err)
 	}
 	if succ {
-		mb, err := c.loadDataFromOriginalTable(ctx, lease)
+		mb, err := c.loadDataFromOriginalTable(store, lease)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -149,7 +163,6 @@ func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		return nil, errors.Trace(err)
 	}
 	return c.TableCommon.AddRecord(ctx, r, opts...)
-
 }
 
 // UpdateRecord implements table.Table

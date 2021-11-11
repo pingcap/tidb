@@ -16,6 +16,7 @@ package tables_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -200,4 +201,38 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 		tk.MustExec("select *from write_tmp1")
 	}
 	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
+}
+
+func TestCacheTableComplexRead(t *testing.T) {
+	t.Parallel()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	doneCh := make(chan struct{}, 1)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("create table complex_cache (id int primary key auto_increment, u int unique, v int)")
+	tk1.MustExec("insert into complex_cache values" + "(5, 105, 1005), (7, 117, 1007), (9, 109, 1009)")
+	tk1.MustExec("alter table complex_cache cache")
+	tk1.MustExec("begin")
+	tk1.MustQuery("select *from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
+
+	go func() {
+		tk2.MustExec("begin")
+		tk2.MustQuery("select *from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
+		var i int
+		for i = 0; i < 10; i++ {
+			time.Sleep(100 * time.Millisecond)
+			if tk2.HasPlan("select *from complex_cache where id > 7", "UnionScan") {
+				break
+			}
+		}
+		require.True(t, i < 10)
+		tk2.MustExec("commit")
+		doneCh <- struct{}{}
+	}()
+	<-doneCh
+	tk1.HasPlan("select *from complex_cache where id > 7", "UnionScan")
+	tk1.MustExec("commit")
 }
