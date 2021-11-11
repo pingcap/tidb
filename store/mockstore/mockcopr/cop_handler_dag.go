@@ -39,13 +39,11 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
 	mockpkg "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/testutils"
-	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -924,16 +922,7 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 
 // fieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
 func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
-	collationId := int(collate.RestoreCollationIDIfNeeded(col.GetCollation()))
-	charsetStr, collationStr, err := charset.GetCharsetInfoByID(collationId)
-	if err != nil {
-		logutil.BgLogger().Error(
-			"Unable to get collation name from ID, use default collation instead.",
-			zap.Int("ID", collationId),
-			zap.Stack("stack"))
-		charsetStr = mysql.DefaultCharset
-		collationStr = mysql.DefaultCollationName
-	}
+	charsetStr, collationStr, _ := charset.GetCharsetInfoByID(int(collate.RestoreCollationIDIfNeeded(col.GetCollation())))
 	return &types.FieldType{
 		Tp:      byte(col.GetTp()),
 		Flag:    uint(col.Flag),

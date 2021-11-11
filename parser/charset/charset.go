@@ -20,6 +20,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/tikv/client-go/v2/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -148,7 +150,12 @@ func GetCharsetInfoByID(coID int) (string, string, error) {
 	if collation, ok := collationsIDMap[coID]; ok {
 		return collation.CharsetName, collation.Name, nil
 	}
-	return "", "", errors.Errorf("Unknown charset id %d", coID)
+
+	logutil.BgLogger().Warn(
+		"Unable to get collation name from collation ID, return default charset and collation instead.",
+		zap.Int("ID", coID),
+		zap.Stack("stack"))
+	return mysql.DefaultCharset, mysql.DefaultCollationName, errors.Errorf("Unknown collation id %d", coID)
 }
 
 // GetCollations returns a list for all collations.
