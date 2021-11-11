@@ -837,6 +837,15 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHints []*as
 			return ""
 		}
 	}
+	// We can place hint at update, delete, select stmt block,there are three combinations follows:
+	// updateStmt-selectStmt,deleteStmt-selectStmt,insertStmt-selectStmt,
+	// so when these are present，we need a way to prevent the hint of wrong placement,
+	// eg `update /*+ use_index(@upd_1 t1 idx_b) t1 set b = 1 where  (a in (select /*+use_index(@sel_1 t2  idx_ba)*/ a from t2 where b = 1) )`
+	// if we only order hint by parse offset from qb_name then @upd_1 and @sel_1 will be same offset,
+	// it's incorrect,so we need a way to deal this，so introduce the startBlockOffset，
+	// the startBlockOffset is the start of the offset to place hint.now if we get @upd_1 and @sel_1,we will set startBlockOffset=0,
+	// because ParseOffsetFromBlockName only parse qbName which Prefix with  'sel_',
+	// so upd_1 will be parsed to startBlockOffset that is 0,the @sel_1 will be parse to 1,it right result for us
 	var blockStartOffset int
 	var afterProcessFunc func(string) string
 	switch n := stmtNode.(type) {
