@@ -105,6 +105,13 @@ func (op *logicalOptimizeOp) appendRuleTracerBeforeRuleOptimize(name string, bef
 	op.tracer.AppendRuleTracerBeforeRuleOptimize(name, before.buildLogicalPlanTrace())
 }
 
+func (op *logicalOptimizeOp) appendRuleTracerStepToCurrent(id int, tp, reason, action string) {
+	if op.tracer == nil {
+		return
+	}
+	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason, action)
+}
+
 func (op *logicalOptimizeOp) trackLogicalPlanAfterRuleOptimize(after LogicalPlan) {
 	if op.tracer == nil {
 		return

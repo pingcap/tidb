@@ -39,8 +39,13 @@ func (tracer *LogicalOptimizeTracer) AppendRuleTracerBeforeRuleOptimize(name str
 }
 
 // AppendRuleTracerStepToCurrent add rule optimize step to current
-func (tracer *LogicalOptimizeTracer) AppendRuleTracerStepToCurrent(step LogicalRuleOptimizeTraceStep) {
-	tracer.curRuleTracer.Steps = append(tracer.curRuleTracer.Steps, step)
+func (tracer *LogicalOptimizeTracer) AppendRuleTracerStepToCurrent(id int, tp, reason, action string) {
+	tracer.curRuleTracer.Steps = append(tracer.curRuleTracer.Steps, LogicalRuleOptimizeTraceStep{
+		ID:     id,
+		TP:     tp,
+		Reason: reason,
+		Action: action,
+	})
 }
 
 // TrackLogicalPlanAfterRuleOptimize add plan trace after optimize

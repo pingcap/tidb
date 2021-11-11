@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/tracing"
 )
 
 type aggregationEliminator struct {
@@ -101,16 +100,8 @@ func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggrega
 				}
 				if distinctByUniqueKey {
 					af.HasDistinct = false
-					if opt.tracer != nil {
-						opt.tracer.AppendRuleTracerStepToCurrent(
-							tracing.LogicalRuleOptimizeTraceStep{
-								TP: agg.TP(),
-								ID: agg.ID(),
-								// TODO: fulfill in future pr
-								Reason: "",
-								Action: "",
-							})
-					}
+					// TODO: fulfill in future pr
+					opt.appendRuleTracerStepToCurrent(agg.ID(), agg.TP(), "", "")
 				}
 			}
 		}
