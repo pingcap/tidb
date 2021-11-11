@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
@@ -61,28 +60,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	}
 
 	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		tbl, ok := b.is.TableByID(p.TblInfo.ID)
-		if !ok {
-			b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, p.TblInfo.Name))
-			return nil
-		}
-		cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS)
-		if cacheData != nil {
-			e.cacheTable = cacheData
-		} else {
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-					}
-				}()
-				if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
-					err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
-					if err != nil {
-						log.Warn("Update Lock Info Error")
-					}
-				}
-			}()
-		}
+		e.cacheTable = b.readFromCache(p.TblInfo, startTS)
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
@@ -429,7 +407,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		}
 		// fallthrough to snapshot get.
 	}
-	// Cache table should first try to get value from cacheBuffer
+	// Cache table should get value from cacheBuffer
 	if e.cacheTable != nil {
 		return e.cacheTable.Get(ctx, key)
 	}

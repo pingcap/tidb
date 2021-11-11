@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -4365,7 +4366,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		partTblID:        plan.PartTblID,
 		columns:          plan.Columns,
 	}
-
+	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		e.cacheTable = b.readFromCache(plan.TblInfo, startTS)
+	}
 	if plan.TblInfo.TempTableType != model.TempTableNone {
 		// Temporary table should not do any lock operations
 		e.lock = false
@@ -4662,5 +4665,32 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 		return errors.New("can not stale read temporary table")
 	}
 
+	return nil
+}
+
+func (b *executorBuilder) readFromCache(tblInfo *model.TableInfo, startTS uint64) kv.MemBuffer {
+
+	tbl, ok := b.is.TableByID(tblInfo.ID)
+	if !ok {
+		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
+		return nil
+	}
+	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS)
+	if cacheData != nil {
+		return cacheData
+	} else {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+				}
+			}()
+			if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+				err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
+				if err != nil {
+					log.Warn("Update Lock Info Error")
+				}
+			}
+		}()
+	}
 	return nil
 }

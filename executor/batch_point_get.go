@@ -78,8 +78,9 @@ type BatchPointGetExec struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	snapshot kv.Snapshot
-	stats    *runtimeStatsWithSnapshot
+	snapshot   kv.Snapshot
+	stats      *runtimeStatsWithSnapshot
+	cacheTable kv.MemBuffer
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -114,6 +115,9 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		snapshot = txn.GetSnapshot()
 	} else {
 		snapshot = e.ctx.GetSnapshotWithTS(e.snapshotTS)
+	}
+	if e.cacheTable != nil {
+		snapshot = cacheTableSnapshot{snapshot, e.cacheTable}
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
@@ -160,6 +164,39 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	e.snapshot = snapshot
 	e.batchGetter = batchGetter
 	return nil
+}
+
+// CacheTable always use memBuffer in session as snapshot.
+// cacheTableSnapshot inherits kv.Snapshot and override the BatchGet methods to return empty.
+type cacheTableSnapshot struct {
+	kv.Snapshot
+	memBuffer kv.MemBuffer
+}
+
+func (s cacheTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	values := make(map[string][]byte)
+	if s.memBuffer == nil {
+		return values, nil
+	}
+
+	for _, key := range keys {
+		val, err := s.memBuffer.Get(ctx, key)
+		if err == kv.ErrNotExist {
+			continue
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		if len(val) == 0 {
+			continue
+		}
+
+		values[string(key)] = val
+	}
+
+	return values, nil
 }
 
 // Close implements the Executor interface.
