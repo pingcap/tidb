@@ -29,8 +29,10 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-var _ table.Table = &cachedTable{}
-var _ table.CachedTable = &cachedTable{}
+var (
+	_ table.Table       = &cachedTable{}
+	_ table.CachedTable = &cachedTable{}
+)
 
 type cachedTable struct {
 	TableCommon
@@ -56,7 +58,7 @@ func leaseFromTS(ts uint64) uint64 {
 func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
 	// Here is a trick to get a MemBuffer data, because the internal API is not exposed.
 	// Create a transaction with start ts 0, and take the MemBuffer out.
-	buffTxn, err := store.BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
+	buffTxn, err := store.Begin(tikv.WithStartTS(0))
 	if err != nil {
 		return nil, err
 	}

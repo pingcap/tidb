@@ -252,7 +252,7 @@ var MockTableFromMeta func(tableInfo *model.TableInfo) Table
 type CachedTable interface {
 	Table
 
-	// TryReadFromCache Check if the cache table is readable
+	// TryReadFromCache checks if the cache table is readable.
 	TryReadFromCache(ts uint64) kv.MemBuffer
 
 	// UpdateLockForRead If you cannot meet the conditions of the read buffer,

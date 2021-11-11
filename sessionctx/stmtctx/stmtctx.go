@@ -176,6 +176,9 @@ type StatementContext struct {
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
 
+	// If the statement read from table cache, this flag is set.
+	ReadFromTableCache bool
+
 	// cache is used to reduce object allocation.
 	cache struct {
 		execdetails.RuntimeStatsColl
