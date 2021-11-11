@@ -114,10 +114,8 @@ func (s *testDBSuite2) TestAlterViewTableCache(c *C) {
 
 func (s *testDBSuite2) TestAlterTableNoCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk2 := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists nocache_t1")
-	tk2.MustExec("use test")
 	/* Test of cache table */
 	tk.MustExec("create table nocache_t1 ( n int auto_increment primary key)")
 	tk.MustExec("alter table nocache_t1 cache")
