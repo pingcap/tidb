@@ -394,6 +394,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			prepared.UseCache = false
 		}
 	}
+	stmtCtx.UseCache = prepared.UseCache
 	var cacheKey kvcache.Key
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
