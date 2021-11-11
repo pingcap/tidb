@@ -1915,15 +1915,12 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 		return expr
 	}
 	argLen := exprTp.Flen
-	// If expr is decimal, we don't need to truncate the converted string.
-	if exprTp.Tp == mysql.TypeNewDecimal && argLen != int(types.UnspecifiedFsp) {
-		argLen = -1
-	}
 	if exprTp.EvalType() == types.ETInt {
 		argLen = mysql.MaxIntWidth
 	}
-	// because we can't control the length of cast(float as char) for now, we can't determine the argLen
-	if exprTp.Tp == mysql.TypeFloat || exprTp.Tp == mysql.TypeDouble {
+	// Because we can't control the length of cast(float as char) for now, we can't determine the argLen.
+	// Decimal is precison number, no need to truncate.
+	if exprTp.Tp == mysql.TypeFloat || exprTp.Tp == mysql.TypeDouble || exprTp.Tp == mysql.TypeNewDecimal {
 		argLen = -1
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
