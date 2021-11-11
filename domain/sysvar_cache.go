@@ -168,13 +168,13 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 	var err error
 	switch name {
 	case variable.TiDBTSOClientBatchMaxWaitTime:
-		var val int64
-		val, err = strconv.ParseInt(sVal, 10, 64)
+		var val float64
+		val, err = strconv.ParseFloat(sVal, 64)
 		if err != nil {
 			break
 		}
 		variable.MaxTSOBatchWaitInterval.Store(val)
-		err = do.SetPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Millisecond*time.Duration(val))
+		err = do.SetPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
 		if err != nil {
 			break
 		}

@@ -208,12 +208,15 @@ func (e *SetExecutor) checkPDClientDynamicOption(name, valStr string, sessionVar
 	var err error
 	switch name {
 	case variable.TiDBTSOClientBatchMaxWaitTime:
-		var val int64
-		val, err = strconv.ParseInt(valStr, 10, 64)
+		var val float64
+		val, err = strconv.ParseFloat(valStr, 64)
 		if err != nil {
 			return err
 		}
-		err = domain.GetDomain(e.ctx).SetPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Millisecond*time.Duration(val))
+		err = domain.GetDomain(e.ctx).SetPDClientDynamicOption(
+			pd.MaxTSOBatchWaitInterval,
+			time.Duration(float64(time.Millisecond)*val),
+		)
 		if err != nil {
 			return err
 		}
