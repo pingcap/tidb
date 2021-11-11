@@ -31,3 +31,6 @@ run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_distributed_i
 pid2="$!"
 
 wait "$pid1" "$pid2"
+
+run_sql 'select count(*) from distributed_import.t'
+check_contains 'count(*): 10'
