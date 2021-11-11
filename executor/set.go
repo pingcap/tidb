@@ -120,13 +120,12 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		if err != nil {
 			return err
 		}
-		// Some PD client dynamic options need to be checked first and set here.
-		err = e.checkPDClientDynamicOption(name, valStr, sessionVars)
+		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, valStr)
 		if err != nil {
 			return err
 		}
-		// TODO: rollback the PD client dynamic option if any error occurs.
-		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, valStr)
+		// Some PD client dynamic options need to be checked first and set here.
+		err = e.checkPDClientDynamicOption(name, sessionVars)
 		if err != nil {
 			return err
 		}
@@ -205,8 +204,19 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	return nil
 }
 
-func (e *SetExecutor) checkPDClientDynamicOption(name, valStr string, sessionVars *variable.SessionVars) error {
-	var err error
+func (e *SetExecutor) checkPDClientDynamicOption(name string, sessionVars *variable.SessionVars) error {
+	if name != variable.TiDBTSOClientBatchMaxWaitTime &&
+		name != variable.TiDBEnableTSOFollowerProxy {
+		return nil
+	}
+	var (
+		err    error
+		valStr string
+	)
+	valStr, err = sessionVars.GlobalVarsAccessor.GetGlobalSysVar(name)
+	if err != nil {
+		return err
+	}
 	switch name {
 	case variable.TiDBTSOClientBatchMaxWaitTime:
 		var val float64
