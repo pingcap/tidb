@@ -367,3 +367,12 @@ func (s *testShowStatsSuite) TestShowColumnStatsUsage(c *C) {
 	c.Assert(rows[0], DeepEquals, []interface{}{"test", "t2", "global", t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
 	c.Assert(rows[1], DeepEquals, []interface{}{"test", "t2", p0.Name.O, t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
 }
+
+func (s *testShowStatsSuite) TestShowHistogramsInFlight(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	result := tk.MustQuery("show histograms_in_flight")
+	rows := result.Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "0")
+}

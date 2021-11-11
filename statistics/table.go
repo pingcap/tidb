@@ -259,6 +259,10 @@ func (n *neededColumnMap) Delete(col tableColumnID) {
 	n.m.Unlock()
 }
 
+func (n *neededColumnMap) Length() int {
+	return len(n.cols)
+}
+
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
