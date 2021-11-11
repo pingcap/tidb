@@ -120,12 +120,13 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		if err != nil {
 			return err
 		}
-		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, valStr)
+		// Some PD client dynamic options need to be checked first and set here.
+		err = e.checkPDClientDynamicOption(name, valStr, sessionVars)
 		if err != nil {
 			return err
 		}
-		// Some PD client dynamic options need to be checked and set here.
-		err = e.checkPDClientDynamicOption(name, valStr, sessionVars)
+		// TODO: rollback the PD client dynamic option if any error occurs.
+		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, valStr)
 		if err != nil {
 			return err
 		}

@@ -173,18 +173,18 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		if err != nil {
 			break
 		}
-		variable.MaxTSOBatchWaitInterval.Store(val)
 		err = do.SetPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
 		if err != nil {
 			break
 		}
+		variable.MaxTSOBatchWaitInterval.Store(val)
 	case variable.TiDBEnableTSOFollowerProxy:
 		val := variable.TiDBOptOn(sVal)
-		variable.EnableTSOFollowerProxy.Store(val)
 		err = do.SetPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
 		if err != nil {
 			break
 		}
+		variable.EnableTSOFollowerProxy.Store(val)
 	case variable.TiDBEnableLocalTxn:
 		variable.EnableLocalTxn.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableStmtSummary:
