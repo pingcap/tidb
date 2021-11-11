@@ -10439,6 +10439,53 @@ func (s *testIntegrationSuite) TestLastInsertId(c *C) {
 	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
 }
 
+func (s *testIntegrationSuite) TestTimestamp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec("SET time_zone = '+00:00';")
+	defer tk.MustExec("SET time_zone = DEFAULT;")
+	timestampStr1 := fmt.Sprintf("%s", tk.MustQuery("SELECT @@timestamp;").Rows()[0])
+	timestampStr1 = timestampStr1[1:]
+	timestampStr1 = timestampStr1[:len(timestampStr1)-1]
+	timestamp1, err := strconv.ParseFloat(timestampStr1, 64)
+	c.Assert(err, IsNil)
+	nowStr1 := fmt.Sprintf("%s", tk.MustQuery("SELECT NOW(6);").Rows()[0])
+	now1, err := time.Parse("[2006-01-02 15:04:05.000000]", nowStr1)
+	c.Assert(err, IsNil)
+	tk.MustExec("set @@timestamp = 12345;")
+	tk.MustQuery("SELECT @@timestamp;").Check(testkit.Rows("12345"))
+	tk.MustQuery("SELECT NOW();").Check(testkit.Rows("1970-01-01 03:25:45"))
+	tk.MustQuery("SELECT NOW();").Check(testkit.Rows("1970-01-01 03:25:45"))
+	tk.MustExec("set @@timestamp = default;")
+	time.Sleep(2 * time.Microsecond)
+	timestampStr2 := fmt.Sprintf("%s", tk.MustQuery("SELECT @@timestamp;").Rows()[0])
+	timestampStr2 = timestampStr2[1:]
+	timestampStr2 = timestampStr2[:len(timestampStr2)-1]
+	timestamp2, err := strconv.ParseFloat(timestampStr2, 64)
+	c.Assert(err, IsNil)
+	nowStr2 := fmt.Sprintf("%s", tk.MustQuery("SELECT NOW(6);").Rows()[0])
+	now2, err := time.Parse("[2006-01-02 15:04:05.000000]", nowStr2)
+	c.Assert(err, IsNil)
+	c.Assert(timestamp1, Less, timestamp2)
+	c.Assert(now1.UnixNano(), Less, now2.UnixNano())
+	tk.MustExec("set @@timestamp = 12345;")
+	tk.MustQuery("SELECT @@timestamp;").Check(testkit.Rows("12345"))
+	tk.MustQuery("SELECT NOW();").Check(testkit.Rows("1970-01-01 03:25:45"))
+	tk.MustQuery("SELECT NOW();").Check(testkit.Rows("1970-01-01 03:25:45"))
+	tk.MustExec("set @@timestamp = 0;")
+	time.Sleep(2 * time.Microsecond)
+	timestampStr3 := fmt.Sprintf("%s", tk.MustQuery("SELECT @@timestamp;").Rows()[0])
+	timestampStr3 = timestampStr3[1:]
+	timestampStr3 = timestampStr3[:len(timestampStr3)-1]
+	timestamp3, err := strconv.ParseFloat(timestampStr3, 64)
+	c.Assert(err, IsNil)
+	nowStr3 := fmt.Sprintf("%s", tk.MustQuery("SELECT NOW(6);").Rows()[0])
+	now3, err := time.Parse("[2006-01-02 15:04:05.000000]", nowStr3)
+	c.Assert(err, IsNil)
+	c.Assert(timestamp2, Less, timestamp3)
+	c.Assert(now2.UnixNano(), Less, now3.UnixNano())
+}
+
 func (s *testIntegrationSuite) TestIdentity(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
