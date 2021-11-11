@@ -40,6 +40,13 @@ type cachedTable struct {
 	handle    StateRemote
 }
 
+// cacheData pack the cache data and lease.
+type cacheData struct {
+	Start uint64
+	Lease uint64
+	kv.MemBuffer
+}
+
 func leaseFromTS(ts uint64) uint64 {
 	// TODO make this configurable in the following PRs
 	const defaultLeaseDuration time.Duration = 3 * time.Second
@@ -58,16 +65,16 @@ func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
 	return buffTxn.GetMemBuffer(), nil
 }
 
-func (c *cachedTable) TryGetMemcache(ts uint64) (kv.MemBuffer, bool) {
+func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 	tmp := c.cacheData.Load()
 	if tmp == nil {
-		return nil, false
+		return nil
 	}
-	data := tmp.(*table.CacheData)
-	if data.Lease > ts {
-		return data.MemBuffer, true
+	data := tmp.(*cacheData)
+	if ts >= data.Start && ts < data.Lease {
+		return data
 	}
-	return nil, false
+	return nil
 }
 
 var mockStateRemote = struct {
@@ -90,42 +97,45 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 	return ret, nil
 }
 
-func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) (kv.MemBuffer, error) {
+func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) (kv.MemBuffer, uint64, error) {
 	buffer, err := newMemBuffer(store)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	var startTS uint64
+	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		prefix := tablecodec.GenTablePrefix(c.tableID)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
-		if txn.StartTS() >= lease {
+		startTS = txn.StartTS()
+		if startTS >= lease {
 			return errors.New("the loaded data is outdated for caching")
 		}
 		it, err := txn.Iter(prefix, prefix.PrefixNext())
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		defer it.Close()
+
 		for it.Valid() && it.Key().HasPrefix(prefix) {
 			value := it.Value()
 			err = buffer.Set(it.Key(), value)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			err = it.Next()
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return buffer, nil
+	return buffer, startTS, nil
 }
 
 func (c *cachedTable) UpdateLockForRead(store kv.Storage, ts uint64) error {
@@ -137,12 +147,13 @@ func (c *cachedTable) UpdateLockForRead(store kv.Storage, ts uint64) error {
 		return errors.Trace(err)
 	}
 	if succ {
-		mb, err := c.loadDataFromOriginalTable(store, lease)
+		mb, startTS, err := c.loadDataFromOriginalTable(store, lease)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		c.cacheData.Store(&table.CacheData{
+		c.cacheData.Store(&cacheData{
+			Start:     startTS,
 			Lease:     lease,
 			MemBuffer: mb,
 		})
