@@ -706,6 +706,9 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		startKey, endKey := r.Range()
 
 		err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
+		failpoint.Inject("ignoreDeleteRangeFailed", func() {
+			err = nil
+		})
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] delete range failed on range",
 				zap.String("uuid", w.uuid),
@@ -2090,6 +2093,7 @@ func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
 		gcIsRunning: false,
 		lastFinish:  time.Now(),
 		done:        make(chan error),
+		pdClient:    store.(tikv.Storage).GetRegionCache().PDClient(),
 	}
 	return &MockGCWorker{worker: worker}, nil
 }
