@@ -1478,7 +1478,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
 	bundles := make([]*placement.Bundle, 0, 3)
 
-	ptBundle, err := newBundleFromTblInfo(t, job, pt)
+	ptBundle, err := placement.NewTableBundle(t, pt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1486,7 +1486,7 @@ func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.Ta
 		bundles = append(bundles, ptBundle)
 	}
 
-	parBundle, err := newBundleFromPartitionDef(t, job, *newPar)
+	parBundle, err := placement.NewPartitionBundle(t, *newPar)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1494,7 +1494,7 @@ func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.Ta
 		bundles = append(bundles, parBundle)
 	}
 
-	ntBundle, err := newBundleFromTblInfo(t, job, nt)
+	ntBundle, err := placement.NewTableBundle(t, nt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
