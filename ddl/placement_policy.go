@@ -124,6 +124,30 @@ func checkPlacementPolicyExistAndCancelNonExistJob(t *meta.Meta, job *model.Job,
 	return nil, err
 }
 
+func checkAllTablePlacementPoliciesExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo) error {
+	if tblInfo.PlacementPolicyRef != nil {
+		if _, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, tblInfo.PlacementPolicyRef.ID); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if tblInfo.Partition == nil {
+		return nil
+	}
+
+	for _, def := range tblInfo.Partition.Definitions {
+		if def.PlacementPolicyRef == nil {
+			continue
+		}
+
+		if _, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, def.PlacementPolicyRef.ID); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
 func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	policyInfo, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, job.SchemaID)
 	if err != nil {
