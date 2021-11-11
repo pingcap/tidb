@@ -40,7 +40,6 @@ type collationInfo struct {
 
 	charset   string
 	collation string
-	flen      int
 }
 
 func (c *collationInfo) HasCoercibility() bool {
@@ -80,7 +79,6 @@ func (c *collationInfo) CharsetAndCollation(ctx sessionctx.Context) (string, str
 	if c.charset == "" || c.collation == "" {
 		c.charset, c.collation = charset.GetDefaultCharsetAndCollate()
 	}
-	c.flen = types.UnspecifiedLength
 	return c.charset, c.collation
 }
 
@@ -257,8 +255,8 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion:
 		chs, coll := charset.GetDefaultCharsetAndCollate()
 		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil
-	case ast.Format:
-		// Format function should return ASCII repertoire, MySQL's doc says it depend on character_set_connection, but it not ture from its source code.
+	case ast.Format, ast.Space, ast.ToBase64, ast.UUID, ast.Hex, ast.MD5, ast.SHA, ast.SHA2:
+		// should return ASCII repertoire, MySQL's doc says it depends on character_set_connection, but it not true from its source code.
 		ec = &ExprCollation{Coer: CoercibilityCoercible, Repe: ASCII}
 		ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
 		return ec, nil

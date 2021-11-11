@@ -17,67 +17,91 @@ package expression
 import (
 	"encoding/hex"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/stretchr/testify/require"
 )
 
 var cryptTests = []struct {
+	chs      string
 	origin   interface{}
 	password interface{}
 	crypt    interface{}
 }{
-	{"", "", ""},
-	{"pingcap", "1234567890123456", "2C35B5A4ADF391"},
-	{"pingcap", "asdfjasfwefjfjkj", "351CC412605905"},
-	{"pingcap123", "123456789012345678901234", "7698723DC6DFE7724221"},
-	{"pingcap#%$%^", "*^%YTu1234567", "8634B9C55FF55E5B6328F449"},
-	{"pingcap", "", "4A77B524BD2C5C"},
-	{"分布式データベース", "pass1234@#$%%^^&", "80CADC8D328B3026D04FB285F36FED04BBCA0CC685BF78B1E687CE"},
-	{"分布式データベース", "分布式7782734adgwy1242", "0E24CFEF272EE32B6E0BFBDB89F29FB43B4B30DAA95C3F914444BC"},
-	{"pingcap", "密匙", "CE5C02A5010010"},
-	{"pingcap数据库", "数据库passwd12345667", "36D5F90D3834E30E396BE3226E3B4ED3"},
-	{"数据库5667", 123.435, "B22196D0569386237AE12F8AAB"},
-	{nil, "数据库passwd12345667", nil},
+	{mysql.DefaultCollationName, "", "", ""},
+	{mysql.DefaultCollationName, "pingcap", "1234567890123456", "2C35B5A4ADF391"},
+	{mysql.DefaultCollationName, "pingcap", "asdfjasfwefjfjkj", "351CC412605905"},
+	{mysql.DefaultCollationName, "pingcap123", "123456789012345678901234", "7698723DC6DFE7724221"},
+	{mysql.DefaultCollationName, "pingcap#%$%^", "*^%YTu1234567", "8634B9C55FF55E5B6328F449"},
+	{mysql.DefaultCollationName, "pingcap", "", "4A77B524BD2C5C"},
+	{mysql.DefaultCollationName, "分布式データベース", "pass1234@#$%%^^&", "80CADC8D328B3026D04FB285F36FED04BBCA0CC685BF78B1E687CE"},
+	{mysql.DefaultCollationName, "分布式データベース", "分布式7782734adgwy1242", "0E24CFEF272EE32B6E0BFBDB89F29FB43B4B30DAA95C3F914444BC"},
+	{mysql.DefaultCollationName, "pingcap", "密匙", "CE5C02A5010010"},
+	{"gbk", "pingcap", "密匙", "E407AC6F691ADE"},
+	{mysql.DefaultCollationName, "pingcap数据库", "数据库passwd12345667", "36D5F90D3834E30E396BE3226E3B4ED3"},
+	{"gbk", "pingcap数据库", "数据库passwd12345667", "B4BDBD6EC8346379F42836E2E0"},
+	{mysql.DefaultCollationName, "数据库5667", 123.435, "B22196D0569386237AE12F8AAB"},
+	{"gbk", "数据库5667", 123.435, "79E22979BD860EF58229"},
+	{mysql.DefaultCollationName, nil, "数据库passwd12345667", nil},
 }
 
-func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
-	fc := funcs[ast.Decode]
+func TestSQLDecode(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
 	for _, tt := range cryptTests {
-		str := types.NewDatum(tt.origin)
-		password := types.NewDatum(tt.password)
-
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, password}))
-		c.Assert(err, IsNil)
-		crypt, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
+		require.NoError(t, err)
+		err = ctx.GetSessionVars().SetSystemVar(variable.CollationConnection, tt.chs)
+		require.NoError(t, err)
+		f, err := newFunctionForTest(ctx, ast.Decode, primitiveValsToConstants(ctx, []interface{}{tt.origin, tt.password})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		require.NoError(t, err)
+		if !d.IsNull() {
+			d = toHex(d)
+		}
+		require.Equal(t, types.NewDatum(tt.crypt), d)
 	}
-	s.testNullInput(c, ast.Decode)
+	testNullInput(t, ctx, ast.Decode)
 }
 
-func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
-	fc := funcs[ast.Encode]
+func TestSQLEncode(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
 	for _, test := range cryptTests {
-		password := types.NewDatum(test.password)
-		cryptStr := fromHex(test.crypt)
-
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{cryptStr, password}))
-		c.Assert(err, IsNil)
-		str, err := evalBuiltinFunc(f, chunk.Row{})
-
-		c.Assert(err, IsNil)
-		c.Assert(str, DeepEquals, types.NewDatum(test.origin))
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, test.chs)
+		require.NoError(t, err)
+		err = ctx.GetSessionVars().SetSystemVar(variable.CollationConnection, test.chs)
+		require.NoError(t, err)
+		var h []byte
+		if test.crypt != nil {
+			h, _ = hex.DecodeString(test.crypt.(string))
+		} else {
+			h = nil
+		}
+		f, err := newFunctionForTest(ctx, ast.Encode, primitiveValsToConstants(ctx, []interface{}{h, test.password})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		require.NoError(t, err)
+		if test.origin != nil {
+			result, err := charset.NewEncoding(test.chs).EncodeString(test.origin.(string))
+			require.NoError(t, err)
+			require.Equal(t, types.NewCollationStringDatum(result, test.chs), d)
+		} else {
+			result := types.NewDatum(test.origin)
+			require.Equal(t, result.GetBytes(), d.GetBytes())
+		}
 	}
-	s.testNullInput(c, ast.Encode)
+	testNullInput(t, ctx, ast.Encode)
 }
 
 var aesTests = []struct {
@@ -118,93 +142,99 @@ var aesTests = []struct {
 	{"aes-256-cfb", "pingcap", []interface{}{"1234567890123456", "12345678901234561234567890123456"}, "2E70FCAC0C0834"},
 }
 
-func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
+func TestAESEncrypt(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
 	fc := funcs[ast.AesEncrypt]
 	for _, tt := range aesTests {
-		err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
-		c.Assert(err, IsNil)
+		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
+		require.NoError(t, err)
 		args := []types.Datum{types.NewDatum(tt.origin)}
 		for _, param := range tt.params {
 			args = append(args, types.NewDatum(param))
 		}
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
+		require.NoError(t, err)
+		require.Equal(t, types.NewDatum(tt.crypt), toHex(crypt))
 	}
-	err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
-	c.Assert(err, IsNil)
-	s.testNullInput(c, ast.AesEncrypt)
-	s.testAmbiguousInput(c, ast.AesEncrypt)
+	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
+	require.NoError(t, err)
+	testNullInput(t, ctx, ast.AesEncrypt)
+	testAmbiguousInput(t, ctx, ast.AesEncrypt)
 }
 
-func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
+func TestAESDecrypt(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
 	fc := funcs[ast.AesDecrypt]
 	for _, tt := range aesTests {
-		err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
-		c.Assert(err, IsNil)
+		err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
+		require.NoError(t, err)
 		args := []types.Datum{fromHex(tt.crypt)}
 		for _, param := range tt.params {
 			args = append(args, types.NewDatum(param))
 		}
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if tt.origin == nil {
-			c.Assert(str.IsNull(), IsTrue)
+			require.True(t, str.IsNull())
 			continue
 		}
-		c.Assert(str, DeepEquals, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin, collate.DefaultLen))
+		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str)
 	}
-	err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
-	c.Assert(err, IsNil)
-	s.testNullInput(c, ast.AesDecrypt)
-	s.testAmbiguousInput(c, ast.AesDecrypt)
+	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
+	require.NoError(t, err)
+	testNullInput(t, ctx, ast.AesDecrypt)
+	testAmbiguousInput(t, ctx, ast.AesDecrypt)
 }
 
-func (s *testEvaluatorSuite) testNullInput(c *C, fnName string) {
-	err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
-	c.Assert(err, IsNil)
+func testNullInput(t *testing.T, ctx sessionctx.Context, fnName string) {
+	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
+	require.NoError(t, err)
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	var argNull types.Datum
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, argNull}))
-	c.Assert(err, IsNil)
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, argNull}))
+	require.NoError(t, err)
 	crypt, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(crypt.IsNull(), IsTrue)
+	require.NoError(t, err)
+	require.True(t, crypt.IsNull())
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull, arg}))
-	c.Assert(err, IsNil)
+	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull, arg}))
+	require.NoError(t, err)
 	crypt, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(crypt.IsNull(), IsTrue)
+	require.NoError(t, err)
+	require.True(t, crypt.IsNull())
 }
 
-func (s *testEvaluatorSuite) testAmbiguousInput(c *C, fnName string) {
+func testAmbiguousInput(t *testing.T, ctx sessionctx.Context, fnName string) {
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	// test for modes that require init_vector
-	err := variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, ("aes-128-cbc"))
-	c.Assert(err, IsNil)
-	_, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg}))
-	c.Assert(err, NotNil)
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg, types.NewStringDatum("iv < 16 bytes")}))
-	c.Assert(err, IsNil)
+	err := variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-cbc")
+	require.NoError(t, err)
+	_, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg}))
+	require.Error(t, err)
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg, types.NewStringDatum("iv < 16 bytes")}))
+	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// test for modes that do not require init_vector
-	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
-	c.Assert(err, IsNil)
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg, arg}))
-	c.Assert(err, IsNil)
+	err = variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, "aes-128-ecb")
+	require.NoError(t, err)
+	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg, arg}))
+	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), GreaterEqual, 1)
+	require.NoError(t, err)
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+	require.GreaterOrEqual(t, len(warnings), 1)
 }
 
 func toHex(d types.Datum) (h types.Datum) {
@@ -228,138 +258,197 @@ func fromHex(str interface{}) (d types.Datum) {
 }
 
 var sha1Tests = []struct {
+	chs    string
 	origin interface{}
 	crypt  string
 }{
-	{"test", "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3"},
-	{"c4pt0r", "034923dcabf099fc4c8917c0ab91ffcd4c2578a6"},
-	{"pingcap", "73bf9ef43a44f42e2ea2894d62f0917af149a006"},
-	{"foobar", "8843d7f92416211de9ebb963ff4ce28125932878"},
-	{1024, "128351137a9c47206c4507dcf2e6fbeeca3a9079"},
-	{123.45, "22f8b438ad7e89300b51d88684f3f0b9fa1d7a32"},
+	{mysql.DefaultCollationName, "test", "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3"},
+	{mysql.DefaultCollationName, "c4pt0r", "034923dcabf099fc4c8917c0ab91ffcd4c2578a6"},
+	{mysql.DefaultCollationName, "pingcap", "73bf9ef43a44f42e2ea2894d62f0917af149a006"},
+	{mysql.DefaultCollationName, "foobar", "8843d7f92416211de9ebb963ff4ce28125932878"},
+	{mysql.DefaultCollationName, 1024, "128351137a9c47206c4507dcf2e6fbeeca3a9079"},
+	{mysql.DefaultCollationName, 123.45, "22f8b438ad7e89300b51d88684f3f0b9fa1d7a32"},
+	{"gbk", 123.45, "22f8b438ad7e89300b51d88684f3f0b9fa1d7a32"},
+	{"gbk", "一二三", "01c1743ce7a7e822454a659f659bad61375ff10c"},
+	{"gbk", "一二三123", "7c9a76465a02c41d377596431ef29418e2f6a72c"},
+	{"gbk", "", "da39a3ee5e6b4b0d3255bfef95601890afd80709"},
 }
 
-func (s *testEvaluatorSuite) TestSha1Hash(c *C) {
+func TestSha1Hash(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
 	fc := funcs[ast.SHA]
 	for _, tt := range sha1Tests {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
+		require.NoError(t, err)
 		in := types.NewDatum(tt.origin)
-		f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{in}))
+		f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{in}))
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		res, err := crypt.ToString()
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, tt.crypt)
+		require.NoError(t, err)
+		require.Equal(t, tt.crypt, res)
 	}
 	// test NULL input for sha
 	var argNull types.Datum
-	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
+	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
 	crypt, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(crypt.IsNull(), IsTrue)
+	require.NoError(t, err)
+	require.True(t, crypt.IsNull())
 }
 
 var sha2Tests = []struct {
+	chs        string
 	origin     interface{}
 	hashLength interface{}
 	crypt      interface{}
 	validCase  bool
 }{
-	{"pingcap", 0, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
-	{"pingcap", 224, "cd036dc9bec69e758401379c522454ea24a6327b48724b449b40c6b7", true},
-	{"pingcap", 256, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
-	{"pingcap", 384, "c50955b6b0c7b9919740d956849eedcb0f0f90bf8a34e8c1f4e071e3773f53bd6f8f16c04425ff728bed04de1b63db51", true},
-	{"pingcap", 512, "ea903c574370774c4844a83b7122105a106e04211673810e1baae7c2ae7aba2cf07465e02f6c413126111ef74a417232683ce7ba210052e63c15fc82204aad80", true},
-	{13572468, 0, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
-	{13572468, 224, "8ad67735bbf49576219f364f4640d595357a440358d15bf6815a16e4", true},
-	{13572468, 256, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
-	{13572468.123, 384, "3b4ee302435dc1e15251efd9f3982b1ca6fe4ac778d3260b7bbf3bea613849677eda830239420e448e4c6dc7c2649d89", true},
-	{13572468.123, 512, "4820aa3f2760836557dc1f2d44a0ba7596333fdb60c8a1909481862f4ab0921c00abb23d57b7e67a970363cc3fcb78b25b6a0d45cdcac0e87aa0c96bc51f7f96", true},
-	{nil, 224, nil, false},
-	{"pingcap", nil, nil, false},
-	{"pingcap", 123, nil, false},
+	{mysql.DefaultCollationName, "pingcap", 0, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
+	{mysql.DefaultCollationName, "pingcap", 224, "cd036dc9bec69e758401379c522454ea24a6327b48724b449b40c6b7", true},
+	{mysql.DefaultCollationName, "pingcap", 256, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
+	{mysql.DefaultCollationName, "pingcap", 384, "c50955b6b0c7b9919740d956849eedcb0f0f90bf8a34e8c1f4e071e3773f53bd6f8f16c04425ff728bed04de1b63db51", true},
+	{mysql.DefaultCollationName, "pingcap", 512, "ea903c574370774c4844a83b7122105a106e04211673810e1baae7c2ae7aba2cf07465e02f6c413126111ef74a417232683ce7ba210052e63c15fc82204aad80", true},
+	{mysql.DefaultCollationName, 13572468, 0, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
+	{mysql.DefaultCollationName, 13572468, 224, "8ad67735bbf49576219f364f4640d595357a440358d15bf6815a16e4", true},
+	{mysql.DefaultCollationName, 13572468, 256, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
+	{mysql.DefaultCollationName, 13572468.123, 384, "3b4ee302435dc1e15251efd9f3982b1ca6fe4ac778d3260b7bbf3bea613849677eda830239420e448e4c6dc7c2649d89", true},
+	{mysql.DefaultCollationName, 13572468.123, 512, "4820aa3f2760836557dc1f2d44a0ba7596333fdb60c8a1909481862f4ab0921c00abb23d57b7e67a970363cc3fcb78b25b6a0d45cdcac0e87aa0c96bc51f7f96", true},
+	{mysql.DefaultCollationName, nil, 224, nil, false},
+	{mysql.DefaultCollationName, "pingcap", nil, nil, false},
+	{mysql.DefaultCollationName, "pingcap", 123, nil, false},
+	{"gbk", "pingcap", 0, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
+	{"gbk", "pingcap", 224, "cd036dc9bec69e758401379c522454ea24a6327b48724b449b40c6b7", true},
+	{"gbk", "pingcap", 256, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
+	{"gbk", "pingcap", 384, "c50955b6b0c7b9919740d956849eedcb0f0f90bf8a34e8c1f4e071e3773f53bd6f8f16c04425ff728bed04de1b63db51", true},
+	{"gbk", "pingcap", 512, "ea903c574370774c4844a83b7122105a106e04211673810e1baae7c2ae7aba2cf07465e02f6c413126111ef74a417232683ce7ba210052e63c15fc82204aad80", true},
+	{"gbk", 13572468, 0, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
+	{"gbk", 13572468, 224, "8ad67735bbf49576219f364f4640d595357a440358d15bf6815a16e4", true},
+	{"gbk", 13572468, 256, "1c91ab1c162fd0cae60a5bb9880f3e7d5a133a65b6057a644b26973d9c55dcfe", true},
+	{"gbk", 13572468.123, 384, "3b4ee302435dc1e15251efd9f3982b1ca6fe4ac778d3260b7bbf3bea613849677eda830239420e448e4c6dc7c2649d89", true},
+	{"gbk", 13572468.123, 512, "4820aa3f2760836557dc1f2d44a0ba7596333fdb60c8a1909481862f4ab0921c00abb23d57b7e67a970363cc3fcb78b25b6a0d45cdcac0e87aa0c96bc51f7f96", true},
+	{"gbk", nil, 224, nil, false},
+	{"gbk", "pingcap", nil, nil, false},
+	{"gbk", "pingcap", 123, nil, false},
+	{"gbk", "一二三", 0, "4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7", true},
+	{"gbk", "一二三", 224, "ae47a60dd96e1deed3988d8fff3d662165e0aac7ddf371f244d7c11e", true},
+	{"gbk", "一二三", 256, "4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7", true},
+	{"gbk", "一二三", 384, "cdb9c8d3e2579d021116ebe9d7d7bb4f5b3a489cae84768f7b3348c9b8d716897a409ea96fd92bfb95e3fd8aa91ffc74", true},
+	{"gbk", "一二三", 512, "f033786177a79c88567e39a44eef41b9da7a21912b4b64464fe5021f75c0e1da120e5018bb0d115746512e758966eff1aa6f7d6eca1617164189e4e1bd975908", true},
+	{"gbk", "一二三123", 0, "1d1494c249ac99db8ff845b1b53b468fbbf2fb2a67b7889e8a780aff78a2e43b", true},
+	{"gbk", "一二三123", 224, "7974f24c519c5a7b8a907b6e34b6a9830898ea5af46dc80e53892ee4", true},
+	{"gbk", "一二三123", 256, "1d1494c249ac99db8ff845b1b53b468fbbf2fb2a67b7889e8a780aff78a2e43b", true},
+	{"gbk", "一二三123", 384, "bddc0f0cf70dd9ecf0bb64c6039d178e3fd8e5b1ec0d57bd1ccd82889f83cd6d9ea8ea74ab37b8377369ebf922426519", true},
+	{"gbk", "一二三123", 512, "0fee43a57577416e0674e2de4cc9d43d96b81453b5b2c5d03c83f840ed420993535f3c54ad63b9bf7a4e02d5425fe1291770b0b2cca0624ca47ef8354dc651d6", true},
+	{"gbk", "", 0, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", true},
+	{"gbk", "", 224, "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f", true},
+	{"gbk", "", 256, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", true},
+	{"gbk", "", 384, "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b", true},
+	{"gbk", "", 512, "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e", true},
 }
 
-func (s *testEvaluatorSuite) TestSha2Hash(c *C) {
+func TestSha2Hash(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
 	fc := funcs[ast.SHA2]
 	for _, tt := range sha2Tests {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
+		require.NoError(t, err)
 		str := types.NewDatum(tt.origin)
 		hashLength := types.NewDatum(tt.hashLength)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, hashLength}))
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, hashLength}))
+		require.NoError(t, err)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if tt.validCase {
 			res, err := crypt.ToString()
-			c.Assert(err, IsNil)
-			c.Assert(res, Equals, tt.crypt)
+			require.NoError(t, err)
+			require.Equal(t, tt.crypt, res)
 		} else {
-			c.Assert(crypt.IsNull(), IsTrue)
+			require.True(t, crypt.IsNull())
 		}
 	}
 }
 
-func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
+func TestMD5Hash(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
 	cases := []struct {
 		args     interface{}
 		expected string
+		charset  string
 		isNil    bool
 		getErr   bool
 	}{
-		{"", "d41d8cd98f00b204e9800998ecf8427e", false, false},
-		{"a", "0cc175b9c0f1b6a831c399e269772661", false, false},
-		{"ab", "187ef4436122d1cc2f40dc2b92f0eba0", false, false},
-		{"abc", "900150983cd24fb0d6963f7d28e17f72", false, false},
-		{123, "202cb962ac59075b964b07152d234b70", false, false},
-		{"123", "202cb962ac59075b964b07152d234b70", false, false},
-		{123.123, "46ddc40585caa8abc07c460b3485781e", false, false},
-		{nil, "", true, false},
+		{"", "d41d8cd98f00b204e9800998ecf8427e", "", false, false},
+		{"a", "0cc175b9c0f1b6a831c399e269772661", "", false, false},
+		{"ab", "187ef4436122d1cc2f40dc2b92f0eba0", "", false, false},
+		{"abc", "900150983cd24fb0d6963f7d28e17f72", "", false, false},
+		{"abc", "900150983cd24fb0d6963f7d28e17f72", "gbk", false, false},
+		{123, "202cb962ac59075b964b07152d234b70", "", false, false},
+		{"123", "202cb962ac59075b964b07152d234b70", "", false, false},
+		{"123", "202cb962ac59075b964b07152d234b70", "gbk", false, false},
+		{123.123, "46ddc40585caa8abc07c460b3485781e", "", false, false},
+		{"一二三", "8093a32450075324682d01456d6e3919", "", false, false},
+		{"一二三", "a45d4af7b243e7f393fa09bed72ac73e", "gbk", false, false},
+		{"ㅂ123", "0e85d0f68c104b65a15d727e26705596", "", false, false},
+		{"ㅂ123", "", "gbk", false, true},
+		{nil, "", "", true, false},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.MD5, s.primitiveValsToConstants([]interface{}{t.args})...)
-		c.Assert(err, IsNil)
+	for _, c := range cases {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.charset)
+		require.NoError(t, err)
+		f, err := newFunctionForTest(ctx, ast.MD5, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
-		if t.getErr {
-			c.Assert(err, NotNil)
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetString(), Equals, t.expected)
+				require.Equal(t, c.expected, d.GetString())
 			}
 		}
 	}
-	_, err := funcs[ast.MD5].getFunction(s.ctx, []Expression{NewZero()})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.MD5].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
 
 }
 
-func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
+func TestRandomBytes(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
+
 	fc := funcs[ast.RandomBytes]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(32)}))
-	c.Assert(err, IsNil)
+	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(32)}))
+	require.NoError(t, err)
 	out, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(len(out.GetBytes()), Equals, 32)
+	require.NoError(t, err)
+	require.Equal(t, 32, len(out.GetBytes()))
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(1025)}))
-	c.Assert(err, IsNil)
+	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(1025)}))
+	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, NotNil)
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(-32)}))
-	c.Assert(err, IsNil)
+	require.Error(t, err)
+	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(-32)}))
+	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, NotNil)
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(0)}))
-	c.Assert(err, IsNil)
+	require.Error(t, err)
+	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(0)}))
+	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(nil)}))
-	c.Assert(err, IsNil)
+	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(nil)}))
+	require.NoError(t, err)
 	out, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(len(out.GetBytes()), Equals, 0)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(out.GetBytes()))
 }
 
 func decodeHex(str string) []byte {
@@ -370,7 +459,9 @@ func decodeHex(str string) []byte {
 	return ret
 }
 
-func (s *testEvaluatorSuite) TestCompress(c *C) {
+func TestCompress(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
 	tests := []struct {
 		in     interface{}
 		expect interface{}
@@ -383,19 +474,21 @@ func (s *testEvaluatorSuite) TestCompress(c *C) {
 	fc := funcs[ast.Compress]
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
-		c.Assert(err, IsNil, Commentf("%v", test))
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		require.NoErrorf(t, err, "%v", test)
 		out, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil, Commentf("%v", test))
+		require.NoErrorf(t, err, "%v", test)
 		if test.expect == nil {
-			c.Assert(out.IsNull(), IsTrue, Commentf("%v", test))
+			require.Truef(t, out.IsNull(), "%v", test)
 			continue
 		}
-		c.Assert(out, DeepEquals, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin, collate.DefaultLen), Commentf("%v", test))
+		require.Equalf(t, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin), out, "%v", test)
 	}
 }
 
-func (s *testEvaluatorSuite) TestUncompress(c *C) {
+func TestUncompress(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
 	tests := []struct {
 		in     interface{}
 		expect interface{}
@@ -417,19 +510,21 @@ func (s *testEvaluatorSuite) TestUncompress(c *C) {
 	fc := funcs[ast.Uncompress]
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
-		c.Assert(err, IsNil, Commentf("%v", test))
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		require.NoErrorf(t, err, "%v", test)
 		out, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil, Commentf("%v", test))
+		require.NoErrorf(t, err, "%v", test)
 		if test.expect == nil {
-			c.Assert(out.IsNull(), IsTrue, Commentf("%v", test))
+			require.Truef(t, out.IsNull(), "%v", test)
 			continue
 		}
-		c.Assert(out, DeepEquals, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin, collate.DefaultLen), Commentf("%v", test))
+		require.Equalf(t, types.NewCollationStringDatum(test.expect.(string), charset.CollationBin), out, "%v", test)
 	}
 }
 
-func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
+func TestUncompressLength(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
 	tests := []struct {
 		in     interface{}
 		expect interface{}
@@ -450,55 +545,68 @@ func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
 	fc := funcs[ast.UncompressedLength]
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
-		c.Assert(err, IsNil, Commentf("%v", test))
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
+		require.NoErrorf(t, err, "%v", test)
 		out, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil, Commentf("%v", test))
-		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
+		require.NoErrorf(t, err, "%v", test)
+		require.Equalf(t, types.NewDatum(test.expect), out, "%v", test)
 	}
 }
 
-func (s *testEvaluatorSuite) TestPassword(c *C) {
+func TestPassword(t *testing.T) {
+	t.Parallel()
+	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
 		expected string
+		charset  string
 		isNil    bool
 		getErr   bool
 		getWarn  bool
 	}{
-		{nil, "", false, false, false},
-		{"", "", false, false, false},
-		{"abc", "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", false, false, true},
-		{123, "*23AE809DDACAF96AF0FD78ED04B6A265E05AA257", false, false, true},
-		{1.23, "*A589EEBA8D3F9E1A34A7EE518FAC4566BFAD5BB6", false, false, true},
-		{types.NewDecFromFloatForTest(123.123), "*B15B84262DB34BFB2C817A45A55C405DC7C52BB1", false, false, true},
+		{nil, "", "", false, false, false},
+		{"", "", "", false, false, false},
+		{"abc", "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", "", false, false, true},
+		{"abc", "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", "gbk", false, false, true},
+		{123, "*23AE809DDACAF96AF0FD78ED04B6A265E05AA257", "", false, false, true},
+		{1.23, "*A589EEBA8D3F9E1A34A7EE518FAC4566BFAD5BB6", "", false, false, true},
+		{"一二三四", "*D207780722F22B23C254CAC0580D3B6738C19E18", "", false, false, true},
+		{"一二三四", "*48E0460AD45CF66AC6B8C18CB8B4BC8A403D935B", "gbk", false, false, true},
+		{"ㅂ123", "", "gbk", false, true, false},
+		{types.NewDecFromFloatForTest(123.123), "*B15B84262DB34BFB2C817A45A55C405DC7C52BB1", "", false, false, true},
 	}
 
-	warnCount := len(s.ctx.GetSessionVars().StmtCtx.GetWarnings())
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.PasswordFunc, s.primitiveValsToConstants([]interface{}{t.args})...)
-		c.Assert(err, IsNil)
+	warnCount := len(ctx.GetSessionVars().StmtCtx.GetWarnings())
+	for _, c := range cases {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.charset)
+		require.NoError(t, err)
+		f, err := newFunctionForTest(ctx, ast.PasswordFunc, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
-		c.Assert(err, IsNil)
-		if t.isNil {
-			c.Assert(d.Kind(), Equals, types.KindNull)
+		if c.getErr {
+			require.Error(t, err)
+			continue
+		}
+		require.NoError(t, err)
+		if c.isNil {
+			require.Equal(t, types.KindNull, d.Kind())
 		} else {
-			c.Assert(d.GetString(), Equals, t.expected)
+			require.Equal(t, c.expected, d.GetString())
 		}
 
-		warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-		if t.getWarn {
-			c.Assert(len(warnings), Equals, warnCount+1)
+		warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+		if c.getWarn {
+			require.Equal(t, warnCount+1, len(warnings))
 
 			lastWarn := warnings[len(warnings)-1]
-			c.Assert(terror.ErrorEqual(errDeprecatedSyntaxNoReplacement, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+			require.Truef(t, terror.ErrorEqual(errDeprecatedSyntaxNoReplacement, lastWarn.Err), "err %v", lastWarn.Err)
 
 			warnCount = len(warnings)
 		} else {
-			c.Assert(len(warnings), Equals, warnCount)
+			require.Equal(t, warnCount, len(warnings))
 		}
 	}
 
-	_, err := funcs[ast.PasswordFunc].getFunction(s.ctx, []Expression{NewZero()})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.PasswordFunc].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
 }

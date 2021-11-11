@@ -18,7 +18,10 @@ import (
 
 // FastChecksum checks whether the "local" checksum matches the checksum from TiKV.
 func FastChecksum(
-	ctx context.Context, backupMeta *backuppb.BackupMeta, storage storage.ExternalStorage,
+	ctx context.Context,
+	backupMeta *backuppb.BackupMeta,
+	storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
 ) error {
 	start := time.Now()
 	defer func() {
@@ -29,7 +32,7 @@ func FastChecksum(
 	ch := make(chan *metautil.Table)
 	errCh := make(chan error)
 	go func() {
-		reader := metautil.NewMetaReader(backupMeta, storage)
+		reader := metautil.NewMetaReader(backupMeta, storage, cipher)
 		if err := reader.ReadSchemasFiles(ctx, ch); err != nil {
 			errCh <- errors.Trace(err)
 		}

@@ -1009,6 +1009,7 @@ const (
 	ErrDataInConsistentMisMatchIndex       = 8134
 	ErrAsOf                                = 8135
 	ErrVariableNoLongerSupported           = 8136
+	ErrAnalyzeMissColumn                   = 8137
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1045,7 +1046,6 @@ const (
 	ErrUnsupportedConstraintCheck         = 8231
 	ErrTableOptionUnionUnsupported        = 8232
 	ErrTableOptionInsertMethodUnsupported = 8233
-	ErrInvalidPlacementSpec               = 8234
 	ErrDDLReorgElementNotExist            = 8235
 	ErrPlacementPolicyCheck               = 8236
 	ErrInvalidAttributesSpec              = 8237
@@ -1053,7 +1053,7 @@ const (
 	ErrPlacementPolicyNotExists           = 8239
 	ErrPlacementPolicyWithDirectOption    = 8240
 	ErrPlacementPolicyInUse               = 8241
-
+	ErrOptOnCacheTable                    = 8242
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

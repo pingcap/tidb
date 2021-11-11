@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -52,13 +53,13 @@ const (
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
 			index_name  varchar(128) NOT NULL,
-			key_data    text NOT NULL,  -- decoded from raw_key, human readable only, not for machine use
-			row_data    text NOT NULL,  -- decoded from raw_row, human readable only, not for machine use
-			raw_key     mediumblob NOT NULL,  -- the conflicted key
-			raw_value   mediumblob NOT NULL,  -- the value of the conflicted key
-			raw_handle  mediumblob NOT NULL,  -- the data handle derived from the conflicted key or value
-			raw_row     mediumblob NOT NULL,  -- the data retrieved from the handle
-			KEY (raw_key(64), task_id)
+			key_data    text NOT NULL COMMENT 'decoded from raw_key, human readable only, not for machine use',
+			row_data    text NOT NULL COMMENT 'decoded from raw_row, human readable only, not for machine use',
+			raw_key     mediumblob NOT NULL COMMENT 'the conflicted key',
+			raw_value   mediumblob NOT NULL COMMENT 'the value of the conflicted key',
+			raw_handle  mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
+			raw_row     mediumblob NOT NULL COMMENT 'the data retrieved from the handle',
+			KEY (task_id, table_name)
 		);
 	`
 
@@ -78,6 +79,13 @@ const (
 		INSERT INTO %s.` + conflictErrorTableName + `
 		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+	`
+
+	selectConflictKeys = `
+		SELECT _tidb_rowid, raw_handle, raw_row
+		FROM %s.` + conflictErrorTableName + `
+		WHERE table_name = ? AND _tidb_rowid > ?
+		ORDER BY _tidb_rowid LIMIT ?;
 	`
 )
 
@@ -259,4 +267,32 @@ func (em *ErrorManager) RecordIndexConflictError(
 		}
 		return nil
 	})
+}
+
+// GetConflictKeys obtains all (distinct) conflicting rows (handle and their
+// values) from the current error report.
+func (em *ErrorManager) GetConflictKeys(ctx context.Context, tableName string, prevRowID int64, limit int) (handleRows [][2][]byte, lastRowID int64, err error) {
+	if em.db == nil {
+		return nil, 0, nil
+	}
+	rows, err := em.db.QueryContext(
+		ctx,
+		fmt.Sprintf(selectConflictKeys, em.schemaEscaped),
+		tableName,
+		prevRowID,
+		limit,
+	)
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var handleRow [2][]byte
+		if err := rows.Scan(&lastRowID, &handleRow[0], &handleRow[1]); err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+		handleRows = append(handleRows, handleRow)
+	}
+	return handleRows, lastRowID, errors.Trace(rows.Err())
 }

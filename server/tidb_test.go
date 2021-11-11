@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//go:build !race
 // +build !race
 
 package server
@@ -1265,7 +1266,7 @@ func (ts *tidbTestSuite) TestCreateTableFlen(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := Execute(ctx, qctx, "show create table t1")
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	cols := rs.Columns()
@@ -1306,7 +1307,7 @@ func (ts *tidbTestSuite) TestShowTablesFlen(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := Execute(ctx, qctx, "show tables")
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	cols := rs.Columns()
