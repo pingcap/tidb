@@ -505,11 +505,8 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 	if !plannercore.IsAutoCommitTxn(ctx) {
 		return false
 	}
-	if ctx.GetSessionVars().StmtCtx.CacheTableUsed() {
-		return false
-	}
 	v, ok := p.(*plannercore.PointGetPlan)
-	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle))
+	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)) && !v.IsCacheTable
 }
 
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement

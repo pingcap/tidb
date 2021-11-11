@@ -58,6 +58,30 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 	}
+	if p.IsCacheTable {
+		tbl, ok := b.is.TableByID(p.TblInfo.ID)
+		if !ok {
+			b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, p.TblInfo.Name))
+			return nil
+		}
+		cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS)
+		if cacheData != nil {
+			e.cacheTable = cacheData
+		} else {
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+					}
+				}()
+				if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+					err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
+					if err != nil {
+						fmt.Println("Update Lock Info Error")
+					}
+				}
+			}()
+		}
+	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
 	e.Init(p, startTS)
@@ -96,7 +120,8 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats *runtimeStatsWithSnapshot
+	stats      *runtimeStatsWithSnapshot
+	cacheTable kv.MemBuffer
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -402,13 +427,11 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		}
 		// fallthrough to snapshot get.
 	}
-	// Cache table first try to get value from cacheBuffer
-	if e.tblInfo.TableCacheStatusType == model.TableCacheStatusEnable  {
-		cond, buffer := e.ctx.GetSessionVars().StmtCtx.GetCacheTable(e.tblInfo.ID)
-		if cond {
-			return buffer.(kv.MemBuffer).Get(ctx, key)
-		}
+	// Cache table should first try to get value from cacheBuffer
+	if e.cacheTable != nil {
+		return e.cacheTable.(kv.MemBuffer).Get(ctx, key)
 	}
+
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
 		if e.ctx.GetSessionVars().EnablePointGetCache {
