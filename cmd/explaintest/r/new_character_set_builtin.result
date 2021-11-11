@@ -215,3 +215,14 @@ select sha2(a, 514), sha2(b, 514), sha2(c, 514) from t;
 sha2(a, 514)	sha2(b, 514)	sha2(c, 514)
 NULL	NULL	NULL
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(b) from t where md5(b) = 'a45d4af7b243e7f393fa09bed72ac73e';
+md5(b)
+a45d4af7b243e7f393fa09bed72ac73e
+set @@tidb_enable_vectorized_expression = true;
+select md5(b) from t where md5(b) = 'a45d4af7b243e7f393fa09bed72ac73e';
+md5(b)
+a45d4af7b243e7f393fa09bed72ac73e
+set @@tidb_enable_vectorized_expression = false;
