@@ -276,13 +276,15 @@ func TestBeginSleepABA(t *testing.T) {
 	tk2.MustExec("update aba set v = 2")
 
 	// And then make the cache available again.
-	for {
+	for i := 0; i < 50; i++ {
 		tk2.MustQuery("select * from aba").Check(testkit.Rows("1 2"))
 		if tk2.HasPlan("select * from aba", "UnionScan") {
+			cacheUsed = true
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	require.True(t, cacheUsed)
 
 	// tk1 should not use the staled cache, because the data is changed.
 	require.False(t, tk1.HasPlan("select * from aba", "UnionScan"))
