@@ -1446,13 +1446,9 @@ const (
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
 func (do *Domain) NotifyUpdatePrivilege() error {
-	// If skip-grant-table is configured, do not flush privileges.
-	// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
-	// the call to do.PrivilegeHandle().Update would panic.
-	if config.GetGlobalConfig().Security.SkipGrantTable {
-		return nil
-	}
-
+	// No matter skip-grant-table is configured or not, sending an etcd message is required.
+	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
+	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), privilegeKey, "")
@@ -1460,6 +1456,14 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
 	}
+
+	// If skip-grant-table is configured, do not flush privileges.
+	// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
+	// the call to do.PrivilegeHandle().Update would panic.
+	if config.GetGlobalConfig().Security.SkipGrantTable {
+		return nil
+	}
+
 	// update locally
 	sysSessionPool := do.SysSessionPool()
 	ctx, err := sysSessionPool.Get()
