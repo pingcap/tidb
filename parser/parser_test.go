@@ -2919,11 +2919,6 @@ func TestDDL(t *testing.T) {
 		{"alter table t reorganize partition remove partition;", false, ""},
 		{"alter table t reorganize partition no_write_to_binlog remove into (partition p0 VALUES LESS THAN (1991));", true, "ALTER TABLE `t` REORGANIZE PARTITION NO_WRITE_TO_BINLOG `remove` INTO (PARTITION `p0` VALUES LESS THAN (1991))"},
 
-		// alter placement rules
-		{"ALTER TABLE t ADD PLACEMENT POLICY CONSTRAINTS='str' ROLE=leader REPLICAS=1", true, "ALTER TABLE `t` ADD PLACEMENT POLICY CONSTRAINTS='str' ROLE=LEADER REPLICAS=1"},
-		{"ALTER TABLE t ALTER PLACEMENT POLICY CONSTRAINTS='str' ROLE=leader REPLICAS=1", true, "ALTER TABLE `t` ALTER PLACEMENT POLICY CONSTRAINTS='str' ROLE=LEADER REPLICAS=1"},
-		{"ALTER TABLE t ADD PLACEMENT POLICY CONSTRAINTS='str1' ROLE=leader REPLICAS=1, ADD PLACEMENT POLICY CONSTRAINTS='str2' ROLE=leader REPLICAS=1", true, "ALTER TABLE `t` ADD PLACEMENT POLICY CONSTRAINTS='str1' ROLE=LEADER REPLICAS=1, ADD PLACEMENT POLICY CONSTRAINTS='str2' ROLE=LEADER REPLICAS=1"},
-
 		// alter attributes
 		{"ALTER TABLE t ATTRIBUTES='str'", true, "ALTER TABLE `t` ATTRIBUTES='str'"},
 		{"ALTER TABLE t ATTRIBUTES='str1,str2'", true, "ALTER TABLE `t` ATTRIBUTES='str1,str2'"},
@@ -5166,6 +5161,10 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t drop histogram on b", true, "ANALYZE TABLE `t` DROP HISTOGRAM ON `b`"},
 		{"analyze table t update histogram on c1, c2;", true, "ANALYZE TABLE `t` UPDATE HISTOGRAM ON `c1`,`c2`"},
 		{"analyze table t drop histogram on c1, c2;", true, "ANALYZE TABLE `t` DROP HISTOGRAM ON `c1`,`c2`"},
+		{"analyze table t1,t2 all columns", true, "ANALYZE TABLE `t1`,`t2` ALL COLUMNS"},
+		{"analyze table t partition a all columns", true, "ANALYZE TABLE `t` PARTITION `a` ALL COLUMNS"},
+		{"analyze table t1,t2 all columns with 4 topn", true, "ANALYZE TABLE `t1`,`t2` ALL COLUMNS WITH 4 TOPN"},
+		{"analyze table t partition a all columns with 1024 buckets", true, "ANALYZE TABLE `t` PARTITION `a` ALL COLUMNS WITH 1024 BUCKETS"},
 		{"analyze table t1,t2 predicate columns", true, "ANALYZE TABLE `t1`,`t2` PREDICATE COLUMNS"},
 		{"analyze table t partition a predicate columns", true, "ANALYZE TABLE `t` PARTITION `a` PREDICATE COLUMNS"},
 		{"analyze table t1,t2 predicate columns with 4 topn", true, "ANALYZE TABLE `t1`,`t2` PREDICATE COLUMNS WITH 4 TOPN"},
@@ -5175,6 +5174,7 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t columns c1,c2 with 4 topn", true, "ANALYZE TABLE `t` COLUMNS `c1`,`c2` WITH 4 TOPN"},
 		{"analyze table t partition a columns c1,c2 with 1024 buckets", true, "ANALYZE TABLE `t` PARTITION `a` COLUMNS `c1`,`c2` WITH 1024 BUCKETS"},
 		{"analyze table t index a columns c", false, ""},
+		{"analyze table t index a all columns", false, ""},
 		{"analyze table t index a predicate columns", false, ""},
 		{"analyze table t with 10 samplerate", true, "ANALYZE TABLE `t` WITH 10 SAMPLERATE"},
 		{"analyze table t with 0.1 samplerate", true, "ANALYZE TABLE `t` WITH 0.1 SAMPLERATE"},
