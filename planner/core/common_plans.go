@@ -384,7 +384,16 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	prepared := preparedStmt.PreparedAst
-	stmtCtx.UseCache = prepared.UseCache
+	for _, vInfo := range preparedStmt.VisitInfos {
+		tbl, err := is.TableByName(model.NewCIStr(vInfo.db), model.NewCIStr(vInfo.table))
+		if err != nil {
+			return err
+		}
+		tblInfo := tbl.Meta()
+		if tblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+			prepared.UseCache = false
+		}
+	}
 	var cacheKey kvcache.Key
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)

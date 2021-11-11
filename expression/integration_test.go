@@ -6207,6 +6207,29 @@ func (s *testIntegrationSerialSuite) TestPreparePlanCache(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
+func (s *testIntegrationSerialSuite) TestPreparePlanCacheNotForCacheTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	plannercore.SetPreparedPlanCache(true)
+	c.Assert(plannercore.PreparedPlanCacheEnabled(), Equals, true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+	// Use the example from the docs https://docs.pingcap.com/tidb/stable/sql-prepare-plan-cache
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("alter table t cache")
+	tk.MustExec("prepare stmt from 'select * from t where a = ?';")
+	tk.MustExec("set @a = 1;")
+	tk.MustExec("execute stmt using @a;")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt using @a;")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue16205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
