@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
@@ -76,7 +77,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 				if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
 					err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
 					if err != nil {
-						fmt.Println("Update Lock Info Error")
+						log.Warn("Update Lock Info Error")
 					}
 				}
 			}()
