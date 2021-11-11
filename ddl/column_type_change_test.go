@@ -2282,6 +2282,5 @@ func (s *testColumnTypeChangeSuite) TestChangeNullValueFromOtherTypeToTimestamp(
 	c.Assert(err.Error(), Equals, "[table:1364]Field 'a' doesn't have a default value")
 
 	_, err = tk.Exec("insert into t values(null)")
-	c.Assert(err, IsNil)
-	tk.MustQuery("select count(*) from t where a = null").Check(testkit.Rows("0"))
+	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
 }
