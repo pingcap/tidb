@@ -232,22 +232,22 @@ insert into t values ('65'), ('123456'), ('123456789');
 select char(a using gbk), char(a using utf8), char(a) from t;
 char(a using gbk)	char(a using utf8)	char(a)
 A	A	A
-â@	â@	â@
-[Í	[Í	[Í
+é‡¦	â@	â@
+NULL	[Í	[Í
 select char(a using gbk) from t;
 char(a using gbk)
 A
-â@
-[Í
+é‡¦
+NULL
 set @@tidb_enable_vectorized_expression = true;
 select char(a using gbk), char(a using utf8), char(a) from t;
 char(a using gbk)	char(a using utf8)	char(a)
 A	A	A
-â@	â@	â@
-[Í	[Í	[Í
+é‡¦	â@	â@
+NULL	[Í	[Í
 select char(a using gbk) from t;
 char(a using gbk)
 A
-â@
-[Í
+é‡¦
+NULL
 set @@tidb_enable_vectorized_expression = false;
