@@ -506,8 +506,12 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 		return false
 	}
 	v, ok := p.(*plannercore.PointGetPlan)
+	if !ok {
+		return false
+	}
+	isUniqueIndex := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
 	isCacheTable := v.TblInfo != nil && (v.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable)
-	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)) && !isCacheTable
+	return isUniqueIndex && !isCacheTable
 }
 
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement
