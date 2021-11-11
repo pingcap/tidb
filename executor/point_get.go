@@ -430,7 +430,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	}
 	// Cache table should first try to get value from cacheBuffer
 	if e.cacheTable != nil {
-		return e.cacheTable.(kv.MemBuffer).Get(ctx, key)
+		return e.cacheTable.Get(ctx, key)
 	}
 
 	lock := e.tblInfo.Lock
