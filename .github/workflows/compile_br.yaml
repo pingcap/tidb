@@ -13,7 +13,10 @@ on:
       - '!br/docs/**'
       - '!br/tests/**'
       - '!br/docker/**'
+#change trigger policy
   pull_request:
+    types:
+      - labeled  # <--
     branches:
       - master
       - 'release-[0-9].[0-9]*'
@@ -35,8 +38,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  compile-windows:
+    if: github.event_name == 'push' || github.event_name == 'pull_request' && github.event.label.name == 'action/run-br-cross-platform-build'
+    name: Compile for Windows job
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v2.1.0
+
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.16
+
+      - name: Run build
+        run: make build_tools
+        
   compile:
+    if: github.event_name == 'pull_request' && github.event.label.name == 'action/run-br-cross-platform-build'
     name: Compile for ${{ matrix.os }} / ${{ matrix.target}}
+
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -47,8 +67,6 @@ jobs:
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
 
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v2.1.0
 
@@ -61,6 +79,7 @@ jobs:
         run: make build_tools
 
   compile-freebsd:
+    if: github.event_name == 'pull_request' && github.event.label.name == 'action/run-br-cross-platform-build'
     name: Compile for FreeBSD job
     runs-on: ubuntu-latest
     steps:
