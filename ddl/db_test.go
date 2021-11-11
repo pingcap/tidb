@@ -6391,13 +6391,15 @@ func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp m
 		c.Assert(tb.Meta().Lock, IsNil)
 	}
 }
-func checkTableCache(c *C, se session.Session, dbName, tableName string) {
+
+func checkTableCacheStatus(c *C, se session.Session, dbName, tableName string, status model.TableCacheStatusType) {
 	tb := testGetTableByName(c, se, dbName, tableName)
 	dom := domain.GetDomain(se)
 	err := dom.Reload()
 	c.Assert(err, IsNil)
-	c.Assert(tb.Meta().TableCacheStatusType, Equals, model.TableCacheStatusEnable)
+	c.Assert(tb.Meta().TableCacheStatusType, Equals, status)
 }
+
 func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
