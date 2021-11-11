@@ -386,8 +386,9 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	prepared := preparedStmt.PreparedAst
 	for _, vInfo := range preparedStmt.VisitInfos {
 		tbl, err := is.TableByName(model.NewCIStr(vInfo.db), model.NewCIStr(vInfo.table))
+		// if table does not exist, skip it, may be it is a `create table` statement
 		if err != nil {
-			return err
+			continue
 		}
 		tblInfo := tbl.Meta()
 		if tblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
