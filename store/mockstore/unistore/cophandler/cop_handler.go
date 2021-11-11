@@ -40,8 +40,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // MPPCtx is the mpp execution context
@@ -446,8 +448,13 @@ func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
 
 // fieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
 func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
-	charsetStr, collationStr, err := charset.GetCharsetInfoByID(int(collate.RestoreCollationIDIfNeeded(col.GetCollation())))
+	collationId := int(collate.RestoreCollationIDIfNeeded(col.GetCollation()))
+	charsetStr, collationStr, err := charset.GetCharsetInfoByID(collationId)
 	if err != nil {
+		logutil.BgLogger().Error(
+			"Unable to get collation name from ID, use default collation instead.",
+			zap.Int("ID", collationId),
+			zap.Stack("stack"))
 		charsetStr = mysql.DefaultCharset
 		collationStr = mysql.DefaultCollationName
 	}
