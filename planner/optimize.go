@@ -17,7 +17,6 @@ package planner
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/parser/model"
 	"math"
 	"runtime/trace"
 	"strings"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/cascades"
 	"github.com/pingcap/tidb/planner/core"
 	plannercore "github.com/pingcap/tidb/planner/core"
