@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -35,7 +36,7 @@ func (s *testDBSuite2) TestAlterTableCache(c *C) {
 	tk.MustGetErrCode("alter table t1 ca", errno.ErrParse)
 	tk.MustGetErrCode("alter table t2 cache", errno.ErrNoSuchTable)
 	tk.MustExec("alter table t1 cache")
-	checkTableCache(c, tk.Se, "test", "t1")
+	checkTableCacheStatus(c, tk.Se, "test", "t1", model.TableCacheStatusEnable)
 	tk.MustExec("drop table if exists t1")
 	/*Test can't skip schema checker*/
 	tk.MustExec("drop table if exists t1,t2")
@@ -109,4 +110,25 @@ func (s *testDBSuite2) TestAlterViewTableCache(c *C) {
 	tk.MustExec("create table cache_view_t (id int);")
 	tk.MustExec("create view v as select * from cache_view_t")
 	tk.MustGetErrCode("alter table v cache", errno.ErrWrongObject)
+}
+
+func (s *testDBSuite2) TestAlterTableNoCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists nocache_t1")
+	/* Test of cache table */
+	tk.MustExec("create table nocache_t1 ( n int auto_increment primary key)")
+	tk.MustExec("alter table nocache_t1 cache")
+	checkTableCacheStatus(c, tk.Se, "test", "nocache_t1", model.TableCacheStatusEnable)
+	tk.MustExec("alter table nocache_t1 nocache")
+	checkTableCacheStatus(c, tk.Se, "test", "nocache_t1", model.TableCacheStatusDisable)
+	tk.MustExec("drop table if exists t1")
+	// Test if a table is not exists
+	tk.MustExec("drop table if exists nocache_t")
+	tk.MustGetErrCode("alter table nocache_t cache", errno.ErrNoSuchTable)
+	tk.MustExec("create table nocache_t (a int)")
+	tk.MustExec("alter table nocache_t nocache")
+	// Multiple no alter cache is okay
+	tk.MustExec("alter table nocache_t nocache")
+	tk.MustExec("alter table nocache_t nocache")
 }
