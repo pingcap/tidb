@@ -21,9 +21,8 @@ import (
 	"path"
 	"sync"
 
-	"github.com/pingcap/tidb/util/pdapi"
-
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/util/pdapi"
 )
 
 // PlacementManager manages placement settings
