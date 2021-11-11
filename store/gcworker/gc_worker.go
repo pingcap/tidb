@@ -1115,9 +1115,9 @@ retryScanAndResolve:
 			return stat, errors.Errorf("unexpected scanlock error: %s", locksResp)
 		}
 		locksInfo := locksResp.GetLocks()
-		locks := make([]*txnlock.Lock, len(locksInfo))
-		for i := range locksInfo {
-			locks[i] = txnlock.NewLock(locksInfo[i])
+		locks := make([]*txnlock.Lock, 0, len(locksInfo))
+		for _, li := range locksInfo {
+			locks = append(locks, txnlock.NewLock(li))
 		}
 		if w.testingKnobs.scanLocks != nil {
 			locks = append(locks, w.testingKnobs.scanLocks(key, loc.Region.GetID())...)
@@ -1820,7 +1820,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	if err != nil {
 		return "", errors.Trace(err)

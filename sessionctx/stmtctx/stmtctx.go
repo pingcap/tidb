@@ -87,8 +87,10 @@ type StatementContext struct {
 	IgnoreNoPartition            bool
 	MaybeOverOptimized4PlanCache bool
 	IgnoreExplainIDSuffix        bool
-	IsStaleness                  bool
-
+	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
+	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
+	// in stmtCtx
+	IsStaleness bool
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -173,6 +175,9 @@ type StatementContext struct {
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
+
+	// If the statement read from table cache, this flag is set.
+	ReadFromTableCache bool
 
 	// cache is used to reduce object allocation.
 	cache struct {

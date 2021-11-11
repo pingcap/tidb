@@ -1249,7 +1249,7 @@ type StatsOptions struct {
 func NewStatsOptions() *StatsOptions {
 	return &StatsOptions{
 		AutoRecalc:   true,
-		ColumnChoice: AllColumns,
+		ColumnChoice: DefaultChoice,
 		ColumnList:   []CIStr{},
 		SampleNum:    uint64(0),
 		SampleRate:   0.0,
@@ -1262,7 +1262,8 @@ func NewStatsOptions() *StatsOptions {
 type ColumnChoice byte
 
 const (
-	AllColumns ColumnChoice = iota
+	DefaultChoice ColumnChoice = iota
+	AllColumns
 	PredicateColumns
 	ColumnList
 )
