@@ -53,12 +53,15 @@ func TestCacheTableBasicScan(t *testing.T) {
 		tk.MustQuery("select *from join_t2").Check(testkit.Rows("2"))
 		tk.MustExec("create table join_t3 (id int)")
 		tk.MustExec("insert into join_t3 values(3)")
+		planUsed := false
 		for i := 0; i < 10; i++ {
 			tk.MustQuery("select *from join_t1 join join_t2").Check(testkit.Rows("1 2"))
-			if tk.Session().GetSessionVars().StmtCtx.CacheTableUsed() {
+			if tk.HasPlan("select *from join_t1 join join_t2", "UnionScan") {
+				planUsed = true
 				break
 			}
 		}
+		require.True(t, planUsed)
 		result := tk.MustQuery("explain format = 'brief' select *from join_t1 join join_t2")
 		result.Check(testkit.Rows(
 			"HashJoin 100000000.00 root  CARTESIAN inner join",
@@ -71,10 +74,12 @@ func TestCacheTableBasicScan(t *testing.T) {
 		// Test for join a cache table and a normal table
 		for i := 0; i < 10; i++ {
 			tk.MustQuery("select *from join_t1 join join_t3").Check(testkit.Rows("1 3"))
-			if tk.Session().GetSessionVars().StmtCtx.CacheTableUsed() {
+			if tk.HasPlan("select *from join_t1 join join_t3", "UnionScan") {
+				planUsed = true
 				break
 			}
 		}
+		require.True(t, planUsed)
 		result = tk.MustQuery("explain format = 'brief' select *from join_t1 join join_t3")
 		result.Check(testkit.Rows(
 			"Projection 100000000.00 root  test.join_t1.id, test.join_t3.id",
@@ -86,15 +91,17 @@ func TestCacheTableBasicScan(t *testing.T) {
 			"    └─TableFullScan 10000.00 cop[tikv] table:join_t3 keep order:false, stats:pseudo"))
 
 		// Second read will from cache table
-		for i := 0; i < 10; i++ {
+		for i := 0; i < 100; i++ {
 			tk.MustQuery("select * from tmp1 where id>4 order by id").Check(testkit.Rows(
 				"5 105 1005", "7 117 1007", "9 109 1009",
 				"10 110 1010", "12 112 1012", "14 114 1014", "16 116 1016", "18 118 1018",
 			))
-			if tk.Session().GetSessionVars().StmtCtx.CacheTableUsed() {
+			if tk.HasPlan("select * from tmp1 where id>4 order by id", "UnionScan") {
+				planUsed = true
 				break
 			}
 		}
+		require.True(t, planUsed)
 		result = tk.MustQuery("explain format = 'brief' select * from tmp1 where id>4 order by id")
 		result.Check(testkit.Rows("UnionScan 3333.33 root  gt(test.tmp1.id, 4)",
 			"└─TableReader 3333.33 root  data:TableRangeScan",
@@ -105,10 +112,12 @@ func TestCacheTableBasicScan(t *testing.T) {
 				"5 105 1005", "9 109 1009", "10 110 1010",
 				"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
 			))
-			if tk.Session().GetSessionVars().StmtCtx.CacheTableUsed() {
+			if tk.HasPlan("select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u", "UnionScan") {
+				planUsed = true
 				break
 			}
 		}
+		require.True(t, planUsed)
 		result = tk.MustQuery("explain format = 'brief' select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u")
 		result.Check(testkit.Rows("UnionScan 3333.33 root  gt(test.tmp1.u, 101)",
 			"└─IndexLookUp 3333.33 root  ",
@@ -233,4 +242,50 @@ func TestCacheTableComplexRead(t *testing.T) {
 	<-doneCh
 	tk1.HasPlan("select *from complex_cache where id > 7", "UnionScan")
 	tk1.MustExec("commit")
+}
+
+func TestBeginSleepABA(t *testing.T) {
+	// During the change "cache1 -> no cache -> cache2",
+	// cache1 and cache2 may be not the same anymore
+	// A transaction should not only check the cache exists, but also check the cache unchanged.
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("drop table if exists aba")
+	tk1.MustExec("create table aba (id int, v int)")
+	tk1.MustExec("insert into aba values (1, 1)")
+	tk1.MustExec("alter table aba cache")
+	tk1.MustQuery("select * from aba").Check(testkit.Rows("1 1"))
+
+	// Begin, read from cache.
+	tk1.MustExec("begin")
+	cacheUsed := false
+	for i := 0; i < 100; i++ {
+		if tk1.HasPlan("select * from aba", "UnionScan") {
+			cacheUsed = true
+			break
+		}
+	}
+	require.True(t, cacheUsed)
+
+	// Another session change the data and make the cache unavailable.
+	tk2.MustExec("update aba set v = 2")
+
+	// And then make the cache available again.
+	for i := 0; i < 50; i++ {
+		tk2.MustQuery("select * from aba").Check(testkit.Rows("1 2"))
+		if tk2.HasPlan("select * from aba", "UnionScan") {
+			cacheUsed = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.True(t, cacheUsed)
+
+	// tk1 should not use the staled cache, because the data is changed.
+	require.False(t, tk1.HasPlan("select * from aba", "UnionScan"))
 }
