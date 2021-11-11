@@ -558,12 +558,12 @@ func (sf *ScalarFunction) SetCoercibility(val Coercibility) {
 	sf.Function.SetCoercibility(val)
 }
 
-// CharsetAndCollation ...
+// CharsetAndCollation gets charset and collation.
 func (sf *ScalarFunction) CharsetAndCollation() (string, string) {
 	return sf.Function.CharsetAndCollation()
 }
 
-// SetCharsetAndCollation ...
+// SetCharsetAndCollation sets charset and collation.
 func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string) {
 	sf.Function.SetCharsetAndCollation(chs, coll)
 }
