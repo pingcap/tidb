@@ -4153,6 +4153,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// Use the TS of the transaction to determine whether the cache can be used.
 		cacheData := cachedTable.TryReadFromCache(txn.StartTS())
 		if cacheData != nil {
+			sessionVars.StmtCtx.ReadFromTableCache = true
 			us := LogicalUnionScan{handleCols: handleCols, cacheTable: cacheData}.Init(b.ctx, b.getSelectOffset())
 			us.SetChildren(ds)
 			result = us

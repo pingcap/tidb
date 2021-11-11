@@ -431,7 +431,8 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			}
 		}
 	}
-	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn && ds.tableInfo.TempTableType != model.TempTableLocal {
+	readFromTableCache := ds.ctx.GetSessionVars().StmtCtx.ReadFromTableCache
+	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn && ds.tableInfo.TempTableType != model.TempTableLocal && !readFromTableCache {
 		err := ds.generateAndPruneIndexMergePath(ds.indexMergeHints != nil)
 		if err != nil {
 			return nil, err
