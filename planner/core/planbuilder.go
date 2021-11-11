@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
@@ -3138,13 +3139,18 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 
 		expr, err := yield(assign.Expr)
 		if err != nil {
-			return nil, err
+			// Throw other error as soon as possible except ErrSubqueryMoreThan1Row which need duplicate in insert in triggered.
+			// Refer to https://github.com/pingcap/tidb/issues/29260 for more information.
+			if terr, ok := errors.Cause(err).(*terror.Error); !(ok && ErrSubqueryMoreThan1Row.Code() == terr.Code()) {
+				return nil, err
+			}
 		}
 
 		p.OnDuplicate = append(p.OnDuplicate, &expression.Assignment{
 			Col:     p.tableSchema.Columns[idx],
 			ColName: p.tableColNames[idx].ColName,
 			Expr:    expr,
+			LazyErr: err,
 		})
 	}
 	return onDupColSet, nil
