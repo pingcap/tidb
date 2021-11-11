@@ -738,6 +738,8 @@ func TestSpmUnion(t *testing.T) {
 		"WITH RECURSIVE `cte` (`a`, `b`) AS (SELECT /*+ use_index(@`sel_1` `test`.`t1` `idx_b`)*/ * FROM `test`.`t1` WHERE `b` = 1 UNION SELECT `a` + 1,`b` + 1 FROM `cte` WHERE `a` < 2) SELECT * FROM `cte` UNION SELECT * FROM `cte`"
 	spmMap["with `cte` as ( select * from `test` . `t1` where `b` = ? ) select * from `cte` union select * from `cte`"] =
 		"WITH `cte` AS (SELECT /*+ use_index(@`sel_1` `test`.`t1` `idx_b`)*/ * FROM `test`.`t1` WHERE `b` = 1) SELECT * FROM `cte` UNION SELECT * FROM `cte`"
+	spmMap["with `cte` as ( select * from `test` . `t1` where `a` = ? ) select * from `cte` union select * from `cte`"] =
+		"WITH `cte` AS (SELECT /*+ use_index(@`sel_1` `test`.`t1` `idx_ab`)*/ * FROM `test`.`t1` WHERE `a` = 1) SELECT * FROM `cte` UNION SELECT * FROM `cte`"
 
 	tk.MustExec("with recursive cte(a,b) as (select /*+use_index(idx_b)*/ * from t1 where b = 1 union select a+1,b+1 from cte where a < 2) select * from cte union select * from cte")
 	tk.MustExec("with recursive cte(a,b) as (select /*+use_index(idx_b)*/ * from t1 where b = 1 union select a+1,b+1 from cte where a < 2) select * from cte union select * from cte")
@@ -750,10 +752,14 @@ func TestSpmUnion(t *testing.T) {
 	tk.MustExec("with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte union select /*+use_index(idx_a)*/ * from t1 where a > 0")
 	tk.MustExec("with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte union select /*+use_index(idx_a)*/ * from t1 where a > 0")
 	tk.MustExec("with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte union select /*+use_index(idx_a)*/ * from t1 where a > 0")
+
+	tk.MustExec("with cte as (select /*+use_index(t1, idx_ab)*/ * from t1 where a = 1) select /*+use_index(@sel_1, t1, idx_ab)*/  * from cte union select * from cte")
+	tk.MustExec("with cte as (select /*+use_index(t1, idx_ab)*/ * from t1 where a = 1) select /*+use_index(@sel_1, t1, idx_ab)*/  * from cte union select * from cte")
+	tk.MustExec("with cte as (select /*+use_index(t1, idx_ab)*/ * from t1 where a = 1) select /*+use_index(@sel_1, t1, idx_ab)*/  * from cte union select * from cte")
 
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 3)
+	require.Len(t, rows, 4)
 	for _, row := range rows {
 		str := fmt.Sprintf("%s", row[0])
 		require.Equal(t, spmMap[str], row[1])

@@ -1121,7 +1121,7 @@ func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n
 	}
 
 	// remove duplicate hints
-	tableHints = make([]*ast.TableOptimizerHint, 0)
+	tableHints = make([]*ast.TableOptimizerHint, 0, len(hints))
 	hintsMap := make(map[string]struct{}, len(hints))
 	for idx := range hints {
 		hintStr := hint.RestoreTableOptimizerHint(hints[idx])
