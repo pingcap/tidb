@@ -17,6 +17,7 @@ package planner
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/parser/model"
 	"math"
 	"runtime/trace"
 	"strings"
@@ -132,7 +133,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			// point plan is already tried in a multi-statement query.
 			fp = fpv.Plan
 		} else {
-			sctx.GetInfoSchema()
 			fp = plannercore.TryFastPlan(sctx, node)
 		}
 		if fp != nil {
@@ -506,7 +506,8 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 		return false
 	}
 	v, ok := p.(*plannercore.PointGetPlan)
-	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)) && !v.IsCacheTable
+	isCacheTable := v.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable
+	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)) && !isCacheTable
 }
 
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement

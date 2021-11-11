@@ -1477,7 +1477,8 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		// If the PointGetPlan needs to read data using unique index (double read), we
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
 		// and the data and index would be inconsistent!
-		isPointGet := (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)) && !v.IsCacheTable
+		isCacheTable := v.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable
+		isPointGet := (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)) && !isCacheTable
 		return isPointGet, nil
 	default:
 		return false, nil
