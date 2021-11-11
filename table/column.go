@@ -279,7 +279,7 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	if val.Kind() == types.KindNull && col.FieldType.Tp == mysql.TypeTimestamp {
-		if v, err := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, int8(col.Decimal)); err == nil {
+		if v, err := expression.ExportedGetTimeCurrentTimestamp(ctx, col.Tp, int8(col.Decimal)); err == nil {
 			// convert null value to timestamp should be substituted with current timestamp.
 			val = v
 		}
