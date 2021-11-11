@@ -1126,7 +1126,7 @@ func TestFeedbackWithStatsVer2(t *testing.T) {
 	require.NoError(t, err)
 	statsTblAfter := h.GetTableStats(tblInfo)
 	// assert that statistics not changed
-	assertTableEqualNew(t, statsTblBefore, statsTblAfter)
+	requireTableEqual(t, statsTblBefore, statsTblAfter)
 
 	// Case 3: Feedback is still effective on version 1 statistics.
 	testKit.MustExec("set tidb_analyze_version = 1")
@@ -1167,34 +1167,6 @@ func TestFeedbackWithStatsVer2(t *testing.T) {
 	testKit.MustQuery(fmt.Sprintf("select stats_ver from mysql.stats_histograms where table_id = %d", tblInfo.ID)).Check(testkit.Rows("1", "1", "1"))
 
 	testKit.MustExec("set global tidb_analyze_version = 1")
-}
-
-func assertTableEqualNew(t *testing.T, a *statistics.Table, b *statistics.Table) {
-	require.Equal(t, b.Count, a.Count)
-	require.Equal(t, b.ModifyCount, a.ModifyCount)
-	require.Equal(t, len(b.Columns), len(a.Columns))
-	for i := range a.Columns {
-		require.Equal(t, b.Columns[i].Count, a.Columns[i].Count)
-		require.True(t, statistics.HistogramEqual(&a.Columns[i].Histogram, &b.Columns[i].Histogram, false))
-		if a.Columns[i].CMSketch == nil {
-			require.Nil(t, b.Columns[i].CMSketch)
-		} else {
-			require.True(t, a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch))
-		}
-		// The nil case has been considered in (*TopN).Equal() so we don't need to consider it here.
-		require.Truef(t, a.Columns[i].TopN.Equal(b.Columns[i].TopN), "%v, %v", a.Columns[i].TopN, b.Columns[i].TopN)
-	}
-	require.Equal(t, len(b.Indices), len(a.Indices))
-	for i := range a.Indices {
-		require.True(t, statistics.HistogramEqual(&a.Indices[i].Histogram, &b.Indices[i].Histogram, false))
-		if a.Indices[i].CMSketch == nil {
-			require.Nil(t, b.Indices[i].CMSketch)
-		} else {
-			require.True(t, a.Indices[i].CMSketch.Equal(b.Indices[i].CMSketch))
-		}
-		require.True(t, a.Indices[i].TopN.Equal(b.Indices[i].TopN))
-	}
-	require.True(t, isSameExtendedStats(a.ExtendedStats, b.ExtendedStats))
 }
 
 func TestLogDetailedInfo(t *testing.T) {
