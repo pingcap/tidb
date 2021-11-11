@@ -18,9 +18,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/tikv/client-go/v2/logutil"
 	"go.uber.org/zap"
 )
 
@@ -151,7 +151,7 @@ func GetCharsetInfoByID(coID int) (string, string, error) {
 		return collation.CharsetName, collation.Name, nil
 	}
 
-	logutil.BgLogger().Warn(
+	log.Warn(
 		"Unable to get collation name from collation ID, return default charset and collation instead.",
 		zap.Int("ID", coID),
 		zap.Stack("stack"))
