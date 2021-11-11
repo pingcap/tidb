@@ -387,7 +387,7 @@ var tablesCols = []columnInfo{
 	{name: "TIDB_ROW_ID_SHARDING_INFO", tp: mysql.TypeVarchar, size: 255},
 	{name: "TIDB_PK_TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
+	{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: 1024},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
@@ -560,7 +560,7 @@ var partitionsCols = []columnInfo{
 	{name: "TABLESPACE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PARTITION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
+	{name: "TIDB_DIRECT_PLACEMENT", tp: mysql.TypeVarchar, size: 1024},
 }
 
 var tableConstraintsCols = []columnInfo{
@@ -1451,16 +1451,16 @@ var tableAttributesCols = []columnInfo{
 var tablePlacementRulesCols = []columnInfo{
 	{name: "POLICY_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 	{name: "CATALOG_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
-	{name: "POLICY_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},    // Catalog wide policy
-	{name: "SCHEMA_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},    // System policy does not have a schema
-	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},     // Schema level rules does not have a table
-	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: types.UnspecifiedLength}, // Table level rules does not have a partition
-	{name: "PRIMARY_REGION", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "REGIONS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "LEADER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "FOLLOWER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
-	{name: "LEARNER_CONSTRAINTS", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "POLICY_NAME", tp: mysql.TypeVarchar, size: 64},    // Catalog wide policy
+	{name: "SCHEMA_NAME", tp: mysql.TypeVarchar, size: 64},    // System policy does not have a schema
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},     // Schema level rules does not have a table
+	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64}, // Table level rules does not have a partition
+	{name: "PRIMARY_REGION", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "REGIONS", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "LEADER_CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "FOLLOWER_CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
+	{name: "LEARNER_CONSTRAINTS", tp: mysql.TypeVarchar, size: 1024, flag: mysql.NotNullFlag},
 	{name: "SCHEDULE", tp: mysql.TypeVarchar, size: 20, flag: mysql.NotNullFlag}, // EVEN or MAJORITY_IN_PRIMARY
 	{name: "FOLLOWERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 	{name: "LEARNERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
