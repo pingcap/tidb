@@ -1439,10 +1439,11 @@ func TestChar(t *testing.T) {
 	}{
 		{"65", 66, 67.5, "utf8", "ABD", 0},               // float
 		{"65", 16740, 67.5, "utf8", "AAdD", 0},           // large num
-		{"65", -1, 67.5, "utf8", nil, 1},                 // with utf8, return nil
 		{"65", -1, 67.5, nil, "A\xff\xff\xff\xffD", 0},   // nagtive int
-		{"a", -1, 67.5, "utf8", nil, 2},                  // with utf8, return nil
 		{"a", -1, 67.5, nil, "\x00\xff\xff\xff\xffD", 0}, // invalid 'a'
+		// TODO: Uncomment it when issue #29685 be closed
+		// {"65", -1, 67.5, "utf8", nil, 1},                 // with utf8, return nil
+		// {"a", -1, 67.5, "utf8", nil, 2},                  // with utf8, return nil
 		// TODO: Uncomment it when gbk be added into charsetInfos
 		// {"1234567", 1234567, 1234567, "gbk", "謬謬謬", 0},  // test char for gbk
 		// {"123456789", 123456789, 123456789, "gbk", nil, 3}, // invalid 123456789 in gbk
