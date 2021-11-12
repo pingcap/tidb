@@ -1962,7 +1962,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	if len(as.ColumnNames) > 0 {
 		specifiedColumns = make([]model.CIStr, 0, len(as.ColumnNames))
 		for _, colName := range as.ColumnNames {
-			specifiedColumns = append(specifiedColumns, colName.Name)
+			specifiedColumns = append(specifiedColumns, colName)
 		}
 	} else {
 		// TODO analyze all columns

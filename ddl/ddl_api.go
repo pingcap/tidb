@@ -2460,10 +2460,16 @@ func setStatsOption(statsOptions *model.StatsOptions, statsOptionType ast.StatsO
 			statsOptions.ColumnChoice = model.AllColumns
 		}
 	case ast.StatsOptionColList:
+		if op.StrValue == "" {
+			return nil
+		}
 		cols := strings.Split(op.StrValue, ",")
 		colList := make([]model.CIStr, 0, len(cols))
 		for _, colStr := range cols {
 			colName := strings.TrimSpace(colStr)
+			if colName == "" {
+				continue
+			}
 			colList = append(colList, model.NewCIStr(colName))
 		}
 		statsOptions.ColumnList = colList
@@ -2540,6 +2546,9 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				return err
 			}
 		}
+	}
+	if tbInfo.StatsOptions != nil && tbInfo.StatsOptions.ColumnChoice == model.ColumnList && len(tbInfo.StatsOptions.ColumnList) == 0 {
+		return errors.Trace(errors.New("column list is not set"))
 	}
 	shardingBits := shardingBits(tbInfo)
 	if tbInfo.PreSplitRegions > shardingBits {
@@ -6470,6 +6479,9 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 						colList := make([]model.CIStr, 0, len(cols))
 						for _, colStr := range cols {
 							colName := strings.TrimSpace(colStr)
+							if colName == "" {
+								continue
+							}
 							colList = append(colList, model.NewCIStr(colName))
 						}
 						statsOptions.ColumnList = colList
@@ -6478,7 +6490,7 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 					return errors.Trace(errors.New("unknown table stats option"))
 				}
 			}
-			// merge old meta if not set at this time
+			// Merge old meta if not set at this time.
 			if meta.StatsOptions != nil {
 				if !hasBuckets {
 					statsOptions.Buckets = meta.StatsOptions.Buckets
@@ -6495,6 +6507,9 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 				if !hasColList {
 					statsOptions.ColumnList = meta.StatsOptions.ColumnList
 				}
+			}
+			if statsOptions.ColumnChoice == model.ColumnList && len(statsOptions.ColumnList) == 0 {
+				return errors.Trace(errors.New("column list is not set"))
 			}
 		}
 	}

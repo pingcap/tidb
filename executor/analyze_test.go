@@ -1160,7 +1160,7 @@ func (s *testSuite10) TestAdjustSampleRateNote(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t."))
 }
 
-func (s *testSuite10) TestTableAnalyzeOptions(c *C) {
+func (s *testSuite10) TestAnalyzeOptions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1334,7 +1334,7 @@ PARTITION BY RANGE ( a ) (
 	}
 }
 
-func (s *testSuite10) TestSampleRateOption(c *C) {
+func (s *testSuite10) TestAnalyzeOptionsSampleRate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1386,7 +1386,7 @@ func (s *testSuite10) TestSampleRateOption(c *C) {
 	c.Assert(strings.Contains(status, "SAMPLERATE=0.7"), IsTrue)
 }
 
-func (s *testSuite10) TestColumnOption(c *C) {
+func (s *testSuite10) TestAnalyzeOptionsColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1449,7 +1449,7 @@ func (s *testSuite10) TestColumnOption(c *C) {
 	c.Assert(strings.Contains(status, "columns b,c"), IsTrue)
 }
 
-func (s *testSuite10) TestAlterOptions(c *C) {
+func (s *testSuite10) TestAnalyzeOptionsAlter(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1482,6 +1482,72 @@ func (s *testSuite10) TestAlterOptions(c *C) {
 	c.Assert(tableInfo.StatsOptions.ColumnList[0].L, Equals, "b")
 	c.Assert(tableInfo.StatsOptions.ColumnList[1].L, Equals, "c")
 
+	// alter table with default
+	tk.MustExec("alter table t STATS_OPTIONS=default")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.Buckets, Equals, uint64(0))
+	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(0))
+	c.Assert(tableInfo.StatsOptions.SampleRate, Equals, float64(0))
+	c.Assert(tableInfo.StatsOptions.ColumnChoice, Equals, model.DefaultChoice)
+	c.Assert(len(tableInfo.StatsOptions.ColumnList), Equals, 0)
+}
+
+func (s *testSuite10) TestAnalyzeOptionsCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// create table with wrong format
+	tk.MustExec("drop table if exists t")
+	err := tk.ExecToErr("create table t(a int, b int, c int) STATS_BUCKETS=abc,STATS_TOPN=5")
+	c.Assert(err, NotNil)
+
+	// create table with empty
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int)")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	c.Assert(tableInfo.StatsOptions, IsNil)
+
+	// create table with empty column list for columnlist choice
+	tk.MustExec("drop table if exists t")
+	err = tk.ExecToErr("create table t(a int, b int, c int) STATS_COL_CHOICE='list',STATS_COL_LIST=''")
+	c.Assert(strings.Contains(err.Error(), "column list is not set"), IsTrue)
+
+	// create table normally
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int) STATS_BUCKETS=10,STATS_TOPN=5,STATS_COL_CHOICE='list',STATS_COL_LIST='a,b'")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.Buckets, Equals, uint64(10))
+	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(5))
+	c.Assert(tableInfo.StatsOptions.SampleRate, Equals, float64(0))
+	c.Assert(tableInfo.StatsOptions.ColumnChoice, Equals, model.ColumnList)
+	c.Assert(len(tableInfo.StatsOptions.ColumnList), Equals, 2)
+	c.Assert(tableInfo.StatsOptions.ColumnList[0].L, Equals, "a")
+	c.Assert(tableInfo.StatsOptions.ColumnList[1].L, Equals, "b")
+
+	// create table with empty column
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int) STATS_BUCKETS=10,STATS_TOPN=5,STATS_COL_CHOICE='list',STATS_COL_LIST='a, ,b,'")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(tableInfo.StatsOptions, NotNil)
+	c.Assert(tableInfo.StatsOptions.ColumnChoice, Equals, model.ColumnList)
+	c.Assert(len(tableInfo.StatsOptions.ColumnList), Equals, 2)
+	c.Assert(tableInfo.StatsOptions.ColumnList[0].L, Equals, "a")
+	c.Assert(tableInfo.StatsOptions.ColumnList[1].L, Equals, "b")
+
 	// alter table with wrong format
 	err = tk.ExecToErr("alter table t STATS_OPTIONS='{\"BUCKETS\":\"abc\"}'")
 	c.Assert(err, NotNil)
@@ -1505,24 +1571,20 @@ func (s *testSuite10) TestAlterOptions(c *C) {
 	tableInfo = table.Meta()
 	c.Assert(tableInfo.StatsOptions, NotNil)
 	c.Assert(tableInfo.StatsOptions.Buckets, Equals, uint64(10))
-	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(0))
-	c.Assert(tableInfo.StatsOptions.SampleRate, Equals, 0.5)
+	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(5))
 	c.Assert(tableInfo.StatsOptions.ColumnChoice, Equals, model.ColumnList)
 	c.Assert(len(tableInfo.StatsOptions.ColumnList), Equals, 2)
-	c.Assert(tableInfo.StatsOptions.ColumnList[0].L, Equals, "b")
-	c.Assert(tableInfo.StatsOptions.ColumnList[1].L, Equals, "c")
 
-	// alter table with default
-	tk.MustExec("alter table t STATS_OPTIONS=default")
+	// alter table with empty column list for columnlist choice
+	err = tk.ExecToErr("alter table t STATS_OPTIONS='{\"COL_CHOICE\":\"list\",\"COL_LIST\":\"\"}'")
+	c.Assert(strings.Contains(err.Error(), "column list is not set"), IsTrue)
+
+	// alter table with empty column
+	tk.MustExec("alter table t STATS_OPTIONS='{\"COL_LIST\":\"a, ,b,\"}'")
 	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema) // refresh infoschema
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = table.Meta()
 	c.Assert(tableInfo.StatsOptions, NotNil)
-	c.Assert(tableInfo.StatsOptions.Buckets, Equals, uint64(0))
-	c.Assert(tableInfo.StatsOptions.TopN, Equals, uint64(0))
-	c.Assert(tableInfo.StatsOptions.SampleRate, Equals, float64(0))
-	c.Assert(tableInfo.StatsOptions.ColumnChoice, Equals, model.AllColumns)
-	c.Assert(len(tableInfo.StatsOptions.ColumnList), Equals, 0)
-
+	c.Assert(len(tableInfo.StatsOptions.ColumnList), Equals, 2)
 }
