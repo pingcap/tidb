@@ -10580,3 +10580,15 @@ func (s *testIntegrationSuite) TestIssue29244(c *C) {
 	tk.MustExec("set tidb_enable_vectorized_expression = off;")
 	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
 }
+
+func (s *testIntegrationSuite) TestIssue29685(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a binary(5));")
+	tk.MustExec("insert into t values (0x1e240), ('ABCDE');")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select convert(t.a using utf8) from t;").Check(testkit.Rows("<nil>", "ABCDE"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select convert(t.a using utf8) from t;").Check(testkit.Rows("<nil>", "ABCDE"))
+}

@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"golang.org/x/text/transform"
 )
 
 func (b *builtinLowerSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
@@ -679,17 +678,14 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	}
 	// Since charset is already validated and set from getFunction(), there's no
 	// need to get charset from args again.
-	encoding, _ := charset.Lookup(b.tp.Charset)
+	enc := charset.NewEncoding(b.tp.Charset)
 	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
 	// return with error.
-	if encoding == nil {
+	if enc.Name() == "" {
 		return errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
 	}
-	encoder := encoding.NewEncoder()
-	decoder := encoding.NewDecoder()
 	isBinaryStr := types.IsBinaryStr(b.args[0].GetType())
 	isRetBinary := types.IsBinaryStr(b.tp)
-	enc := charset.NewEncoding(b.tp.Charset)
 	if isRetBinary {
 		enc = charset.NewEncoding(b.args[0].GetType().Charset)
 	}
@@ -702,13 +698,19 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 		}
 		exprI := expr.GetString(i)
 		if isBinaryStr {
-			target, _, err := transform.String(encoder, exprI)
+			target, err := enc.EncodeString(exprI)
 			if err != nil {
-				return err
+				result.AppendNull()
+				continue
 			}
 			// we should convert target into utf8 internal.
-			exprInternal, _, _ := transform.String(decoder, target)
-			result.AppendString(exprInternal)
+			exprInternal, err := enc.DecodeString(target)
+			if err != nil {
+				result.AppendNull()
+				continue
+			} else {
+				result.AppendString(exprInternal)
+			}
 		} else {
 			if isRetBinary {
 				str, err := enc.EncodeString(exprI)
