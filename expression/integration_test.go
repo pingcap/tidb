@@ -6217,11 +6217,21 @@ func (s *testIntegrationSerialSuite) TestPreparePlanCacheNotForCacheTable(c *C) 
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
 	c.Assert(err, IsNil)
-	// Use the example from the docs https://docs.pingcap.com/tidb/stable/sql-prepare-plan-cache
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("alter table t cache")
+
+	tk.MustQuery("select * from t where a = 1")
+	// already read cache after reading first time
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
+		"Projection 10.00 root  test.t.a",
+		"└─UnionScan 10.00 root  eq(test.t.a, 1)",
+		"  └─TableReader 10.00 root  data:Selection",
+		"    └─Selection 10.00 cop[tikv]  eq(test.t.a, 1)",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+
 	tk.MustExec("prepare stmt from 'select * from t where a = ?';")
 	tk.MustExec("set @a = 1;")
 	tk.MustExec("execute stmt using @a;")
