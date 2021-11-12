@@ -5399,6 +5399,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5721,6 +5722,7 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	if err != nil {
 		return err
 	}
+
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("drop indexes"))
 	}
