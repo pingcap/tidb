@@ -358,11 +358,11 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 type DuplicateResolutionAlgorithm int
 
 const (
-	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB.
-	DupeResAlgRecord DuplicateResolutionAlgorithm = iota
-
 	// DupeResAlgNone doesn't detect duplicate.
-	DupeResAlgNone
+	DupeResAlgNone DuplicateResolutionAlgorithm = iota
+
+	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB.
+	DupeResAlgRecord
 
 	// DupeResAlgRemove records all duplicate records like the 'record' algorithm and remove all information related to the
 	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
@@ -642,7 +642,7 @@ func NewConfig() *Config {
 			SendKVPairs:         32768,
 			RegionSplitSize:     0,
 			DiskQuota:           ByteSize(math.MaxInt64),
-			DuplicateResolution: DupeResAlgRecord,
+			DuplicateResolution: DupeResAlgNone,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
