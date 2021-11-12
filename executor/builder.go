@@ -1264,7 +1264,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 
 	// consider collations
 	for i := range v.EqualConditions {
-		chs, coll := v.EqualConditions[i].CharsetAndCollation(e.ctx)
+		chs, coll := v.EqualConditions[i].CharsetAndCollation()
 		leftTypes[i].Charset, leftTypes[i].Collate = chs, coll
 		rightTypes[i].Charset, rightTypes[i].Collate = chs, coll
 	}
