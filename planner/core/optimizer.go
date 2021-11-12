@@ -93,26 +93,26 @@ func defaultLogicalOptimizeOption() *logicalOptimizeOp {
 	return &logicalOptimizeOp{}
 }
 
-func (op *logicalOptimizeOp) withEnableOptimizeTrace(tracer *tracing.LogicalOptimizeTracer) *logicalOptimizeOp {
+func (op *logicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.LogicalOptimizeTracer) *logicalOptimizeOp {
 	op.tracer = tracer
 	return op
 }
 
-func (op *logicalOptimizeOp) appendRuleTracerBeforeRuleOptimize(name string, before LogicalPlan) {
+func (op *logicalOptimizeOp) appendBeforeRuleOptimize(name string, before LogicalPlan) {
 	if op.tracer == nil {
 		return
 	}
 	op.tracer.AppendRuleTracerBeforeRuleOptimize(name, before.buildLogicalPlanTrace())
 }
 
-func (op *logicalOptimizeOp) appendRuleTracerStepToCurrent(id int, tp, reason, action string) {
+func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp, reason, action string) {
 	if op.tracer == nil {
 		return
 	}
 	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason, action)
 }
 
-func (op *logicalOptimizeOp) trackLogicalPlanAfterRuleOptimize(after LogicalPlan) {
+func (op *logicalOptimizeOp) trackAfterRuleOptimize(after LogicalPlan) {
 	if op.tracer == nil {
 		return
 	}
@@ -375,7 +375,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizeTrace {
 		tracer := &tracing.LogicalOptimizeTracer{Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0)}
-		opt = opt.withEnableOptimizeTrace(tracer)
+		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
 			stmtCtx.LogicalOptimizeTrace = tracer
 		}()
@@ -388,12 +388,12 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.appendRuleTracerBeforeRuleOptimize(rule.name(), logic)
+		opt.appendBeforeRuleOptimize(rule.name(), logic)
 		logic, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
-		opt.trackLogicalPlanAfterRuleOptimize(logic)
+		opt.trackAfterRuleOptimize(logic)
 	}
 	return logic, err
 }

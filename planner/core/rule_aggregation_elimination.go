@@ -101,7 +101,7 @@ func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggrega
 				if distinctByUniqueKey {
 					af.HasDistinct = false
 					// TODO: fulfill in future pr
-					opt.appendRuleTracerStepToCurrent(agg.ID(), agg.TP(), "", "")
+					opt.appendStepToCurrent(agg.ID(), agg.TP(), "", "")
 				}
 			}
 		}
