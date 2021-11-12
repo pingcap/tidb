@@ -724,18 +724,9 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 		}
 	} else {
 		logutil.Logger(ctx).Warn("Client without Auth Plugin support; Please upgrade client")
-		if cc.ctx == nil {
-			err := cc.openSession()
-			if err != nil {
-				return err
-			}
-		}
-		userplugin, err := cc.ctx.AuthPluginForUser(&auth.UserIdentity{Username: cc.user, Hostname: cc.peerHost})
+		_, err := cc.checkAuthPlugin(ctx, resp)
 		if err != nil {
 			return err
-		}
-		if userplugin != mysql.AuthNativePassword && userplugin != "" {
-			return errNotSupportedAuthMode
 		}
 		resp.AuthPlugin = mysql.AuthNativePassword
 	}
@@ -883,12 +874,16 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	// method send by the client (*authPlugin) then we need to switch the authentication
 	// method to match the one configured for that specific user.
 	if (cc.authPlugin != userplugin) || (cc.authPlugin != resp.AuthPlugin) {
-		authData, err := cc.authSwitchRequest(ctx, userplugin)
-		if err != nil {
-			return nil, err
+		if resp.Capability&mysql.ClientPluginAuth > 0 {
+			authData, err := cc.authSwitchRequest(ctx, userplugin)
+			if err != nil {
+				return nil, err
+			}
+			resp.AuthPlugin = userplugin
+			return authData, nil
+		} else {
+			return nil, errNotSupportedAuthMode
 		}
-		resp.AuthPlugin = userplugin
-		return authData, nil
 	}
 
 	return nil, nil
