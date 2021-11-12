@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testkit
@@ -57,4 +58,9 @@ func (tk *DBTestKit) MustQuery(sql string, args ...interface{}) *sql.Rows {
 	tk.require.NoError(err, comment)
 	tk.require.NotNil(rows, comment)
 	return rows
+}
+
+// GetDB returns the underlay sql.DB instance.
+func (tk *DBTestKit) GetDB() *sql.DB {
+	return tk.db
 }

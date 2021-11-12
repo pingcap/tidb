@@ -26,6 +26,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -2927,4 +2928,45 @@ func TestIssue28675(t *testing.T) {
 	tk.MustQuery("select privileges from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows("select,update"))
 	require.Equal(t, 1, len(tk.MustQuery("desc test.v").Rows()))
 	require.Equal(t, 1, len(tk.MustQuery("explain test.v").Rows()))
+}
+
+func TestSkipGrantTable(t *testing.T) {
+	save := config.GetGlobalConfig()
+	config.UpdateGlobal(func(c *config.Config) { c.Security.SkipGrantTable = true })
+	defer config.StoreGlobalConfig(save)
+
+	store, clean := newStore(t)
+	defer clean()
+
+	// Issue 29317
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE USER 'test1'@'%';`)
+	tk.MustExec(`GRANT BACKUP_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTORE_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RELOAD ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SHUTDOWN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_STATUS_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_CONNECTION_ADMIN, CONNECTION_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT PROCESS ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SHUTDOWN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SELECT, INSERT, UPDATE, DELETE ON mysql.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SELECT ON information_schema.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT SELECT ON performance_schema.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* TO root;`)
+	tk.MustExec(`revoke SHUTDOWN on *.* from root;`)
+	tk.MustExec(`revoke CONFIG on *.* from root;`)
+
+	tk.MustExec(`CREATE USER 'test2'@'%' IDENTIFIED BY '12345';`)
+	tk.MustExec(`GRANT PROCESS, CONFIG ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT SHOW DATABASES ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT DASHBOARD_CLIENT ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_STATUS_ADMIN ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'test2'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN ON *.* TO 'test2'@'%';`)
 }

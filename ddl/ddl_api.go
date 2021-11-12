@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -2818,12 +2817,6 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			isAlterTable := true
 			err = d.RenameTable(sctx, ident, newIdent, isAlterTable)
-		case ast.AlterTableAlterPartition:
-			if sctx.GetSessionVars().EnableAlterPlacement {
-				err = d.AlterTableAlterPartition(sctx, ident, spec)
-			} else {
-				err = errors.New("alter partition alter placement is experimental and it is switched off by tidb_enable_alter_placement")
-			}
 		case ast.AlterTablePartition:
 			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
 			err = errors.New("alter table partition is unsupported")
@@ -2919,6 +2912,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			err = d.AlterTablePartitionOptions(sctx, ident, spec)
 		case ast.AlterTableCache:
 			err = d.AlterTableCache(sctx, ident)
+		case ast.AlterTableNoCache:
+			err = d.AlterTableNoCache(sctx, ident)
 		default:
 			// Nothing to do now.
 		}
@@ -6360,62 +6355,6 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	return errors.Trace(err)
 }
 
-func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	meta := tb.Meta()
-	if meta.Partition == nil {
-		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
-	}
-
-	partitionID, err := tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// TODO: the old placement rules should be migrated to new format. use the bundle from meta directly.
-	bundle := infoschema.GetBundle(d.infoCache.GetLatest(), []int64{partitionID, meta.ID, schema.ID})
-
-	err = bundle.ApplyPlacementSpec(spec.PlacementSpecs)
-	if err != nil {
-		var sb strings.Builder
-		sb.Reset()
-
-		restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreKeyWordLowercase|format.RestoreNameBackQuotes, &sb)
-
-		if e := spec.Restore(restoreCtx); e != nil {
-			return ErrInvalidPlacementSpec.GenWithStackByArgs("", err)
-		}
-		return ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
-	}
-
-	err = bundle.Tidy()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	bundle.Reset(placement.RuleIndexPartition, []int64{partitionID})
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    meta.ID,
-		SchemaName: schema.Name.L,
-		Type:       model.ActionAlterTableAlterPartition,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partitionID, bundle},
-	}
-
-	err = d.doDDLJob(ctx, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
-}
-
 func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
@@ -6809,6 +6748,7 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
+
 func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
@@ -6831,6 +6771,30 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 		SchemaName: schema.Name.L,
 		TableID:    t.Meta().ID,
 		Type:       model.ActionAlterCacheTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error) {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return err
+	}
+	// if a table is not in cache state, return directly
+	if t.Meta().TableCacheStatusType == model.TableCacheStatusDisable {
+		return nil
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		SchemaName: schema.Name.L,
+		TableID:    t.Meta().ID,
+		Type:       model.ActionAlterNoCacheTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{},
 	}

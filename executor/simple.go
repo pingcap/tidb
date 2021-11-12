@@ -1296,12 +1296,29 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			break
 		}
 
+		// delete from activeRoles
+		if s.IsDropRole {
+			for i := 0; i < len(activeRoles); i++ {
+				if activeRoles[i].Username == user.Username && activeRoles[i].Hostname == user.Hostname {
+					activeRoles = append(activeRoles[:i], activeRoles[i+1:]...)
+					break
+				}
+			}
+		}
+
 		//TODO: need delete columns_priv once we implement columns_priv functionality.
 	}
 
 	if len(failedUsers) == 0 {
 		if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "commit"); err != nil {
 			return err
+		}
+		if s.IsDropRole {
+			// apply new activeRoles
+			if ok, roleName := checker.ActiveRoles(e.ctx, activeRoles); !ok {
+				u := e.ctx.GetSessionVars().User
+				return ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
+			}
 		}
 	} else {
 		if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "rollback"); err != nil {
@@ -1336,7 +1353,7 @@ func userExistsInternal(sqlExecutor sqlexec.SQLExecutor, name string, host strin
 	if err != nil {
 		return false, err
 	}
-	req := recordSet.NewChunk()
+	req := recordSet.NewChunk(nil)
 	err = recordSet.Next(context.TODO(), req)
 	var rows int = 0
 	if err == nil {
@@ -1516,12 +1533,6 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 			return errors.New("FLUSH TABLES WITH READ LOCK is not supported.  Please use @@tidb_snapshot")
 		}
 	case ast.FlushPrivileges:
-		// If skip-grant-table is configured, do not flush privileges.
-		// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
-		// Call dom.PrivilegeHandle().Update would panic.
-		if config.GetGlobalConfig().Security.SkipGrantTable {
-			return nil
-		}
 		dom := domain.GetDomain(e.ctx)
 		return dom.NotifyUpdatePrivilege()
 	case ast.FlushTiDBPlugin:

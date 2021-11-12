@@ -279,6 +279,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	e.kvRanges = kvRanges
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// In a test case IndexReaderExecutor is mocked and e.table is nil.
+	// Avoid sending distsql request to TIKV.
 	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}

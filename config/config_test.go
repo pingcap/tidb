@@ -344,7 +344,8 @@ spilled-file-encryption-method = "aes128-ctr"
 	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
 	require.NoError(t, conf.Load(configFile))
 
-	// Make sure the example config is the same as default config.
+	// Make sure the example config is the same as default config except `auto_tls`.
+	conf.Security.AutoTLS = false
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
