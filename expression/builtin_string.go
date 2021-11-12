@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"golang.org/x/text/transform"
 )
 
 var (
@@ -1144,21 +1143,25 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 
 	// Since charset is already validated and set from getFunction(), there's no
 	// need to get charset from args again.
-	encoding, _ := charset.Lookup(b.tp.Charset)
+	enc := charset.NewEncoding(b.tp.Charset)
 	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
 	// return with error.
-	if encoding == nil {
+	if enc.Name() == "" {
 		return "", true, errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
 	}
 	// if expr is binary string and convert meet error, we should return NULL.
 	if types.IsBinaryStr(b.args[0].GetType()) {
-		target, _, err := transform.String(encoding.NewEncoder(), expr)
+		target, err := enc.EncodeString(expr)
 		if err != nil {
 			return "", true, err
 		}
 
 		// we should convert target into utf8 internal.
-		exprInternal, _, _ := transform.String(encoding.NewDecoder(), target)
+		exprInternal, err := enc.DecodeString(target)
+		if err != nil {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return "", true, nil
+		}
 		return exprInternal, false, nil
 	}
 	if types.IsBinaryStr(b.tp) {
@@ -1166,7 +1169,6 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 		expr, err = enc.EncodeString(expr)
 		return expr, false, err
 	}
-	enc := charset.NewEncoding(b.tp.Charset)
 	return string(enc.EncodeInternal(nil, []byte(expr))), false, nil
 }
 
