@@ -676,8 +676,8 @@ func (s *testSuiteWithData) TestUsingAndNaturalJoinSchema(c *C) {
 
 	var input []string
 	var output []struct {
-		SQL  string
-		Res  []string
+		SQL string
+		Res []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {

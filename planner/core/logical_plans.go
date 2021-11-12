@@ -149,7 +149,7 @@ type LogicalJoin struct {
 	// fullSchema contains all the columns that the Join can output. It's ordered as [outer schema..., inner schema...].
 	// This is useful for natural joins and "using" joins. In these cases, the join key columns from the
 	// inner side (or the right side when it's an inner join) will not be in the schema of Join.
-	// But upper operators should be able to find those "redundant" columns, and user also can specificly select
+	// But upper operators should be able to find those "redundant" columns, and the user also can specifically select
 	// those columns, so we put the "redundant" columns here to make them be able to be found.
 	//
 	// For example:
