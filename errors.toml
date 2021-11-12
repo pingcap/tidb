@@ -1231,6 +1231,11 @@ error = '''
 Operand should contain %d column(s)
 '''
 
+["planner:1242"]
+error = '''
+Subquery returns more than 1 row
+'''
+
 ["planner:1247"]
 error = '''
 Reference '%-.64s' not supported (%s)
