@@ -1534,7 +1534,7 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 		}
 		var expr expression.Expression
 		expr, err = expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), p.data[ith], v)
-		expr.SetCharsetAndCollation(f.CharsetAndCollation(sctx))
+		expr.SetCharsetAndCollation(f.CharsetAndCollation())
 		var val int64
 		val, isNull, err = expr.EvalInt(sctx, chunk.Row{})
 		return val > 0
