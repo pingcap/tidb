@@ -768,7 +768,8 @@ func (tr *TableRestore) postProcess(
 				tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
 			}
 
-			remoteChecksum, err := DoChecksum(ctx, tr.tableInfo)
+			var remoteChecksum *RemoteChecksum
+			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
 			if err != nil {
 				return false, err
 			}
@@ -795,7 +796,8 @@ func (tr *TableRestore) postProcess(
 			nextStage = checkpoints.CheckpointStatusChecksumSkipped
 		}
 
-		if err == nil {
+		// Don't call FinishTable when other lightning will calculate checksum.
+		if err == nil && !hasDupe && needChecksum {
 			err = metaMgr.FinishTable(ctx)
 		}
 
