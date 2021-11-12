@@ -29,7 +29,11 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testDBSuite8) TestAlterTableAttributes(c *C) {
+var _ = SerialSuites(&testAttributesDDLSerialSuite{})
+
+type testAttributesDDLSerialSuite struct{}
+
+func (s *testAttributesDDLSerialSuite) TestAlterTableAttributes(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
@@ -64,7 +68,7 @@ func (s *testDBSuite8) TestAlterTableAttributes(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testDBSuite8) TestAlterTablePartitionAttributes(c *C) {
+func (s *testAttributesDDLSerialSuite) TestAlterTablePartitionAttributes(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
@@ -105,7 +109,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(err, IsNil)
 }
 
-func (s *testDBSuite8) TestTruncateTable(c *C) {
+func (s *testAttributesDDLSerialSuite) TestTruncateTable(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
@@ -165,7 +169,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows3[0][3], Not(Equals), rows2[0][3])
 }
 
-func (s *testDBSuite8) TestRenameTable(c *C) {
+func (s *testAttributesDDLSerialSuite) TestRenameTable(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
@@ -225,7 +229,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows3[0][3], Equals, rows2[0][3])
 }
 
-func (s *testDBSuite8) TestRecoverTable(c *C) {
+func (s *testAttributesDDLSerialSuite) TestRecoverTable(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
@@ -279,7 +283,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows1[1][3], Equals, rows[1][3])
 }
 
-func (s *testDBSuite8) TestFlashbackTable(c *C) {
+func (s *testAttributesDDLSerialSuite) TestFlashbackTable(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
@@ -350,7 +354,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows2[1][3], Equals, rows[1][3])
 }
 
-func (s *testDBSuite8) TestDropTable(c *C) {
+func (s *testAttributesDDLSerialSuite) TestDropTable(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
@@ -403,7 +407,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(len(rows), Equals, 0)
 }
 
-func (s *testDBSuite8) TestCreateWithSameName(c *C) {
+func (s *testAttributesDDLSerialSuite) TestCreateWithSameName(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
@@ -480,7 +484,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(len(rows), Equals, 0)
 }
 
-func (s *testDBSuite8) TestPartition(c *C) {
+func (s *testAttributesDDLSerialSuite) TestPartition(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
@@ -553,7 +557,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows3[1][3], Equals, rows2[1][3])
 }
 
-func (s *testDBSuite8) TestDropSchema(c *C) {
+func (s *testAttributesDDLSerialSuite) TestDropSchema(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
@@ -590,7 +594,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(len(rows), Equals, 0)
 }
 
-func (s *testDBSuite8) TestDefaultKeyword(c *C) {
+func (s *testAttributesDDLSerialSuite) TestDefaultKeyword(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
