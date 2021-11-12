@@ -340,6 +340,30 @@ func TestShowCreateView(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestShowCreatePolicy(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SHOW CREATE PLACEMENT POLICY `test`.`policy_x`").
+		WillReturnRows(sqlmock.NewRows([]string{"Policy", "Create Policy"}).
+			AddRow("policy_x", "CREATE PLACEMENT POLICY `policy_x` LEARNERS=1"))
+
+	createPolicySQL, err := ShowCreatePolicy(conn, "test", "policy_x")
+	require.NoError(t, err)
+	require.Equal(t, "CREATE PLACEMENT POLICY `policy_x` LEARNERS=1", createPolicySQL)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+}
+
+
 func TestGetSuitableRows(t *testing.T) {
 	t.Parallel()
 

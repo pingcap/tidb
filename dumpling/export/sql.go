@@ -92,6 +92,21 @@ func ShowCreateTable(db *sql.Conn, database, table string) (string, error) {
 	return oneRow[1], nil
 }
 
+// ShowCreatePolicy constructs the create policy SQL for a specified table
+// returns (createPoilicySQL, error)
+func ShowCreatePolicy(db *sql.Conn, database, policy string) (string, error) {
+	var oneRow [2]string
+	handleOneRow := func(rows *sql.Rows) error {
+		return rows.Scan(&oneRow[0], &oneRow[1])
+	}
+	query := fmt.Sprintf("SHOW CREATE PLACEMENT POLICY `%s`.`%s`", escapeString(database), escapeString(policy))
+	err := simpleQuery(db, query, handleOneRow)
+	if err != nil {
+		return "", errors.Annotatef(err, "sql: %s", query)
+	}
+	return oneRow[1], nil
+}
+
 // ShowCreateView constructs the create view SQL for a specified view
 // returns (createFakeTableSQL, createViewSQL, error)
 func ShowCreateView(db *sql.Conn, database, view string) (createFakeTableSQL string, createRealViewSQL string, err error) {
