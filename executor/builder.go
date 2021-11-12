@@ -4681,7 +4681,9 @@ func (b *executorBuilder) readFromCache(tblInfo *model.TableInfo, startTS uint64
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Error("Update cache table Log Info meet panic", zap.Stack("stack"))
+				logutil.BgLogger().Error("panic in the recoverable goroutine",
+					zap.Reflect("r", r),
+					zap.Stack("stack trace"))
 			}
 		}()
 		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
