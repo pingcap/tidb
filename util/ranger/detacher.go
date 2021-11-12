@@ -103,7 +103,7 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 	if !ok {
 		return -1
 	}
-	_, collation := expr.CharsetAndCollation(f.GetCtx())
+	_, collation := expr.CharsetAndCollation()
 	switch f.FuncName.L {
 	case ast.LogicOr:
 		dnfItems := expression.FlattenDNFConditions(f)
