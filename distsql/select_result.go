@@ -461,8 +461,8 @@ func (r *selectResult) memConsume(bytes int64) {
 // Close closes selectResult.
 func (r *selectResult) Close() error {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.exit = true
-	r.mu.Unlock()
 	if r.feedback.Actual() >= 0 {
 		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}
