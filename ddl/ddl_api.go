@@ -5399,10 +5399,10 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
-
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("create index"))
 	}
