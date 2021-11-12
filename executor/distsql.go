@@ -337,8 +337,8 @@ type IndexLookUpExecutor struct {
 
 	// All fields above are immutable.
 
-	idxWorkerWg sync.WaitGroup
-	tblWorkerWg sync.WaitGroup
+	idxWorkerWg *sync.WaitGroup
+	tblWorkerWg *sync.WaitGroup
 	finished    chan struct{}
 
 	mu                  sync.Mutex
@@ -471,8 +471,8 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
-	e.idxWorkerWg = sync.WaitGroup{}
-	e.tblWorkerWg = sync.WaitGroup{}
+	e.idxWorkerWg = &sync.WaitGroup{}
+	e.tblWorkerWg = &sync.WaitGroup{}
 
 	var err error
 	if e.corColInIdxSide {
@@ -540,7 +540,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	}
 	tps := e.getRetTpsByHandle()
 	idxID := e.getIndexPlanRootID()
-	idxWorkerWg := &e.idxWorkerWg
+	idxWorkerWg := e.idxWorkerWg
 	idxWorkerWg.Add(1)
 	go func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
@@ -631,7 +631,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 // startTableWorker launchs some background goroutines which pick tasks from workCh and execute the task.
 func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency()
-	tblWorkerWg := &e.tblWorkerWg
+	tblWorkerWg := e.tblWorkerWg
 	tblWorkerWg.Add(lookupConcurrencyLimit)
 	workers := make([]*tableWorker, lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
@@ -713,7 +713,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	}
 	e.memTracker = nil
 	e.resultCurr = nil
-	resultCh, idxWorkerWg, tblWorkerWg := e.resultCh, &e.idxWorkerWg, &e.tblWorkerWg
+	resultCh, idxWorkerWg, tblWorkerWg := e.resultCh, e.idxWorkerWg, e.tblWorkerWg
 	e.mu.Unlock()
 	// Drain the resultCh and discard the result, in case that Next() doesn't fully
 	// consume the data, background worker still writing to resultCh and block forever.
