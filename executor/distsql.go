@@ -590,9 +590,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				result.Close()
 				e.mu.Unlock()
 				break
-			} else {
-				e.pendingIndexResults = result
 			}
+			e.pendingIndexResults = result
 			e.mu.Unlock()
 			worker.batchSize = initBatchSize
 			if worker.batchSize > worker.maxBatchSize {

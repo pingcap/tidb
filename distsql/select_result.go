@@ -214,19 +214,28 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			}
 			return nil
 		}
+
+		r.mu.Lock()
+		if r.exit {
+			r.mu.Unlock()
+			break
+		}
 		r.selectResp = new(tipb.SelectResponse)
 		err = r.selectResp.Unmarshal(resultSubset.GetData())
 		if err != nil {
+			r.mu.Unlock()
 			return errors.Trace(err)
 		}
 		respSize := int64(r.selectResp.Size())
 		atomic.StoreInt64(&r.selectRespSize, respSize)
 		r.memConsume(respSize)
 		if err := r.selectResp.Error; err != nil {
+			r.mu.Unlock()
 			return dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
 		}
 		sessVars := r.ctx.GetSessionVars()
 		if atomic.LoadUint32(&sessVars.Killed) == 1 {
+			r.mu.Unlock()
 			return errors.Trace(errQueryInterrupted)
 		}
 		sc := sessVars.StmtCtx
@@ -238,25 +247,20 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		}
 		r.partialCount++
 
-		r.mu.Lock()
-		if r.exit {
-			r.mu.Unlock()
-			break
-		} else {
-			hasStats, ok := resultSubset.(CopRuntimeStats)
-			if ok {
-				copStats := hasStats.GetCopRuntimeStats()
-				if copStats != nil {
-					r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime())
-					copStats.CopTime = duration
-					sc.MergeExecDetails(&copStats.ExecDetails, nil)
-				}
+		hasStats, ok := resultSubset.(CopRuntimeStats)
+		if ok {
+			copStats := hasStats.GetCopRuntimeStats()
+			if copStats != nil {
+				r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime())
+				copStats.CopTime = duration
+				sc.MergeExecDetails(&copStats.ExecDetails, nil)
 			}
 		}
 		r.mu.Unlock()
 		if len(r.selectResp.Chunks) != 0 {
 			break
 		}
+		r.mu.Unlock()
 	}
 	return nil
 }
