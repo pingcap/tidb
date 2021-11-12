@@ -501,6 +501,7 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 // useMaxTS returns true when meets following conditions:
 //  1. ctx is auto commit tagged.
 //  2. plan is point get by pk.
+//  3. not a cache table.
 func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 	if !plannercore.IsAutoCommitTxn(ctx) {
 		return false
@@ -509,9 +510,15 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 	if !ok {
 		return false
 	}
-	isUniqueIndex := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
-	isCacheTable := v.TblInfo != nil && (v.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable)
-	return isUniqueIndex && !isCacheTable
+	noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
+	if !noSecondRead {
+		return false
+	}
+
+	if v.TblInfo != nil && (v.TblInfo.TableCacheStatusType != model.TableCacheStatusDisable) {
+		return false
+	}
+	return true
 }
 
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement
