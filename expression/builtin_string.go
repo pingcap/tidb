@@ -1703,12 +1703,7 @@ func (b *builtinHexStrArgSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-	dBytes := hack.Slice(d)
-	dBytes, err = b.encoding.Encode(nil, dBytes)
-	if err != nil {
-		return d, false, err
-	}
-	return strings.ToUpper(hex.EncodeToString(dBytes)), false, nil
+	return strings.ToUpper(hex.EncodeToString(hack.Slice(d))), false, nil
 }
 
 type builtinHexIntArgSig struct {
