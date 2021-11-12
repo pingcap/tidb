@@ -154,10 +154,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
 			switch diff.Type {
-			case model.ActionAlterTableAlterPartition:
-				partitionID := opt.TableID
-				// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
-				return []int64{partitionID}, b.applyPlacementUpdate(placement.GroupID(partitionID))
 			case model.ActionTruncateTablePartition:
 				// Reduce the impact on DML when executing partition DDL. eg.
 				// While session 1 performs the DML operation associated with partition 1,
@@ -200,12 +196,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 				return nil, errors.Trace(err)
 			}
 			tblIDs = append(tblIDs, affectedIDs...)
-		}
-	} else {
-		switch diff.Type {
-		case model.ActionAlterTableAlterPartition:
-			// If there is no AffectedOpts, It means the job is in Public -> GlobalTxnState phase
-			return []int64{}, nil
 		}
 	}
 	return tblIDs, nil
