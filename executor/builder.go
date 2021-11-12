@@ -4682,7 +4682,7 @@ func (b *executorBuilder) readFromCache(tblInfo *model.TableInfo, startTS uint64
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Error("Update cache table Log Info meet panic", zap.Any("panic", r), zap.Stack("stack"))
+				log.Error("Update cache table Log Info meet panic", zap.Stack("stack"))
 			}
 		}()
 		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
