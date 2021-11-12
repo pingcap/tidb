@@ -4678,19 +4678,19 @@ func (b *executorBuilder) readFromCache(tblInfo *model.TableInfo, startTS uint64
 	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS)
 	if cacheData != nil {
 		return cacheData
-	} else {
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-				}
-			}()
-			if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
-				err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
-				if err != nil {
-					log.Warn("Update Lock Info Error")
-				}
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error("Update cache table Log Info meet panic", zap.Any("panic", r), zap.Stack("stack"))
 			}
 		}()
-	}
+		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
+			if err != nil {
+				log.Warn("Update Lock Info Error")
+			}
+		}
+	}()
 	return nil
 }
