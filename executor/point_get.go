@@ -60,7 +60,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	}
 
 	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.readFromCache(p.TblInfo, startTS)
+		e.cacheTable = b.getCacheTable(p.TblInfo, startTS)
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
@@ -154,6 +154,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
 		e.snapshot = e.ctx.GetSnapshotWithTS(snapshotTS)
+	}
+	if e.cacheTable != nil {
+		e.snapshot = cacheTableSnapshot{e.snapshot, e.cacheTable}
 	}
 	if err := e.verifyTxnScope(); err != nil {
 		return err
@@ -406,10 +409,6 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 			}
 		}
 		// fallthrough to snapshot get.
-	}
-	// Cache table should get value from cacheBuffer
-	if e.cacheTable != nil {
-		return e.cacheTable.Get(ctx, key)
 	}
 
 	lock := e.tblInfo.Lock

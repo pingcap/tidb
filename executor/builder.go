@@ -4367,7 +4367,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		columns:          plan.Columns,
 	}
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.readFromCache(plan.TblInfo, startTS)
+		e.cacheTable = b.getCacheTable(plan.TblInfo, startTS)
 	}
 	if plan.TblInfo.TempTableType != model.TempTableNone {
 		// Temporary table should not do any lock operations
@@ -4668,7 +4668,7 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 	return nil
 }
 
-func (b *executorBuilder) readFromCache(tblInfo *model.TableInfo, startTS uint64) kv.MemBuffer {
+func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64) kv.MemBuffer {
 	tbl, ok := b.is.TableByID(tblInfo.ID)
 	if !ok {
 		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
