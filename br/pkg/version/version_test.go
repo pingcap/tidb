@@ -339,8 +339,8 @@ func TestDetectServerInfo(t *testing.T) {
 		if info.ServerVersion == nil {
 			require.Nil(t, expectVer, cmt)
 		} else {
-      fmt.Printf("%v, %v\n", *info.ServerVersion, *expectVer)
-      require.True(t, info.ServerVersion.Equal(*expectVer))
+			fmt.Printf("%v, %v\n", *info.ServerVersion, *expectVer)
+			require.True(t, info.ServerVersion.Equal(*expectVer))
 		}
 		require.NoError(t, mock.ExpectationsWereMet(), cmt)
 	}
@@ -355,9 +355,9 @@ func makeVersion(major, minor, patch int64, preRelease string) *semver.Version {
 	}
 }
 
-func (s *checkSuite) TestFetchVersion(c *C) {
+func TestFetchVersion(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	tidbVersion := `Release Version: v5.2.1
 Edition: Community
@@ -373,20 +373,21 @@ Check Table Before Drop: false`
 	mock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnRows(sqlmock.
 		NewRows([]string{""}).AddRow(tidbVersion))
 	versionStr, err := FetchVersion(ctx, db)
-	c.Assert(err, IsNil)
-	c.Assert(versionStr, Equals, tidbVersion)
+	require.NoError(t, err)
+	require.Equal(t, tidbVersion, versionStr)
 
 	mock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnError(errors.New("mock failure"))
 	mock.ExpectQuery("SELECT version\\(\\);").WillReturnRows(sqlmock.
 		NewRows([]string{""}).AddRow("5.7.25"))
 	versionStr, err = FetchVersion(ctx, db)
-	c.Assert(err, IsNil)
-	c.Assert(versionStr, Equals, "5.7.25")
+	require.NoError(t, err)
+	require.Equal(t, "5.7.25", versionStr)
 
 	mock.ExpectQuery("SELECT tidb_version\\(\\);").WillReturnError(errors.New("mock failure"))
 	mock.ExpectQuery("SELECT version\\(\\);").WillReturnError(errors.New("mock failure"))
 
 	_, err = FetchVersion(ctx, db)
-	c.Assert(err, ErrorMatches, ".*mock failure")
+	require.Error(t, err)
+	require.Regexp(t, ".*mock failure", err.Error())
 
 }
