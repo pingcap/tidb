@@ -1151,19 +1151,12 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	// if expr is binary string and convert meet error, we should return NULL.
 	if types.IsBinaryStr(b.args[0].GetType()) {
-		target, err := enc.EncodeString(expr)
+		target, err := enc.DecodeString(expr)
 		if err != nil {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			return "", true, nil
 		}
-
-		// we should convert target into utf8 internal.
-		exprInternal, err := enc.DecodeString(target)
-		if err != nil {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			return "", true, nil
-		}
-		return exprInternal, false, nil
+		return target, false, nil
 	}
 	if types.IsBinaryStr(b.tp) {
 		enc := charset.NewEncoding(b.args[0].GetType().Charset)

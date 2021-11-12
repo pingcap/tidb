@@ -698,18 +698,12 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 		}
 		exprI := expr.GetString(i)
 		if isBinaryStr {
-			target, err := enc.EncodeString(exprI)
-			if err != nil {
-				result.AppendNull()
-				continue
-			}
-			// we should convert target into utf8 internal.
-			exprInternal, err := enc.DecodeString(target)
+			target, err := enc.DecodeString(exprI)
 			if err != nil {
 				result.AppendNull()
 				continue
 			} else {
-				result.AppendString(exprInternal)
+				result.AppendString(target)
 			}
 		} else {
 			if isRetBinary {

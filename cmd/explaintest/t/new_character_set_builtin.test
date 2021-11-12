@@ -57,6 +57,13 @@ select hex(convert('ㅂ' using gbk)), convert('ㅂ' using gbk);
 select convert(a using binary) from t;
 select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
 select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
+drop table if exists t;
+create table t(a binary(10));
+insert into t values (0xe240), (0x01e240);
+set @@tidb_enable_vectorized_expression = true;
+select hex(convert(a using gbk)), convert(a using gbk) from t;
+set @@tidb_enable_vectorized_expression = false;
+select hex(convert(a using gbk)), convert(a using gbk) from t;
 
 -- test for builtin function md5()
 drop table if exists t;
