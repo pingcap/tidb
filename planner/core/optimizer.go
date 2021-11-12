@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/lock"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 )
 
@@ -82,9 +84,44 @@ var optRuleList = []logicalOptRule{
 	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 }
 
+type logicalOptimizeOp struct {
+	// tracer is goring to track optimize steps during rule optimizing
+	tracer *tracing.LogicalOptimizeTracer
+}
+
+func defaultLogicalOptimizeOption() *logicalOptimizeOp {
+	return &logicalOptimizeOp{}
+}
+
+func (op *logicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.LogicalOptimizeTracer) *logicalOptimizeOp {
+	op.tracer = tracer
+	return op
+}
+
+func (op *logicalOptimizeOp) appendBeforeRuleOptimize(name string, before LogicalPlan) {
+	if op.tracer == nil {
+		return
+	}
+	op.tracer.AppendRuleTracerBeforeRuleOptimize(name, before.buildLogicalPlanTrace())
+}
+
+func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp, reason, action string) {
+	if op.tracer == nil {
+		return
+	}
+	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason, action)
+}
+
+func (op *logicalOptimizeOp) trackAfterRuleOptimize(after LogicalPlan) {
+	if op.tracer == nil {
+		return
+	}
+	op.tracer.TrackLogicalPlanAfterRuleOptimize(after.buildLogicalPlanTrace())
+}
+
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
-	optimize(context.Context, LogicalPlan) (LogicalPlan, error)
+	optimize(context.Context, LogicalPlan, *logicalOptimizeOp) (LogicalPlan, error)
 	name() string
 }
 
@@ -118,6 +155,76 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 		}
 	}
 	return nil
+}
+
+// VisitInfo4PrivCheck generates privilege check infos because privilege check of local temporary tables is different
+// with normal tables. `CREATE` statement needs `CREATE TEMPORARY TABLE` privilege from the database, and subsequent
+// statements do not need any privileges.
+func VisitInfo4PrivCheck(is infoschema.InfoSchema, node ast.Node, vs []visitInfo) (privVisitInfo []visitInfo) {
+	if node == nil {
+		return vs
+	}
+
+	switch stmt := node.(type) {
+	case *ast.CreateTableStmt:
+		privVisitInfo = make([]visitInfo, 0, len(vs))
+		for _, v := range vs {
+			if v.privilege == mysql.CreatePriv {
+				if stmt.TemporaryKeyword == ast.TemporaryLocal {
+					// `CREATE TEMPORARY TABLE` privilege is required from the database, not the table.
+					newVisitInfo := v
+					newVisitInfo.privilege = mysql.CreateTMPTablePriv
+					newVisitInfo.table = ""
+					privVisitInfo = append(privVisitInfo, newVisitInfo)
+				} else {
+					// If both the normal table and temporary table already exist, we need to check the privilege.
+					privVisitInfo = append(privVisitInfo, v)
+				}
+			} else {
+				// `CREATE TABLE LIKE tmp` or `CREATE TABLE FROM SELECT tmp` in the future.
+				if needCheckTmpTablePriv(is, v) {
+					privVisitInfo = append(privVisitInfo, v)
+				}
+			}
+		}
+	case *ast.DropTableStmt:
+		// Dropping a local temporary table doesn't need any privileges.
+		if stmt.IsView {
+			privVisitInfo = vs
+		} else {
+			privVisitInfo = make([]visitInfo, 0, len(vs))
+			if stmt.TemporaryKeyword != ast.TemporaryLocal {
+				for _, v := range vs {
+					if needCheckTmpTablePriv(is, v) {
+						privVisitInfo = append(privVisitInfo, v)
+					}
+				}
+			}
+		}
+	case *ast.GrantStmt, *ast.DropSequenceStmt, *ast.DropPlacementPolicyStmt:
+		// Some statements ignore local temporary tables, so they should check the privileges on normal tables.
+		privVisitInfo = vs
+	default:
+		privVisitInfo = make([]visitInfo, 0, len(vs))
+		for _, v := range vs {
+			if needCheckTmpTablePriv(is, v) {
+				privVisitInfo = append(privVisitInfo, v)
+			}
+		}
+	}
+	return
+}
+
+func needCheckTmpTablePriv(is infoschema.InfoSchema, v visitInfo) bool {
+	if v.db != "" && v.table != "" {
+		// Other statements on local temporary tables except `CREATE` do not check any privileges.
+		tb, err := is.TableByName(model.NewCIStr(v.db), model.NewCIStr(v.table))
+		// If the table doesn't exist, we do not report errors to avoid leaking the existence of the table.
+		if err == nil && tb.Meta().TempTableType == model.TempTableLocal {
+			return false
+		}
+	}
+	return true
 }
 
 // CheckTableLock checks the table lock.
@@ -264,6 +371,15 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
+	opt := defaultLogicalOptimizeOption()
+	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
+	if stmtCtx.EnableOptimizeTrace {
+		tracer := &tracing.LogicalOptimizeTracer{Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0)}
+		opt = opt.withEnableOptimizeTracer(tracer)
+		defer func() {
+			stmtCtx.LogicalOptimizeTrace = tracer
+		}()
+	}
 	var err error
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
@@ -272,10 +388,12 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		logic, err = rule.optimize(ctx, logic)
+		opt.appendBeforeRuleOptimize(rule.name(), logic)
+		logic, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
+		opt.trackAfterRuleOptimize(logic)
 	}
 	return logic, err
 }

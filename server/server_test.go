@@ -25,7 +25,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -37,14 +36,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -53,23 +48,7 @@ var (
 )
 
 func TestT(t *testing.T) {
-	defaultConfig := config.NewConfig()
-	globalConfig := config.GetGlobalConfig()
-	// Test for issue 22162. the global config shouldn't be changed by other pkg init function.
-	if !reflect.DeepEqual(defaultConfig, globalConfig) {
-		t.Fatalf("%#v != %#v\n", defaultConfig, globalConfig)
-	}
-
-	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
-	// Set schema lease to avoid it from making CI slow.
-	session.SetSchemaLease(0)
 	CustomVerboseFlag = true
-	logLevel := os.Getenv("log_level")
-	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
@@ -2065,9 +2044,10 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
 				errCode:           1365, // div by zero
 			},
 			{
-				stmt:            "CREATE TABLE test_client_errors2 (a int primary key, b int primary key)",
-				incrementErrors: true,
-				errCode:         1068, // multiple pkeys
+				stmt:              "CREATE TABLE test_client_errors2 (a int primary key, b int primary key)",
+				incrementWarnings: true,
+				incrementErrors:   true,
+				errCode:           1068, // multiple pkeys
 			},
 			{
 				stmt:            "gibberish",
