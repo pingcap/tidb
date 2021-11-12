@@ -199,6 +199,11 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		r.mu.Lock()
+		if r.exit {
+			r.mu.Unlock()
+			break
+		}
 		if r.selectResp != nil {
 			r.memConsume(-atomic.LoadInt64(&r.selectRespSize))
 		}
@@ -212,13 +217,8 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 				metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
 				r.durationReported = true
 			}
-			return nil
-		}
-
-		r.mu.Lock()
-		if r.exit {
 			r.mu.Unlock()
-			break
+			return nil
 		}
 		r.selectResp = new(tipb.SelectResponse)
 		err = r.selectResp.Unmarshal(resultSubset.GetData())

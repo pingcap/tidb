@@ -471,6 +471,8 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
+	e.idxWorkerWg = sync.WaitGroup{}
+	e.tblWorkerWg = sync.WaitGroup{}
 
 	var err error
 	if e.corColInIdxSide {
@@ -538,7 +540,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	}
 	tps := e.getRetTpsByHandle()
 	idxID := e.getIndexPlanRootID()
-	e.idxWorkerWg.Add(1)
+	idxWorkerWg := &e.idxWorkerWg
+	idxWorkerWg.Add(1)
 	go func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		worker := &indexWorker{
@@ -620,7 +623,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		}
 		close(workCh)
 		close(e.resultCh)
-		e.idxWorkerWg.Done()
+		idxWorkerWg.Done()
 	}()
 	return nil
 }
@@ -628,7 +631,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 // startTableWorker launchs some background goroutines which pick tasks from workCh and execute the task.
 func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency()
-	e.tblWorkerWg.Add(lookupConcurrencyLimit)
+	tblWorkerWg := &e.tblWorkerWg
+	tblWorkerWg.Add(lookupConcurrencyLimit)
 	workers := make([]*tableWorker, lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		workerID := i
@@ -648,7 +652,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			defer trace.StartRegion(ctx1, "IndexLookUpTableWorker").End()
 			worker.pickAndExecTask(ctx1)
 			cancel()
-			e.tblWorkerWg.Done()
+			tblWorkerWg.Done()
 		}()
 	}
 	e.tableWorkers = workers
@@ -709,14 +713,15 @@ func (e *IndexLookUpExecutor) Close() error {
 	}
 	e.memTracker = nil
 	e.resultCurr = nil
+	resultCh, idxWorkerWg, tblWorkerWg := e.resultCh, &e.idxWorkerWg, &e.tblWorkerWg
 	e.mu.Unlock()
 	// Drain the resultCh and discard the result, in case that Next() doesn't fully
 	// consume the data, background worker still writing to resultCh and block forever.
 	go func() {
-		for range e.resultCh {
+		for range resultCh {
 		}
-		e.idxWorkerWg.Wait()
-		e.tblWorkerWg.Wait()
+		idxWorkerWg.Wait()
+		tblWorkerWg.Wait()
 	}()
 	return nil
 }
