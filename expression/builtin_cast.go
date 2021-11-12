@@ -1908,7 +1908,7 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
-// WrapWithCastAsStringWithTp wraps `expr` with converting charset.
+// WrapWithCharsetConvert wraps `expr` with converting charset.
 func WrapWithCharsetConvert(ctx sessionctx.Context, expr Expression, funcName string) Expression {
 	retTp := expr.GetType()
 	if _, err := charset.GetDefaultCollationLegacy(retTp.Charset); err != nil {
