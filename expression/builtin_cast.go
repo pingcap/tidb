@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -1905,6 +1906,28 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	types.SetBinChsClnFlag(tp)
 	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
 	return BuildCastFunction(ctx, expr, tp)
+}
+
+// WrapWithCastAsStringWithTp wraps `expr` with converting charset.
+func WrapWithCharsetConvert(ctx sessionctx.Context, expr Expression, funcName string) Expression {
+	retTp := expr.GetType()
+	if _, err := charset.GetDefaultCollationLegacy(retTp.Charset); err != nil {
+		const charsetConv = "charset_convert"
+		switch funcName {
+		case ast.Hex:
+			bf, err := newBaseBuiltinFunc(ctx, charsetConv, []Expression{expr}, retTp.EvalType())
+			if err != nil {
+				return expr
+			}
+			chsSig := &builtinCharsetConvSig{bf}
+			return &ScalarFunction{
+				FuncName: model.NewCIStr(charsetConv),
+				RetType:  retTp,
+				Function: chsSig,
+			}
+		}
+	}
+	return expr
 }
 
 // WrapWithCastAsString wraps `expr` with `cast` if the return type of expr is
