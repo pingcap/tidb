@@ -28,7 +28,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 func TestAdminCheckTableFailed(t *testing.T) {
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
