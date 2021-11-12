@@ -463,6 +463,8 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
 	// situation.
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.initRuntimeStats()
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -705,6 +707,8 @@ func (e *IndexLookUpExecutor) Close() error {
 		}
 		worker.mu.Unlock()
 	}
+	e.memTracker = nil
+	e.resultCurr = nil
 	e.mu.Unlock()
 	// Drain the resultCh and discard the result, in case that Next() doesn't fully
 	// consume the data, background worker still writing to resultCh and block forever.
@@ -713,8 +717,6 @@ func (e *IndexLookUpExecutor) Close() error {
 		}
 		e.idxWorkerWg.Wait()
 		e.tblWorkerWg.Wait()
-		e.memTracker = nil
-		e.resultCurr = nil
 	}()
 	return nil
 }
