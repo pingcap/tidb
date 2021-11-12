@@ -64,6 +64,7 @@ func (b *builtinCharsetConvSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
+	enc := charset.NewEncoding(b.args[0].GetType().Charset)
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		var str string
@@ -72,6 +73,10 @@ func (b *builtinCharsetConvSig) vecEvalString(input *chunk.Chunk, result *chunk.
 			continue
 		}
 		str = buf.GetString(i)
+		str, err = enc.EncodeString(str)
+		if err != nil {
+			return err
+		}
 		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
 		if err != nil {
 			return err
