@@ -247,3 +247,14 @@ select char(12345678 using gbk);
 char(12345678 using gbk)
 糰N
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
+md5(compress(a))	md5(compress(b))	md5(compress(c))
+2198d4d3b06a6cba3f9275c7e364105c	5e587a14393aecf0629bb29dbd6b4379	905068487b6220f70bb71a48323826be
+set @@tidb_enable_vectorized_expression = true;
+select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
+md5(compress(a))	md5(compress(b))	md5(compress(c))
+2198d4d3b06a6cba3f9275c7e364105c	5e587a14393aecf0629bb29dbd6b4379	905068487b6220f70bb71a48323826be
+set @@tidb_enable_vectorized_expression = false;
