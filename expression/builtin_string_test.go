@@ -885,14 +885,16 @@ func TestConvert(t *testing.T) {
 		str           interface{}
 		cs            string
 		result        string
+		isNull        bool
 		hasBinaryFlag bool
 	}{
-		{"haha", "utf8", "haha", false},
-		{"haha", "ascii", "haha", false},
-		{"haha", "binary", "haha", true},
-		{"haha", "bInAry", "haha", true},
-		{types.NewBinaryLiteralFromUint(0x7e, -1), "BiNarY", "~", true},
-		{types.NewBinaryLiteralFromUint(0xe4b8ade696870a, -1), "uTf8", "中文\n", false},
+		{"haha", "utf8", "haha", false, false},
+		{"haha", "ascii", "haha", false, false},
+		{"haha", "binary", "haha", false, true},
+		{"haha", "bInAry", "haha", false, true},
+		{types.NewBinaryLiteralFromUint(0x7e, -1), "BiNarY", "~", true, true},
+		{types.NewBinaryLiteralFromUint(0x1e240, -1), "utf8", "", true, false},
+		{types.NewBinaryLiteralFromUint(0xe4b8ade696870a, -1), "uTf8", "中文\n", true, false},
 	}
 	for _, v := range tbl {
 		fc := funcs[ast.Convert]
@@ -908,8 +910,12 @@ func TestConvert(t *testing.T) {
 
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, types.KindString, r.Kind())
-		require.Equal(t, v.result, r.GetString())
+		if !v.isNull {
+			require.Equal(t, types.KindString, r.Kind())
+			require.Equal(t, v.result, r.GetString())
+		} else {
+			require.True(t, v.isNull)
+		}
 	}
 
 	// Test case for getFunction() error
@@ -1441,9 +1447,8 @@ func TestChar(t *testing.T) {
 		{"65", 16740, 67.5, "utf8", "AAdD", 0},           // large num
 		{"65", -1, 67.5, nil, "A\xff\xff\xff\xffD", 0},   // nagtive int
 		{"a", -1, 67.5, nil, "\x00\xff\xff\xff\xffD", 0}, // invalid 'a'
-		// TODO: Uncomment it when issue #29685 be closed
-		// {"65", -1, 67.5, "utf8", nil, 1},                 // with utf8, return nil
-		// {"a", -1, 67.5, "utf8", nil, 2},                  // with utf8, return nil
+		{"65", -1, 67.5, "utf8", nil, 1},                 // with utf8, return nil
+		{"a", -1, 67.5, "utf8", nil, 2},                  // with utf8, return nil
 		// TODO: Uncomment it when gbk be added into charsetInfos
 		// {"1234567", 1234567, 1234567, "gbk", "謬謬謬", 0},  // test char for gbk
 		// {"123456789", 123456789, 123456789, "gbk", nil, 3}, // invalid 123456789 in gbk

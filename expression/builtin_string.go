@@ -1153,7 +1153,8 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	if types.IsBinaryStr(b.args[0].GetType()) {
 		target, err := enc.EncodeString(expr)
 		if err != nil {
-			return "", true, err
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return "", true, nil
 		}
 
 		// we should convert target into utf8 internal.

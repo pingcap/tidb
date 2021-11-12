@@ -147,7 +147,7 @@ func (e *Encoding) validUTF8(src []byte) ([]byte, error) {
 	for len(src) > 0 {
 		r, size := utf8.DecodeRune(src)
 		if r == utf8.RuneError && size == 1 {
-			return resultBytes, e.generateErr(src, 3)
+			return resultBytes, e.generateErr(src, characterLengthUTF8(src))
 		}
 		src = src[size:]
 	}
@@ -161,7 +161,8 @@ func (e *Encoding) validUTF8String(src string) (string, error) {
 	for len(src) > 0 {
 		r, size := utf8.DecodeRuneInString(src)
 		if r == utf8.RuneError && size == 1 {
-			return resultStr, e.generateErr([]byte(src), 3)
+			srcBytes := []byte(src)
+			return resultStr, e.generateErr(srcBytes, characterLengthUTF8(srcBytes))
 		}
 		src = src[size:]
 	}
