@@ -112,3 +112,13 @@ select sha2(a, 256), sha2(b, 256), sha2(c, 256) from t;
 select sha2(a, 384), sha2(b, 384), sha2(c, 384) from t;
 select sha2(a, 514), sha2(b, 514), sha2(c, 514) from t;
 set @@tidb_enable_vectorized_expression = false;
+
+-- test for push md5() builtin function down to unistore
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(b) from t where md5(b) = 'a45d4af7b243e7f393fa09bed72ac73e';
+set @@tidb_enable_vectorized_expression = true;
+select md5(b) from t where md5(b) = 'a45d4af7b243e7f393fa09bed72ac73e';
+set @@tidb_enable_vectorized_expression = false;
+
