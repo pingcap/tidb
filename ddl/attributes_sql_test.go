@@ -355,6 +355,8 @@ func (s *testDBSuite8) TestDropTable(c *C) {
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
+	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
 		err := store.Close()
@@ -405,6 +407,8 @@ func (s *testDBSuite8) TestCreateWithSameName(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -553,6 +557,8 @@ func (s *testDBSuite8) TestDropSchema(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
