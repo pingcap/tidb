@@ -15,10 +15,14 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
+	"math"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/testkit"
@@ -331,6 +335,132 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows2[1][0], Equals, "schema/test/t3/p0")
 	c.Assert(rows2[1][2], Equals, `"key1=value1"`)
 	c.Assert(rows2[1][3], Equals, rows[1][3])
+}
+
+func (s *testDBSuite8) TestDropTable(c *C) {
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`)
+	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
+	}()
+
+	timeBeforeDrop, _, safePointSQL, resetGC := testkit.MockGC(tk)
+	defer resetGC()
+
+	// Set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// Set GC enable.
+	err = gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	gcWorker, err := gcworker.NewMockGCWorker(store)
+	c.Assert(err, IsNil)
+
+	// add rules
+	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	c.Assert(err, IsNil)
+	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
+	c.Assert(err, IsNil)
+	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	// drop table
+	_, err = tk.Exec(`drop table t1;`)
+	c.Assert(err, IsNil)
+
+	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
+	c.Assert(err, IsNil)
+	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	c.Assert(len(rows), Equals, 0)
+}
+
+func (s *testDBSuite8) TestCreateWithSameName(c *C) {
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`)
+	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
+	}()
+
+	timeBeforeDrop, _, safePointSQL, resetGC := testkit.MockGC(tk)
+	defer resetGC()
+
+	// Set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// Set GC enable.
+	err = gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	gcWorker, err := gcworker.NewMockGCWorker(store)
+	c.Assert(err, IsNil)
+
+	// add rules
+	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	c.Assert(err, IsNil)
+	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
+	c.Assert(err, IsNil)
+	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	// drop table
+	_, err = tk.Exec(`drop table t1;`)
+	c.Assert(err, IsNil)
+
+	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+
+	tk.MustExec(`create table t1 (c int)
+	PARTITION BY RANGE (c) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11)
+	);`)
+	// add rules
+	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	c.Assert(err, IsNil)
+	_, err = tk.Exec(`alter table t1 partition p1 attributes="key1=value1";`)
+	c.Assert(err, IsNil)
+	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	c.Assert(len(rows), Equals, 3)
+
+	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
+	c.Assert(err, IsNil)
+	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+
+	// drop table
+	_, err = tk.Exec(`drop table t1;`)
+	c.Assert(err, IsNil)
+	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
+	c.Assert(err, IsNil)
+	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	c.Assert(len(rows), Equals, 0)
 }
 
 func (s *testDBSuite8) TestPartition(c *C) {

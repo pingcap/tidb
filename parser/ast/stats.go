@@ -40,7 +40,7 @@ type AnalyzeTableStmt struct {
 	// HistogramOperation is set in "ANALYZE TABLE ... UPDATE/DROP HISTOGRAM ..." statement.
 	HistogramOperation HistogramOperationType
 	// ColumnNames indicate the columns whose statistics need to be collected.
-	ColumnNames  []*ColumnName
+	ColumnNames  []model.CIStr
 	ColumnChoice model.ColumnChoice
 }
 
@@ -129,7 +129,7 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 				if i != 0 {
 					ctx.WritePlain(",")
 				}
-				ctx.WriteName(columnName.Name.O)
+				ctx.WriteName(columnName.O)
 			}
 		}
 	}
@@ -144,7 +144,7 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WriteName(columnName.Name.O)
+			ctx.WriteName(columnName.O)
 		}
 	}
 	if n.IndexFlag {

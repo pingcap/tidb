@@ -2446,8 +2446,14 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 		bigints = append(bigints, val)
 	}
-	result := string(b.convertToBytes(bigints))
-	return result, false, nil
+
+	dBytes := b.convertToBytes(bigints)
+	resultBytes, err := charset.NewEncoding(b.tp.Charset).Decode(nil, dBytes)
+	if err != nil {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return "", true, nil
+	}
+	return string(resultBytes), false, nil
 }
 
 type charLengthFunctionClass struct {
