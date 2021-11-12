@@ -4669,7 +4669,6 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 }
 
 func (b *executorBuilder) readFromCache(tblInfo *model.TableInfo, startTS uint64) kv.MemBuffer {
-
 	tbl, ok := b.is.TableByID(tblInfo.ID)
 	if !ok {
 		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
