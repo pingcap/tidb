@@ -88,7 +88,7 @@ func NewCharsetConvertor(dataCharacterSet, dataInvalidCharReplace string) (*Char
 }
 
 func loadCharsetFromConfig(dataCharacterSet string) (Charset, error) {
-	switch dataCharacterSet {
+	switch strings.ToLower(dataCharacterSet) {
 	case "", "binary":
 		return Binary, nil
 	case "utf8mb4":

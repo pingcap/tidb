@@ -2597,37 +2597,37 @@ AnalyzeTableStmt:
 			AnalyzeOpts:    $9.([]ast.AnalyzeOpt),
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "UPDATE" "HISTOGRAM" "ON" ColumnNameList AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "UPDATE" "HISTOGRAM" "ON" IdentList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames:         []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames:        $7.([]*ast.ColumnName),
+			ColumnNames:        $7.([]model.CIStr),
 			AnalyzeOpts:        $8.([]ast.AnalyzeOpt),
 			HistogramOperation: ast.HistogramOperationUpdate,
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "DROP" "HISTOGRAM" "ON" ColumnNameList
+|	"ANALYZE" "TABLE" TableName "DROP" "HISTOGRAM" "ON" IdentList
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames:         []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames:        $7.([]*ast.ColumnName),
+			ColumnNames:        $7.([]model.CIStr),
 			HistogramOperation: ast.HistogramOperationDrop,
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "COLUMNS" ColumnNameList AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "COLUMNS" IdentList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames:   []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames:  $5.([]*ast.ColumnName),
+			ColumnNames:  $5.([]model.CIStr),
 			ColumnChoice: model.ColumnList,
 			AnalyzeOpts:  $6.([]ast.AnalyzeOpt)}
 	}
-|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "COLUMNS" ColumnNameList AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "COLUMNS" IdentList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames:     []*ast.TableName{$3.(*ast.TableName)},
 			PartitionNames: $5.([]model.CIStr),
-			ColumnNames:    $7.([]*ast.ColumnName),
+			ColumnNames:    $7.([]model.CIStr),
 			ColumnChoice:   model.ColumnList,
 			AnalyzeOpts:    $8.([]ast.AnalyzeOpt)}
 	}
