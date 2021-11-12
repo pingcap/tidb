@@ -901,9 +901,6 @@ func CutOne(b []byte) (data []byte, remain []byte, err error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	if l < 0 || l > len(b) {
-		return nil, nil, errors.New("Fail to peek the first encoded value")
-	}
 	return b[:l], b[l:], nil
 }
 
@@ -924,9 +921,6 @@ func SetRawValues(data []byte, values []types.Datum) error {
 		l, err := peek(data)
 		if err != nil {
 			return errors.Trace(err)
-		}
-		if l < 0 || l > len(data) {
-			return errors.New("Fail to peek the first encoded value")
 		}
 		values[i].SetRaw(data[:l:l])
 		data = data[l:]

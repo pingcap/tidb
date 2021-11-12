@@ -2293,7 +2293,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int, statsOptions *mod
 		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", CMSketchSizeLimit)
 	}
 	for key, v1Default := range analyzeOptionDefault {
-		// set values with table-level options or global default
+		// Set values with table-level options or global default.
 		if _, ok := optMap[key]; !ok {
 			valToSet := v1Default
 			if statsVer == statistics.Version2 {
@@ -2323,7 +2323,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int, statsOptions *mod
 					}
 				}
 			}
-			// analyzeOptionLimit could change, we can only check at planning instead of create/alter table
+			// analyzeOptionLimit could change, we can only check at planning instead of create/alter table.
 			if key != ast.AnalyzeOptSampleRate && valToSet > analyzeOptionLimit[key] {
 				return nil, errors.Errorf("value of analyze option %s should not be larger than %d", ast.AnalyzeOptionString[key], analyzeOptionLimit[key])
 			}

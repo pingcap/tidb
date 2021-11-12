@@ -1259,6 +1259,30 @@ func NewStatsOptions() *StatsOptions {
 	}
 }
 
+func (s *StatsOptions) GetBucketsInfo() string {
+	if s.Buckets == 0 {
+		return "default"
+	} else {
+		return strconv.FormatUint(s.Buckets, 10)
+	}
+}
+
+func (s *StatsOptions) GetTopNInfo() string {
+	if s.TopN == 0 {
+		return "default"
+	} else {
+		return strconv.FormatUint(s.TopN, 10)
+	}
+}
+
+func (s *StatsOptions) GetSampleRateInfo() string {
+	if s.SampleRate == 0 {
+		return "default"
+	} else {
+		return strconv.FormatFloat(s.SampleRate, 'f', -1, 64)
+	}
+}
+
 type ColumnChoice byte
 
 const (
