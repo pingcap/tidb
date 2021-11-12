@@ -355,7 +355,7 @@ func TestCacheTableBatchPointGet(t *testing.T) {
 	tk.MustExec("update bp_cache_tmp1 set v=999 where id=3")
 	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 999"))
 	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 999"))
-	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13) and u in (12, 13)").Check(testkit.Rows("3 13 103"))
+	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13) and u in (12, 13)").Check(testkit.Rows("3 13 999"))
 	tk.MustExec("delete from bp_cache_tmp1 where id=4")
 	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 4)").Check(testkit.Rows("1 11 101"))
 	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 14)").Check(testkit.Rows("1 11 101"))
