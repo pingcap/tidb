@@ -86,12 +86,12 @@ func (s testCharsetConvertorSuite) TestInvalidCharReplace(c *C) {
 }
 
 func (s testCharsetConvertorSuite) TestLoadCharsetFromConfig(c *C) {
-	cases := map[string]Charset {
-		"binary": Binary,
-		"BINARY": Binary,
-		"GBK": GBK,
-		"gbk": GBK,
-		"Gbk": GBK,
+	cases := map[string]Charset{
+		"binary":  Binary,
+		"BINARY":  Binary,
+		"GBK":     GBK,
+		"gbk":     GBK,
+		"Gbk":     GBK,
 		"gB18030": GB18030,
 		"GB18030": GB18030,
 	}
