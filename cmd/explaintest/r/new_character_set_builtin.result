@@ -234,20 +234,16 @@ char(a using gbk)	char(a using utf8)	char(a)
 A	A	A
 é‡¦	â@	â@
 NULL	[Í	[Í
-select char(a using gbk) from t;
-char(a using gbk)
-A
-é‡¦
-NULL
+select char(12345678 using gbk);
+char(12345678 using gbk)
+ç³°N
 set @@tidb_enable_vectorized_expression = true;
 select char(a using gbk), char(a using utf8), char(a) from t;
 char(a using gbk)	char(a using utf8)	char(a)
 A	A	A
 é‡¦	â@	â@
 NULL	[Í	[Í
-select char(a using gbk) from t;
-char(a using gbk)
-A
-é‡¦
-NULL
+select char(12345678 using gbk);
+char(12345678 using gbk)
+ç³°N
 set @@tidb_enable_vectorized_expression = false;
