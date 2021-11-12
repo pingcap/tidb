@@ -4931,6 +4931,9 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
+	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("rename index"))
+	}
 	duplicate, err := validateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
 	if duplicate {
 		return nil
@@ -5399,7 +5402,9 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("create index"))
+	}
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
 		colName := model.NewCIStr("expression_index")
@@ -5716,7 +5721,9 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	if err != nil {
 		return err
 	}
-
+	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		return errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("drop indexes"))
+	}
 	indexNames := make([]model.CIStr, 0, len(specs))
 	ifExists := make([]bool, 0, len(specs))
 	for _, spec := range specs {

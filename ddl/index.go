@@ -304,9 +304,6 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
-	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		return ver, errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("rename index"))
-	}
 
 	idx := tblInfo.FindIndexByName(from.L)
 	idx.Name = to
@@ -404,9 +401,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		return ver, errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("create index"))
 	}
 
 	var (
@@ -740,9 +734,6 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, indexNames, ifExists, err := getSchemaInfos(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		return ver, errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("create indexes"))
 	}
 
 	indexInfos, err := checkDropIndexes(tblInfo, job, indexNames, ifExists)
