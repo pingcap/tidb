@@ -260,7 +260,6 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if len(r.selectResp.Chunks) != 0 {
 			break
 		}
-		r.mu.Unlock()
 	}
 	return nil
 }
