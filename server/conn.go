@@ -717,10 +717,6 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 
 		switch resp.AuthPlugin {
 		case mysql.AuthCachingSha2Password:
-			resp.Auth, err = cc.authSha(ctx)
-			if err != nil {
-				return err
-			}
 		case mysql.AuthNativePassword:
 		case mysql.AuthSocket:
 		default:
