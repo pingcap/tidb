@@ -728,6 +728,20 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 		}
 	} else {
 		logutil.Logger(ctx).Warn("Client without Auth Plugin support; Please upgrade client")
+		if cc.ctx == nil {
+			err := cc.openSession()
+			if err != nil {
+				return err
+			}
+		}
+		userplugin, err := cc.ctx.AuthPluginForUser(&auth.UserIdentity{Username: cc.user, Hostname: cc.peerHost})
+		if err != nil {
+			return err
+		}
+		if userplugin != mysql.AuthNativePassword && userplugin != "" {
+			return errNotSupportedAuthMode
+		}
+		resp.AuthPlugin = mysql.AuthNativePassword
 	}
 	return nil
 }
