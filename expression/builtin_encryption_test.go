@@ -462,17 +462,24 @@ func decodeHex(str string) []byte {
 func TestCompress(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
+	fc := funcs[ast.Compress]
+	gbkStr, _ := charset.NewEncoding("gbk").EncodeString("你好")
 	tests := []struct {
+		chs    string
 		in     interface{}
 		expect interface{}
 	}{
-		{"hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
-		{"", ""},
-		{nil, nil},
+		{"", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
+		{"", "", ""},
+		{"", nil, nil},
+		{"utf8mb4", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
+		{"gbk", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
+		{"utf8mb4", "你好", string(decodeHex("06000000789C7AB277C1D3A57B01010000FFFF10450489"))},
+		{"gbk", gbkStr, string(decodeHex("04000000789C3AF278D76140000000FFFF07F40325"))},
 	}
-
-	fc := funcs[ast.Compress]
 	for _, test := range tests {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, test.chs)
+		require.NoErrorf(t, err, "%v", test)
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)
