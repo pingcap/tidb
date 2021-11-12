@@ -1519,6 +1519,11 @@ func (s *testSuite10) TestAnalyzeOptionsCheck(c *C) {
 	err = tk.ExecToErr("create table t(a int, b int, c int) STATS_COL_CHOICE='list',STATS_COL_LIST=''")
 	c.Assert(strings.Contains(err.Error(), "column list is not set"), IsTrue)
 
+	// create table with non-existing columns
+	tk.MustExec("drop table if exists t")
+	err = tk.ExecToErr("create table t(a int, b int, c int) STATS_COL_CHOICE='list',STATS_COL_LIST='c,d'")
+	c.Assert(strings.Contains(err.Error(), "column d does not exist"), IsTrue)
+
 	// create table normally
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int) STATS_BUCKETS=10,STATS_TOPN=5,STATS_COL_CHOICE='list',STATS_COL_LIST='a,b'")
@@ -1587,4 +1592,8 @@ func (s *testSuite10) TestAnalyzeOptionsCheck(c *C) {
 	tableInfo = table.Meta()
 	c.Assert(tableInfo.StatsOptions, NotNil)
 	c.Assert(len(tableInfo.StatsOptions.ColumnList), Equals, 2)
+
+	// create table with non-existing columns
+	err = tk.ExecToErr("alter table t STATS_OPTIONS='{\"COL_CHOICE\":\"list\",\"COL_LIST\":\"c,d\"}'")
+	c.Assert(strings.Contains(err.Error(), "column d does not exist"), IsTrue)
 }

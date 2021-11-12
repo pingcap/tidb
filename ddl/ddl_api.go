@@ -2436,7 +2436,7 @@ func SetDirectPlacementOpt(placementSettings *model.PlacementSettings, placement
 	return nil
 }
 
-func setStatsOption(statsOptions *model.StatsOptions, statsOptionType ast.StatsOptionType, op *ast.TableOption) error {
+func setStatsOption(statsOptions *model.StatsOptions, statsOptionType ast.StatsOptionType, op *ast.TableOption, columns []*model.ColumnInfo) error {
 	switch statsOptionType {
 	case ast.StatsOptionBuckets:
 		statsOptions.Buckets = op.UintValue
@@ -2449,33 +2449,59 @@ func setStatsOption(statsOptions *model.StatsOptions, statsOptionType ast.StatsO
 		}
 		statsOptions.SampleRate = sampleRate
 	case ast.StatsOptionColsChoice:
-		switch strings.ToLower(op.StrValue) {
-		case "all":
-			statsOptions.ColumnChoice = model.AllColumns
-		case "list":
-			statsOptions.ColumnChoice = model.ColumnList
-		case "predicate":
-			statsOptions.ColumnChoice = model.PredicateColumns
-		default:
-			statsOptions.ColumnChoice = model.AllColumns
+		err := setStatsOptionColumnChoice(op.StrValue, statsOptions)
+		if err != nil {
+			return err
 		}
 	case ast.StatsOptionColList:
-		if op.StrValue == "" {
-			return nil
+		err := setStatsOptionColumnList(op.StrValue, columns, statsOptions)
+		if err != nil {
+			return err
 		}
-		cols := strings.Split(op.StrValue, ",")
-		colList := make([]model.CIStr, 0, len(cols))
-		for _, colStr := range cols {
-			colName := strings.TrimSpace(colStr)
-			if colName == "" {
-				continue
-			}
-			colList = append(colList, model.NewCIStr(colName))
-		}
-		statsOptions.ColumnList = colList
 	default:
 		return errors.Trace(errors.New("unknown table stats option"))
 	}
+	return nil
+}
+
+func setStatsOptionColumnChoice(opVal string, statsOptions *model.StatsOptions) error {
+	switch strings.ToLower(opVal) {
+	case "all":
+		statsOptions.ColumnChoice = model.AllColumns
+	case "list":
+		statsOptions.ColumnChoice = model.ColumnList
+	case "predicate":
+		statsOptions.ColumnChoice = model.PredicateColumns
+	case "default":
+		statsOptions.ColumnChoice = model.DefaultChoice
+	default:
+		return errors.New("COL_CHOICE should be one of all|list|predicate|default")
+	}
+	return nil
+}
+
+func setStatsOptionColumnList(val string, columns []*model.ColumnInfo, statsOptions *model.StatsOptions) error {
+	if strings.ToLower(val) == "default" {
+		statsOptions.ColumnList = []model.CIStr{}
+		return nil
+	}
+	columnMap := map[string]*model.ColumnInfo{}
+	for _, col := range columns {
+		columnMap[col.Name.L] = col
+	}
+	cols := strings.Split(val, ",")
+	colList := make([]model.CIStr, 0, len(cols))
+	for _, colStr := range cols {
+		colName := strings.TrimSpace(colStr)
+		if colName == "" {
+			continue
+		}
+		if _, ok := columnMap[colName]; !ok {
+			return errors.Trace(errors.Errorf("column %s does not exist", colName))
+		}
+		colList = append(colList, model.NewCIStr(colName))
+	}
+	statsOptions.ColumnList = colList
 	return nil
 }
 
@@ -2541,7 +2567,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			if tbInfo.StatsOptions == nil {
 				tbInfo.StatsOptions = model.NewStatsOptions()
 			}
-			err := setStatsOption(tbInfo.StatsOptions, ast.StatsOptionType(op.Tp), op)
+			err := setStatsOption(tbInfo.StatsOptions, ast.StatsOptionType(op.Tp), op, tbInfo.Columns)
 			if err != nil {
 				return err
 			}
@@ -6458,33 +6484,15 @@ func (d *ddl) AlterTableStatsOptions(ctx sessionctx.Context, ident ast.Ident, sp
 					}
 				case "COL_CHOICE":
 					hasColChoice = true
-					switch strings.ToLower(val) {
-					case "all":
-						statsOptions.ColumnChoice = model.AllColumns
-					case "list":
-						statsOptions.ColumnChoice = model.ColumnList
-					case "predicate":
-						statsOptions.ColumnChoice = model.PredicateColumns
-					case "default":
-						statsOptions.ColumnChoice = model.AllColumns
-					default:
-						return fmt.Errorf("%w: %s", errors.New("COL_CHOICE should be one of all|list|predicate"), val)
+					err0 := setStatsOptionColumnChoice(val, statsOptions)
+					if err0 != nil {
+						return err0
 					}
 				case "COL_LIST":
 					hasColList = true
-					if strings.ToLower(val) == "default" {
-						statsOptions.ColumnList = []model.CIStr{}
-					} else {
-						cols := strings.Split(val, ",")
-						colList := make([]model.CIStr, 0, len(cols))
-						for _, colStr := range cols {
-							colName := strings.TrimSpace(colStr)
-							if colName == "" {
-								continue
-							}
-							colList = append(colList, model.NewCIStr(colName))
-						}
-						statsOptions.ColumnList = colList
+					err0 := setStatsOptionColumnList(val, meta.Columns, statsOptions)
+					if err0 != nil {
+						return err0
 					}
 				default:
 					return errors.Trace(errors.New("unknown table stats option"))
