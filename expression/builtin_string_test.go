@@ -1430,34 +1430,37 @@ func TestChar(t *testing.T) {
 	}()
 
 	tbl := []struct {
-		str    string
-		iNum   int64
-		fNum   float64
-		result string
+		str      string
+		iNum     int64
+		fNum     float64
+		charset  interface{}
+		result   interface{}
+		warnings int
 	}{
-		{"65", 66, 67.5, "ABD"},                  // float
-		{"65", 16740, 67.5, "AAdD"},              // large num
-		{"65", -1, 67.5, "A\xff\xff\xff\xffD"},   // nagtive int
-		{"a", -1, 67.5, "\x00\xff\xff\xff\xffD"}, // invalid 'a'
+		{"65", 66, 67.5, "utf8", "ABD", 0},               // float
+		{"65", 16740, 67.5, "utf8", "AAdD", 0},           // large num
+		{"65", -1, 67.5, nil, "A\xff\xff\xff\xffD", 0},   // nagtive int
+		{"a", -1, 67.5, nil, "\x00\xff\xff\xff\xffD", 0}, // invalid 'a'
+		// TODO: Uncomment it when issue #29685 be closed
+		// {"65", -1, 67.5, "utf8", nil, 1},                 // with utf8, return nil
+		// {"a", -1, 67.5, "utf8", nil, 2},                  // with utf8, return nil
+		// TODO: Uncomment it when gbk be added into charsetInfos
+		// {"1234567", 1234567, 1234567, "gbk", "謬謬謬", 0},  // test char for gbk
+		// {"123456789", 123456789, 123456789, "gbk", nil, 3}, // invalid 123456789 in gbk
 	}
 	for _, v := range tbl {
-		for _, char := range []interface{}{"utf8", nil} {
-			fc := funcs[ast.CharFunc]
-			f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(v.str, v.iNum, v.fNum, char)))
-			require.NoError(t, err)
-			require.NotNil(t, f)
-			r, err := evalBuiltinFunc(f, chunk.Row{})
-			require.NoError(t, err)
-			trequire.DatumEqual(t, types.NewDatum(v.result), r)
+		fc := funcs[ast.CharFunc]
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(v.str, v.iNum, v.fNum, v.charset)))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		trequire.DatumEqual(t, types.NewDatum(v.result), r)
+		if v.warnings != 0 {
+			warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+			require.Equal(t, v.warnings, len(warnings))
 		}
 	}
-
-	fc := funcs[ast.CharFunc]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("65", 66, nil)))
-	require.NoError(t, err)
-	r, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	trequire.DatumEqual(t, types.NewDatum("AB"), r)
 }
 
 func TestCharLength(t *testing.T) {
