@@ -16,12 +16,14 @@ package errormanager
 
 import (
 	"context"
-	"github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"go.uber.org/atomic"
 	"math"
 	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	. "github.com/pingcap/check"
+	"go.uber.org/atomic"
+	
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 )
 
 var _ = Suite(errorManagerSuite{})
