@@ -22,7 +22,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
 	"go.uber.org/atomic"
-	
+
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 )
 
