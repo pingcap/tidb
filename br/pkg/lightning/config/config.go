@@ -832,7 +832,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	if err1 != nil {
 		return err1
 	}
-	if charset != UTF8MB4 && charset != Binary {
+	if charset == GBK || charset == GB18030 {
 		log.L().Warn(
 			"incompatible strings may be encountered during the transcoding process and will be replaced, please be aware of the risk of not being able to retain the original information",
 			zap.String("source-character-set", charset.String()),
