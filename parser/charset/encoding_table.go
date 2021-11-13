@@ -14,6 +14,7 @@
 package charset
 
 import (
+	"github.com/cznic/mathutil"
 	"strings"
 	go_unicode "unicode"
 	"unicode/utf8"
@@ -304,6 +305,14 @@ func characterLengthOne(_ []byte) int {
 	return 1
 }
 
+type TruncateStrategy int8
+
+const (
+	TruncateStrategyEmpty TruncateStrategy = iota
+	TruncateStrategyTrim
+	TruncateStrategyReplace
+)
+
 var _ StringValidator = StringValidatorASCII{}
 var _ StringValidator = StringValidatorUTF8{}
 var _ StringValidator = StringValidatorOther{}
@@ -311,36 +320,51 @@ var _ StringValidator = StringValidatorOther{}
 // StringValidator is used to check if a string is valid in the specific charset.
 type StringValidator interface {
 	Validate(str string) (invalidPos int)
-	Truncate(str string) string
+	Truncate(str string, strategy TruncateStrategy) (result string, invalidPos int)
 }
 
 // StringValidatorASCII checks whether a string is valid ASCII string.
 type StringValidatorASCII struct{}
 
 // Validate checks whether the string is valid in the given charset.
-// It returns the first invalid byte offset.
-func (s StringValidatorASCII) Validate(str string) (invalidPos int) {
-	for i := 0; i < len(str); i++ {
-		if str[i] > go_unicode.MaxASCII {
-			return i
-		}
-	}
-	return -1
+func (s StringValidatorASCII) Validate(str string) int {
+	_, invalidPos := s.Truncate(str, TruncateStrategyEmpty)
+	return invalidPos
 }
 
 // Truncate implement the interface StringValidator.
-func (s StringValidatorASCII) Truncate(str string) string {
-	strBytes := Slice(str)
-	r := make([]byte, 0, len(str))
+func (s StringValidatorASCII) Truncate(str string, strategy TruncateStrategy) (string, int) {
+	var result []byte
+	if strategy == TruncateStrategyReplace {
+		result = make([]byte, 0, len(str))
+	}
+	invalidPos := -1
 	for i, w := 0, 0; i < len(str); i += w {
-		w = characterLengthUTF8(strBytes[i:])
-		if w > 1 || (w == 1 && str[i] > go_unicode.MaxASCII) {
-			r = append(r, '?')
-		} else {
-			r = append(r, str[i:i+w]...)
+		w = 1
+		if str[i] > go_unicode.MaxASCII {
+			if invalidPos == -1 {
+				invalidPos = i
+			}
+			switch strategy {
+			case TruncateStrategyEmpty:
+				return "", invalidPos
+			case TruncateStrategyTrim:
+				return str[:i], invalidPos
+			case TruncateStrategyReplace:
+				w = characterLengthUTF8(Slice(str)[i:])
+				w = mathutil.Min(w, len(str)-i)
+				result = append(result, '?')
+				continue
+			}
+		}
+		if strategy == TruncateStrategyReplace {
+			result = append(result, str[i:i+w]...)
 		}
 	}
-	return string(r)
+	if strategy == TruncateStrategyReplace {
+		return string(result), invalidPos
+	}
+	return str, -1
 }
 
 // StringValidatorUTF8 checks whether a string is valid UTF8 string.
@@ -350,44 +374,49 @@ type StringValidatorUTF8 struct {
 }
 
 // Validate checks whether the string is valid in the given charset.
-// It returns the first invalid byte offset.
-func (s StringValidatorUTF8) Validate(str string) (invalidPos int) {
-	if s.IsUTF8MB4 && utf8.ValidString(str) {
-		// Quick check passed.
-		return -1
-	}
-	doMB4CharCheck := !s.IsUTF8MB4 && s.CheckMB4ValueInUTF8
-	for i, w := 0, 0; i < len(str); i += w {
-		runeValue, width := utf8.DecodeRuneInString(str[i:])
-		if runeValue == utf8.RuneError {
-			if strings.HasPrefix(str[i:], string(utf8.RuneError)) {
-				w = width
-				continue
-			}
-			return i
-		} else if width > 3 && doMB4CharCheck {
-			// Meet non-BMP characters.
-			return i
-		}
-		w = width
-	}
-	return -1
+func (s StringValidatorUTF8) Validate(str string) int {
+	_, invalidPos := s.Truncate(str, TruncateStrategyEmpty)
+	return invalidPos
 }
 
 // Truncate implement the interface StringValidator.
-func (s StringValidatorUTF8) Truncate(str string) string {
-	r := make([]byte, 0, len(str))
+func (s StringValidatorUTF8) Truncate(str string, strategy TruncateStrategy) (string, int) {
+	if s.IsUTF8MB4 && utf8.ValidString(str) {
+		// Quick check passed.
+		return str, -1
+	}
+	doMB4CharCheck := !s.IsUTF8MB4 && s.CheckMB4ValueInUTF8
+	var result []byte
+	if strategy == TruncateStrategyReplace {
+		result = make([]byte, 0, len(str))
+	}
+	invalidPos := -1
 	for i, w := 0, 0; i < len(str); i += w {
-		rv, width := utf8.DecodeRuneInString(str[i:])
-		w = width
+		var rv rune
+		rv, w = utf8.DecodeRuneInString(str[i:])
 		if (rv == utf8.RuneError && !strings.HasPrefix(str[i:], string(utf8.RuneError))) ||
-			width > 3 && !s.IsUTF8MB4 {
-			r = append(r, '?')
-		} else {
-			r = append(r, str[i:i+w]...)
+			w > 3 && doMB4CharCheck {
+			if invalidPos == -1 {
+				invalidPos = i
+			}
+			switch strategy {
+			case TruncateStrategyEmpty:
+				return "", invalidPos
+			case TruncateStrategyTrim:
+				return str[:i], invalidPos
+			case TruncateStrategyReplace:
+				result = append(result, '?')
+				continue
+			}
+		}
+		if strategy == TruncateStrategyReplace {
+			result = append(result, str[i:i+w]...)
 		}
 	}
-	return string(r)
+	if strategy == TruncateStrategyReplace {
+		return string(result), invalidPos
+	}
+	return str, -1
 }
 
 // StringValidatorOther checks whether a string is valid string in given charset.
@@ -396,18 +425,49 @@ type StringValidatorOther struct {
 }
 
 // Validate checks whether the string is valid in the given charset.
-// It returns the first invalid byte offset.
-func (s StringValidatorOther) Validate(str string) (invalidPos int) {
-	enc := NewEncoding(s.Charset)
-	if !enc.enabled() {
-		return -1
-	}
-	return enc.IsValid([]byte(str))
+func (s StringValidatorOther) Validate(str string) int {
+	_, invalidPos := s.Truncate(str, TruncateStrategyEmpty)
+	return invalidPos
 }
 
 // Truncate implement the interface StringValidator.
-func (s StringValidatorOther) Truncate(str string) string {
+func (s StringValidatorOther) Truncate(str string, strategy TruncateStrategy) (string, int) {
 	enc := NewEncoding(s.Charset)
-	truncated := enc.EncodeInternal(nil, []byte(str))
-	return string(truncated)
+	if !enc.enabled() {
+		return str, -1
+	}
+	var result []byte
+	if strategy == TruncateStrategyReplace {
+		result = make([]byte, 0, len(str))
+	}
+	var buf [4]byte
+	strBytes := Slice(str)
+	transformer := enc.enc.NewEncoder()
+	invalidPos := -1
+	for i, w := 0, 0; i < len(str); i += w {
+		w = characterLengthUTF8(strBytes[i:])
+		w := mathutil.Min(w, len(str)-i)
+		_, _, err := transformer.Transform(buf[:], strBytes[i:i+w], true)
+		if err != nil {
+			if invalidPos == -1 {
+				invalidPos = i
+			}
+			switch strategy {
+			case TruncateStrategyEmpty:
+				return "", invalidPos
+			case TruncateStrategyTrim:
+				return str[:i], invalidPos
+			case TruncateStrategyReplace:
+				result = append(result, '?')
+				continue
+			}
+		}
+		if strategy == TruncateStrategyReplace {
+			result = append(result, strBytes[i:i+w]...)
+		}
+	}
+	if strategy == TruncateStrategyReplace {
+		return string(result), invalidPos
+	}
+	return str, -1
 }

@@ -316,8 +316,12 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 
 	if v := makeStringValidator(ctx, col); v != nil {
 		str := casted.GetString()
-		if invalidPos := v.Validate(str); invalidPos >= 0 {
-			casted = types.NewStringDatum(v.Truncate(str))
+		strategy := charset.TruncateStrategyReplace
+		if val.Collation() == charset.CollationBin {
+			strategy = charset.TruncateStrategyTrim
+		}
+		if newStr, invalidPos := v.Truncate(str, strategy); invalidPos >= 0 {
+			casted = types.NewStringDatum(newStr)
 			err = handleWrongCharsetValue(ctx, col, str, invalidPos)
 		}
 	}

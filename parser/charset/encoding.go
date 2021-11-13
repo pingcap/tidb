@@ -157,24 +157,6 @@ func (e *Encoding) DecodeString(src string) (string, error) {
 	return string(bs), err
 }
 
-// IsValid checks whether src(utf8) bytes can be encode into a string with given charset.
-// Return -1 if it encodes successfully.
-func (e *Encoding) IsValid(src []byte) (invalidPos int) {
-	dec := e.enc.NewEncoder()
-	dest := [4]byte{}
-	var srcOffset int
-	for srcOffset < len(src) {
-		srcNextLen := characterLengthUTF8(src[srcOffset:])
-		srcEnd := mathutil.Min(srcOffset+srcNextLen, len(src))
-		_, nSrc, err := dec.Transform(dest[:], src[srcOffset:srcEnd], false)
-		if err != nil {
-			return srcOffset
-		}
-		srcOffset += nSrc
-	}
-	return -1
-}
-
 func (e *Encoding) transform(transformer transform.Transformer, dest, src []byte, isDecoding bool) ([]byte, error) {
 	if len(dest) < len(src) {
 		dest = make([]byte, len(src)*2)
