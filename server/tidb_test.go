@@ -1149,8 +1149,10 @@ func TestFieldList(t *testing.T) {
 	require.Equal(t, columnAsName, cols[0].Name)
 }
 
-func (ts *tidbTestSuite) TestClientErrors(c *C) {
-	ts.runTestInfoschemaClientErrors(c)
+func TestClientErrors(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+	ts.runTestInfoschemaClientErrors(t)
 }
 
 func (ts *tidbTestSuite) TestInitConnect(c *C) {

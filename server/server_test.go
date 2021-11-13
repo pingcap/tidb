@@ -2188,8 +2188,8 @@ func (cli *testServerClient) runTestInitConnect(c *C) {
 
 // Client errors are only incremented when using the TiDB Server protocol,
 // and not internal SQL statements. Thus, this test is in the server-test suite.
-func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
-	cli.runTestsOnNewDB(t, nil, "clientErrors", func(dbt *DBTest) {
+func (cli *testingServerClient) runTestInfoschemaClientErrors(t *testing.T) {
+	cli.runTestsOnNewDB(t, nil, "clientErrors", func(dbt *testkit.DBTestKit) {
 
 		clientErrors := []struct {
 			stmt              string
@@ -2221,7 +2221,7 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
 			for _, tbl := range sources {
 
 				var errors, warnings int
-				rows := dbt.mustQuery("SELECT SUM(error_count), SUM(warning_count) FROM information_schema."+tbl+" WHERE error_number = ? GROUP BY error_number", test.errCode)
+				rows := dbt.MustQuery("SELECT SUM(error_count), SUM(warning_count) FROM information_schema."+tbl+" WHERE error_number = ? GROUP BY error_number", test.errCode)
 				if rows.Next() {
 					rows.Scan(&errors, &warnings)
 				}
@@ -2234,7 +2234,7 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
 					warnings++
 				}
 				var err error
-				rows, err = dbt.db.Query(test.stmt)
+				rows, err = dbt.GetDB().Query(test.stmt)
 				if err == nil {
 					// make sure to read the result since the error/warnings are populated in the network send code.
 					if rows.Next() {
@@ -2244,13 +2244,13 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
 					rows.Close()
 				}
 				var newErrors, newWarnings int
-				rows = dbt.mustQuery("SELECT SUM(error_count), SUM(warning_count) FROM information_schema."+tbl+" WHERE error_number = ? GROUP BY error_number", test.errCode)
+				rows = dbt.MustQuery("SELECT SUM(error_count), SUM(warning_count) FROM information_schema."+tbl+" WHERE error_number = ? GROUP BY error_number", test.errCode)
 				if rows.Next() {
 					rows.Scan(&newErrors, &newWarnings)
 				}
 				rows.Close()
-				dbt.Check(newErrors, Equals, errors)
-				dbt.Check(newWarnings, Equals, warnings, Commentf("source=information_schema.%s code=%d statement=%s", tbl, test.errCode, test.stmt))
+				require.Equal(t, errors, newErrors)
+				require.Equalf(t, warnings, newWarnings, "source=information_schema.%s code=%d statement=%s", tbl, test.errCode, test.stmt)
 			}
 		}
 
