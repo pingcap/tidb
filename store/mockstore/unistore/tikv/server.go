@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -216,6 +217,7 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 			LockKey:         errLocked.Key,
 			LockTS:          errLocked.Lock.StartTS,
 			DeadlockKeyHash: result.DeadlockResp.DeadlockKeyHash,
+			WaitChain:       result.DeadlockResp.WaitChain,
 		}
 		resp.Errors, resp.RegionError = convertToPBErrors(deadlockErr)
 		return resp, nil
@@ -616,6 +618,11 @@ func (svr *Server) BatchCoprocessor(req *coprocessor.BatchRequest, batchCopServe
 	return nil
 }
 
+// RawCoprocessor implements implements the tikvpb.TikvServer interface.
+func (svr *Server) RawCoprocessor(context.Context, *kvrpcpb.RawCoprocessorRequest) (*kvrpcpb.RawCoprocessorResponse, error) {
+	panic("unimplemented")
+}
+
 func (mrm *MockRegionManager) removeMPPTaskHandler(taskID int64, storeID uint64) error {
 	set := mrm.getMPPTaskSet(storeID)
 	if set == nil {
@@ -630,7 +637,12 @@ func (mrm *MockRegionManager) removeMPPTaskHandler(taskID int64, storeID uint64)
 	return errors.New("cannot find mpp task")
 }
 
-// DispatchMPPTask implements implements the tikvpb.TikvServer interface.
+// IsAlive implements the tikvpb.TikvServer interface.
+func (svr *Server) IsAlive(_ context.Context, _ *mpp.IsAliveRequest) (*mpp.IsAliveResponse, error) {
+	panic("todo")
+}
+
+// DispatchMPPTask implements the tikvpb.TikvServer interface.
 func (svr *Server) DispatchMPPTask(_ context.Context, _ *mpp.DispatchTaskRequest) (*mpp.DispatchTaskResponse, error) {
 	panic("todo")
 }
@@ -777,7 +789,7 @@ func (svr *Server) EstablishMPPConnectionWithStoreID(req *mpp.EstablishMPPConnec
 		}
 	}
 	if mppHandler == nil {
-		return errors.New("tatsk not found")
+		return errors.New("task not found")
 	}
 	ctx1, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -950,38 +962,28 @@ func (svr *Server) RemoveLockObserver(context.Context, *kvrpcpb.RemoveLockObserv
 	return &kvrpcpb.RemoveLockObserverResponse{}, nil
 }
 
-// VerGet implements implements the tikvpb.TikvServer interface.
-func (svr *Server) VerGet(context.Context, *kvrpcpb.VerGetRequest) (*kvrpcpb.VerGetResponse, error) {
-	panic("unimplemented")
-}
-
-// VerBatchGet implements implements the tikvpb.TikvServer interface.
-func (svr *Server) VerBatchGet(context.Context, *kvrpcpb.VerBatchGetRequest) (*kvrpcpb.VerBatchGetResponse, error) {
-	panic("unimplemented")
-}
-
-// VerMut implements implements the tikvpb.TikvServer interface.
-func (svr *Server) VerMut(context.Context, *kvrpcpb.VerMutRequest) (*kvrpcpb.VerMutResponse, error) {
-	panic("unimplemented")
-}
-
-// VerBatchMut implements implements the tikvpb.TikvServer interface.
-func (svr *Server) VerBatchMut(context.Context, *kvrpcpb.VerBatchMutRequest) (*kvrpcpb.VerBatchMutResponse, error) {
-	panic("unimplemented")
-}
-
-// VerScan implements implements the tikvpb.TikvServer interface.
-func (svr *Server) VerScan(context.Context, *kvrpcpb.VerScanRequest) (*kvrpcpb.VerScanResponse, error) {
-	panic("unimplemented")
-}
-
-// VerDeleteRange implements implements the tikvpb.TikvServer interface.
-func (svr *Server) VerDeleteRange(context.Context, *kvrpcpb.VerDeleteRangeRequest) (*kvrpcpb.VerDeleteRangeResponse, error) {
-	panic("unimplemented")
-}
-
 // CheckLeader implements implements the tikvpb.TikvServer interface.
 func (svr *Server) CheckLeader(context.Context, *kvrpcpb.CheckLeaderRequest) (*kvrpcpb.CheckLeaderResponse, error) {
+	panic("unimplemented")
+}
+
+// RawCompareAndSwap implements the tikvpb.TikvServer interface.
+func (svr *Server) RawCompareAndSwap(context.Context, *kvrpcpb.RawCASRequest) (*kvrpcpb.RawCASResponse, error) {
+	panic("implement me")
+}
+
+// GetStoreSafeTS implements the tikvpb.TikvServer interface.
+func (svr *Server) GetStoreSafeTS(context.Context, *kvrpcpb.StoreSafeTSRequest) (*kvrpcpb.StoreSafeTSResponse, error) {
+	return &kvrpcpb.StoreSafeTSResponse{}, nil
+}
+
+// GetLockWaitInfo implements the tikvpb.TikvServer interface.
+func (svr *Server) GetLockWaitInfo(context.Context, *kvrpcpb.GetLockWaitInfoRequest) (*kvrpcpb.GetLockWaitInfoResponse, error) {
+	panic("unimplemented")
+}
+
+// RawChecksum implements implements the tikvpb.TikvServer interface.
+func (svr *Server) RawChecksum(context.Context, *kvrpcpb.RawChecksumRequest) (*kvrpcpb.RawChecksumResponse, error) {
 	panic("unimplemented")
 }
 
@@ -1020,6 +1022,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				LockKey:         x.LockKey,
 				LockTs:          x.LockTS,
 				DeadlockKeyHash: x.DeadlockKeyHash,
+				WaitChain:       x.WaitChain,
 			},
 		}
 	case *ErrCommitExpire:

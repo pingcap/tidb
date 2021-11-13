@@ -8,16 +8,18 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package main
 
+// #nosec G108
 import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	_ "net/http/pprof"
 	"sync"
@@ -26,8 +28,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -128,8 +130,13 @@ func main() {
 	resp, err := http.Get("http://localhost:9191/metrics")
 	terror.MustNil(err)
 
-	defer terror.Call(resp.Body.Close)
-	text, err1 := ioutil.ReadAll(resp.Body)
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Error("function call errored", zap.Error(err), zap.Stack("stack"))
+		}
+	}()
+
+	text, err1 := io.ReadAll(resp.Body)
 	terror.Log(errors.Trace(err1))
 
 	fmt.Println(string(text))

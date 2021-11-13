@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io/fs"
 	"os"
 	"runtime"
 	"strconv"
@@ -27,10 +28,8 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	parsertypes "github.com/pingcap/parser/types"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -39,6 +38,9 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	parsertypes "github.com/pingcap/tidb/parser/types"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -50,8 +52,8 @@ import (
 	kvstore "github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -64,12 +66,14 @@ import (
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
+	"github.com/pingcap/tidb/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/grpclog"
 )
 
 // Flag Names
@@ -106,6 +110,9 @@ const (
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
 	nmAffinityCPU                = "affinity-cpus"
+
+	nmInitializeSecure   = "initialize-secure"
+	nmInitializeInsecure = "initialize-insecure"
 )
 
 var (
@@ -121,7 +128,7 @@ var (
 	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
 	port             = flag.String(nmPort, "4000", "tidb server port")
 	cors             = flag.String(nmCors, "", "tidb server allow cors origin")
-	socket           = flag.String(nmSocket, "", "The socket file to use for connection.")
+	socket           = flag.String(nmSocket, "/tmp/tidb-{Port}.sock", "The socket file to use for connection.")
 	enableBinlog     = flagBoolean(nmEnableBinlog, false, "enable generate binlog")
 	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
@@ -148,6 +155,10 @@ var (
 	// PROXY Protocol
 	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
 	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
+
+	// Security
+	initializeSecure   = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
+	initializeInsecure = flagBoolean(nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
 )
 
 func main() {
@@ -170,6 +181,11 @@ func main() {
 		terror.MustNil(err)
 		checkTempStorageQuota()
 	}
+	// Enable failpoints in tikv/client-go if the test API is enabled.
+	// It appears in the main function to be set before any use of client-go to prevent data race.
+	if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
+		tikv.EnableFailpoints()
+	}
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()
@@ -182,12 +198,18 @@ func main() {
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
 
+	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
+	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
+	// For regression of issue like https://github.com/pingcap/tidb/issues/28190
+	terror.RegisterFinish()
+
 	exited := make(chan struct{})
 	signal.SetupSignalHandler(func(graceful bool) {
 		svr.Close()
 		cleanup(svr, storage, dom, graceful)
 		close(exited)
 	})
+	topsql.SetupTopSQL()
 	terror.MustNil(svr.Run())
 	<-exited
 	syncLog()
@@ -200,6 +222,12 @@ func exit() {
 
 func syncLog() {
 	if err := log.Sync(); err != nil {
+		// Don't complain about /dev/stdout as Fsync will return EINVAL.
+		if pathErr, ok := err.(*fs.PathError); ok {
+			if pathErr.Path == "/dev/stdout" {
+				os.Exit(0)
+			}
+		}
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
 		os.Exit(1)
 	}
@@ -305,7 +333,7 @@ func setupBinlogClient() {
 
 	terror.MustNil(err)
 
-	err = pumpcli.InitLogger(cfg.Log.ToLogConfig())
+	err = logutil.InitLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 
 	binloginfo.SetPumpsClient(client)
@@ -484,6 +512,28 @@ func overrideConfig(cfg *config.Config) {
 	if actualFlags[nmProxyProtocolHeaderTimeout] {
 		cfg.ProxyProtocol.HeaderTimeout = *proxyProtocolHeaderTimeout
 	}
+
+	// Sanity check: can't specify both options
+	if actualFlags[nmInitializeSecure] && actualFlags[nmInitializeInsecure] {
+		err = fmt.Errorf("the options --initialize-insecure and --initialize-secure are mutually exclusive")
+		terror.MustNil(err)
+	}
+	// The option --initialize-secure=true ensures that a secure bootstrap is used.
+	if actualFlags[nmInitializeSecure] {
+		cfg.Security.SecureBootstrap = *initializeSecure
+	}
+	// The option --initialize-insecure=true/false was used.
+	// Store the inverted value of this to the secure bootstrap cfg item
+	if actualFlags[nmInitializeInsecure] {
+		cfg.Security.SecureBootstrap = !*initializeInsecure
+	}
+	// Secure bootstrap initializes with Socket authentication
+	// which is not supported on windows. Only the insecure bootstrap
+	// method is supported.
+	if runtime.GOOS == "windows" && cfg.Security.SecureBootstrap {
+		err = fmt.Errorf("the option --initialize-secure is not supported on Windows")
+		terror.MustNil(err)
+	}
 }
 
 func setGlobalVars() {
@@ -506,6 +556,8 @@ func setGlobalVars() {
 	session.SetStatsLease(statsLeaseDuration)
 	indexUsageSyncLeaseDuration := parseDuration(cfg.Performance.IndexUsageSyncLease)
 	session.SetIndexUsageSyncLease(indexUsageSyncLeaseDuration)
+	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
+	session.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
@@ -526,17 +578,28 @@ func setGlobalVars() {
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
 
+	if len(cfg.ServerVersion) > 0 {
+		mysql.ServerVersion = cfg.ServerVersion
+		variable.SetSysVar(variable.Version, cfg.ServerVersion)
+	}
+
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
-	variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
+	variable.SetSysVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
 	variable.SetSysVar(variable.LowerCaseTableNames, strconv.Itoa(cfg.LowerCaseTableNames))
 	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(cfg.Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
+	cfg.Socket = strings.Replace(cfg.Socket, "{Port}", fmt.Sprintf("%d", cfg.Port), 1)
 	variable.SetSysVar(variable.Socket, cfg.Socket)
 	variable.SetSysVar(variable.DataDir, cfg.Path)
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
-	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ", "))
+	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
+	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
 	variable.MemoryUsageAlarmRatio.Store(cfg.Performance.MemoryUsageAlarmRatio)
+	if hostname, err := os.Hostname(); err != nil {
+		variable.SetSysVar(variable.Hostname, hostname)
+	}
+	variable.GlobalLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))
 
 	if cfg.Security.EnableSEM {
 		sem.Enable()
@@ -558,8 +621,8 @@ func setGlobalVars() {
 		}
 	}
 
-	atomic.StoreUint64(&tikv.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
-	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
+	atomic.StoreUint64(&transaction.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
+	tikv.SetRegionCacheTTLSec(int64(cfg.TiKVClient.RegionCacheTTL))
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
 	executor.GlobalDiskUsageTracker.SetBytesLimit(cfg.TempStorageQuota)
@@ -572,27 +635,20 @@ func setGlobalVars() {
 	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
 
 	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
-	if err != nil {
+	if err != nil || t < 0 {
 		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
 			zap.String("currentValue", cfg.TiKVClient.StoreLivenessTimeout))
 	}
-	tikv.StoreLivenessTimeout = t
+	tikv.SetStoreLivenessTimeout(t)
 	parsertypes.TiDBStrictIntegerDisplayWidth = cfg.DeprecateIntegerDisplayWidth
+	deadlockhistory.GlobalDeadlockHistory.Resize(cfg.PessimisticTxn.DeadlockHistoryCapacity)
 }
 
 func setupLog() {
 	cfg := config.GetGlobalConfig()
-	err := logutil.InitZapLogger(cfg.Log.ToLogConfig())
+	err := logutil.InitLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 
-	err = logutil.InitLogger(cfg.Log.ToLogConfig())
-	terror.MustNil(err)
-
-	if len(os.Getenv("GRPC_DEBUG")) > 0 {
-		grpclog.SetLoggerV2(grpclog.NewLoggerV2WithVerbosity(os.Stderr, os.Stderr, os.Stderr, 999))
-	} else {
-		grpclog.SetLoggerV2(grpclog.NewLoggerV2(ioutil.Discard, ioutil.Discard, os.Stderr))
-	}
 	// trigger internal http(s) client init.
 	util.InternalHTTPClient()
 }
@@ -629,7 +685,7 @@ func setupMetrics() {
 		metrics.TimeJumpBackCounter.Inc()
 	}
 	callBackCount := 0
-	sucessCallBack := func() {
+	successCallBack := func() {
 		callBackCount++
 		// It is callback by monitor per second, we increase metrics.KeepAliveCounter per 5s.
 		if callBackCount >= 5 {
@@ -637,7 +693,7 @@ func setupMetrics() {
 			metrics.KeepAliveCounter.Inc()
 		}
 	}
-	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
+	go systimemon.StartMonitor(time.Now, systimeErrHandler, successCallBack)
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }
@@ -654,7 +710,7 @@ func setupTracing() {
 }
 
 func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
-	atomic.StoreUint32(&tikv.ShuttingDown, 1)
+	tikv.StoreShuttingDown(1)
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
@@ -662,13 +718,15 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 
 func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
 	if graceful {
-		svr.GracefulDown(context.Background(), nil)
+		done := make(chan struct{})
+		svr.GracefulDown(context.Background(), done)
 	} else {
 		svr.TryGracefulDown()
 	}
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage(storage, dom)
 	disk.CleanUp()
+	topsql.Close()
 }
 
 func stringToList(repairString string) []string {

@@ -8,17 +8,20 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package sem
 
 import (
+	"os"
 	"strings"
 	"sync/atomic"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 const (
@@ -56,6 +59,7 @@ const (
 	tidbProfileMemory     = "tidb_profile_memory"
 	tidbProfileMutex      = "tidb_profile_mutex"
 	tikvProfileCPU        = "tikv_profile_cpu"
+	tidbGCLeaderDesc      = "tidb_gc_leader_desc"
 	restrictedPriv        = "RESTRICTED_"
 )
 
@@ -68,6 +72,9 @@ var (
 func Enable() {
 	atomic.StoreInt32(&semEnabled, 1)
 	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.On)
+	variable.SetSysVar(variable.Hostname, variable.DefHostname)
+	// write to log so users understand why some operations are weird.
+	logutil.BgLogger().Info("tidb-server is operating with security enhanced mode (SEM) enabled")
 }
 
 // Disable disables SEM. This is intended to be used by the test-suite.
@@ -75,6 +82,9 @@ func Enable() {
 func Disable() {
 	atomic.StoreInt32(&semEnabled, 0)
 	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.Off)
+	if hostname, err := os.Hostname(); err != nil {
+		variable.SetSysVar(variable.Hostname, hostname)
+	}
 }
 
 // IsEnabled checks if Security Enhanced Mode (SEM) is enabled
@@ -111,6 +121,41 @@ func IsInvisibleTable(dbLowerName, tblLowerName string) bool {
 			return true
 		}
 	case metricsSchema:
+		return true
+	}
+	return false
+}
+
+// IsInvisibleStatusVar returns true if the status var needs to be hidden
+func IsInvisibleStatusVar(varName string) bool {
+	return varName == tidbGCLeaderDesc
+}
+
+// IsInvisibleSysVar returns true if the sysvar needs to be hidden
+func IsInvisibleSysVar(varNameInLower string) bool {
+	switch varNameInLower {
+	case variable.TiDBDDLSlowOprThreshold, // ddl_slow_threshold
+		variable.TiDBAllowRemoveAutoInc,
+		variable.TiDBCheckMb4ValueInUTF8,
+		variable.TiDBConfig,
+		variable.TiDBEnableSlowLog,
+		variable.TiDBEnableTelemetry,
+		variable.TiDBExpensiveQueryTimeThreshold,
+		variable.TiDBForcePriority,
+		variable.TiDBGeneralLog,
+		variable.TiDBMetricSchemaRangeDuration,
+		variable.TiDBMetricSchemaStep,
+		variable.TiDBOptWriteRowID,
+		variable.TiDBPProfSQLCPU,
+		variable.TiDBRecordPlanInSlowLog,
+		variable.TiDBRowFormatVersion,
+		variable.TiDBSlowQueryFile,
+		variable.TiDBSlowLogThreshold,
+		variable.TiDBEnableCollectExecutionInfo,
+		variable.TiDBMemoryUsageAlarmRatio,
+		variable.TiDBRedactLog,
+		variable.TiDBRestrictedReadOnly,
+		variable.TiDBSlowLogMasking:
 		return true
 	}
 	return false

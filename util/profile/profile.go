@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +17,6 @@ package profile
 import (
 	"bytes"
 	"io"
-	"io/ioutil"
 	"runtime/pprof"
 	"strconv"
 	"strings"
@@ -103,7 +103,7 @@ func (c *Collector) ProfileGraph(name string) ([][]types.Datum, error) {
 
 // ParseGoroutines returns the groutine list for given string representation
 func (c *Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
-	content, err := ioutil.ReadAll(reader)
+	content, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}

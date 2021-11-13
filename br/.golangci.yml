@@ -1,0 +1,12 @@
+linters-settings:
+  gocyclo:
+    min-complexity: 40
+
+issues:
+  # Excluding configuration per-path, per-linter, per-text and per-source
+  exclude-rules:
+    # TODO Remove it.
+    - path: split_client.go
+      text: "SA1019:"
+      linters:
+        - staticcheck

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,8 +17,8 @@ package kv
 import (
 	"strings"
 
-	pmysql "github.com/pingcap/parser/mysql"
 	mysql "github.com/pingcap/tidb/errno"
+	pmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
@@ -51,6 +52,8 @@ var (
 	// ErrWriteConflictInTiDB is the error when the commit meets an write conflict error when local latch is enabled.
 	ErrWriteConflictInTiDB = dbterror.ClassKV.NewStdErr(mysql.ErrWriteConflictInTiDB,
 		pmysql.Message(mysql.MySQLErrName[mysql.ErrWriteConflictInTiDB].Raw+" "+TxnRetryableMark, nil))
+	// ErrLockExpire is the error when the lock is expired.
+	ErrLockExpire = dbterror.ClassTiKV.NewStd(mysql.ErrLockExpire)
 )
 
 // IsTxnRetryableError checks if the error could safely retry the transaction.

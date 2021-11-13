@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -27,6 +28,12 @@ var (
 	ErrAccessDenied = dbterror.ClassSchema.NewStd(mysql.ErrAccessDenied)
 	// ErrDatabaseNotExists returns for database not exists.
 	ErrDatabaseNotExists = dbterror.ClassSchema.NewStd(mysql.ErrBadDB)
+	// ErrPlacementPolicyExists returns for placement_policy policy already exists.
+	ErrPlacementPolicyExists = dbterror.ClassSchema.NewStd(mysql.ErrPlacementPolicyExists)
+	// ErrPlacementPolicyNotExists return for placement_policy policy not exists.
+	ErrPlacementPolicyNotExists = dbterror.ClassSchema.NewStd(mysql.ErrPlacementPolicyNotExists)
+	// ErrReservedSyntax  for internal syntax.
+	ErrReservedSyntax = dbterror.ClassSchema.NewStd(mysql.ErrReservedSyntax)
 	// ErrTableExists returns for table already exists.
 	ErrTableExists = dbterror.ClassSchema.NewStd(mysql.ErrTableExists)
 	// ErrTableDropExists returns for dropping a non-existent table.
@@ -69,4 +76,6 @@ var (
 	ErrTableLocked = dbterror.ClassSchema.NewStd(mysql.ErrTableLocked)
 	// ErrWrongObject returns when the table/view/sequence is not the expected object.
 	ErrWrongObject = dbterror.ClassSchema.NewStd(mysql.ErrWrongObject)
+	// ErrAdminCheckTable returns when the check table in temporary mode.
+	ErrAdminCheckTable = dbterror.ClassSchema.NewStd(mysql.ErrAdminCheckTable)
 )

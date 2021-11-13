@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -85,7 +86,7 @@ type TiDBHashAggImpl struct {
 // CalcCost implements Implementation CalcCost interface.
 func (agg *TiDBHashAggImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
-	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, true)
+	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, true, false)
 	agg.cost = selfCost + children[0].GetCost()
 	return agg.cost
 }
@@ -110,7 +111,7 @@ type TiKVHashAggImpl struct {
 // CalcCost implements Implementation CalcCost interface.
 func (agg *TiKVHashAggImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	hashAgg := agg.plan.(*plannercore.PhysicalHashAgg)
-	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, false)
+	selfCost := hashAgg.GetCost(children[0].GetPlan().Stats().RowCount, false, false)
 	agg.cost = selfCost + children[0].GetCost()
 	return agg.cost
 }

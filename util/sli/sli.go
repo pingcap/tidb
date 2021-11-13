@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -94,12 +95,12 @@ func (t *TxnWriteThroughputSLI) IsInvalid() bool {
 
 const (
 	smallTxnAffectRow = 20
-	smallTxnWriteSize = 1 * 1024 * 1024 // 1MB
+	smallTxnSize      = 1 * 1024 * 1024 // 1MB
 )
 
 // IsSmallTxn exports for testing.
 func (t *TxnWriteThroughputSLI) IsSmallTxn() bool {
-	return t.affectRow <= smallTxnAffectRow && t.writeSize <= smallTxnWriteSize
+	return t.affectRow <= smallTxnAffectRow && t.writeSize <= smallTxnSize
 }
 
 // Reset exports for testing.

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,29 +24,27 @@ import (
 type GeneralEvent byte
 
 const (
-	// Log presents log event.
-	Log GeneralEvent = iota
-	// Error presents error event.
+	// Starting represents a GeneralEvent that is about to start
+	Starting GeneralEvent = iota
+	// Completed represents a GeneralEvent that has completed
+	Completed
+	// Error represents a GeneralEvent that has error (and typically couldn't start)
 	Error
-	// Result presents result event.
-	Result
-	// Status presents status event.
-	Status
 )
 
 // ConnectionEvent presents TiDB connection event.
 type ConnectionEvent byte
 
 const (
-	// Connected presents new connection establish event(finish auth).
+	// Connected represents new connection establish event(finish auth).
 	Connected ConnectionEvent = iota
-	// Disconnect presents disconnect event.
+	// Disconnect represents disconnect event.
 	Disconnect
-	// ChangeUser presents change user.
+	// ChangeUser represents change user.
 	ChangeUser
-	// PreAuth presents event before start auth.
+	// PreAuth represents event before start auth.
 	PreAuth
-	// Reject presents event reject connection event.
+	// Reject represents event reject connection event.
 	Reject
 )
 

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -855,6 +856,11 @@ const (
 	ErrGrantRole                                             = 3523
 	ErrRoleNotGranted                                        = 3530
 	ErrLockAcquireFailAndNoWaitSet                           = 3572
+	ErrCTERecursiveRequiresUnion                             = 3573
+	ErrCTERecursiveRequiresNonRecursiveFirst                 = 3574
+	ErrCTERecursiveForbidsAggregation                        = 3575
+	ErrCTERecursiveForbiddenJoinOrder                        = 3576
+	ErrInvalidRequiresSingleReference                        = 3577
 	ErrWindowNoSuchWindow                                    = 3579
 	ErrWindowCircularityInWindowGraph                        = 3580
 	ErrWindowNoChildPartitioning                             = 3581
@@ -877,6 +883,7 @@ const (
 	ErrWindowExplainJSON                                     = 3598
 	ErrWindowFunctionIgnoresFrame                            = 3599
 	ErrIllegalPrivilegeLevel                                 = 3619
+	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
 	ErrDataTruncatedFunctionalIndex                          = 3751
 	ErrDataOutOfRangeFunctionalIndex                         = 3752
@@ -884,7 +891,7 @@ const (
 	ErrFunctionalIndexRefAutoIncrement                       = 3754
 	ErrCannotDropColumnFunctionalIndex                       = 3755
 	ErrFunctionalIndexPrimaryKey                             = 3756
-	ErrFunctionalIndexOnLob                                  = 3757
+	ErrFunctionalIndexOnBlob                                 = 3757
 	ErrFunctionalIndexFunctionIsNotAllowed                   = 3758
 	ErrFulltextFunctionalIndex                               = 3759
 	ErrSpatialFunctionalIndex                                = 3760
@@ -916,6 +923,8 @@ const (
 	ErrAdminCheckTable                     = 8003
 	ErrTxnTooLarge                         = 8004
 	ErrWriteConflictInTiDB                 = 8005
+	ErrOptOnTemporaryTable                 = 8006
+	ErrDropTableOnTemporaryTable           = 8007
 	ErrUnsupportedReloadPlugin             = 8018
 	ErrUnsupportedReloadPluginVar          = 8019
 	ErrTableLocked                         = 8020
@@ -996,6 +1005,11 @@ const (
 	ErrMultiStatementDisabled              = 8130
 	ErrPartitionStatsMissing               = 8131
 	ErrNotSupportedWithSem                 = 8132
+	ErrDataInConsistentExtraIndex          = 8133
+	ErrDataInConsistentMisMatchIndex       = 8134
+	ErrAsOf                                = 8135
+	ErrVariableNoLongerSupported           = 8136
+	ErrAnalyzeMissColumn                   = 8137
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1035,7 +1049,12 @@ const (
 	ErrInvalidPlacementSpec               = 8234
 	ErrDDLReorgElementNotExist            = 8235
 	ErrPlacementPolicyCheck               = 8236
-
+	ErrInvalidAttributesSpec              = 8237
+	ErrPlacementPolicyExists              = 8238
+	ErrPlacementPolicyNotExists           = 8239
+	ErrPlacementPolicyWithDirectOption    = 8240
+	ErrPlacementPolicyInUse               = 8241
+	ErrOptOnCacheTable                    = 8242
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

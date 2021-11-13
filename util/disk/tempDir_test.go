@@ -8,53 +8,49 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package disk
 
 import (
-	"io/ioutil"
 	"os"
 	"sync"
 	"testing"
 
-	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	path, _ := ioutil.TempDir("", "tmp-storage-disk-pkg")
+func TestRemoveDir(t *testing.T) {
+	path, err := os.MkdirTemp("", "tmp-storage-disk-pkg")
+	require.NoError(t, err)
+	defer config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = path
 	})
-	_ = os.RemoveAll(path) // clean the uncleared temp file during the last run.
-	_ = os.MkdirAll(path, 0755)
-	check.TestingT(t)
-}
+	err = os.RemoveAll(path) // clean the uncleared temp file during the last run.
+	require.NoError(t, err)
+	err = os.MkdirAll(path, 0755)
+	require.NoError(t, err)
 
-var _ = check.SerialSuites(&testDiskSerialSuite{})
-
-type testDiskSerialSuite struct {
-}
-
-func (s *testDiskSerialSuite) TestRemoveDir(c *check.C) {
-	err := CheckAndInitTempDir()
-	c.Assert(err, check.IsNil)
-	c.Assert(checkTempDirExist(), check.Equals, true)
-	c.Assert(os.RemoveAll(config.GetGlobalConfig().TempStoragePath), check.IsNil)
-	c.Assert(checkTempDirExist(), check.Equals, false)
+	err = CheckAndInitTempDir()
+	require.NoError(t, err)
+	require.Equal(t, checkTempDirExist(), true)
+	require.NoError(t, os.RemoveAll(config.GetGlobalConfig().TempStoragePath))
+	require.Equal(t, checkTempDirExist(), false)
 	wg := sync.WaitGroup{}
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
-		go func(c *check.C) {
+		go func(t *testing.T) {
 			err := CheckAndInitTempDir()
-			c.Assert(err, check.IsNil)
+			require.NoError(t, err)
 			wg.Done()
-		}(c)
+		}(t)
 	}
 	wg.Wait()
 	err = CheckAndInitTempDir()
-	c.Assert(err, check.IsNil)
-	c.Assert(checkTempDirExist(), check.Equals, true)
+	require.NoError(t, err)
+	require.Equal(t, checkTempDirExist(), true)
 }

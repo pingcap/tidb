@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -224,7 +225,18 @@ func GetUsedList(usedCols []*Column, schema *Schema) []bool {
 	tmpSchema := NewSchema(usedCols...)
 	used := make([]bool, schema.Len())
 	for i, col := range schema.Columns {
-		used[i] = tmpSchema.Contains(col)
+		if !used[i] {
+			used[i] = tmpSchema.Contains(col)
+
+			// When cols are a generated expression col, compare them in terms of virtual expr.
+			if expr, ok := col.VirtualExpr.(*ScalarFunction); ok && used[i] {
+				for j, colToCompare := range schema.Columns {
+					if !used[j] && j != i && (expr).Equal(nil, colToCompare.VirtualExpr) && col.RetType.Equal(colToCompare.RetType) {
+						used[j] = true
+					}
+				}
+			}
+		}
 	}
 	return used
 }

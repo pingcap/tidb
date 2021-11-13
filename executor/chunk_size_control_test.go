@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,18 +22,18 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 var (
@@ -67,7 +68,7 @@ func (c *testSlowClient) GetDelay(regionID uint64) time.Duration {
 }
 
 // manipulateCluster splits this cluster's region by splitKeys and returns regionIDs after split
-func manipulateCluster(cluster cluster.Cluster, splitKeys [][]byte) []uint64 {
+func manipulateCluster(cluster testutils.Cluster, splitKeys [][]byte) []uint64 {
 	if len(splitKeys) == 0 {
 		return nil
 	}
@@ -113,7 +114,7 @@ type testChunkSizeControlKit struct {
 	dom     *domain.Domain
 	tk      *testkit.TestKit
 	client  *testSlowClient
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 }
 
 type testChunkSizeControlSuite struct {
@@ -135,7 +136,7 @@ func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {
 
 		var err error
 		kit.store, err = mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.WithClusterInspector(func(c testutils.Cluster) {
 				mockstore.BootstrapWithSingleStore(c)
 				kit.cluster = c
 			}),
@@ -157,7 +158,7 @@ func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {
 }
 
 func (s *testChunkSizeControlSuite) getKit(name string) (
-	kv.Storage, *domain.Domain, *testkit.TestKit, *testSlowClient, cluster.Cluster) {
+	kv.Storage, *domain.Domain, *testkit.TestKit, *testSlowClient, testutils.Cluster) {
 	x := s.m[name]
 	return x.store, x.dom, x.tk, x.client, x.cluster
 }

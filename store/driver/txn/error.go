@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,14 +24,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/logutil"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 )
 
@@ -93,6 +95,9 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 		if err != nil {
 			return genKeyExistsError(name, key.String(), err)
 		}
+		if col.Length > 0 && len(str) > col.Length {
+			str = str[:col.Length]
+		}
 		valueStr = append(valueStr, str)
 	}
 	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
@@ -138,14 +143,14 @@ func extractKeyErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if e, ok := errors.Cause(err).(*tikvstore.ErrWriteConflict); ok {
+	if e, ok := errors.Cause(err).(*tikverr.ErrWriteConflict); ok {
 		return newWriteConflictError(e.WriteConflict)
 	}
-	if e, ok := errors.Cause(err).(*tikvstore.ErrRetryable); ok {
+	if e, ok := errors.Cause(err).(*tikverr.ErrRetryable); ok {
 		notFoundDetail := prettyLockNotFoundKey(e.Retryable)
 		return kv.ErrTxnRetryable.GenWithStackByArgs(e.Retryable + " " + notFoundDetail)
 	}
-	return errors.Trace(err)
+	return derr.ToTiDBErr(err)
 }
 
 func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {

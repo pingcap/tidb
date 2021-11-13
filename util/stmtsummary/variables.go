@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,12 +17,12 @@ package stmtsummary
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-	svariable "github.com/pingcap/tidb/sessionctx/variable"
 )
 
 const (
@@ -104,7 +105,7 @@ func getBoolFinalVariable(varType int, sessionValue, globalValue string) int64 {
 
 // normalizeEnableValue converts 'ON' or '1' to 1 and 'OFF' or '0' to 0.
 func normalizeEnableValue(value string) int64 {
-	if svariable.TiDBOptOn(value) {
+	if strings.EqualFold(value, "ON") || value == "1" {
 		return 1
 	}
 	return 0

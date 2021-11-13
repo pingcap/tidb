@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,9 +18,9 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -45,7 +46,7 @@ func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, clien
 	return
 }
 
-// PbConverter supplys methods to convert TiDB expressions to TiPB.
+// PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
 	sc     *stmtctx.StatementContext
@@ -141,6 +142,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 			return tp, val, true
 		}
 		return tp, nil, false
+	case types.KindMysqlEnum:
+		tp = tipb.ExprType_MysqlEnum
+		val = codec.EncodeUint(nil, d.GetUint64())
 	default:
 		return tp, nil, false
 	}
@@ -156,6 +160,7 @@ func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 		Decimal: int32(ft.Decimal),
 		Charset: ft.Charset,
 		Collate: collationToProto(ft.Collate),
+		Elems:   ft.Elems,
 	}
 }
 
@@ -168,6 +173,7 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 		Decimal: int(ft.Decimal),
 		Charset: ft.Charset,
 		Collate: protoToCollation(ft.Collate),
+		Elems:   ft.Elems,
 	}
 }
 
@@ -204,8 +210,12 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 		return nil
 	}
 	switch column.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry, mysql.TypeUnspecified:
+	case mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 		return nil
+	case mysql.TypeEnum:
+		if !IsPushDownEnabled("enum", kv.UnSpecified) {
+			return nil
+		}
 	}
 
 	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {

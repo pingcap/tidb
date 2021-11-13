@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,22 +17,12 @@ package mockstore
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	tidbcfg "github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/config"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-type testSuite struct{}
-
-func (s testSuite) SetUpSuite(c *C) {}
-
-var _ = Suite(testSuite{})
-
-func (s testSuite) TestConfig(c *C) {
+func TestConfig(t *testing.T) {
 	tidbcfg.UpdateGlobal(func(conf *tidbcfg.Config) {
 		conf.TxnLocalLatches = config.TxnLocalLatches{
 			Enabled:  true,
@@ -45,8 +36,8 @@ func (s testSuite) TestConfig(c *C) {
 
 	var driver MockTiKVDriver
 	store, err := driver.Open("mocktikv://")
-	c.Assert(err, IsNil)
-	c.Assert(store.(LatchEnableChecker).IsLatchEnabled(), IsTrue)
+	require.NoError(t, err)
+	require.True(t, store.(LatchEnableChecker).IsLatchEnabled())
 	store.Close()
 
 	tidbcfg.UpdateGlobal(func(conf *tidbcfg.Config) {
@@ -56,18 +47,18 @@ func (s testSuite) TestConfig(c *C) {
 		}
 	})
 	store, err = driver.Open("mocktikv://")
-	c.Assert(err, IsNil)
-	c.Assert(store.(LatchEnableChecker).IsLatchEnabled(), IsFalse)
+	require.NoError(t, err)
+	require.False(t, store.(LatchEnableChecker).IsLatchEnabled())
 	store.Close()
 
 	store, err = driver.Open(":")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	if store != nil {
 		store.Close()
 	}
 
 	store, err = driver.Open("faketikv://")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	if store != nil {
 		store.Close()
 	}

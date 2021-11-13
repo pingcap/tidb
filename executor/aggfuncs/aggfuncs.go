@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -102,6 +103,9 @@ var (
 
 	// All the AggFunc implementations for "BIT_AND" are listed here.
 	_ AggFunc = (*bitAndUint64)(nil)
+
+	// All the AggFunc implementations for "JSON_ARRAYAGG" are listed here
+	_ AggFunc = (*jsonArrayagg)(nil)
 
 	// All the AggFunc implementations for "JSON_OBJECTAGG" are listed here
 	_ AggFunc = (*jsonObjectAgg)(nil)
@@ -201,7 +205,7 @@ type SlidingWindowAggFunc interface {
 	// PartialResult stores the intermediate result which will be used in the next
 	// sliding window, ensure call ResetPartialResult after a frame are evaluated
 	// completely.
-	Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
+	Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
 }
 
 // MaxMinSlidingWindowAggFunc is the interface to evaluate the max/min agg function using sliding window

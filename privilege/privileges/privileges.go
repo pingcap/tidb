@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,10 +22,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -40,10 +41,19 @@ var SkipWithGrant = false
 var _ privilege.Manager = (*UserPrivileges)(nil)
 var dynamicPrivs = []string{
 	"BACKUP_ADMIN",
+	"RESTORE_ADMIN",
+	"SYSTEM_USER",
 	"SYSTEM_VARIABLES_ADMIN",
 	"ROLE_ADMIN",
 	"CONNECTION_ADMIN",
-	"RESTRICTED_TABLES_ADMIN",
+	"PLACEMENT_ADMIN",                 // Can Create/Drop/Alter PLACEMENT POLICY
+	"DASHBOARD_CLIENT",                // Can login to the TiDB-Dashboard.
+	"RESTRICTED_TABLES_ADMIN",         // Can see system tables when SEM is enabled
+	"RESTRICTED_STATUS_ADMIN",         // Can see all status vars when SEM is enabled.
+	"RESTRICTED_VARIABLES_ADMIN",      // Can see all variables when SEM is enabled
+	"RESTRICTED_USER_ADMIN",           // User can not have their access revoked by SUPER users.
+	"RESTRICTED_CONNECTION_ADMIN",     // Can not be killed by PROCESS/CONNECTION_ADMIN privilege
+	"RESTRICTED_REPLICA_WRITER_ADMIN", // Can write to the sever even when tidb_restriced_read_only is turned on.
 }
 var dynamicPrivLock sync.Mutex
 
@@ -53,6 +63,35 @@ type UserPrivileges struct {
 	user string
 	host string
 	*Handle
+}
+
+// RequestDynamicVerificationWithUser implements the Manager interface.
+func (p *UserPrivileges) RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool {
+	if SkipWithGrant {
+		return true
+	}
+
+	if user == nil {
+		return false
+	}
+
+	mysqlPriv := p.Handle.Get()
+	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
+	return mysqlPriv.RequestDynamicVerification(roles, user.Username, user.Hostname, privName, grantable)
+}
+
+// HasExplicitlyGrantedDynamicPrivilege checks if a user has a DYNAMIC privilege
+// without accepting SUPER privilege as a fallback.
+func (p *UserPrivileges) HasExplicitlyGrantedDynamicPrivilege(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool {
+	if SkipWithGrant {
+		return true
+	}
+	if p.user == "" && p.host == "" {
+		return true
+	}
+
+	mysqlPriv := p.Handle.Get()
+	return mysqlPriv.HasExplicitlyGrantedDynamicPrivilege(activeRoles, p.user, p.host, privName, grantable)
 }
 
 // RequestDynamicVerification implements the Manager interface.
@@ -106,14 +145,21 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		}
 		return true
 	// We should be very careful of limiting privileges, so ignore `mysql` for now.
-	case util.PerformanceSchemaName.L, util.MetricSchemaName.L:
-		if (dbLowerName == util.PerformanceSchemaName.L && perfschema.IsPredefinedTable(table)) ||
-			(dbLowerName == util.MetricSchemaName.L && infoschema.IsMetricTable(table)) {
+	case util.PerformanceSchemaName.L:
+		if perfschema.IsPredefinedTable(table) {
 			switch priv {
 			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 				return false
+			}
+		}
+	case util.MetricSchemaName.L:
+		if infoschema.IsMetricTable(table) {
+			switch priv {
+			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				return false
+			// PROCESS is the same with SELECT for metrics_schema.
 			case mysql.SelectPriv:
-				return true
+				priv |= mysql.ProcessPriv
 			}
 		}
 	}
@@ -139,7 +185,37 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 	}
 
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.RequestVerification(nil, user.Username, user.Hostname, db, table, column, priv)
+	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
+	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
+}
+
+func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
+	pwd := record.AuthenticationString
+	if pwd == "" {
+		return true
+	}
+	if record.AuthPlugin == mysql.AuthNativePassword {
+		if len(pwd) == mysql.PWDHashLen+1 {
+			return true
+		}
+		logutil.BgLogger().Error("user password from system DB not like a mysql_native_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		return false
+	}
+
+	if record.AuthPlugin == mysql.AuthCachingSha2Password {
+		if len(pwd) == mysql.SHAPWDHashLen {
+			return true
+		}
+		logutil.BgLogger().Error("user password from system DB not like a caching_sha2_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		return false
+	}
+
+	if record.AuthPlugin == mysql.AuthSocket {
+		return true
+	}
+
+	logutil.BgLogger().Error("user password from system DB not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+	return false
 }
 
 // GetEncodedPassword implements the Manager interface.
@@ -151,12 +227,33 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 			zap.String("user", user), zap.String("host", host))
 		return ""
 	}
-	pwd := record.AuthenticationString
-	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
-		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
-		return ""
+	if p.isValidHash(record) {
+		return record.AuthenticationString
 	}
-	return pwd
+	return ""
+}
+
+// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
+func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
+	if SkipWithGrant {
+		return mysql.AuthNativePassword, nil
+	}
+
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		return "", errors.New("Failed to get user record")
+	}
+	// zero-length auth string means no password for native and caching_sha2 auth.
+	// but for auth_socket it means there should be a 1-to-1 mapping between the TiDB user
+	// and the OS user.
+	if record.AuthenticationString == "" && record.AuthPlugin != mysql.AuthSocket {
+		return "", nil
+	}
+	if p.isValidHash(record) {
+		return record.AuthPlugin, nil
+	}
+	return "", errors.New("Failed to get plugin for user")
 }
 
 // GetAuthWithoutVerification implements the Manager interface.
@@ -224,8 +321,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	}
 
 	pwd := record.AuthenticationString
-	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
-		logutil.BgLogger().Error("user password from system DB not like sha1sum", zap.String("user", user))
+	if !p.isValidHash(record) {
 		return
 	}
 
@@ -238,16 +334,39 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	}
 
 	if len(pwd) == 0 || len(authentication) == 0 {
-		return
+		if record.AuthPlugin != mysql.AuthSocket {
+			return
+		}
 	}
 
-	hpwd, err := auth.DecodePassword(pwd)
-	if err != nil {
-		logutil.BgLogger().Error("decode password string failed", zap.Error(err))
-		return
-	}
+	if record.AuthPlugin == mysql.AuthNativePassword {
+		hpwd, err := auth.DecodePassword(pwd)
+		if err != nil {
+			logutil.BgLogger().Error("decode password string failed", zap.Error(err))
+			return
+		}
 
-	if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
+		if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
+			return
+		}
+	} else if record.AuthPlugin == mysql.AuthCachingSha2Password {
+		authok, err := auth.CheckShaPassword([]byte(pwd), string(authentication))
+		if err != nil {
+			logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
+		}
+
+		if !authok {
+			return
+		}
+	} else if record.AuthPlugin == mysql.AuthSocket {
+		if string(authentication) != user && string(authentication) != pwd {
+			logutil.BgLogger().Error("Failed socket auth", zap.String("user", user),
+				zap.String("socket_user", string(authentication)),
+				zap.String("authentication_string", pwd))
+			return
+		}
+	} else {
+		logutil.BgLogger().Error("unknown authentication plugin", zap.String("user", user), zap.String("plugin", record.AuthPlugin))
 		return
 	}
 
@@ -433,9 +552,9 @@ func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string
 }
 
 // UserPrivilegesTable implements the Manager interface.
-func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
+func (p *UserPrivileges) UserPrivilegesTable(activeRoles []*auth.RoleIdentity, user, host string) [][]types.Datum {
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.UserPrivilegesTable()
+	return mysqlPriv.UserPrivilegesTable(activeRoles, user, host)
 }
 
 // ShowGrants implements privilege.Manager ShowGrants interface.
@@ -512,7 +631,8 @@ func (p *UserPrivileges) GetAllRoles(user, host string) []*auth.RoleIdentity {
 }
 
 // IsDynamicPrivilege returns true if the DYNAMIC privilege is built-in or has been registered by a plugin
-func (p *UserPrivileges) IsDynamicPrivilege(privNameInUpper string) bool {
+func (p *UserPrivileges) IsDynamicPrivilege(privName string) bool {
+	privNameInUpper := strings.ToUpper(privName)
 	for _, priv := range dynamicPrivs {
 		if privNameInUpper == priv {
 			return true
@@ -522,7 +642,11 @@ func (p *UserPrivileges) IsDynamicPrivilege(privNameInUpper string) bool {
 }
 
 // RegisterDynamicPrivilege is used by plugins to add new privileges to TiDB
-func RegisterDynamicPrivilege(privNameInUpper string) error {
+func RegisterDynamicPrivilege(privName string) error {
+	privNameInUpper := strings.ToUpper(privName)
+	if len(privNameInUpper) > 32 {
+		return errors.New("privilege name is longer than 32 characters")
+	}
 	dynamicPrivLock.Lock()
 	defer dynamicPrivLock.Unlock()
 	for _, priv := range dynamicPrivs {
@@ -532,4 +656,15 @@ func RegisterDynamicPrivilege(privNameInUpper string) error {
 	}
 	dynamicPrivs = append(dynamicPrivs, privNameInUpper)
 	return nil
+}
+
+// GetDynamicPrivileges returns the list of registered DYNAMIC privileges
+// for use in meta data commands (i.e. SHOW PRIVILEGES)
+func GetDynamicPrivileges() []string {
+	dynamicPrivLock.Lock()
+	defer dynamicPrivLock.Unlock()
+
+	privCopy := make([]string, len(dynamicPrivs))
+	copy(privCopy, dynamicPrivs)
+	return privCopy
 }

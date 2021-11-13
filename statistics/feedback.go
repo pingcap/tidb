@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,9 +26,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
@@ -107,7 +108,6 @@ func (m *QueryFeedbackMap) Append(q *QueryFeedback) {
 		Tp:         q.Tp,
 	}
 	m.append(k, []*QueryFeedback{q})
-	return
 }
 
 // MaxQueryFeedbackCount is the max number of feedbacks that are cached in memory.
@@ -136,7 +136,6 @@ func (m *QueryFeedbackMap) Merge(r *QueryFeedbackMap) {
 			break
 		}
 	}
-	return
 }
 
 var (
@@ -177,6 +176,7 @@ func CollectFeedback(sc *stmtctx.StatementContext, q *QueryFeedback, numOfRanges
 	if q.Hist == nil || q.Hist.Len() == 0 {
 		return false
 	}
+	// #nosec G404
 	if numOfRanges > MaxNumberOfRanges || rand.Float64() > FeedbackProbability.Load() {
 		return false
 	}
@@ -639,6 +639,8 @@ func (b *BucketFeedback) refineBucketCount(sc *stmtctx.StatementContext, bkt buc
 const (
 	defaultSplitCount = 10
 	splitPerFeedback  = 10
+	// defaultBucketCount is the number of buckets a column histogram has.
+	defaultBucketCount = 256
 )
 
 // getSplitCount gets the split count for the histogram. It is based on the intuition that:
@@ -686,11 +688,8 @@ func getBucketScore(bkts []bucket, totalCount float64, id int) bucketScore {
 	return bucketScore{id, math.Abs(err / (preCount + count))}
 }
 
-// defaultBucketCount is the number of buckets a column histogram has.
-var defaultBucketCount = 256
-
-func mergeBuckets(bkts []bucket, isNewBuckets []bool, totalCount float64) []bucket {
-	mergeCount := len(bkts) - defaultBucketCount
+func mergeBuckets(bkts []bucket, isNewBuckets []bool, bucketCount int, totalCount float64) []bucket {
+	mergeCount := len(bkts) - bucketCount
 	if mergeCount <= 0 {
 		return bkts
 	}
@@ -726,11 +725,11 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, totalCount float64) []buck
 }
 
 // splitBuckets split the histogram buckets according to the feedback.
-func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int64) {
+func splitBuckets(h *Histogram, feedback *QueryFeedback, bucketCount int) ([]bucket, []bool, int64) {
 	bktID2FB, numTotalFBs := buildBucketFeedback(h, feedback)
 	buckets := make([]bucket, 0, h.Len())
 	isNewBuckets := make([]bool, 0, h.Len())
-	splitCount := getSplitCount(numTotalFBs, defaultBucketCount-h.Len())
+	splitCount := getSplitCount(numTotalFBs, bucketCount-h.Len())
 	for i := 0; i < h.Len(); i++ {
 		bktFB, ok := bktID2FB[i]
 		// No feedback, just use the original one.
@@ -760,14 +759,20 @@ func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int6
 
 // UpdateHistogram updates the histogram according buckets.
 func UpdateHistogram(h *Histogram, feedback *QueryFeedback, statsVer int) *Histogram {
+	return UpdateHistogramWithBucketCount(h, feedback, statsVer, defaultBucketCount)
+}
+
+// UpdateHistogramWithBucketCount updates the histogram according buckets with customized
+// bucketCount for testing.
+func UpdateHistogramWithBucketCount(h *Histogram, feedback *QueryFeedback, statsVer int, bucketCount int) *Histogram {
 	if statsVer < Version2 {
-		// If it's the stats we haven't maintain the bucket NDV yet. Reset the ndv.
+		// If it's the stats we haven't maintained the bucket NDV yet. Reset the ndv.
 		for i := range feedback.Feedback {
 			feedback.Feedback[i].Ndv = 0
 		}
 	}
-	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback)
-	buckets = mergeBuckets(buckets, isNewBuckets, float64(totalCount))
+	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback, bucketCount)
+	buckets = mergeBuckets(buckets, isNewBuckets, bucketCount, float64(totalCount))
 	hist := buildNewHistogram(h, buckets)
 	// Update the NDV of primary key column.
 	if feedback.Tp == PkType {

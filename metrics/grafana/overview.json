@@ -4924,14 +4924,14 @@
               "expr": "irate(node_network_receive_bytes_total{tidb_cluster=\"$tidb_cluster\", device!=\"lo\"}[5m])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "Inbound:  {{instance}}",
+              "legendFormat": "Inbound:  {{instance}}-{{device}}",
               "refId": "A"
             },
             {
               "expr": "irate(node_network_transmit_bytes_total{tidb_cluster=\"$tidb_cluster\", device!=\"lo\"}[5m])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "Outbound:  {{instance}}",
+              "legendFormat": "Outbound:  {{instance}}-{{device}}",
               "refId": "B"
             }
           ],

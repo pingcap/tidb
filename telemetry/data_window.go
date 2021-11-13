@@ -8,15 +8,22 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package telemetry
 
 import (
+	"context"
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/api"
+	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	pmodel "github.com/prometheus/common/model"
 	"go.uber.org/atomic"
 )
 
@@ -51,13 +58,23 @@ const (
 
 	maxSubWindowLength         = int(ReportInterval / SubWindowSize) // TODO: Ceiling?
 	maxSubWindowLengthInWindow = int(WindowSize / SubWindowSize)     // TODO: Ceiling?
+	promReadTimeout            = time.Second * 30
 )
 
 type windowData struct {
-	BeginAt        time.Time          `json:"beginAt"`
-	ExecuteCount   uint64             `json:"executeCount"`
-	TiFlashUsage   tiFlashUsageData   `json:"tiFlashUsage"`
-	CoprCacheUsage coprCacheUsageData `json:"coprCacheUsage"`
+	BeginAt               time.Time          `json:"beginAt"`
+	ExecuteCount          uint64             `json:"executeCount"`
+	TiFlashUsage          tiFlashUsageData   `json:"tiFlashUsage"`
+	CoprCacheUsage        coprCacheUsageData `json:"coprCacheUsage"`
+	SQLUsage              sqlUsageData       `json:"SQLUsage"`
+	BuiltinFunctionsUsage map[string]uint32  `json:"builtinFunctionsUsage"`
+}
+
+type sqlType map[string]uint64
+
+type sqlUsageData struct {
+	SQLTotal uint64  `json:"total"`
+	SQLType  sqlType `json:"type"`
 }
 
 type coprCacheUsageData struct {
@@ -75,10 +92,132 @@ type tiFlashUsageData struct {
 	ExchangePushDown uint64 `json:"exchangePushDown"`
 }
 
+// builtinFunctionsUsageCollector collects builtin functions usage information and dump it into windowData.
+type builtinFunctionsUsageCollector struct {
+	sync.Mutex
+
+	// Should acquire lock to access this
+	usageData BuiltinFunctionsUsage
+}
+
+// Merge BuiltinFunctionsUsage data
+func (b *builtinFunctionsUsageCollector) Collect(usageData BuiltinFunctionsUsage) {
+	// TODO(leiysky): use multi-worker to collect the usage information so we can make this asynchronous
+	b.Lock()
+	defer b.Unlock()
+	b.usageData.Merge(usageData)
+}
+
+// Dump BuiltinFunctionsUsage data
+func (b *builtinFunctionsUsageCollector) Dump() map[string]uint32 {
+	b.Lock()
+	ret := b.usageData
+	b.usageData = make(map[string]uint32)
+	b.Unlock()
+
+	return ret
+}
+
+// BuiltinFunctionsUsage is a map from ScalarFuncSig_name(string) to usage count(uint32)
+type BuiltinFunctionsUsage map[string]uint32
+
+// Inc will increase the usage count of scalar function by 1
+func (b BuiltinFunctionsUsage) Inc(scalarFuncSigName string) {
+	v, ok := b[scalarFuncSigName]
+	if !ok {
+		b[scalarFuncSigName] = 1
+	} else {
+		b[scalarFuncSigName] = v + 1
+	}
+}
+
+// Merge BuiltinFunctionsUsage data
+func (b BuiltinFunctionsUsage) Merge(usageData BuiltinFunctionsUsage) {
+	for k, v := range usageData {
+		prev, ok := b[k]
+		if !ok {
+			b[k] = v
+		} else {
+			b[k] = prev + v
+		}
+	}
+}
+
+// GlobalBuiltinFunctionsUsage is used to collect builtin functions usage information
+var GlobalBuiltinFunctionsUsage = &builtinFunctionsUsageCollector{usageData: make(BuiltinFunctionsUsage)}
+
 var (
 	rotatedSubWindows []*windowData
 	subWindowsLock    = sync.RWMutex{}
 )
+
+func getSQLSum(sqlTypeData *sqlType) uint64 {
+	result := uint64(0)
+	for _, v := range *sqlTypeData {
+		result += v
+	}
+	return result
+}
+
+func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
+	ctx := context.TODO()
+	promQL := "avg(tidb_executor_statement_total{}) by (type)"
+	result, err := querySQLMetric(ctx, timepoint, promQL)
+	if err != nil {
+		return err
+	}
+	analysisSQLUsage(result, SQLResult)
+	return nil
+}
+
+func querySQLMetric(ctx context.Context, queryTime time.Time, promQL string) (result pmodel.Value, err error) {
+	// Add retry to avoid network error.
+	var prometheusAddr string
+	for i := 0; i < 5; i++ {
+		//TODO: the prometheus will be Integrated into the PD, then we need to query the prometheus in PD directly, which need change the quire API
+		prometheusAddr, err = infosync.GetPrometheusAddr()
+		if err == nil || err == infosync.ErrPrometheusAddrIsNotSet {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err != nil {
+		return nil, err
+	}
+	promClient, err := api.NewClient(api.Config{
+		Address: prometheusAddr,
+	})
+	if err != nil {
+		return nil, err
+	}
+	promQLAPI := promv1.NewAPI(promClient)
+	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
+	defer cancel()
+	// Add retry to avoid network error.
+	for i := 0; i < 5; i++ {
+		result, _, err = promQLAPI.Query(ctx, promQL, queryTime)
+		if err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return result, err
+}
+
+func analysisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
+	if promResult == nil {
+		return
+	}
+	switch promResult.Type() {
+	case pmodel.ValVector:
+		matrix := promResult.(pmodel.Vector)
+		for _, m := range matrix {
+			v := m.Value
+			promLable := string(m.Metric[pmodel.LabelName("type")])
+			SQLResult.SQLType[promLable] = uint64(v)
+		}
+	}
+}
 
 // RotateSubWindow rotates the telemetry sub window.
 func RotateSubWindow() {
@@ -98,7 +237,20 @@ func RotateSubWindow() {
 			GTE80:  CurrentCoprCacheHitRatioGTE80Count.Swap(0),
 			GTE100: CurrentCoprCacheHitRatioGTE100Count.Swap(0),
 		},
+		SQLUsage: sqlUsageData{
+			SQLTotal: 0,
+			SQLType:  make(sqlType),
+		},
+		BuiltinFunctionsUsage: GlobalBuiltinFunctionsUsage.Dump(),
 	}
+
+	err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
+	if err != nil {
+		logutil.BgLogger().Info("Error exists when getting the SQL Metric.")
+	}
+
+	thisSubWindow.SQLUsage.SQLTotal = getSQLSum(&thisSubWindow.SQLUsage.SQLType)
+
 	subWindowsLock.Lock()
 	rotatedSubWindows = append(rotatedSubWindows, &thisSubWindow)
 	if len(rotatedSubWindows) > maxSubWindowLength {
@@ -106,6 +258,14 @@ func RotateSubWindow() {
 		rotatedSubWindows = rotatedSubWindows[len(rotatedSubWindows)-maxSubWindowLength:]
 	}
 	subWindowsLock.Unlock()
+}
+
+func calDeltaSQLTypeMap(cur sqlType, last sqlType) sqlType {
+	deltaMap := make(sqlType)
+	for key, value := range cur {
+		deltaMap[key] = value - (last)[key]
+	}
+	return deltaMap
 }
 
 // getWindowData returns data aggregated by window size.
@@ -117,6 +277,12 @@ func getWindowData() []*windowData {
 	i := 0
 	for i < len(rotatedSubWindows) {
 		thisWindow := *rotatedSubWindows[i]
+		var startWindow windowData
+		if i == 0 {
+			startWindow = thisWindow
+		} else {
+			startWindow = *rotatedSubWindows[i-1]
+		}
 		aggregatedSubWindows := 1
 		// Aggregate later sub windows
 		i++
@@ -131,6 +297,12 @@ func getWindowData() []*windowData {
 			thisWindow.CoprCacheUsage.GTE40 += rotatedSubWindows[i].CoprCacheUsage.GTE40
 			thisWindow.CoprCacheUsage.GTE80 += rotatedSubWindows[i].CoprCacheUsage.GTE80
 			thisWindow.CoprCacheUsage.GTE100 += rotatedSubWindows[i].CoprCacheUsage.GTE100
+			thisWindow.SQLUsage.SQLTotal = rotatedSubWindows[i].SQLUsage.SQLTotal - startWindow.SQLUsage.SQLTotal
+			thisWindow.SQLUsage.SQLType = calDeltaSQLTypeMap(rotatedSubWindows[i].SQLUsage.SQLType, startWindow.SQLUsage.SQLType)
+
+			mergedBuiltinFunctionsUsage := BuiltinFunctionsUsage(thisWindow.BuiltinFunctionsUsage)
+			mergedBuiltinFunctionsUsage.Merge(BuiltinFunctionsUsage(rotatedSubWindows[i].BuiltinFunctionsUsage))
+			thisWindow.BuiltinFunctionsUsage = mergedBuiltinFunctionsUsage
 			aggregatedSubWindows++
 			i++
 		}

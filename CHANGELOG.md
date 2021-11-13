@@ -1,5 +1,5 @@
 # TiDB Changelog
-All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/tikv/pd/blob/master/CHANGELOG.md).
+All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/release-notes.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/tikv/pd/blob/master/CHANGELOG.md).
 
 ## [3.0.4] 2019-10-08
 ## New features
@@ -959,12 +959,12 @@ Enable hash partition by default; and enable range columns partition when there 
     - Control whether to open the `general log`
     - Support modifying the log level online
     - Check the TiDB cluster information
-* [Add the `auto_analyze_ratio` system variables to contorl the ratio of Analyze](https://pingcap.com/docs/FAQ/#whats-the-trigger-strategy-for-auto-analyze-in-tidb)
-* [Add the `tidb_retry_limit` system variable to control the automatic retry times of transactions](https://pingcap.com/docs/sql/tidb-specific/#tidb-retry-limit)
-* [Add the `tidb_disable_txn_auto_retry` system variable to control whether the transaction retries automatically](https://pingcap.com/docs/sql/tidb-specific/#tidb-disable-txn-auto-retry)
-* [Support using `admin show slow` statement to obtain the slow queries ](https://pingcap.com/docs/sql/slow-query/#admin-show-slow-command)
-* [Add the `tidb_slow_log_threshold` environment variable to set the threshold of slow log automatically](https://pingcap.com/docs/sql/tidb-specific/#tidb_slow_log_threshold) 
-* [Add the `tidb_query_log_max_len` environment variable to set the length of the SQL statement to be truncated in the log dynamically](https://pingcap.com/docs/sql/tidb-specific/#tidb_query_log_max_len)
+* [Add the `auto_analyze_ratio` system variables to contorl the ratio of Analyze](https://docs.pingcap.com/tidb/stable/sql-faq#whats-the-trigger-strategy-for-auto-analyze-in-tidb)
+* [Add the `tidb_retry_limit` system variable to control the automatic retry times of transactions](https://docs.pingcap.com/tidb/stable/system-variables#tidb_retry_limit)
+* [Add the `tidb_disable_txn_auto_retry` system variable to control whether the transaction retries automatically](https://docs.pingcap.com/tidb/stable/system-variables/#tidb_disable_txn_auto_retry)
+* [Support using `admin show slow` statement to obtain the slow queries ](https://docs.pingcap.com/tidb/stable/identify-slow-queries/#admin-show-slow-command)
+* [Add the `tidb_slow_log_threshold` environment variable to set the threshold of slow log automatically](https://docs.pingcap.com/tidb/stable/system-variables#tidb_slow_log_threshold) 
+* [Add the `tidb_query_log_max_len` environment variable to set the length of the SQL statement to be truncated in the log dynamically](https://docs.pingcap.com/tidb/stable/system-variables#tidb_query_log_max_len)
 
 ### DDL
 * Support the parallel execution of the add index statement and other statements to avoid the time consuming add index operation blocking other operations

@@ -8,16 +8,20 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package property
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
@@ -30,17 +34,84 @@ type SortItem struct {
 	Desc bool
 }
 
-// PartitionType is the way to partition during mpp data exchanging.
-type PartitionType int
+func (s *SortItem) String() string {
+	if s.Desc {
+		return fmt.Sprintf("{%s desc}", s.Col)
+	}
+	return fmt.Sprintf("{%s asc}", s.Col)
+}
+
+// MPPPartitionType is the way to partition during mpp data exchanging.
+type MPPPartitionType int
 
 const (
 	// AnyType will not require any special partition types.
-	AnyType PartitionType = iota
+	AnyType MPPPartitionType = iota
 	// BroadcastType requires current task to broadcast its data.
 	BroadcastType
 	// HashType requires current task to shuffle its data according to some columns.
 	HashType
 )
+
+// MPPPartitionColumn is the column that will be used in MPP Hash Exchange
+type MPPPartitionColumn struct {
+	Col       *expression.Column
+	CollateID int32
+}
+
+func (partitionCol *MPPPartitionColumn) hashCode(ctx *stmtctx.StatementContext) []byte {
+	hashcode := partitionCol.Col.HashCode(ctx)
+	if partitionCol.CollateID < 0 {
+		// collateId < 0 means new collation is not enabled
+		hashcode = codec.EncodeInt(hashcode, int64(partitionCol.CollateID))
+	} else {
+		hashcode = codec.EncodeInt(hashcode, 1)
+	}
+	return hashcode
+}
+
+// Equal returns true if partitionCol == other
+func (partitionCol *MPPPartitionColumn) Equal(other *MPPPartitionColumn) bool {
+	if partitionCol.CollateID < 0 {
+		// collateId only matters if new collation is enabled
+		if partitionCol.CollateID != other.CollateID {
+			return false
+		}
+	}
+	return partitionCol.Col.Equal(nil, other.Col)
+}
+
+// ExplainColumnList generates explain information for a list of columns.
+func ExplainColumnList(cols []*MPPPartitionColumn) []byte {
+	buffer := bytes.NewBufferString("")
+	for i, col := range cols {
+		buffer.WriteString("[name: ")
+		buffer.WriteString(col.Col.ExplainInfo())
+		buffer.WriteString(", collate: ")
+		if collate.NewCollationEnabled() {
+			buffer.WriteString(GetCollateNameByIDForPartition(col.CollateID))
+		} else {
+			buffer.WriteString("N/A")
+		}
+		buffer.WriteString("]")
+		if i+1 < len(cols) {
+			buffer.WriteString(", ")
+		}
+	}
+	return buffer.Bytes()
+}
+
+// GetCollateIDByNameForPartition returns collate id by collation name
+func GetCollateIDByNameForPartition(coll string) int32 {
+	collateID := int32(collate.CollationName2ID(coll))
+	return collate.RewriteNewCollationIDIfNeeded(collateID)
+}
+
+// GetCollateNameByIDForPartition returns collate id by collation name
+func GetCollateNameByIDForPartition(collateID int32) string {
+	collateID = collate.RestoreCollationIDIfNeeded(collateID)
+	return collate.CollationID2Name(collateID)
+}
 
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.
@@ -70,10 +141,14 @@ type PhysicalProperty struct {
 	CanAddEnforcer bool
 
 	// If the partition type is hash, the data should be reshuffled by partition cols.
-	PartitionCols []*expression.Column
+	MPPPartitionCols []*MPPPartitionColumn
 
 	// which types the exchange sender belongs to, only take effects when it's a mpp task.
-	PartitionTp PartitionType
+	MPPPartitionTp MPPPartitionType
+
+	// RejectSort means rejecting the sort property from its children, but it only works for MPP tasks.
+	// Non-MPP tasks do not care about it.
+	RejectSort bool
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -96,15 +171,15 @@ func SortItemsFromCols(cols []*expression.Column, desc bool) []SortItem {
 }
 
 // IsSubsetOf check if the keys can match the needs of partition.
-func (p *PhysicalProperty) IsSubsetOf(keys []*expression.Column) []int {
-	if len(p.PartitionCols) > len(keys) {
+func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
+	if len(p.MPPPartitionCols) > len(keys) {
 		return nil
 	}
 	matches := make([]int, 0, len(keys))
-	for _, partCol := range p.PartitionCols {
+	for _, partCol := range p.MPPPartitionCols {
 		found := false
 		for i, key := range keys {
-			if partCol.Equal(nil, key) {
+			if partCol.Equal(key) {
 				found = true
 				matches = append(matches, i)
 				break
@@ -183,9 +258,9 @@ func (p *PhysicalProperty) HashCode() []byte {
 		}
 	}
 	if p.TaskTp == MppTaskType {
-		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.PartitionTp))
-		for _, col := range p.PartitionCols {
-			p.hashcode = append(p.hashcode, col.HashCode(nil)...)
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.MPPPartitionTp))
+		for _, col := range p.MPPPartitionCols {
+			p.hashcode = append(p.hashcode, col.hashCode(nil)...)
 		}
 	}
 	return p.hashcode
@@ -200,11 +275,12 @@ func (p *PhysicalProperty) String() string {
 // property, specifically, `CanAddEnforcer` should not be included.
 func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 	prop := &PhysicalProperty{
-		SortItems:     p.SortItems,
-		TaskTp:        p.TaskTp,
-		ExpectedCnt:   p.ExpectedCnt,
-		PartitionTp:   p.PartitionTp,
-		PartitionCols: p.PartitionCols,
+		SortItems:        p.SortItems,
+		TaskTp:           p.TaskTp,
+		ExpectedCnt:      p.ExpectedCnt,
+		MPPPartitionTp:   p.MPPPartitionTp,
+		MPPPartitionCols: p.MPPPartitionCols,
+		RejectSort:       p.RejectSort,
 	}
 	return prop
 }

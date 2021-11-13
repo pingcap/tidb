@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -87,7 +88,7 @@ func (a *LogOnExceed) Action(t *Tracker) {
 		a.acted = true
 		if a.logHook == nil {
 			logutil.BgLogger().Warn("memory exceeds quota",
-				zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.bytesLimit, t.String())))
+				zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.bytesHardLimit, t.String())))
 			return
 		}
 		a.logHook(a.ConnID)

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
@@ -43,14 +45,14 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	// the align the output schema. In the future, we can solve this in-compatibility by
 	// passing down the aggregation mode to TiFlash.
 	if physicalAgg, ok := p.Children()[0].(*PhysicalHashAgg); ok {
-		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase {
+		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
 			if physicalAgg.isFinalAgg() {
 				return false
 			}
 		}
 	}
 	if physicalAgg, ok := p.Children()[0].(*PhysicalStreamAgg); ok {
-		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase {
+		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
 			if physicalAgg.isFinalAgg() {
 				return false
 			}
@@ -59,6 +61,9 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	// If this projection is specially added for `DO`, we keep it.
 	if p.CalculateNoDelay {
 		return false
+	}
+	if p.Schema().Len() == 0 {
+		return true
 	}
 	child := p.Children()[0]
 	if p.Schema().Len() != child.Schema().Len() {
@@ -174,7 +179,11 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	if isProj {
 		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
 			for i := range proj.Exprs {
-				proj.Exprs[i] = expression.FoldConstant(ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema()))
+				proj.Exprs[i] = ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema())
+				foldedExpr := expression.FoldConstant(proj.Exprs[i])
+				// the folded expr should have the same null flag with the original expr, especially for the projection under union, so forcing it here.
+				foldedExpr.GetType().Flag = (foldedExpr.GetType().Flag & ^mysql.NotNullFlag) | (proj.Exprs[i].GetType().Flag & mysql.NotNullFlag)
+				proj.Exprs[i] = foldedExpr
 			}
 			p.Children()[0] = child.Children()[0]
 		}

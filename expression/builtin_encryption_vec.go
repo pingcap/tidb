@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,9 +17,9 @@ package expression
 import (
 	"bytes"
 	"crypto/aes"
-	"crypto/md5"
+	"crypto/md5" // #nosec G501
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
@@ -28,7 +29,8 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
@@ -41,7 +43,7 @@ func (b *builtinAesDecryptSig) vectorized() bool {
 
 func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	strBuf, err := b.bufAllocator.get(types.ETString, n)
+	strBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -50,7 +52,7 @@ func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		return err
 	}
 
-	keyBuf, err := b.bufAllocator.get(types.ETString, n)
+	keyBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -109,7 +111,7 @@ func (b *builtinAesEncryptIVSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 func (b *builtinAesEncryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	strBuf, err := b.bufAllocator.get(types.ETString, n)
+	strBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -118,7 +120,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return err
 	}
 
-	keyBuf, err := b.bufAllocator.get(types.ETString, n)
+	keyBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -127,7 +129,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return err
 	}
 
-	ivBuf, err := b.bufAllocator.get(types.ETString, n)
+	ivBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -202,7 +204,7 @@ func (b *builtinDecodeSig) vectorized() bool {
 
 func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -210,7 +212,10 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err1 := b.bufAllocator.get(types.ETString, n)
+	dataTp := b.args[0].GetType()
+	dataEnc := charset.NewEncoding(dataTp.Charset)
+
+	buf1, err1 := b.bufAllocator.get()
 	if err1 != nil {
 		return err1
 	}
@@ -218,14 +223,22 @@ func (b *builtinDecodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
+	passwordTp := b.args[1].GetType()
+	passwordEnc := charset.NewEncoding(passwordTp.Charset)
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		dataStr := buf.GetString(i)
-		passwordStr := buf1.GetString(i)
+		dataStr, err := dataEnc.EncodeString(buf.GetString(i))
+		if err != nil {
+			return err
+		}
+		passwordStr, err := passwordEnc.EncodeString(buf1.GetString(i))
+		if err != nil {
+			return err
+		}
 		decodeStr, err := encrypt.SQLDecode(dataStr, passwordStr)
 		if err != nil {
 			return err
@@ -241,7 +254,7 @@ func (b *builtinEncodeSig) vectorized() bool {
 
 func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -249,22 +262,33 @@ func (b *builtinEncodeSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err1 := b.bufAllocator.get(types.ETString, n)
+	buf1, err1 := b.bufAllocator.get()
 	if err1 != nil {
 		return err1
 	}
+	dataTp := b.args[0].GetType()
+	dataEnc := charset.NewEncoding(dataTp.Charset)
 	defer b.bufAllocator.put(buf1)
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
+	passwordTp := b.args[1].GetType()
+	passwordEnc := charset.NewEncoding(passwordTp.Charset)
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) || buf1.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		decodeStr := buf.GetString(i)
-		passwordStr := buf1.GetString(i)
+
+		decodeStr, err := dataEnc.EncodeString(buf.GetString(i))
+		if err != nil {
+			return err
+		}
+		passwordStr, err := passwordEnc.EncodeString(buf1.GetString(i))
+		if err != nil {
+			return err
+		}
 		dataStr, err := encrypt.SQLEncode(decodeStr, passwordStr)
 		if err != nil {
 			return err
@@ -282,7 +306,7 @@ func (b *builtinAesDecryptIVSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	strBuf, err := b.bufAllocator.get(types.ETString, n)
+	strBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -291,7 +315,7 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return err
 	}
 
-	keyBuf, err := b.bufAllocator.get(types.ETString, n)
+	keyBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -300,7 +324,7 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return err
 	}
 
-	ivBuf, err := b.bufAllocator.get(types.ETString, n)
+	ivBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -375,7 +399,7 @@ func (b *builtinRandomBytesSig) vectorized() bool {
 
 func (b *builtinRandomBytesSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -412,7 +436,7 @@ func (b *builtinMD5Sig) vectorized() bool {
 
 func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -421,14 +445,21 @@ func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 		return err
 	}
 	result.ReserveString(n)
-	digest := md5.New()
+
+	var dBytes []byte
+	digest := md5.New() // #nosec G401
+	enc := charset.NewEncoding(b.args[0].GetType().Charset)
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		cryptByte := buf.GetBytes(i)
-		_, err := digest.Write(cryptByte)
+		cryptBytes := buf.GetBytes(i)
+		dBytes, err := enc.Encode(dBytes, cryptBytes)
+		if err != nil {
+			return err
+		}
+		_, err = digest.Write(dBytes)
 		if err != nil {
 			return err
 		}
@@ -446,7 +477,7 @@ func (b *builtinSHA2Sig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha2
 func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -454,7 +485,7 @@ func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -545,7 +576,7 @@ func deallocateByteSlice(b []byte) {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
 func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -606,7 +637,7 @@ func (b *builtinAesEncryptSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	strBuf, err := b.bufAllocator.get(types.ETString, n)
+	strBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -615,7 +646,7 @@ func (b *builtinAesEncryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 		return err
 	}
 
-	keyBuf, err := b.bufAllocator.get(types.ETString, n)
+	keyBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -671,7 +702,7 @@ func (b *builtinPasswordSig) vectorized() bool {
 
 func (b *builtinPasswordSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -705,7 +736,7 @@ func (b *builtinSHA1Sig) vectorized() bool {
 
 func (b *builtinSHA1Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -714,7 +745,7 @@ func (b *builtinSHA1Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		return err
 	}
 	result.ReserveString(n)
-	hasher := sha1.New()
+	hasher := sha1.New() // #nosec G401
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -739,7 +770,7 @@ func (b *builtinUncompressSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
 func (b *builtinUncompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -794,7 +825,7 @@ func (b *builtinUncompressedLengthSig) vectorized() bool {
 func (b *builtinUncompressedLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	nr := input.NumRows()
-	payloadBuf, err := b.bufAllocator.get(types.ETString, nr)
+	payloadBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}

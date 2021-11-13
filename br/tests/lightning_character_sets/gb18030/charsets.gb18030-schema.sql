@@ -1,0 +1,1 @@
+create table gb18030 (`Ö÷¼ü` int primary key comment '×¢ÊÍ');

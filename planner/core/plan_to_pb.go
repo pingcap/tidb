@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,12 +16,11 @@ package core
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -48,7 +48,7 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
-		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
+		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(ctx, client, aggFunc))
 	}
 	executorID := ""
 	if storeType == kv.TiFlash {
@@ -74,7 +74,7 @@ func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
-		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
+		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(ctx, client, aggFunc))
 	}
 	executorID := ""
 	if storeType == kv.TiFlash {
@@ -216,8 +216,9 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 	return true
 }
 
-func findColumnInfoByID(infos []*model.ColumnInfo, id int64) *model.ColumnInfo {
-	for _, info := range infos {
+// FindColumnInfoByID finds ColumnInfo in cols by ID.
+func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInfo {
+	for _, info := range colInfos {
 		if info.ID == id {
 			return info
 		}
@@ -243,8 +244,17 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 	}
 
 	hashCols := make([]expression.Expression, 0, len(e.HashCols))
+	hashColTypes := make([]*tipb.FieldType, 0, len(e.HashCols))
 	for _, col := range e.HashCols {
-		hashCols = append(hashCols, col)
+		hashCols = append(hashCols, col.Col)
+		tp := expression.ToPBFieldType(col.Col.RetType)
+		tp.Collate = col.CollateID
+		hashColTypes = append(hashColTypes, tp)
+	}
+	allFieldTypes := make([]*tipb.FieldType, 0, len(e.Schema().Columns))
+	for _, column := range e.Schema().Columns {
+		pbType := expression.ToPBFieldType(column.RetType)
+		allFieldTypes = append(allFieldTypes, pbType)
 	}
 	hashColPb, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, hashCols, ctx.GetClient())
 	if err != nil {
@@ -255,6 +265,8 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 		EncodedTaskMeta: encodedTask,
 		PartitionKeys:   hashColPb,
 		Child:           child,
+		Types:           hashColTypes,
+		AllFieldTypes:   allFieldTypes,
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
@@ -279,9 +291,6 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.Sto
 	fieldTypes := make([]*tipb.FieldType, 0, len(e.Schema().Columns))
 	for _, column := range e.Schema().Columns {
 		pbType := expression.ToPBFieldType(column.RetType)
-		if column.RetType.Tp == mysql.TypeEnum {
-			pbType.Elems = append(pbType.Elems, column.RetType.Elems...)
-		}
 		fieldTypes = append(fieldTypes, pbType)
 	}
 	ecExec := &tipb.ExchangeReceiver{
@@ -306,7 +315,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 		} else if col.ID == model.ExtraPidColID {
 			columns = append(columns, model.NewExtraPartitionIDColInfo())
 		} else {
-			columns = append(columns, findColumnInfoByID(tableColumns, col.ID))
+			columns = append(columns, FindColumnInfoByID(tableColumns, col.ID))
 		}
 	}
 	var pkColIds []int64
@@ -366,7 +375,25 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	if err != nil {
 		return nil, err
 	}
-	otherConditions, err := expression.ExpressionsToPBList(sc, p.OtherConditions, client)
+
+	var otherConditionsInJoin expression.CNFExprs
+	var otherEqConditionsFromIn expression.CNFExprs
+	if p.JoinType == AntiSemiJoin {
+		for _, condition := range p.OtherConditions {
+			if expression.IsEQCondFromIn(condition) {
+				otherEqConditionsFromIn = append(otherEqConditionsFromIn, condition)
+			} else {
+				otherConditionsInJoin = append(otherConditionsInJoin, condition)
+			}
+		}
+	} else {
+		otherConditionsInJoin = p.OtherConditions
+	}
+	otherConditions, err := expression.ExpressionsToPBList(sc, otherConditionsInJoin, client)
+	if err != nil {
+		return nil, err
+	}
+	otherEqConditions, err := expression.ExpressionsToPBList(sc, otherEqConditionsFromIn, client)
 	if err != nil {
 		return nil, err
 	}
@@ -397,17 +424,18 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 		buildFiledTypes = append(buildFiledTypes, expression.ToPBFieldType(retType))
 	}
 	join := &tipb.Join{
-		JoinType:        pbJoinType,
-		JoinExecType:    tipb.JoinExecType_TypeHashJoin,
-		InnerIdx:        int64(p.InnerChildIdx),
-		LeftJoinKeys:    left,
-		RightJoinKeys:   right,
-		ProbeTypes:      probeFiledTypes,
-		BuildTypes:      buildFiledTypes,
-		LeftConditions:  leftConditions,
-		RightConditions: rightConditions,
-		OtherConditions: otherConditions,
-		Children:        []*tipb.Executor{lChildren, rChildren},
+		JoinType:                pbJoinType,
+		JoinExecType:            tipb.JoinExecType_TypeHashJoin,
+		InnerIdx:                int64(p.InnerChildIdx),
+		LeftJoinKeys:            left,
+		RightJoinKeys:           right,
+		ProbeTypes:              probeFiledTypes,
+		BuildTypes:              buildFiledTypes,
+		LeftConditions:          leftConditions,
+		RightConditions:         rightConditions,
+		OtherConditions:         otherConditions,
+		OtherEqConditionsFromIn: otherEqConditions,
+		Children:                []*tipb.Executor{lChildren, rChildren},
 	}
 
 	executorID := p.ExplainID().String()

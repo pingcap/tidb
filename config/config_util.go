@@ -8,24 +8,17 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package config
 
 import (
-	"bytes"
 	"encoding/json"
-	"fmt"
-	"io/ioutil"
-	"os"
-	"path/filepath"
 	"reflect"
-	"time"
 
-	"github.com/BurntSushi/toml"
-	"github.com/pingcap/errors"
-	tikvcfg "github.com/pingcap/tidb/store/tikv/config"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 )
 
 // CloneConf deeply clones this config.
@@ -104,35 +97,8 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string) (accepte
 	return
 }
 
-func atomicWriteConfig(c *Config, confPath string) (err error) {
-	content, err := encodeConfig(c)
-	if err != nil {
-		return err
-	}
-	tmpConfPath := filepath.Join(os.TempDir(), fmt.Sprintf("tmp_conf_%v.toml", time.Now().Format("20060102150405")))
-	if err := ioutil.WriteFile(tmpConfPath, []byte(content), 0666); err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(os.Rename(tmpConfPath, confPath))
-}
-
 // ConfReloadFunc is used to reload the config to make it work.
 type ConfReloadFunc func(oldConf, newConf *Config)
-
-func encodeConfig(conf *Config) (string, error) {
-	confBuf := bytes.NewBuffer(nil)
-	te := toml.NewEncoder(confBuf)
-	if err := te.Encode(conf); err != nil {
-		return "", errors.New("encode config error=" + err.Error())
-	}
-	return confBuf.String(), nil
-}
-
-func decodeConfig(content string) (*Config, error) {
-	c := new(Config)
-	_, err := toml.Decode(content, c)
-	return c, err
-}
 
 // FlattenConfigItems flatten this config, see more cases in the test.
 func FlattenConfigItems(nestedConfig map[string]interface{}) map[string]interface{} {
@@ -142,9 +108,9 @@ func FlattenConfigItems(nestedConfig map[string]interface{}) map[string]interfac
 }
 
 func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) {
-	switch nested.(type) {
+	switch nested := nested.(type) {
 	case map[string]interface{}:
-		for k, v := range nested.(map[string]interface{}) {
+		for k, v := range nested {
 			path := k
 			if prefix != "" {
 				path = prefix + "." + k
@@ -156,7 +122,7 @@ func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) 
 	}
 }
 
-// GetTxnScopeFromConfig extracts @@txn_scope value from config
-func GetTxnScopeFromConfig() (bool, string) {
+// GetTxnScopeFromConfig extracts @@txn_scope value from the config.
+func GetTxnScopeFromConfig() string {
 	return tikvcfg.GetTxnScopeFromConfig()
 }

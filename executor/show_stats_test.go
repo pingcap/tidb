@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,6 +19,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
@@ -75,10 +78,12 @@ func (s *testShowStatsSuite) TestShowStatsBuckets(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	// Simple behavior testing. Version=1 is enough.
+	tk.MustExec("set @@tidb_analyze_version=1")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("create index idx on t(a,b)")
 	tk.MustExec("insert into t values (1,1)")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t with 0 topn")
 	result := tk.MustQuery("show stats_buckets").Sort()
 	result.Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  b 0 0 1 1 1 1 0", "test t  idx 1 0 1 1 (1, 1) (1, 1) 0"))
 	result = tk.MustQuery("show stats_buckets where column_name = 'idx'")
@@ -87,7 +92,7 @@ func (s *testShowStatsSuite) TestShowStatsBuckets(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (`a` datetime, `b` int, key `idx`(`a`, `b`))")
 	tk.MustExec("insert into t values (\"2020-01-01\", 1)")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t with 0 topn")
 	result = tk.MustQuery("show stats_buckets").Sort()
 	result.Check(testkit.Rows("test t  a 0 0 1 1 2020-01-01 00:00:00 2020-01-01 00:00:00 0", "test t  b 0 0 1 1 1 1 0", "test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1) 0"))
 	result = tk.MustQuery("show stats_buckets where column_name = 'idx'")
@@ -96,7 +101,7 @@ func (s *testShowStatsSuite) TestShowStatsBuckets(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (`a` date, `b` int, key `idx`(`a`, `b`))")
 	tk.MustExec("insert into t values (\"2020-01-01\", 1)")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t with 0 topn")
 	result = tk.MustQuery("show stats_buckets").Sort()
 	result.Check(testkit.Rows("test t  a 0 0 1 1 2020-01-01 2020-01-01 0", "test t  b 0 0 1 1 1 1 0", "test t  idx 1 0 1 1 (2020-01-01, 1) (2020-01-01, 1) 0"))
 	result = tk.MustQuery("show stats_buckets where column_name = 'idx'")
@@ -105,7 +110,7 @@ func (s *testShowStatsSuite) TestShowStatsBuckets(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (`a` timestamp, `b` int, key `idx`(`a`, `b`))")
 	tk.MustExec("insert into t values (\"2020-01-01\", 1)")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t with 0 topn")
 	result = tk.MustQuery("show stats_buckets").Sort()
 	result.Check(testkit.Rows("test t  a 0 0 1 1 2020-01-01 00:00:00 2020-01-01 00:00:00 0", "test t  b 0 0 1 1 1 1 0", "test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1) 0"))
 	result = tk.MustQuery("show stats_buckets where column_name = 'idx'")
@@ -118,6 +123,7 @@ func (s *testShowStatsSuite) TestShowStatsHasNullValue(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, index idx(a))")
 	tk.MustExec("insert into t values(NULL)")
+	tk.MustExec("set @@session.tidb_analyze_version=1")
 	tk.MustExec("analyze table t")
 	// Null values are excluded from histogram for single-column index.
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows())
@@ -177,6 +183,8 @@ func (s *testShowStatsSuite) TestShowPartitionStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	testkit.WithPruneMode(tk, variable.Static, func() {
 		tk.MustExec("set @@session.tidb_enable_table_partition=1")
+		// Version2 is tested in TestGlobalStatsData1/2/3 and TestAnalyzeGlobalStatsWithOpts.
+		tk.MustExec("set @@session.tidb_analyze_version=1")
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
@@ -215,9 +223,25 @@ func (s *testShowStatsSuite) TestShowAnalyzeStatus(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, primary key(a), index idx(b))")
 	tk.MustExec(`insert into t values (1, 1), (2, 2)`)
-	tk.MustExec("analyze table t")
 
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show analyze status").Sort()
+	c.Assert(len(result.Rows()), Equals, 1)
+	c.Assert(result.Rows()[0][0], Equals, "test")
+	c.Assert(result.Rows()[0][1], Equals, "t")
+	c.Assert(result.Rows()[0][2], Equals, "")
+	c.Assert(result.Rows()[0][3], Equals, "analyze table")
+	c.Assert(result.Rows()[0][4], Equals, "2")
+	c.Assert(result.Rows()[0][5], NotNil)
+	c.Assert(result.Rows()[0][6], NotNil)
+	c.Assert(result.Rows()[0][7], Equals, "finished")
+
+	statistics.ClearHistoryJobs()
+
+	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("analyze table t")
+	result = tk.MustQuery("show analyze status").Sort()
 	c.Assert(len(result.Rows()), Equals, 2)
 	c.Assert(result.Rows()[0][0], Equals, "test")
 	c.Assert(result.Rows()[0][1], Equals, "t")
@@ -312,4 +336,34 @@ func (s *testShowStatsSuite) TestShowStatsExtended(c *C) {
 	s.domain.StatsHandle().Update(s.domain.InfoSchema())
 	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
 	c.Assert(len(result.Rows()), Equals, 0)
+}
+
+func (s *testShowStatsSuite) TestShowColumnStatsUsage(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx_a_b(a, b))")
+	tk.MustExec("create table t2 (a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
+
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	t2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, null, '2021-10-20 08:00:00')", t1.Meta().ID, t1.Meta().Columns[0].ID))
+	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, '2021-10-20 09:00:00', null)", t2.Meta().ID, t2.Meta().Columns[0].ID))
+	p0 := t2.Meta().GetPartitionInfo().Definitions[0]
+	tk.MustExec(fmt.Sprintf("insert into mysql.column_stats_usage values (%d, %d, '2021-10-20 09:00:00', null)", p0.ID, t2.Meta().Columns[0].ID))
+
+	result := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Sort()
+	rows := result.Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0], DeepEquals, []interface{}{"test", "t1", "", t1.Meta().Columns[0].Name.O, "<nil>", "2021-10-20 08:00:00"})
+
+	result = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Sort()
+	rows = result.Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0], DeepEquals, []interface{}{"test", "t2", "global", t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
+	c.Assert(rows[1], DeepEquals, []interface{}{"test", "t2", p0.Name.O, t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
 }

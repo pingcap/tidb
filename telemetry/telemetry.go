@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -170,8 +171,6 @@ func InitialRun(ctx sessionctx.Context, etcdClient *clientv3.Client) error {
 	if err != nil {
 		return err
 	}
-
 	logutil.BgLogger().Info("Telemetry configuration", zap.String("endpoint", apiEndpoint), zap.Duration("report_interval", ReportInterval), zap.Bool("enabled", enabled))
-
 	return ReportUsageData(ctx, etcdClient)
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -148,21 +149,22 @@ func (p *LogicalProjection) PreparePossibleProperties(schema *expression.Schema,
 		}
 	}
 	tmpSchema := expression.NewSchema(oldCols...)
-	for i := len(childProperties) - 1; i >= 0; i-- {
-		for j, col := range childProperties[i] {
+	newProperties := make([][]*expression.Column, 0, len(childProperties))
+	for _, childProperty := range childProperties {
+		newChildProperty := make([]*expression.Column, 0, len(childProperty))
+		for _, col := range childProperty {
 			pos := tmpSchema.ColumnIndex(col)
 			if pos >= 0 {
-				childProperties[i][j] = newCols[pos]
+				newChildProperty = append(newChildProperty, newCols[pos])
 			} else {
-				childProperties[i] = childProperties[i][:j]
 				break
 			}
 		}
-		if len(childProperties[i]) == 0 {
-			childProperties = append(childProperties[:i], childProperties[i+1:]...)
+		if len(newChildProperty) != 0 {
+			newProperties = append(newProperties, newChildProperty)
 		}
 	}
-	return childProperties
+	return newProperties
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
@@ -204,9 +206,10 @@ func (la *LogicalAggregation) PreparePossibleProperties(schema *expression.Schem
 	for _, possibleChildProperty := range childProps {
 		sortColOffsets := getMaxSortPrefix(possibleChildProperty, groupByCols)
 		if len(sortColOffsets) == len(groupByCols) {
-			resultProperties = append(resultProperties, possibleChildProperty[:len(groupByCols)])
+			prop := possibleChildProperty[:len(groupByCols)]
+			resultProperties = append(resultProperties, prop)
 		}
 	}
 	la.possibleProperties = resultProperties
-	return la.possibleProperties
+	return resultProperties
 }

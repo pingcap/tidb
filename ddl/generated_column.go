@@ -8,17 +8,23 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package ddl
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 )
 
@@ -137,6 +143,31 @@ func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 	return c.cols
 }
 
+// hasDependentByGeneratedColumn checks whether there are other columns depend on this column or not.
+func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName model.CIStr) (bool, string, bool) {
+	for _, col := range tblInfo.Columns {
+		for dep := range col.Dependences {
+			if dep == colName.L {
+				return true, dep, col.Hidden
+			}
+		}
+	}
+	return false, "", false
+}
+
+func isGeneratedRelatedColumn(tblInfo *model.TableInfo, newCol, col *model.ColumnInfo) error {
+	if newCol.IsGenerated() || col.IsGenerated() {
+		// TODO: Make it compatible with MySQL error.
+		msg := fmt.Sprintf("newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	}
+	if ok, dep, _ := hasDependentByGeneratedColumn(tblInfo, col.Name); ok {
+		msg := fmt.Sprintf("oldCol is a dependent column '%s' for generated column", dep)
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	}
+	return nil
+}
+
 type generatedColumnChecker struct {
 	cols []*ast.ColumnName
 }
@@ -160,7 +191,7 @@ func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 //  3. check if the modified expr contains non-deterministic functions
 //  4. check whether new column refers to any auto-increment columns.
 //  5. check if the new column is indexed or stored
-func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
+func checkModifyGeneratedColumn(sctx sessionctx.Context, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
 	// rule 1.
 	oldColIsStored := !oldCol.IsGenerated() || oldCol.GeneratedStored
 	newColIsStored := !newCol.IsGenerated() || newCol.GeneratedStored
@@ -221,8 +252,10 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 
 		// rule 4.
 		_, dependColNames := findDependedColumnNames(newColDef)
-		if err := checkAutoIncrementRef(newColDef.Name.Name.L, dependColNames, tbl.Meta()); err != nil {
-			return errors.Trace(err)
+		if !sctx.GetSessionVars().EnableAutoIncrementInGenerated {
+			if err := checkAutoIncrementRef(newColDef.Name.Name.L, dependColNames, tbl.Meta()); err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		// rule 5.
@@ -234,11 +267,12 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 }
 
 type illegalFunctionChecker struct {
-	hasIllegalFunc bool
-	hasAggFunc     bool
-	hasRowVal      bool // hasRowVal checks whether the functional index refers to a row value
-	hasWindowFunc  bool
-	otherErr       error
+	hasIllegalFunc       bool
+	hasAggFunc           bool
+	hasRowVal            bool // hasRowVal checks whether the functional index refers to a row value
+	hasWindowFunc        bool
+	hasNotGAFunc4ExprIdx bool
+	otherErr             error
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
@@ -254,6 +288,10 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 		if err != nil {
 			c.otherErr = err
 			return inNode, true
+		}
+		_, isFuncGA := variable.GAFunction4ExpressionIndex[node.FnName.L]
+		if !isFuncGA {
+			c.hasNotGAFunc4ExprIdx = true
 		}
 	case *ast.SubqueryExpr, *ast.ValuesExpr, *ast.VariableExpr:
 		// Subquery & `values(x)` & variable is not allowed
@@ -312,6 +350,9 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 	}
 	if c.otherErr != nil {
 		return c.otherErr
+	}
+	if genType == typeIndex && c.hasNotGAFunc4ExprIdx && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
+		return ErrUnsupportedExpressionIndex
 	}
 	return nil
 }

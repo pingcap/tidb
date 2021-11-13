@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/statistics"
@@ -56,15 +58,17 @@ func (impl *MemTableScanImpl) CalcCost(outCount float64, children ...memo.Implem
 // TableReaderImpl implementation of PhysicalTableReader.
 type TableReaderImpl struct {
 	baseImpl
+	tblInfo     *model.TableInfo
 	tblColHists *statistics.HistColl
 }
 
 // NewTableReaderImpl creates a new table reader Implementation.
-func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, hists *statistics.HistColl) *TableReaderImpl {
+func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *plannercore.DataSource) *TableReaderImpl {
 	base := baseImpl{plan: reader}
 	impl := &TableReaderImpl{
 		baseImpl:    base,
-		tblColHists: hists,
+		tblInfo:     source.TableInfo(),
+		tblColHists: source.TblColHists,
 	}
 	return impl
 }
@@ -74,7 +78,9 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 	reader := impl.plan.(*plannercore.PhysicalTableReader)
 	width := impl.tblColHists.GetAvgRowSize(impl.plan.SCtx(), reader.Schema().Columns, false, false)
 	sessVars := reader.SCtx().GetSessionVars()
-	networkCost := outCount * sessVars.NetworkFactor * width
+	// TableReaderImpl don't have tableInfo property, so using nil to replace it.
+	// Todo add the tableInfo property for the TableReaderImpl.
+	networkCost := outCount * sessVars.GetNetworkFactor(impl.tblInfo) * width
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
@@ -118,9 +124,9 @@ func (impl *TableScanImpl) CalcCost(outCount float64, children ...memo.Implement
 	ts := impl.plan.(*plannercore.PhysicalTableScan)
 	width := impl.tblColHists.GetTableAvgRowSize(impl.plan.SCtx(), impl.tblCols, kv.TiKV, true)
 	sessVars := ts.SCtx().GetSessionVars()
-	impl.cost = outCount * sessVars.ScanFactor * width
+	impl.cost = outCount * sessVars.GetScanFactor(ts.Table) * width
 	if ts.Desc {
-		impl.cost = outCount * sessVars.DescScanFactor * width
+		impl.cost = outCount * sessVars.GetDescScanFactor(ts.Table) * width
 	}
 	return impl.cost
 }
@@ -128,6 +134,7 @@ func (impl *TableScanImpl) CalcCost(outCount float64, children ...memo.Implement
 // IndexReaderImpl is the implementation of PhysicalIndexReader.
 type IndexReaderImpl struct {
 	baseImpl
+	tblInfo     *model.TableInfo
 	tblColHists *statistics.HistColl
 }
 
@@ -146,17 +153,18 @@ func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, children ...memo.Im
 func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
 	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
-	networkCost := outCount * sessVars.NetworkFactor * impl.tblColHists.GetAvgRowSize(reader.SCtx(), children[0].GetPlan().Schema().Columns, true, false)
+	networkCost := outCount * sessVars.GetNetworkFactor(impl.tblInfo) * impl.tblColHists.GetAvgRowSize(reader.SCtx(), children[0].GetPlan().Schema().Columns, true, false)
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	impl.cost = (networkCost + children[0].GetCost()) / copIterWorkers
 	return impl.cost
 }
 
 // NewIndexReaderImpl creates a new IndexReader Implementation.
-func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, tblColHists *statistics.HistColl) *IndexReaderImpl {
+func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, source *plannercore.DataSource) *IndexReaderImpl {
 	return &IndexReaderImpl{
 		baseImpl:    baseImpl{plan: reader},
-		tblColHists: tblColHists,
+		tblInfo:     source.TableInfo(),
+		tblColHists: source.TblColHists,
 	}
 }
 
@@ -171,11 +179,11 @@ func (impl *IndexScanImpl) CalcCost(outCount float64, children ...memo.Implement
 	is := impl.plan.(*plannercore.PhysicalIndexScan)
 	sessVars := is.SCtx().GetSessionVars()
 	rowSize := impl.tblColHists.GetIndexAvgRowSize(is.SCtx(), is.Schema().Columns, is.Index.Unique)
-	cost := outCount * rowSize * sessVars.ScanFactor
+	cost := outCount * rowSize * sessVars.GetScanFactor(is.Table)
 	if is.Desc {
-		cost = outCount * rowSize * sessVars.DescScanFactor
+		cost = outCount * rowSize * sessVars.GetDescScanFactor(is.Table)
 	}
-	cost += float64(len(is.Ranges)) * sessVars.SeekFactor
+	cost += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table)
 	impl.cost = cost
 	return impl.cost
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,7 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -168,18 +169,6 @@ func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTyp
 			if i < lenRunes-1 {
 				i++
 				r = runes[i]
-				if r == escapeRune || r == '_' || r == '%' {
-					// Valid escape.
-				} else {
-					// Invalid escape, fall back to escape byte.
-					// mysql will treat escape character as the origin value even
-					// the escape sequence is invalid in Go or C.
-					// e.g., \m is invalid in Go, but in MySQL we will get "m" for select '\m'.
-					// Following case is correct just for escape \, not for others like +.
-					// TODO: Add more checks for other escapes.
-					i--
-					r = escapeRune
-				}
 			}
 		case '_':
 			// %_ => _%

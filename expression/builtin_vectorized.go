@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,60 +18,41 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 // columnBufferAllocator is used to allocate and release column buffer in vectorized evaluation.
 type columnBufferAllocator interface {
-	// get allocates a column buffer with the specific eval type and capacity.
-	// the allocator is not responsible for initializing the column, so please initialize it before using.
-	get(evalType types.EvalType, capacity int) (*chunk.Column, error)
+	// get allocates a column. The allocator is not responsible for initializing the column, so please initialize it before using.
+	get() (*chunk.Column, error)
 	// put releases a column buffer.
 	put(buf *chunk.Column)
 }
 
-// localSliceBuffer implements columnBufferAllocator interface.
-// It works like a concurrency-safe deque which is implemented by a lock + slice.
-type localSliceBuffer struct {
-	sync.Mutex
-	buffers []*chunk.Column
-	head    int
-	tail    int
-	size    int
+// localColumnPool implements columnBufferAllocator interface.
+// It works like a concurrency-safe deque which is implemented by lock-free sync.Pool.
+type localColumnPool struct {
+	sync.Pool
 }
 
-func newLocalSliceBuffer(initCap int) *localSliceBuffer {
-	return &localSliceBuffer{buffers: make([]*chunk.Column, initCap)}
-}
-
-var globalColumnAllocator = newLocalSliceBuffer(1024)
-
-func newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
-	switch evalType {
-	case types.ETInt:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), capacity), nil
-	case types.ETReal:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeDouble), capacity), nil
-	case types.ETDecimal:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeNewDecimal), capacity), nil
-	case types.ETDuration:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeDuration), capacity), nil
-	case types.ETDatetime, types.ETTimestamp:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeDatetime), capacity), nil
-	case types.ETString:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeString), capacity), nil
-	case types.ETJson:
-		return chunk.NewColumn(types.NewFieldType(mysql.TypeJSON), capacity), nil
+func newLocalColumnPool() *localColumnPool {
+	newColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
+	return &localColumnPool{
+		sync.Pool{
+			New: func() interface{} {
+				return newColumn.CopyConstruct(nil)
+			},
+		},
 	}
-	return nil, errors.Errorf("get column buffer for unsupported EvalType=%v", evalType)
 }
 
-// GetColumn allocates a column buffer with the specific eval type and capacity.
-// the allocator is not responsible for initializing the column, so please initialize it before using.
-func GetColumn(evalType types.EvalType, capacity int) (*chunk.Column, error) {
-	return globalColumnAllocator.get(evalType, capacity)
+var globalColumnAllocator = newLocalColumnPool()
+
+// GetColumn allocates a column. The allocator is not responsible for initializing the column, so please initialize it before using.
+func GetColumn(_ types.EvalType, _ int) (*chunk.Column, error) {
+	return globalColumnAllocator.get()
 }
 
 // PutColumn releases a column buffer.
@@ -78,39 +60,16 @@ func PutColumn(buf *chunk.Column) {
 	globalColumnAllocator.put(buf)
 }
 
-func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Column, error) {
-	r.Lock()
-	if r.size > 0 {
-		buf := r.buffers[r.head]
-		r.head++
-		if r.head == len(r.buffers) {
-			r.head = 0
-		}
-		r.size--
-		r.Unlock()
-		return buf, nil
+func (r *localColumnPool) get() (*chunk.Column, error) {
+	col, ok := r.Pool.Get().(*chunk.Column)
+	if !ok {
+		return nil, errors.New("unexpected object in localColumnPool")
 	}
-	r.Unlock()
-	return newBuffer(evalType, capacity)
+	return col, nil
 }
 
-func (r *localSliceBuffer) put(buf *chunk.Column) {
-	r.Lock()
-	if r.size == len(r.buffers) {
-		buffers := make([]*chunk.Column, len(r.buffers)*2)
-		copy(buffers, r.buffers[r.head:])
-		copy(buffers[r.size-r.head:], r.buffers[:r.tail])
-		r.head = 0
-		r.tail = len(r.buffers)
-		r.buffers = buffers
-	}
-	r.buffers[r.tail] = buf
-	r.tail++
-	if r.tail == len(r.buffers) {
-		r.tail = 0
-	}
-	r.size++
-	r.Unlock()
+func (r *localColumnPool) put(col *chunk.Column) {
+	r.Pool.Put(col)
 }
 
 // vecEvalIntByRows uses the non-vectorized(row-based) interface `evalInt` to eval the expression.

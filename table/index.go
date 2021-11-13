@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,8 +17,8 @@ package table
 import (
 	"context"
 
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -31,20 +32,14 @@ type IndexIterator interface {
 
 // CreateIdxOpt contains the options will be used when creating an index.
 type CreateIdxOpt struct {
-	Ctx             context.Context
-	SkipHandleCheck bool // If true, skip the handle constraint check.
-	Untouched       bool // If true, the index key/value is no need to commit.
+	Ctx       context.Context
+	Untouched bool // If true, the index key/value is no need to commit.
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
 // Here is a blog post about how to use this pattern:
 // https://dave.cheney.net/2014/10/17/functional-options-for-friendly-apis
 type CreateIdxOptFunc func(*CreateIdxOpt)
-
-// SkipHandleCheck is a defined value of CreateIdxFunc.
-var SkipHandleCheck CreateIdxOptFunc = func(opt *CreateIdxOpt) {
-	opt.SkipHandleCheck = true
-}
 
 // IndexIsUntouched uses to indicate the index kv is untouched.
 var IndexIsUntouched CreateIdxOptFunc = func(opt *CreateIdxOpt) {
@@ -66,11 +61,11 @@ type Index interface {
 	// Create supports insert into statement.
 	Create(ctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) (kv.Handle, error)
 	// Delete supports delete from statement.
-	Delete(sc *stmtctx.StatementContext, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle) error
+	Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
 	// Drop supports drop table, drop index statements.
-	Drop(us kv.UnionStore) error
+	Drop(txn kv.Transaction) error
 	// Exist supports check index exists or not.
-	Exist(sc *stmtctx.StatementContext, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error)
+	Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error)
 	// GenIndexKey generates an index key.
 	GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error)
 	// Seek supports where clause.

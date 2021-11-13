@@ -8,18 +8,22 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
+	"testing"
 	"time"
 
-	"github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testExpressionSuite) TestRandWithTime(c *check.C) {
+func TestRandWithTime(t *testing.T) {
+	t.Parallel()
+
 	rng1 := NewWithTime()
 	// NOTE: On windows platform, this Sleep is necessary. Because time.Now() is
 	// imprecise, calling UnixNano() twice returns the same value. We have to make
@@ -28,16 +32,18 @@ func (s *testExpressionSuite) TestRandWithTime(c *check.C) {
 	rng2 := NewWithTime()
 	got1 := rng1.Gen()
 	got2 := rng2.Gen()
-	c.Assert(got1 < 1.0, check.IsTrue)
-	c.Assert(got1 >= 0.0, check.IsTrue)
-	c.Assert(got1 != rng1.Gen(), check.IsTrue)
-	c.Assert(got2 < 1.0, check.IsTrue)
-	c.Assert(got2 >= 0.0, check.IsTrue)
-	c.Assert(got2 != rng2.Gen(), check.IsTrue)
-	c.Assert(got1 != got2, check.IsTrue)
+	require.True(t, got1 < 1.0)
+	require.True(t, got1 >= 0.0)
+	require.True(t, got1 != rng1.Gen())
+	require.True(t, got2 < 1.0)
+	require.True(t, got2 >= 0.0)
+	require.True(t, got2 != rng2.Gen())
+	require.True(t, got1 != got2)
 }
 
-func (s *testExpressionSuite) TestRandWithSeed(c *check.C) {
+func TestRandWithSeed(t *testing.T) {
+	t.Parallel()
+
 	tests := [4]struct {
 		seed  int64
 		once  float64
@@ -49,8 +55,8 @@ func (s *testExpressionSuite) TestRandWithSeed(c *check.C) {
 	for _, test := range tests {
 		rng := NewWithSeed(test.seed)
 		got1 := rng.Gen()
-		c.Assert(got1 == test.once, check.IsTrue)
+		require.True(t, got1 == test.once)
 		got2 := rng.Gen()
-		c.Assert(got2 == test.twice, check.IsTrue)
+		require.True(t, got2 == test.twice)
 	}
 }

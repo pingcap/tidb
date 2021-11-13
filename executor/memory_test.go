@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -81,7 +82,7 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	c.Assert(err, IsNil)
 	record := records[0]
 	rowCnt := 0
-	chk := record.NewChunk()
+	chk := record.NewChunk(nil)
 	for {
 		c.Assert(record.Next(context.Background(), chk), IsNil)
 		rowCnt += chk.NumRows()
@@ -104,12 +105,14 @@ func (s *testMemoryLeak) TestPBMemoryLeak(c *C) {
 	c.Assert(s.memDiff(inUseFinal, inUseAfter), Less, delta)
 }
 
+// nolint:unused
 func (s *testMemoryLeak) readMem() (allocated, heapInUse uint64) {
 	var stat runtime.MemStats
 	runtime.ReadMemStats(&stat)
 	return stat.TotalAlloc, stat.HeapInuse
 }
 
+// nolint:unused
 func (s *testMemoryLeak) memDiff(m1, m2 uint64) uint64 {
 	if m1 > m2 {
 		return m1 - m2

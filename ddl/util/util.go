@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,8 +20,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -69,7 +70,7 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 		return nil, errors.Trace(err)
 	}
 
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	it := chunk.NewIterator4Chunk(req)
 	for {
 		err = rs.Next(context.TODO(), req)
@@ -118,7 +119,7 @@ func RemoveFromGCDeleteRange(ctx sessionctx.Context, jobID, elementID int64) err
 }
 
 // RemoveMultiFromGCDeleteRange is exported for ddl pkg to use.
-func RemoveMultiFromGCDeleteRange(ctx sessionctx.Context, jobID int64, elementIDs []int64) error {
+func RemoveMultiFromGCDeleteRange(ctx context.Context, sctx sessionctx.Context, jobID int64, elementIDs []int64) error {
 	var buf strings.Builder
 	buf.WriteString(completeDeleteMultiRangesSQL)
 	paramIDs := make([]interface{}, 0, 1+len(elementIDs))
@@ -131,7 +132,7 @@ func RemoveMultiFromGCDeleteRange(ctx sessionctx.Context, jobID int64, elementID
 		paramIDs = append(paramIDs, elementID)
 	}
 	buf.WriteString(")")
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), buf.String(), paramIDs...)
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, buf.String(), paramIDs...)
 	return errors.Trace(err)
 }
 
@@ -150,20 +151,20 @@ func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, old
 }
 
 // LoadDDLReorgVars loads ddl reorg variable from mysql.global_variables.
-func LoadDDLReorgVars(ctx sessionctx.Context) error {
+func LoadDDLReorgVars(ctx context.Context, sctx sessionctx.Context) error {
 	// close issue #21391
 	// variable.TiDBRowFormatVersion is used to encode the new row for column type change.
-	return LoadGlobalVars(ctx, []string{variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgBatchSize, variable.TiDBRowFormatVersion})
+	return LoadGlobalVars(ctx, sctx, []string{variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgBatchSize, variable.TiDBRowFormatVersion})
 }
 
 // LoadDDLVars loads ddl variable from mysql.global_variables.
 func LoadDDLVars(ctx sessionctx.Context) error {
-	return LoadGlobalVars(ctx, []string{variable.TiDBDDLErrorCountLimit})
+	return LoadGlobalVars(context.Background(), ctx, []string{variable.TiDBDDLErrorCountLimit})
 }
 
 // LoadGlobalVars loads global variable from mysql.global_variables.
-func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
-	if sctx, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
+func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
+	if e, ok := sctx.(sqlexec.RestrictedSQLExecutor); ok {
 		var buf strings.Builder
 		buf.WriteString(loadGlobalVars)
 		paramNames := make([]interface{}, 0, len(varNames))
@@ -175,18 +176,20 @@ func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 			paramNames = append(paramNames, name)
 		}
 		buf.WriteString(")")
-		stmt, err := sctx.ParseWithParams(context.Background(), buf.String(), paramNames...)
+		stmt, err := e.ParseWithParams(ctx, buf.String(), paramNames...)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rows, _, err := sctx.ExecRestrictedStmt(context.Background(), stmt)
+		rows, _, err := e.ExecRestrictedStmt(ctx, stmt)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		for _, row := range rows {
 			varName := row.GetString(0)
 			varValue := row.GetString(1)
-			variable.SetLocalSystemVar(varName, varValue)
+			if err = sctx.GetSessionVars().SetSystemVar(varName, varValue); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

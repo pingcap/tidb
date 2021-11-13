@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,10 +20,10 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -102,11 +103,22 @@ func (r *pointSorter) Less(i, j int) bool {
 }
 
 func rangePointLess(sc *stmtctx.StatementContext, a, b *point) (bool, error) {
+	if a.value.Kind() == types.KindMysqlEnum && b.value.Kind() == types.KindMysqlEnum {
+		return rangePointEnumLess(sc, a, b)
+	}
 	cmp, err := a.value.CompareDatum(sc, &b.value)
 	if cmp != 0 {
 		return cmp < 0, nil
 	}
 	return rangePointEqualValueLess(a, b), errors.Trace(err)
+}
+
+func rangePointEnumLess(sc *stmtctx.StatementContext, a, b *point) (bool, error) {
+	cmp := types.CompareInt64(a.value.GetInt64(), b.value.GetInt64())
+	if cmp != 0 {
+		return cmp < 0, nil
+	}
+	return rangePointEqualValueLess(a, b), nil
 }
 
 func rangePointEqualValueLess(a, b *point) bool {
@@ -218,7 +230,7 @@ func (r *builder) buildFromColumn(expr *expression.Column) []*point {
 	return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
-func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
+func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
 	var (
@@ -235,7 +247,8 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 		if col.RetType.EvalType() == types.ETString && (value.Kind() == types.KindString || value.Kind() == types.KindBinaryLiteral) {
 			value.SetString(value.GetString(), col.RetType.Collate)
 		}
-		if col.GetType().Tp == mysql.TypeYear {
+		// If nulleq with null value, values.ToInt64 will return err
+		if col.GetType().Tp == mysql.TypeYear && !value.IsNull() {
 			// If the original value is adjusted, we need to change the condition.
 			// For example, col < 2156. Since the max year is 2155, 2156 is changed to 2155.
 			// col < 2155 is wrong. It should be col <= 2155.
@@ -244,7 +257,7 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 				return err1
 			}
 			*value, err = value.ConvertToMysqlYear(r.sc, col.RetType)
-			if errors.ErrorEqual(err, types.ErrInvalidYear) {
+			if errors.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 				// Keep err for EQ and NE.
 				switch *op {
 				case ast.GT:
@@ -317,6 +330,10 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 	value, op, isValidRange = handleBoundCol(ft, value, op)
 	if !isValidRange {
 		return nil
+	}
+
+	if ft.Tp == mysql.TypeEnum && ft.EvalType() == types.ETString {
+		return handleEnumFromBinOp(r.sc, ft, value, op)
 	}
 
 	switch op {
@@ -433,6 +450,55 @@ func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datu
 	return val, op, true
 }
 
+func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum, op string) []*point {
+	res := make([]*point, 0, len(ft.Elems)*2)
+	appendPointFunc := func(d types.Datum) {
+		res = append(res, &point{value: d, excl: false, start: true})
+		res = append(res, &point{value: d, excl: false, start: false})
+	}
+
+	tmpEnum := types.Enum{}
+	for i := 0; i <= len(ft.Elems); i++ {
+		if i == 0 {
+			tmpEnum = types.Enum{}
+		} else {
+			tmpEnum.Name = ft.Elems[i-1]
+			tmpEnum.Value = uint64(i)
+		}
+
+		d := types.NewCollateMysqlEnumDatum(tmpEnum, ft.Collate)
+		if v, err := d.CompareDatum(sc, &val); err == nil {
+			switch op {
+			case ast.LT:
+				if v < 0 {
+					appendPointFunc(d)
+				}
+			case ast.LE:
+				if v <= 0 {
+					appendPointFunc(d)
+				}
+			case ast.GT:
+				if v > 0 {
+					appendPointFunc(d)
+				}
+			case ast.GE:
+				if v >= 0 {
+					appendPointFunc(d)
+				}
+			case ast.EQ:
+				if v == 0 {
+					appendPointFunc(d)
+				}
+			case ast.NE:
+				if v != 0 {
+					appendPointFunc(d)
+				}
+			}
+		}
+	}
+	return res
+}
+
 func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, keepNull bool) []*point {
 	if isNot == 1 {
 		if keepNull {
@@ -503,6 +569,26 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 		}
 		if dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral {
 			dt.SetString(dt.GetString(), colCollate)
+		}
+		if expr.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
+			switch dt.Kind() {
+			case types.KindString, types.KindBytes, types.KindBinaryLiteral:
+				// Can't use ConvertTo directly, since we shouldn't convert numerical string to Enum in select stmt.
+				targetType := expr.GetArgs()[0].GetType()
+				enum, parseErr := types.ParseEnumName(targetType.Elems, dt.GetString(), targetType.Collate)
+				if parseErr == nil {
+					dt.SetMysqlEnum(enum, targetType.Collate)
+				} else {
+					err = parseErr
+				}
+			default:
+				dt, err = dt.ConvertTo(r.sc, expr.GetArgs()[0].GetType())
+			}
+
+			if err != nil {
+				// in (..., an impossible value (not valid enum), ...), the range is empty, so skip it.
+				continue
+			}
 		}
 		if expr.GetArgs()[0].GetType().Tp == mysql.TypeYear {
 			dt, err = dt.ConvertToMysqlYear(r.sc, expr.GetArgs()[0].GetType())
@@ -681,7 +767,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []*point {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
-		return r.buildFormBinOp(expr)
+		return r.buildFromBinOp(expr)
 	case ast.LogicAnd:
 		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	case ast.LogicOr:

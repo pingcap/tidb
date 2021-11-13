@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -43,7 +45,6 @@ func checkApplyPlan(c *C, tk *testkit.TestKit, sql string, parallel int) {
 		}
 	}
 	c.Assert(containApply, IsTrue)
-	return
 }
 
 func (s *testSuite) TestParallelApply(c *C) {
@@ -570,6 +571,10 @@ func (s *testSuite) TestApplyCacheRatio(c *C) {
 }
 
 func (s *testSuite) TestApplyGoroutinePanic(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("race detected, skip it temporarily and fix it before 20210619")
+	}
+
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 	tk.MustExec("drop table if exists t1, t2")
@@ -596,4 +601,15 @@ func (s *testSuite) TestApplyGoroutinePanic(c *C) {
 		c.Assert(err, NotNil) // verify errors are not be ignored
 		c.Assert(failpoint.Disable(panicPath), IsNil)
 	}
+}
+
+func (s *testSuite) TestIssue24930(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustQuery(`select case when t1.a is null
+    then (select t2.a from t2 where t2.a = t1.a limit 1) else t1.a end a
+	from t1 where t1.a=1 order by a limit 1`).Check(testkit.Rows()) // can return an empty result instead of hanging forever
 }

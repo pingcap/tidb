@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,19 +20,20 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -385,7 +387,7 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.MustExec(dropUserSQL)
 
 	// Test alter user.
-	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123';`
+	createUserSQL = `CREATE USER 'test1'@'localhost' IDENTIFIED BY '123', 'test2'@'localhost' IDENTIFIED BY '123', 'test3'@'localhost' IDENTIFIED BY '123', 'test4'@'localhost' IDENTIFIED BY '123';`
 	tk.MustExec(createUserSQL)
 	alterUserSQL := `ALTER USER 'test1'@'localhost' IDENTIFIED BY '111';`
 	tk.MustExec(alterUserSQL)
@@ -397,6 +399,10 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.MustGetErrCode(alterUserSQL, mysql.ErrCannotUser)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("222")))
+	alterUserSQL = `ALTER USER 'test4'@'localhost' IDENTIFIED WITH 'auth_socket';`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`SELECT plugin FROM mysql.User WHERE User="test4" and Host="localhost"`)
+	result.Check(testkit.Rows("auth_socket"))
 
 	alterUserSQL = `ALTER USER IF EXISTS 'test2'@'localhost' IDENTIFIED BY '222', 'test_not_exist'@'localhost' IDENTIFIED BY '1';`
 	tk.MustExec(alterUserSQL)
@@ -477,6 +483,46 @@ func (s *testSuite7) TestUser(c *C) {
 	alterUserSQL = `alter user test3@'%' IDENTIFIED WITH 'mysql_native_password' AS '*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9';`
 	tk.MustExec(alterUserSQL)
 	tk.MustQuery(querySQL).Check(testkit.Rows("*6BB4837EB74329105EE4568DDA7DC67ED2CA2AD9"))
+
+	createUserSQL = `create user userA@LOCALHOST;`
+	tk.MustExec(createUserSQL)
+	querySQL = `select user,host from mysql.user where user = 'userA';`
+	tk.MustQuery(querySQL).Check(testkit.Rows("userA localhost"))
+
+	createUserSQL = `create user userB@DEMO.com;`
+	tk.MustExec(createUserSQL)
+	querySQL = `select user,host from mysql.user where user = 'userB';`
+	tk.MustQuery(querySQL).Check(testkit.Rows("userB demo.com"))
+
+	createUserSQL = `create user userC@localhost;`
+	tk.MustExec(createUserSQL)
+	renameUserSQL := `rename user 'userC'@'localhost' to 'userD'@'Demo.com';`
+	tk.MustExec(renameUserSQL)
+	querySQL = `select user,host from mysql.user where user = 'userD';`
+	tk.MustQuery(querySQL).Check(testkit.Rows("userD demo.com"))
+
+	createUserSQL = `create user foo@localhost identified with 'foobar';`
+	_, err = tk.Exec(createUserSQL)
+	c.Check(terror.ErrorEqual(err, executor.ErrPluginIsNotLoaded), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec(`create user joan;`)
+	tk.MustExec(`create user sally;`)
+	tk.MustExec(`create role engineering;`)
+	tk.MustExec(`create role consultants;`)
+	tk.MustExec(`create role qa;`)
+	tk.MustExec(`grant engineering to joan;`)
+	tk.MustExec(`grant engineering to sally;`)
+	tk.MustExec(`grant engineering, consultants to joan, sally;`)
+	tk.MustExec(`grant qa to consultants;`)
+	tk.MustExec("CREATE ROLE `engineering`@`US`;")
+	tk.MustExec("create role `engineering`@`INDIA`;")
+	_, err = tk.Exec("grant `engineering`@`US` TO `engineering`@`INDIA`;")
+	c.Check(err, IsNil)
+
+	tk.MustQuery("select user,host from mysql.user where user='engineering' and host = 'india'").
+		Check(testkit.Rows("engineering india"))
+	tk.MustQuery("select user,host from mysql.user where user='engineering' and host = 'us'").
+		Check(testkit.Rows("engineering us"))
 }
 
 func (s *testSuite3) TestSetPwd(c *C) {
@@ -491,6 +537,11 @@ func (s *testSuite3) TestSetPwd(c *C) {
 	tk.MustExec(`SET PASSWORD FOR 'testpwd'@'localhost' = 'password';`)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="testpwd" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("password")))
+
+	tk.MustExec(`CREATE USER 'testpwdsock'@'localhost' IDENTIFIED WITH 'auth_socket';`)
+	tk.MustExec(`SET PASSWORD FOR 'testpwdsock'@'localhost' = 'password';`)
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Note 1699 SET PASSWORD has no significance for user 'testpwdsock'@'localhost' as authentication plugin does not support it."))
 
 	// set password
 	setPwdSQL := `SET PASSWORD = 'pwd'`
@@ -604,12 +655,15 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 }
 
 func (s *testSerialSuite) TestDropPartitionStats(c *C) {
-	c.Skip("unstable")
+	if israce.RaceEnabled {
+		c.Skip("unstable, skip race test")
+	}
 	// Use the testSerialSuite to fix the unstable test
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec(`create table t (
+	tk.MustExec(`create database if not exists test_drop_gstats`)
+	tk.MustExec("use test_drop_gstats")
+	tk.MustExec("drop table if exists test_drop_gstats;")
+	tk.MustExec(`create table test_drop_gstats (
 	a int,
 	key(a)
 )
@@ -620,7 +674,7 @@ partition by range (a) (
 )`)
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("insert into t values (1), (5), (11), (15), (21), (25)")
+	tk.MustExec("insert into test_drop_gstats values (1), (5), (11), (15), (21), (25)")
 	c.Assert(s.domain.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 
 	checkPartitionStats := func(names ...string) {
@@ -631,26 +685,26 @@ partition by range (a) (
 		}
 	}
 
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table test_drop_gstats")
 	checkPartitionStats("global", "p0", "p1", "global")
 
-	tk.MustExec("drop stats t partition p0")
+	tk.MustExec("drop stats test_drop_gstats partition p0")
 	checkPartitionStats("global", "p1", "global")
 
-	err := tk.ExecToErr("drop stats t partition abcde")
+	err := tk.ExecToErr("drop stats test_drop_gstats partition abcde")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "can not found the specified partition name abcde in the table definition")
 
-	tk.MustExec("drop stats t partition global")
+	tk.MustExec("drop stats test_drop_gstats partition global")
 	checkPartitionStats("global", "p1")
 
-	tk.MustExec("drop stats t global")
+	tk.MustExec("drop stats test_drop_gstats global")
 	checkPartitionStats("p1")
 
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table test_drop_gstats")
 	checkPartitionStats("global", "p0", "p1", "global")
 
-	tk.MustExec("drop stats t partition p0, p1, global")
+	tk.MustExec("drop stats test_drop_gstats partition p0, p1, global")
 	checkPartitionStats("global")
 }
 
@@ -693,7 +747,7 @@ func (s *testSuite3) TestDropStatsFromKV(c *C) {
 	tk.MustExec(`insert into t values("1","1"),("2","2"),("3","3"),("4","4")`)
 	tk.MustExec("insert into t select * from t")
 	tk.MustExec("insert into t select * from t")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t with 2 topn")
 	tblID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_name = "t" and table_schema = "test"`).Rows()[0][0].(string)
 	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
 		testkit.Rows("0 16"))
@@ -883,4 +937,19 @@ func (s *testSuite3) TestIssue23649(c *C) {
 	c.Assert(err.Error(), Equals, "[executor:3523]Unknown authorization ID `bogusrole`@`%`")
 	_, err = tk.Exec("GRANT bogusrole to nonexisting;")
 	c.Assert(err.Error(), Equals, "[executor:3523]Unknown authorization ID `bogusrole`@`%`")
+}
+
+func (s *testSuite3) TestSetCurrentUserPwd(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER issue28534;")
+	defer func() {
+		tk.MustExec("DROP USER IF EXISTS issue28534;")
+	}()
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "issue28534", Hostname: "localhost", CurrentUser: true, AuthUsername: "issue28534", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec(`SET PASSWORD FOR CURRENT_USER() = "43582eussi"`)
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="issue28534"`)
+	result.Check(testkit.Rows(auth.EncodePassword("43582eussi")))
 }

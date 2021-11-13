@@ -8,19 +8,21 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
-	json2 "encoding/json"
+	"bytes"
+	goJSON "encoding/json"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -215,10 +217,13 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	return sig, nil
 }
 
-func (b *builtinJSONUnquoteSig) evalString(row chunk.Row) (string, bool, error) {
-	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinJSONUnquoteSig) evalString(row chunk.Row) (str string, isNull bool, err error) {
+	str, isNull, err = b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
+	}
+	if len(str) >= 2 && str[0] == '"' && str[len(str)-1] == '"' && !goJSON.Valid([]byte(str)) {
+		return "", false, json.ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
 	}
 	str, err = json.UnquoteString(str)
 	if err != nil {
@@ -841,7 +846,7 @@ func (b *builtinJSONValidStringSig) evalInt(row chunk.Row) (res int64, isNull bo
 	}
 
 	data := hack.Slice(val)
-	if json2.Valid(data) {
+	if goJSON.Valid(data) {
 		res = 1
 	} else {
 		res = 0
@@ -1044,7 +1049,56 @@ type jsonMergePatchFunctionClass struct {
 }
 
 func (c *jsonMergePatchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_MERGE_PATCH")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := make([]types.EvalType, 0, len(args))
+	for range args {
+		argTps = append(argTps, types.ETJson)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinJSONMergePatchSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonMergePatchSig)
+	return sig, nil
+}
+
+type builtinJSONMergePatchSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONMergePatchSig) Clone() builtinFunc {
+	newSig := &builtinJSONMergePatchSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinJSONMergePatchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+	values := make([]*json.BinaryJSON, 0, len(b.args))
+	for _, arg := range b.args {
+		var value json.BinaryJSON
+		value, isNull, err = arg.EvalJSON(b.ctx, row)
+		if err != nil {
+			return
+		}
+		if isNull {
+			values = append(values, nil)
+		} else {
+			values = append(values, &value)
+		}
+	}
+	tmpRes, err := json.MergePatchBinary(values)
+	if err != nil {
+		return
+	}
+	if tmpRes != nil {
+		res = *tmpRes
+	} else {
+		isNull = true
+	}
+	return res, isNull, nil
 }
 
 type jsonMergePreserveFunctionClass struct {
@@ -1072,8 +1126,45 @@ type jsonPrettyFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONSPrettySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONSPrettySig) Clone() builtinFunc {
+	newSig := &builtinJSONSPrettySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonPrettyFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_PRETTY")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETJson)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinJSONSPrettySig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonPrettySig)
+	return sig, nil
+}
+
+func (b *builtinJSONSPrettySig) evalString(row chunk.Row) (res string, isNull bool, err error) {
+	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, err
+	}
+
+	buf, err := obj.MarshalJSON()
+	if err != nil {
+		return res, isNull, err
+	}
+	var resBuf bytes.Buffer
+	if err = goJSON.Indent(&resBuf, buf, "", "  "); err != nil {
+		return res, isNull, err
+	}
+	return resBuf.String(), false, nil
 }
 
 type jsonQuoteFunctionClass struct {

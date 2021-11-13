@@ -23,7 +23,7 @@ In MySQL, collation is treated as an attribute of the character set: for each ch
   * It defines a total order on all characters of a character set.
   * It determines if padding is applied when comparing two strings.
   * It describes comparisons of logically identical but physically different byte sequences.
-Some examples of the effects of collation can be found in [this part](https://dev.mysql.com/doc/refman/8.0/en/charset-collation-effect.html) of the MySQL Manual and [this webpage](http://demo.icu-project.org/icu-bin/locexp?_=en_US&x=col).
+Some examples of the effects of collation can be found in [this part](https://dev.mysql.com/doc/refman/8.0/en/charset-collation-effect.html) of the MySQL Manual and [this webpage](https://web.archive.org/web/20171030065123/http://demo.icu-project.org/icu-bin/locexp?_=en_US&x=col).
 
 Several collation implementations are described in [this part](https://dev.mysql.com/doc/refman/8.0/en/charset-collation-implementations.html) of MySQL Manual:
 

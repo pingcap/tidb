@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,7 +19,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
 // SchemaChecker is used for checking schema-validity.
@@ -51,12 +53,12 @@ func NewSchemaChecker(do *Domain, schemaVer int64, relatedTableIDs []int64) *Sch
 }
 
 // Check checks the validity of the schema version.
-func (s *SchemaChecker) Check(txnTS uint64) (*tikv.RelatedSchemaChange, error) {
+func (s *SchemaChecker) Check(txnTS uint64) (*transaction.RelatedSchemaChange, error) {
 	return s.CheckBySchemaVer(txnTS, intSchemaVer(s.schemaVer))
 }
 
 // CheckBySchemaVer checks if the schema version valid or not at txnTS.
-func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.SchemaVer) (*tikv.RelatedSchemaChange, error) {
+func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.SchemaVer) (*transaction.RelatedSchemaChange, error) {
 	schemaOutOfDateRetryInterval := atomic.LoadInt64(&SchemaOutOfDateRetryInterval)
 	schemaOutOfDateRetryTimes := int(atomic.LoadInt32(&SchemaOutOfDateRetryTimes))
 	for i := 0; i < schemaOutOfDateRetryTimes; i++ {

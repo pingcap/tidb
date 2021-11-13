@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,11 +29,10 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	tikvcfg "github.com/pingcap/tidb/store/tikv/config"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	tracing "github.com/uber/jaeger-client-go/config"
 	"go.uber.org/zap"
 )
@@ -60,9 +60,9 @@ const (
 	DefHost = "0.0.0.0"
 	// DefStatusHost is the default status host of TiDB
 	DefStatusHost = "0.0.0.0"
-	// Def TableColumnCountLimit is limit of the number of columns in a table
+	// DefTableColumnCountLimit is limit of the number of columns in a table
 	DefTableColumnCountLimit = 1017
-	// Def TableColumnCountLimit is maximum limitation of the number of columns in a table
+	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
 )
 
@@ -73,7 +73,7 @@ var (
 		"tikv":     true,
 		"unistore": true,
 	}
-	// checkTableBeforeDrop enable to execute `admin check table` before `drop table`.
+	// CheckTableBeforeDrop enable to execute `admin check table` before `drop table`.
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
@@ -100,10 +100,11 @@ type Config struct {
 	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
-	TempStorageQuota int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
-	EnableStreaming  bool                    `toml:"enable-streaming" json:"enable-streaming"`
-	EnableBatchDML   bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
-	TxnLocalLatches  tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
+	TempStorageQuota int64 `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
+	// Deprecated
+	EnableStreaming bool                    `toml:"-" json:"-"`
+	EnableBatchDML  bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	TxnLocalLatches tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames        int                `toml:"lower-case-table-names" json:"lower-case-table-names"`
@@ -137,6 +138,7 @@ type Config struct {
 	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
+	TopSQL              TopSQL      `toml:"top-sql" json:"top-sql"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
@@ -182,6 +184,12 @@ type Config struct {
 	// 1. there is a network partition problem between TiDB and PD leader.
 	// 2. there is a network partition problem between TiDB and TiKV leader.
 	EnableForwarding bool `toml:"enable-forwarding" json:"enable-forwarding"`
+	// MaxBallastObjectSize set the max size of the ballast object, the unit is byte.
+	// The default value is the smallest of the following two values: 2GB or
+	// one quarter of the total physical memory in the current system.
+	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
+	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
+	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -198,7 +206,6 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 	return &tikvcfg.Config{
 		CommitterConcurrency:  c.Performance.CommitterConcurrency,
 		MaxTxnTTL:             c.Performance.MaxTxnTTL,
-		ServerMemoryQuota:     defTiKVCfg.ServerMemoryQuota,
 		TiKVClient:            c.TiKVClient,
 		Security:              c.Security.ClusterSecurity(),
 		PDClient:              c.PDClient,
@@ -298,7 +305,7 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 type Log struct {
 	// Log level.
 	Level string `toml:"level" json:"level"`
-	// Log format. one of json, text, or console.
+	// Log format, one of json or text.
 	Format string `toml:"format" json:"format"`
 	// Disable automatic timestamps in output. Deprecated: use EnableTimestamp instead.
 	DisableTimestamp nullableBool `toml:"disable-timestamp" json:"disable-timestamp"`
@@ -366,6 +373,11 @@ type Security struct {
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
+	// Allow automatic TLS certificate generation
+	AutoTLS         bool   `toml:"auto-tls" json:"auto-tls"`
+	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
+	RSAKeySize      int    `toml:"rsa-key-size" json:"rsa-key-size"`
+	SecureBootstrap bool   `toml:"secure-bootstrap" json:"secure-bootstrap"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -382,7 +394,6 @@ func (e *ErrConfigValidationFailed) Error() string {
 		"TiDB manual to make sure this option has not been deprecated and removed from your TiDB "+
 		"version if the option does not appear to be a typo", e.confFile, strings.Join(
 		e.UndecodedItems, ", "))
-
 }
 
 // ClusterSecurity returns Security info for cluster
@@ -425,7 +436,9 @@ type Performance struct {
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
 	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease   string  `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                  int     `toml:"gogc" json:"gogc"`
+	EnforceMPP            bool    `toml:"enforce-mpp" json:"enforce-mpp"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -496,12 +509,18 @@ type Binlog struct {
 type PessimisticTxn struct {
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
+	// The max count of deadlock events that will be recorded in the information_schema.deadlocks table.
+	DeadlockHistoryCapacity uint `toml:"deadlock-history-capacity" json:"deadlock-history-capacity"`
+	// Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
+	DeadlockHistoryCollectRetryable bool `toml:"deadlock-history-collect-retryable" json:"deadlock-history-collect-retryable"`
 }
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
-		MaxRetryCount: 256,
+		MaxRetryCount:                   256,
+		DeadlockHistoryCapacity:         10,
+		DeadlockHistoryCollectRetryable: false,
 	}
 }
 
@@ -527,6 +546,12 @@ type StmtSummary struct {
 	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
+// TopSQL is the config for TopSQL.
+type TopSQL struct {
+	// The TopSQL's data receiver address.
+	ReceiverAddress string `toml:"receiver-address" json:"receiver-address"`
+}
+
 // IsolationRead is the config for isolation read.
 type IsolationRead struct {
 	// Engines filters tidb-server access paths by engine type.
@@ -540,6 +565,8 @@ type Experimental struct {
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable global kill.
 	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
+	// Whether enable charset feature.
+	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -547,6 +574,7 @@ var defaultConf = Config{
 	Host:                         DefHost,
 	AdvertiseAddress:             "",
 	Port:                         DefPort,
+	Socket:                       "/tmp/tidb-{Port}.sock",
 	Cors:                         "",
 	Store:                        "unistore",
 	Path:                         "/tmp/tidb",
@@ -623,6 +651,8 @@ var defaultConf = Config{
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease: "0s",
 		GOGC:                100,
+		EnforceMPP:          false,
+		PlanReplayerGCLease: "10m",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -630,7 +660,7 @@ var defaultConf = Config{
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          false,
-		Capacity:         100,
+		Capacity:         1000,
 		MemoryGuardRatio: 0.1,
 	},
 	OpenTracing: OpenTracing{
@@ -647,11 +677,15 @@ var defaultConf = Config{
 		WriteTimeout: "15s",
 		Strategy:     "range",
 	},
+	Plugin: Plugin{
+		Dir:  "/data/deploy/plugin",
+		Load: "",
+	},
 	PessimisticTxn: DefaultPessimisticTxn(),
 	StmtSummary: StmtSummary{
 		Enable:              true,
 		EnableInternalQuery: false,
-		MaxStmtCount:        200,
+		MaxStmtCount:        3000,
 		MaxSQLLength:        4096,
 		RefreshInterval:     1800,
 		HistorySize:         24,
@@ -660,8 +694,8 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		AllowsExpressionIndex: false,
-		EnableGlobalKill:      false,
+		EnableGlobalKill: false,
+		EnableNewCharset: false,
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
@@ -670,6 +704,8 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
+		AutoTLS:                     true,
+		RSAKeySize:                  4096,
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
@@ -715,6 +751,7 @@ var deprecatedConfig = map[string]struct{}{
 	"enable-redact-log":              {}, // use variable tidb_redact_log instead
 	"tikv-client.copr-cache.enable":  {},
 	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
+	"enable-streaming":               {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -795,9 +832,6 @@ func (c *Config) Load(confFile string) error {
 	if metaData.IsDefined("oom-action") {
 		IsOOMActionSetByUser = true
 	}
-	if len(c.ServerVersion) > 0 {
-		mysql.ServerVersion = c.ServerVersion
-	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
 	undecoded := metaData.Undecoded()
@@ -871,8 +905,8 @@ func (c *Config) Valid() error {
 		return err
 	}
 
-	if c.Performance.TxnTotalSizeLimit > 10<<30 {
-		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
+	if c.Performance.TxnTotalSizeLimit > 1<<40 {
+		return fmt.Errorf("txn-total-size-limit should be less than %d", 1<<40)
 	}
 
 	if c.Performance.MemoryUsageAlarmRatio > 1 || c.Performance.MemoryUsageAlarmRatio < 0 {

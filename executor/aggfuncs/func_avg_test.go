@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,34 +17,40 @@ package aggfuncs_test
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/set"
 )
 
-func (s *testSuite) TestMergePartialResult4Avg(c *C) {
+func TestMergePartialResult4Avg(t *testing.T) {
+	t.Parallel()
+
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5, 2.0, 3.0, 2.375),
 		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, 5, 2.0, 3.0, 2.375),
 	}
 	for _, test := range tests {
-		s.testMergePartialResult(c, test)
+		testMergePartialResult(t, test)
 	}
 }
 
-func (s *testSuite) TestAvg(c *C) {
+func TestAvg(t *testing.T) {
+	t.Parallel()
+
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5, nil, 2.0),
 		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, 5, nil, 2.0),
 	}
+
 	for _, test := range tests {
-		s.testAggFunc(c, test)
+		testAggFunc(t, test)
 	}
 }
 
-func (s *testSuite) TestMemAvg(c *C) {
+func TestMemAvg(t *testing.T) {
+	t.Parallel()
+
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4AvgDecimalSize, defaultUpdateMemDeltaGens, false),
@@ -55,7 +62,7 @@ func (s *testSuite) TestMemAvg(c *C) {
 			aggfuncs.DefPartialResult4AvgDistinctFloat64Size+set.DefFloat64SetBucketMemoryUsage, distinctUpdateMemDeltaGens, true),
 	}
 	for _, test := range tests {
-		s.testAggMemFunc(c, test)
+		testAggMemFunc(t, test)
 	}
 }
 
