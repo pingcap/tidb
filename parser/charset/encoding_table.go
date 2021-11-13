@@ -14,11 +14,11 @@
 package charset
 
 import (
-	"github.com/cznic/mathutil"
 	"strings"
 	go_unicode "unicode"
 	"unicode/utf8"
 
+	"github.com/cznic/mathutil"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/japanese"
