@@ -77,7 +77,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		// Return if privilege is invalid, to fail before not existing table, see issue #29302
 		for _, p := range e.Privs {
 			if len(p.Cols) == 0 {
-				if !mysql.AllTablePrivs.Has(p.Priv) && p.Priv != mysql.AllPriv && p.Priv != mysql.UsagePriv && p.Priv != mysql.GrantPriv {
+				if !mysql.AllTablePrivs.Has(p.Priv) && p.Priv != mysql.AllPriv && p.Priv != mysql.UsagePriv && p.Priv != mysql.GrantPriv && p.Priv != mysql.ExtendedPriv {
 					return ErrIllegalGrantForTable
 				}
 			} else {
