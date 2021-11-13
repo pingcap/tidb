@@ -2131,59 +2131,59 @@ func (cli *testServerClient) waitUntilServerOnline() {
 	}
 }
 
-func (cli *testServerClient) runTestInitConnect(c *C) {
+func (cli *testingServerClient) runTestInitConnect(t *testing.T) {
 
-	cli.runTests(c, nil, func(dbt *DBTest) {
-		dbt.mustExec(`SET GLOBAL init_connect="insert into test.ts VALUES (NOW());SET @a=1;"`)
-		dbt.mustExec(`CREATE USER init_nonsuper`)
-		dbt.mustExec(`CREATE USER init_super`)
-		dbt.mustExec(`GRANT SELECT, INSERT, DROP ON test.* TO init_nonsuper`)
-		dbt.mustExec(`GRANT SELECT, INSERT, DROP, SUPER ON *.* TO init_super`)
-		dbt.mustExec(`CREATE TABLE ts (a TIMESTAMP)`)
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec(`SET GLOBAL init_connect="insert into test.ts VALUES (NOW());SET @a=1;"`)
+		dbt.MustExec(`CREATE USER init_nonsuper`)
+		dbt.MustExec(`CREATE USER init_super`)
+		dbt.MustExec(`GRANT SELECT, INSERT, DROP ON test.* TO init_nonsuper`)
+		dbt.MustExec(`GRANT SELECT, INSERT, DROP, SUPER ON *.* TO init_super`)
+		dbt.MustExec(`CREATE TABLE ts (a TIMESTAMP)`)
 	})
 
 	// test init_nonsuper
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.User = "init_nonsuper"
-	}, func(dbt *DBTest) {
-		rows := dbt.mustQuery(`SELECT @a`)
-		c.Assert(rows.Next(), IsTrue)
+	}, func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery(`SELECT @a`)
+		require.True(t, rows.Next())
 		var a int
 		err := rows.Scan(&a)
-		c.Assert(err, IsNil)
-		dbt.Check(a, Equals, 1)
-		c.Assert(rows.Close(), IsNil)
+		require.NoError(t, err)
+		require.Equal(t, 1, a)
+		require.NoError(t, rows.Close())
 	})
 
 	// test init_super
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.User = "init_super"
-	}, func(dbt *DBTest) {
-		rows := dbt.mustQuery(`SELECT IFNULL(@a,"")`)
-		c.Assert(rows.Next(), IsTrue)
+	}, func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery(`SELECT IFNULL(@a,"")`)
+		require.True(t, rows.Next())
 		var a string
 		err := rows.Scan(&a)
-		c.Assert(err, IsNil)
-		dbt.Check(a, Equals, "") // null
-		c.Assert(rows.Close(), IsNil)
+		require.NoError(t, err)
+		require.Equal(t, "", a)
+		require.NoError(t, rows.Close())
 		// change the init-connect to invalid.
-		dbt.mustExec(`SET GLOBAL init_connect="invalidstring"`)
+		dbt.MustExec(`SET GLOBAL init_connect="invalidstring"`)
 	})
 	// set global init_connect to empty to avoid fail other tests
-	defer cli.runTests(c, func(config *mysql.Config) {
+	defer cli.runTests(t, func(config *mysql.Config) {
 		config.User = "init_super"
-	}, func(dbt *DBTest) {
+	}, func(dbt *testkit.DBTestKit) {
 		// set init_connect to empty to avoid fail other tests
-		dbt.mustExec(`SET GLOBAL init_connect=""`)
+		dbt.MustExec(`SET GLOBAL init_connect=""`)
 	})
 
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "init_nonsuper"
 	}))
-	c.Assert(err, IsNil, Commentf("Error connecting")) // doesn't fail because of lazy loading
-	defer db.Close()                                   // may already be closed
-	_, err = db.Exec("SELECT 1")                       // fails because of init sql
-	c.Assert(err, NotNil)
+	require.NoErrorf(t, err, "Error connecting") // doesn't fail because of lazy loading
+	defer db.Close()                             // may already be closed
+	_, err = db.Exec("SELECT 1")                 // fails because of init sql
+	require.Error(t, err)
 }
 
 // Client errors are only incremented when using the TiDB Server protocol,

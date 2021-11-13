@@ -1155,8 +1155,10 @@ func TestClientErrors(t *testing.T) {
 	ts.runTestInfoschemaClientErrors(t)
 }
 
-func (ts *tidbTestSuite) TestInitConnect(c *C) {
-	ts.runTestInitConnect(c)
+func TestInitConnect(t *testing.T) {
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+	ts.runTestInitConnect(t)
 }
 
 func (ts *tidbTestSuite) TestSumAvg(c *C) {
