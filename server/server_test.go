@@ -2047,25 +2047,25 @@ func (cli *testingServerClient) runReloadTLS(t *testing.T, overrider configOverr
 	return err
 }
 
-func (cli *testServerClient) runTestSumAvg(c *C) {
-	cli.runTests(c, nil, func(dbt *DBTest) {
-		dbt.mustExec("create table sumavg (a int, b decimal, c double)")
-		dbt.mustExec("insert sumavg values (1, 1, 1)")
-		rows := dbt.mustQuery("select sum(a), sum(b), sum(c) from sumavg")
-		c.Assert(rows.Next(), IsTrue)
+func (cli *testingServerClient) runTestSumAvg(t *testing.T) {
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table sumavg (a int, b decimal, c double)")
+		dbt.MustExec("insert sumavg values (1, 1, 1)")
+		rows := dbt.MustQuery("select sum(a), sum(b), sum(c) from sumavg")
+		require.True(t, rows.Next())
 		var outA, outB, outC float64
 		err := rows.Scan(&outA, &outB, &outC)
-		c.Assert(err, IsNil)
-		c.Assert(outA, Equals, 1.0)
-		c.Assert(outB, Equals, 1.0)
-		c.Assert(outC, Equals, 1.0)
-		rows = dbt.mustQuery("select avg(a), avg(b), avg(c) from sumavg")
-		c.Assert(rows.Next(), IsTrue)
+		require.NoError(t, err)
+		require.Equal(t, 1.0, outA)
+		require.Equal(t, 1.0, outB)
+		require.Equal(t, 1.0, outC)
+		rows = dbt.MustQuery("select avg(a), avg(b), avg(c) from sumavg")
+		require.True(t, rows.Next())
 		err = rows.Scan(&outA, &outB, &outC)
-		c.Assert(err, IsNil)
-		c.Assert(outA, Equals, 1.0)
-		c.Assert(outB, Equals, 1.0)
-		c.Assert(outC, Equals, 1.0)
+		require.NoError(t, err)
+		require.Equal(t, 1.0, outA)
+		require.Equal(t, 1.0, outB)
+		require.Equal(t, 1.0, outC)
 	})
 }
 

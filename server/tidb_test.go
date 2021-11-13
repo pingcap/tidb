@@ -1150,20 +1150,24 @@ func TestFieldList(t *testing.T) {
 }
 
 func TestClientErrors(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTiDBTest(t)
 	defer cleanup()
 	ts.runTestInfoschemaClientErrors(t)
 }
 
 func TestInitConnect(t *testing.T) {
+	t.Parallel()
 	ts, cleanup := createTiDBTest(t)
 	defer cleanup()
 	ts.runTestInitConnect(t)
 }
 
-func (ts *tidbTestSuite) TestSumAvg(c *C) {
-	c.Parallel()
-	ts.runTestSumAvg(c)
+func TestSumAvg(t *testing.T) {
+	t.Parallel()
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+	ts.runTestSumAvg(t)
 }
 
 func TestNullFlag(t *testing.T) {
