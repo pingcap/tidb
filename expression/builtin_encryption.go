@@ -856,6 +856,11 @@ func (b *builtinCompressSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
+	strTp := b.args[0].GetType()
+	str, err = charset.NewEncoding(strTp.Charset).EncodeString(str)
+	if err != nil {
+		return "", false, err
+	}
 
 	// According to doc: Empty strings are stored as empty strings.
 	if len(str) == 0 {

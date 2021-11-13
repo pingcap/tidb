@@ -38,12 +38,7 @@ func (s *Store) GetMPPClient() kv.MPPClient { return nil }
 func (s *Store) GetOracle() oracle.Oracle { return nil }
 
 // Begin implements kv.Storage interface.
-func (s *Store) Begin() (kv.Transaction, error) { return nil, nil }
-
-// BeginWithOption implements kv.Storage interface.
-func (s *Store) BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error) {
-	return s.Begin()
-}
+func (s *Store) Begin(opts ...tikv.TxnOption) (kv.Transaction, error) { return nil, nil }
 
 // GetSnapshot implements kv.Storage interface.
 func (s *Store) GetSnapshot(ver kv.Version) kv.Snapshot { return nil }
