@@ -442,13 +442,13 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 			return err
 		}
 		if isCBC {
-			plainText, err = encrypt.AESEncryptWithCBC(str, key, iv)
+			plainText, _ = encrypt.AESEncryptWithCBC(str, key, iv)
 		}
 		if isOFB {
-			plainText, err = encrypt.AESEncryptWithOFB(str, key, iv)
+			plainText, _ = encrypt.AESEncryptWithOFB(str, key, iv)
 		}
 		if isCFB {
-			plainText, err = encrypt.AESEncryptWithCFB(str, key, iv)
+			plainText, _ = encrypt.AESEncryptWithCFB(str, key, iv)
 		}
 		result.AppendBytes(plainText)
 	}
