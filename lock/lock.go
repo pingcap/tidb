@@ -77,13 +77,19 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 	if tb.Meta().Lock == nil {
 		return nil
 	}
-	if privilege == mysql.DropPriv && tb.Meta().Name.O == table {
-		switch tb.Meta().Lock.Tp {
-		case model.TableLockWrite:
-			return ErrLockedTableDropped
-		case model.TableLockRead, model.TableLockWriteLocal, model.TableLockReadOnly:
-			return infoschema.ErrTableNotLockedForWrite.GenWithStackByArgs(tb.Meta().Name)
+	if privilege == mysql.DropPriv && tb.Meta().Name.O == table && c.ctx.HasLockedTables() {
+		lockTables := c.ctx.GetAllTableLocks()
+		for _, lockT := range lockTables {
+			if lockT.TableID == tb.Meta().ID {
+				switch tb.Meta().Lock.Tp {
+				case model.TableLockWrite:
+					return ErrLockedTableDropped
+				case model.TableLockRead, model.TableLockWriteLocal, model.TableLockReadOnly:
+					return infoschema.ErrTableNotLockedForWrite.GenWithStackByArgs(tb.Meta().Name)
+				}
+			}
 		}
+
 	}
 
 	if !alterWriteable && c.ctx.HasLockedTables() {

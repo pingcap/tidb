@@ -1632,7 +1632,7 @@ func TestRenameTableWithLocked(t *testing.T) {
 	tk.MustExec("CREATE TABLE t1 (a int);")
 
 	tk.MustExec("LOCK TABLES t1 WRITE;")
-	tk.MustExec("drop database renamedb2;")
+	tk.MustGetErrCode("drop database renamedb2;", errno.ErrLockOrActiveTransaction)
 	tk.MustExec("RENAME TABLE t1 TO t2;")
 	tk.MustQuery("select * from renamedb.t2").Check(testkit.Rows())
 	tk.MustExec("UNLOCK TABLES")
