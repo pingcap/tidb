@@ -181,7 +181,7 @@ func (s cacheTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[st
 
 	for _, key := range keys {
 		val, err := s.memBuffer.Get(ctx, key)
-		if err == kv.ErrNotExist {
+		if kv.ErrNotExist.Equal(err) {
 			continue
 		}
 
