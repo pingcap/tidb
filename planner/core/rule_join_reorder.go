@@ -60,22 +60,22 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 			}
 		}
 		edge := directedEdge{
-			Start:    leftPlan,
-			End:      rightPlan,
-			JoinType: join.JoinType,
+			start:    leftPlan,
+			end:      rightPlan,
+			joinType: join.JoinType,
 		}
 		directedEdges = append(directedEdges, edge)
 
 		for idx, _ := range lhsDirectedEdges {
 			lhsEdge := lhsDirectedEdges[idx]
-			natureEdges := extractNatureDirectedEdges(lhsEdge, edge)
-			directedEdges = append(directedEdges, natureEdges...)
+			implicitEdges := extractNatureDirectedEdges(lhsEdge, edge)
+			directedEdges = append(directedEdges, implicitEdges...)
 
 		}
 		for idx, _ := range rhsDirectedEdges {
 			rhsEdge := rhsDirectedEdges[idx]
-			natureEdges := extractNatureDirectedEdges(rhsEdge, edge)
-			directedEdges = append(directedEdges, natureEdges...)
+			implicitEdges := extractNatureDirectedEdges(rhsEdge, edge)
+			directedEdges = append(directedEdges, implicitEdges...)
 		}
 	}
 	directedEdges = append(directedEdges, lhsDirectedEdges...)
@@ -98,64 +98,40 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	return group, eqEdges, otherConds, directedEdges, joinTypes
 }
 
-func extractNatureDirectedEdges(edge1 directedEdge, edge2 directedEdge) (natureEdges []directedEdge) {
-	natureEdges = make([]directedEdge, 0)
-	if edge1.JoinType == InnerJoin {
-		if edge2.JoinType == LeftOuterJoin {
-			if edge1.Start == edge2.End {
-				natureEdges = append(natureEdges, directedEdge{
-					Start:    edge1.End,
-					End:      edge2.Start,
-					IsNature: true,
+// Extract implicit join order
+func extractNatureDirectedEdges(edge1 directedEdge, edge2 directedEdge) (implicitEdges []directedEdge) {
+	implicitEdges = make([]directedEdge, 0)
+	if edge1.joinType == InnerJoin {
+		if edge2.joinType == LeftOuterJoin {
+			if edge1.start == edge2.end {
+				implicitEdges = append(implicitEdges, directedEdge{
+					start:      edge1.end,
+					end:        edge2.start,
+					isImplicit: true,
 				})
-			} else if edge1.End == edge2.End {
-				natureEdges = append(natureEdges, directedEdge{
-					Start:    edge1.Start,
-					End:      edge2.Start,
-					IsNature: true,
+			} else if edge1.end == edge2.end {
+				implicitEdges = append(implicitEdges, directedEdge{
+					start:      edge1.start,
+					end:        edge2.start,
+					isImplicit: true,
 				})
 			}
-		} else if edge2.JoinType == RightOuterJoin {
-			if edge1.Start == edge2.Start {
-				natureEdges = append(natureEdges, directedEdge{
-					Start:    edge1.End,
-					End:      edge2.End,
-					IsNature: true,
+		} else if edge2.joinType == RightOuterJoin {
+			if edge1.start == edge2.start {
+				implicitEdges = append(implicitEdges, directedEdge{
+					start:      edge1.end,
+					end:        edge2.end,
+					isImplicit: true,
 				})
-			} else if edge1.End == edge2.Start {
-				natureEdges = append(natureEdges, directedEdge{
-					Start:    edge1.Start,
-					End:      edge2.End,
-					IsNature: true,
+			} else if edge1.end == edge2.start {
+				implicitEdges = append(implicitEdges, directedEdge{
+					start:      edge1.start,
+					end:        edge2.end,
+					isImplicit: true,
 				})
 			}
 		}
 	}
-	//if edge1.JoinType == LeftOuterJoin || edge1.JoinType == InnerJoin{
-	//	if edge2.JoinType == LeftOuterJoin && edge2.End == edge1.End {
-	//		natureEdges = append(natureEdges, directedEdge{
-	//			Start:    edge1.Start,
-	//			End:      edge2.Start,
-	//		})
-	//	}else if edge2.JoinType == RightOuterJoin && edge1.End == edge2.Start {
-	//		natureEdges = append(natureEdges, directedEdge{
-	//			Start:    edge1.Start,
-	//			End:      edge2.End,
-	//		})
-	//	}
-	//}else if edge1.JoinType == RightOuterJoin  || edge1.JoinType == InnerJoin{
-	//	if edge2.JoinType == LeftOuterJoin && edge1.Start == edge2.End {
-	//		natureEdges = append(natureEdges, directedEdge{
-	//			Start:    edge1.Start,
-	//			End:      edge2.End,
-	//		})
-	//	}else if edge2.JoinType == RightOuterJoin && edge2.Start == edge1.Start {
-	//		natureEdges = append(natureEdges, directedEdge{
-	//			Start:    edge1.End,
-	//			End:      edge1.End,
-	//		})
-	//	}
-	//}
 	return
 }
 
@@ -163,10 +139,10 @@ type joinReOrderSolver struct {
 }
 
 type directedEdge struct {
-	Start    LogicalPlan
-	End      LogicalPlan
-	JoinType JoinType
-	IsNature bool
+	start      LogicalPlan
+	end        LogicalPlan
+	joinType   JoinType
+	isImplicit bool
 }
 
 type jrNode struct {

@@ -58,15 +58,15 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 	}
 
 	for _, edge := range s.directedEdges {
-		if !edge.IsNature && edge.JoinType == InnerJoin {
+		if !edge.isImplicit && edge.joinType == InnerJoin {
 			continue
 		}
-		nodeSet := s.directMap[edge.Start]
+		nodeSet := s.directMap[edge.start]
 		if nodeSet == nil {
 			nodeSet = make(map[LogicalPlan]struct{})
-			s.directMap[edge.Start] = nodeSet
+			s.directMap[edge.start] = nodeSet
 		}
-		nodeSet[edge.End] = struct{}{}
+		nodeSet[edge.end] = struct{}{}
 	}
 
 	for isPropagated := false; isPropagated; {
