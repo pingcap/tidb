@@ -27,7 +27,7 @@ type joinReorderGreedySolver struct {
 	eqEdges   []*expression.ScalarFunction
 	joinTypes []JoinType
 	// Maintain the order for plans of the outerJoin. [a,b] indicate a must join before b
-	directedEdges [][]LogicalPlan
+	directedEdges []directedEdge
 }
 
 // solve reorders the join nodes in the group based on a greedy algorithm.
@@ -58,17 +58,18 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 	}
 
 	for _, edge := range s.directedEdges {
-		nodeSet := s.directMap[edge[0]]
+		if !edge.IsNature && edge.JoinType == InnerJoin {
+			continue
+		}
+		nodeSet := s.directMap[edge.Start]
 		if nodeSet == nil {
 			nodeSet = make(map[LogicalPlan]struct{})
-			s.directMap[edge[0]] = nodeSet
+			s.directMap[edge.Start] = nodeSet
 		}
-		nodeSet[edge[1]] = struct{}{}
+		nodeSet[edge.End] = struct{}{}
 	}
 
-	isChanged := true
-	for isChanged {
-		isChanged = false
+	for isPropagated := false; isPropagated; {
 		for _, set := range s.directMap {
 			oldSize := len(set)
 			newSet := make(map[LogicalPlan]struct{})
@@ -83,34 +84,29 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 			}
 			newSize := len(set)
 			if oldSize != newSize {
-				isChanged = true
+				isPropagated = true
 			}
 		}
 	}
 
-	// First sort plans by cost
+	// Sort plans by cost and join order
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
-		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
-	})
+		joinGroup1 := s.curJoinGroup[i]
+		joinGroup2 := s.curJoinGroup[j]
+		if set, ok := s.directMap[joinGroup1.p]; ok {
+			if _, ok = set[joinGroup2.p]; ok {
+				return false
+			}
+		}
 
-	// Then adjust the order for the plans according to join order that maintained in the directMap.
-	for key, set := range s.directMap {
-		keyIdx := -1
-		lowerStart := -1
-		for idx, node := range s.curJoinGroup {
-			if key == node.p {
-				keyIdx = idx
-			}
-			if _, ok := set[node.p]; ok && lowerStart < 0 {
-				lowerStart = idx
+		if set, ok := s.directMap[joinGroup2.p]; ok {
+			if _, ok = set[joinGroup1.p]; ok {
+				return true
 			}
 		}
-		if keyIdx > lowerStart {
-			selectNode := s.curJoinGroup[keyIdx]
-			s.curJoinGroup = append(s.curJoinGroup[0:keyIdx], s.curJoinGroup[keyIdx+1:]...)
-			s.curJoinGroup = append(s.curJoinGroup[0:lowerStart], append([]*jrNode{selectNode}, s.curJoinGroup[lowerStart:]...)...)
-		}
-	}
+
+		return joinGroup1.cumCost < joinGroup2.cumCost
+	})
 
 	var cartesianGroup []LogicalPlan
 	for len(s.curJoinGroup) > 0 {

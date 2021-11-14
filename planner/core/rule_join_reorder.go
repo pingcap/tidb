@@ -27,9 +27,9 @@ import (
 //
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, c, d}.
-func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression, directedEdges [][]LogicalPlan, joinTypes []JoinType) {
+func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression, directedEdges []directedEdge, joinTypes []JoinType) {
 	join, isJoin := p.(*LogicalJoin)
-	directedEdges = make([][]LogicalPlan, 0)
+	directedEdges = make([]directedEdge, 0)
 	if !isJoin || join.preferJoinType > uint(0) || join.StraightJoin ||
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
 		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
@@ -38,31 +38,48 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 
 	lhsGroup, lhsEqualConds, lhsOtherConds, lhsDirectedEdges, lhsJoinTypes := extractJoinGroup(join.children[0])
 	rhsGroup, rhsEqualConds, rhsOtherConds, rhsDirectedEdges, rhsJoinTypes := extractJoinGroup(join.children[1])
+
 	// Collect the order for plans of the outerJoin
 	// For example: a left join b indicate a must join before b
 	//              a right join b indicate a must join after b
-	if join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin {
-		var leftPlan LogicalPlan
-		var rightPlan LogicalPlan
-		for _, eqCond := range join.EqualConditions {
-			arg0 := eqCond.GetArgs()[0].(*expression.Column)
-			arg1 := eqCond.GetArgs()[1].(*expression.Column)
-			for _, leftNode := range lhsGroup {
-				if leftNode.Schema().Contains(arg0) {
-					leftPlan = leftNode
-				}
-			}
-			for _, rightNode := range rhsGroup {
-				if rightNode.Schema().Contains(arg1) {
-					rightPlan = rightNode
-				}
+	var leftPlan LogicalPlan
+	var rightPlan LogicalPlan
+	for _, eqCond := range join.EqualConditions {
+		arg0 := eqCond.GetArgs()[0].(*expression.Column)
+		arg1 := eqCond.GetArgs()[1].(*expression.Column)
+		for _, leftNode := range lhsGroup {
+			if leftNode.Schema().Contains(arg0) {
+				leftPlan = leftNode
+				break
 			}
 		}
-		directedEdges = append(directedEdges, []LogicalPlan{leftPlan, rightPlan})
+		for _, rightNode := range rhsGroup {
+			if rightNode.Schema().Contains(arg1) {
+				rightPlan = rightNode
+				break
+			}
+		}
+		edge := directedEdge{
+			Start:    leftPlan,
+			End:      rightPlan,
+			JoinType: join.JoinType,
+		}
+		directedEdges = append(directedEdges, edge)
+
+		for idx, _ := range lhsDirectedEdges {
+			lhsEdge := lhsDirectedEdges[idx]
+			natureEdges := extractNatureDirectedEdges(lhsEdge, edge)
+			directedEdges = append(directedEdges, natureEdges...)
+
+		}
+		for idx, _ := range rhsDirectedEdges {
+			rhsEdge := rhsDirectedEdges[idx]
+			natureEdges := extractNatureDirectedEdges(rhsEdge, edge)
+			directedEdges = append(directedEdges, natureEdges...)
+		}
 	}
 	directedEdges = append(directedEdges, lhsDirectedEdges...)
 	directedEdges = append(directedEdges, rhsDirectedEdges...)
-
 	group = append(group, lhsGroup...)
 	group = append(group, rhsGroup...)
 	eqEdges = append(eqEdges, join.EqualConditions...)
@@ -81,7 +98,75 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	return group, eqEdges, otherConds, directedEdges, joinTypes
 }
 
+func extractNatureDirectedEdges(edge1 directedEdge, edge2 directedEdge) (natureEdges []directedEdge) {
+	natureEdges = make([]directedEdge, 0)
+	if edge1.JoinType == InnerJoin {
+		if edge2.JoinType == LeftOuterJoin {
+			if edge1.Start == edge2.End {
+				natureEdges = append(natureEdges, directedEdge{
+					Start:    edge1.End,
+					End:      edge2.Start,
+					IsNature: true,
+				})
+			} else if edge1.End == edge2.End {
+				natureEdges = append(natureEdges, directedEdge{
+					Start:    edge1.Start,
+					End:      edge2.Start,
+					IsNature: true,
+				})
+			}
+		} else if edge2.JoinType == RightOuterJoin {
+			if edge1.Start == edge2.Start {
+				natureEdges = append(natureEdges, directedEdge{
+					Start:    edge1.End,
+					End:      edge2.End,
+					IsNature: true,
+				})
+			} else if edge1.End == edge2.Start {
+				natureEdges = append(natureEdges, directedEdge{
+					Start:    edge1.Start,
+					End:      edge2.End,
+					IsNature: true,
+				})
+			}
+		}
+	}
+	//if edge1.JoinType == LeftOuterJoin || edge1.JoinType == InnerJoin{
+	//	if edge2.JoinType == LeftOuterJoin && edge2.End == edge1.End {
+	//		natureEdges = append(natureEdges, directedEdge{
+	//			Start:    edge1.Start,
+	//			End:      edge2.Start,
+	//		})
+	//	}else if edge2.JoinType == RightOuterJoin && edge1.End == edge2.Start {
+	//		natureEdges = append(natureEdges, directedEdge{
+	//			Start:    edge1.Start,
+	//			End:      edge2.End,
+	//		})
+	//	}
+	//}else if edge1.JoinType == RightOuterJoin  || edge1.JoinType == InnerJoin{
+	//	if edge2.JoinType == LeftOuterJoin && edge1.Start == edge2.End {
+	//		natureEdges = append(natureEdges, directedEdge{
+	//			Start:    edge1.Start,
+	//			End:      edge2.End,
+	//		})
+	//	}else if edge2.JoinType == RightOuterJoin && edge2.Start == edge1.Start {
+	//		natureEdges = append(natureEdges, directedEdge{
+	//			Start:    edge1.End,
+	//			End:      edge1.End,
+	//		})
+	//	}
+	//}
+	return
+}
+
 type joinReOrderSolver struct {
+}
+
+type directedEdge struct {
+	Start    LogicalPlan
+	End      LogicalPlan
+	JoinType JoinType
+	IsNature bool
 }
 
 type jrNode struct {
