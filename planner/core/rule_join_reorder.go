@@ -66,13 +66,13 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		}
 		directedEdges = append(directedEdges, edge)
 
-		for idx, _ := range lhsDirectedEdges {
+		for idx := range lhsDirectedEdges {
 			lhsEdge := lhsDirectedEdges[idx]
 			implicitEdges := extractNatureDirectedEdges(lhsEdge, edge)
 			directedEdges = append(directedEdges, implicitEdges...)
 
 		}
-		for idx, _ := range rhsDirectedEdges {
+		for idx := range rhsDirectedEdges {
 			rhsEdge := rhsDirectedEdges[idx]
 			implicitEdges := extractNatureDirectedEdges(rhsEdge, edge)
 			directedEdges = append(directedEdges, implicitEdges...)
