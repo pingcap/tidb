@@ -232,14 +232,16 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 	if !config.TableLockEnabled() {
 		return nil
 	}
+	var err error
 	checker := lock.NewChecker(ctx, is)
 	for i := range vs {
-		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege, vs[i].alterWritable)
-		if err != nil {
-			return err
+		err = checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege, vs[i].alterWritable)
+		// if any operation contains the locked table, then pass the check, such as rename
+		if err == nil {
+			return nil
 		}
 	}
-	return nil
+	return err
 }
 
 func checkStableResultMode(sctx sessionctx.Context) bool {

@@ -20,10 +20,12 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -42,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	newtestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
@@ -1607,4 +1610,29 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
+}
+
+// See issue: https://github.com/pingcap/tidb/issues/29752
+func TestRenameTableWithLocked(t *testing.T) {
+	t.Parallel()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
+
+	store, clean := newtestkit.CreateMockStore(t)
+	defer clean()
+
+	tk := newtestkit.NewTestKit(t, store)
+	tk.MustExec("create database renamedb")
+	tk.MustExec("use renamedb")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (a int);")
+	tk.MustExec("LOCK TABLES t1 WRITE;")
+	tk.MustExec("RENAME TABLE t1 TO t2;")
+	tk.MustQuery("select * from renamedb.t2").Check(testkit.Rows())
+	tk.MustExec("UNLOCK TABLES")
+	tk.MustExec("RENAME TABLE t2 TO t1;")
+	tk.MustQuery("select * from renamedb.t1").Check(testkit.Rows())
+	tk.MustExec("drop database renamedb")
 }
