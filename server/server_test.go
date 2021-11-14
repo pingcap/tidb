@@ -123,21 +123,6 @@ func (cli *testServerClient) getDSN(overriders ...configOverrider) string {
 }
 
 // runTests runs tests using the default database `test`.
-func (cli *testServerClient) runTests(c *C, overrider configOverrider, tests ...func(dbt *DBTest)) {
-	db, err := sql.Open("mysql", cli.getDSN(overrider))
-	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer func() {
-		err := db.Close()
-		c.Assert(err, IsNil)
-	}()
-
-	dbt := &DBTest{c, db}
-	for _, test := range tests {
-		test(dbt)
-	}
-}
-
-// runTests runs tests using the default database `test`.
 func (cli *testingServerClient) runTests(t *testing.T, overrider configOverrider, tests ...func(dbt *testkit.DBTestKit)) {
 	db, err := sql.Open("mysql", cli.getDSN(overrider))
 	require.NoErrorf(t, err, "Error connecting")
@@ -949,36 +934,6 @@ func (cli *testingServerClient) runTestLoadDataForListColumnPartition2(t *testin
 		rows = dbt.MustQuery("select * from t order by id")
 		cli.checkRows(t, rows, "w 1 1", "w 2 2", "w 3 3", "e 5 5", "e 8 8", "n 9 9")
 	})
-}
-
-func (cli *testServerClient) checkRows(c *C, rows *sql.Rows, expectedRows ...string) {
-	buf := bytes.NewBuffer(nil)
-	result := make([]string, 0, 2)
-	for rows.Next() {
-		cols, err := rows.Columns()
-		c.Assert(err, IsNil)
-		rawResult := make([][]byte, len(cols))
-		dest := make([]interface{}, len(cols))
-		for i := range rawResult {
-			dest[i] = &rawResult[i]
-		}
-
-		err = rows.Scan(dest...)
-		c.Assert(err, IsNil)
-		buf.Reset()
-		for i, raw := range rawResult {
-			if i > 0 {
-				buf.WriteString(" ")
-			}
-			if raw == nil {
-				buf.WriteString("<nil>")
-			} else {
-				buf.WriteString(string(raw))
-			}
-		}
-		result = append(result, buf.String())
-	}
-	c.Assert(strings.Join(result, "\n"), Equals, strings.Join(expectedRows, "\n"))
 }
 
 func (cli *testingServerClient) checkRows(t *testing.T, rows *sql.Rows, expectedRows ...string) {

@@ -533,24 +533,28 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 
 }
 
-func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
+func TestSocketAndIp(t *testing.T) {
 	osTempDir := os.TempDir()
 	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 	defer os.RemoveAll(tempDir)
-	cli := newTestServerClient()
+
+	cli := newTestingServerClient()
 	cfg := newTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
 	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
@@ -558,134 +562,134 @@ func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 	// Test with Socket connection + Setup user1@% for all host access
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	defer func() {
-		cli.runTests(c, func(config *mysql.Config) {
+		cli.runTests(t, func(config *mysql.Config) {
 			config.User = "root"
 		},
-			func(dbt *DBTest) {
-				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'%'")
-				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'localhost'")
-				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'127.0.0.1'")
+			func(dbt *testkit.DBTestKit) {
+				dbt.MustQuery("DROP USER IF EXISTS 'user1'@'%'")
+				dbt.MustQuery("DROP USER IF EXISTS 'user1'@'localhost'")
+				dbt.MustQuery("DROP USER IF EXISTS 'user1'@'127.0.0.1'")
 			})
 	}()
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.User = "root"
 		config.Net = "unix"
 		config.Addr = socketFile
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
-			cli.checkRows(c, rows, "root@localhost")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
-			dbt.mustQuery("CREATE USER user1@'%'")
-			dbt.mustQuery("GRANT SELECT ON test.* TO user1@'%'")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
+			cli.checkRows(t, rows, "root@localhost")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.MustQuery("CREATE USER user1@'%'")
+			dbt.MustQuery("GRANT SELECT ON test.* TO user1@'%'")
 		})
 	// Test with Network interface connection with all hosts
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.User = "user1"
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
-			cli.checkRows(c, rows, "user1@127.0.0.1")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+			cli.checkRows(t, rows, "user1@127.0.0.1")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
 		})
 	// Test with unix domain socket file connection with all hosts
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.Net = "unix"
 		config.Addr = socketFile
 		config.User = "user1"
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
-			cli.checkRows(c, rows, "user1@localhost")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
+			cli.checkRows(t, rows, "user1@localhost")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
 		})
 
 	// Setup user1@127.0.0.1 for loop back network interface access
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.User = "root"
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
-			cli.checkRows(c, rows, "root@127.0.0.1")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
-			dbt.mustQuery("CREATE USER user1@127.0.0.1")
-			dbt.mustQuery("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
+			cli.checkRows(t, rows, "root@127.0.0.1")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.MustQuery("CREATE USER user1@127.0.0.1")
+			dbt.MustQuery("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
 		})
 	// Test with Network interface connection with all hosts
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.User = "user1"
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
-			cli.checkRows(c, rows, "user1@127.0.0.1")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON test.* TO 'user1'@'127.0.0.1'")
+			cli.checkRows(t, rows, "user1@127.0.0.1")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON test.* TO 'user1'@'127.0.0.1'")
 		})
 	// Test with unix domain socket file connection with all hosts
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.Net = "unix"
 		config.Addr = socketFile
 		config.User = "user1"
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
-			cli.checkRows(c, rows, "user1@localhost")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
+			cli.checkRows(t, rows, "user1@localhost")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
 		})
 
 	// Setup user1@localhost for socket (and if MySQL compatible; loop back network interface access)
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.Net = "unix"
 		config.Addr = socketFile
 		config.User = "root"
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
-			cli.checkRows(c, rows, "root@localhost")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
-			dbt.mustQuery("CREATE USER user1@localhost")
-			dbt.mustQuery("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
+			cli.checkRows(t, rows, "root@localhost")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.MustQuery("CREATE USER user1@localhost")
+			dbt.MustQuery("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
 		})
 	// Test with Network interface connection with all hosts
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.User = "user1"
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
-			cli.checkRows(c, rows, "user1@127.0.0.1")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON test.* TO 'user1'@'127.0.0.1'")
+			cli.checkRows(t, rows, "user1@127.0.0.1")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON test.* TO 'user1'@'127.0.0.1'")
 		})
 	// Test with unix domain socket file connection with all hosts
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.Net = "unix"
 		config.Addr = socketFile
 		config.User = "user1"
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
-			cli.checkRows(c, rows, "user1@localhost")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
+			cli.checkRows(t, rows, "user1@localhost")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
 		})
 
 }
