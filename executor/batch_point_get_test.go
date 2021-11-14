@@ -17,12 +17,12 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
