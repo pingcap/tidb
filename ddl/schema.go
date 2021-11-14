@@ -16,8 +16,10 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
@@ -220,6 +222,19 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+
+		var ruleIDs []string
+		for _, tblInfo := range tables {
+			rules := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
+			ruleIDs = append(ruleIDs, rules...)
+		}
+		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
+		err = infosync.UpdateLabelRules(context.TODO(), patch)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
 		// Update the job state when all affairs done.
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
