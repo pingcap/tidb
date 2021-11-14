@@ -1613,6 +1613,7 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 }
 
 // See issue: https://github.com/pingcap/tidb/issues/29752
+// Ref https://dev.mysql.com/doc/refman/8.0/en/rename-table.html
 func TestRenameTableWithLocked(t *testing.T) {
 	t.Parallel()
 	defer config.RestoreFunc()()
@@ -1628,11 +1629,17 @@ func TestRenameTableWithLocked(t *testing.T) {
 	tk.MustExec("use renamedb")
 	tk.MustExec("DROP TABLE IF EXISTS t1;")
 	tk.MustExec("CREATE TABLE t1 (a int);")
+
 	tk.MustExec("LOCK TABLES t1 WRITE;")
 	tk.MustExec("RENAME TABLE t1 TO t2;")
 	tk.MustQuery("select * from renamedb.t2").Check(testkit.Rows())
 	tk.MustExec("UNLOCK TABLES")
 	tk.MustExec("RENAME TABLE t2 TO t1;")
 	tk.MustQuery("select * from renamedb.t1").Check(testkit.Rows())
+
+	tk.MustExec("LOCK TABLES t1 READ;")
+	tk.MustGetErrCode("RENAME TABLE t1 TO t2;", errno.ErrTableNotLockedForWrite)
+	tk.MustExec("UNLOCK TABLES")
+
 	tk.MustExec("drop database renamedb")
 }
