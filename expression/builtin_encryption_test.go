@@ -195,15 +195,15 @@ func TestAESEncrypt(t *testing.T) {
 		require.NoError(t, err)
 		err = variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
 		require.NoError(t, err)
-		args := []types.Datum{fromHex(tt.crypt)}
+		args := []types.Datum{types.NewDatum(tt.origin)}
 		for _, param := range tt.params {
 			args = append(args, types.NewDatum(param))
 		}
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		str, err := evalBuiltinFunc(f, chunk.Row{})
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str)
+		require.Equal(t, types.NewDatum(tt.crypt), toHex(crypt))
 	}
 }
 
