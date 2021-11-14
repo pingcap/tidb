@@ -258,3 +258,20 @@ select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
 md5(compress(a))	md5(compress(b))	md5(compress(c))
 2198d4d3b06a6cba3f9275c7e364105c	5e587a14393aecf0629bb29dbd6b4379	905068487b6220f70bb71a48323826be
 set @@tidb_enable_vectorized_expression = false;
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_encrypt(123456789, '123')) as a, hex(aes_encrypt(987654321, '123')) as b;
+a	b
+3375C2B28622D121067C9D78CEF48B20	35BDCDDBA3C0E0B4427FA199FFF0566C
+set @@block_encryption_mode='aes-128-ofb';
+select hex(aes_encrypt(123456789, '1234567890123456', '1234567890123456')) as a, hex(aes_encrypt(987654321, '1234567890123456', '1234567890123456')) as b;
+a	b
+444EFE38E96AA7D2E2	4C44FA3AE968A3D8EA
+set @@tidb_enable_vectorized_expression = true;
+select hex(aes_encrypt(123456789, '1234567890123456', '1234567890123456')) as a, hex(aes_encrypt(987654321, '1234567890123456', '1234567890123456')) as b;
+a	b
+444EFE38E96AA7D2E2	4C44FA3AE968A3D8EA
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_encrypt(123456789, '123')) as a, hex(aes_encrypt(987654321, '123')) as b;
+a	b
+3375C2B28622D121067C9D78CEF48B20	35BDCDDBA3C0E0B4427FA199FFF0566C
+set @@tidb_enable_vectorized_expression = false;
