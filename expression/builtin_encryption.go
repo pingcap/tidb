@@ -340,12 +340,12 @@ func (b *builtinAesEncryptIVSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 func (b *builtinAesEncryptIVSig) evalString(row chunk.Row) (string, bool, error) {
 	// According to doc: If either function argument is NULL, the function returns NULL.
-	cryptStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
 
-	cryptStr, err = charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(cryptStr)
+	str, err = charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(str)
 	if err != nil {
 		return "", false, err
 	}
@@ -377,11 +377,11 @@ func (b *builtinAesEncryptIVSig) evalString(row chunk.Row) (string, bool, error)
 	var cipherText []byte
 	switch b.modeName {
 	case "cbc":
-		cipherText, err = encrypt.AESEncryptWithCBC([]byte(cryptStr), key, []byte(iv))
+		cipherText, err = encrypt.AESEncryptWithCBC([]byte(str), key, []byte(iv))
 	case "ofb":
-		cipherText, err = encrypt.AESEncryptWithOFB([]byte(cryptStr), key, []byte(iv))
+		cipherText, err = encrypt.AESEncryptWithOFB([]byte(str), key, []byte(iv))
 	case "cfb":
-		cipherText, err = encrypt.AESEncryptWithCFB([]byte(cryptStr), key, []byte(iv))
+		cipherText, err = encrypt.AESEncryptWithCFB([]byte(str), key, []byte(iv))
 	default:
 		return "", true, errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
