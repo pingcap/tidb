@@ -60,8 +60,8 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 			}
 		}
 		edge := directedEdge{
-			start:    leftPlan,
-			end:      rightPlan,
+			left:     leftPlan,
+			right:    rightPlan,
 			joinType: join.JoinType,
 		}
 		directedEdges = append(directedEdges, edge)
@@ -70,7 +70,6 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 			lhsEdge := lhsDirectedEdges[idx]
 			implicitEdges := extractNatureDirectedEdges(lhsEdge, edge)
 			directedEdges = append(directedEdges, implicitEdges...)
-
 		}
 		for idx := range rhsDirectedEdges {
 			rhsEdge := rhsDirectedEdges[idx]
@@ -101,35 +100,47 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 // Extract implicit join order
 func extractNatureDirectedEdges(edge1 directedEdge, edge2 directedEdge) (implicitEdges []directedEdge) {
 	implicitEdges = make([]directedEdge, 0)
-	if edge1.joinType == InnerJoin {
-		if edge2.joinType == LeftOuterJoin {
-			if edge1.start == edge2.end {
-				implicitEdges = append(implicitEdges, directedEdge{
-					start:      edge1.end,
-					end:        edge2.start,
-					isImplicit: true,
-				})
-			} else if edge1.end == edge2.end {
-				implicitEdges = append(implicitEdges, directedEdge{
-					start:      edge1.start,
-					end:        edge2.start,
-					isImplicit: true,
-				})
-			}
-		} else if edge2.joinType == RightOuterJoin {
-			if edge1.start == edge2.start {
-				implicitEdges = append(implicitEdges, directedEdge{
-					start:      edge1.end,
-					end:        edge2.end,
-					isImplicit: true,
-				})
-			} else if edge1.end == edge2.start {
-				implicitEdges = append(implicitEdges, directedEdge{
-					start:      edge1.start,
-					end:        edge2.end,
-					isImplicit: true,
-				})
-			}
+	if edge2.joinType == LeftOuterJoin {
+		if (edge1.joinType == InnerJoin || edge1.joinType == RightOuterJoin) && edge1.left == edge2.right {
+			implicitEdges = append(implicitEdges, directedEdge{
+				left:       edge1.right,
+				right:      edge2.left,
+				isImplicit: true,
+			})
+		} else if (edge1.joinType == InnerJoin || edge1.joinType == LeftOuterJoin) && edge1.right == edge2.right {
+			implicitEdges = append(implicitEdges, directedEdge{
+				left:       edge1.left,
+				right:      edge2.left,
+				isImplicit: true,
+			})
+		}
+	} else if edge2.joinType == RightOuterJoin {
+		if (edge1.joinType == InnerJoin || edge1.joinType == RightOuterJoin) && edge1.left == edge2.left {
+			implicitEdges = append(implicitEdges, directedEdge{
+				left:       edge1.right,
+				right:      edge2.left,
+				isImplicit: true,
+			})
+		} else if (edge1.joinType == InnerJoin || edge1.joinType == LeftOuterJoin) && edge1.right == edge2.left {
+			implicitEdges = append(implicitEdges, directedEdge{
+				left:       edge1.left,
+				right:      edge2.right,
+				isImplicit: true,
+			})
+		}
+	} else if edge2.joinType == InnerJoin {
+		if edge1.joinType == RightOuterJoin && edge1.left == edge2.left {
+			implicitEdges = append(implicitEdges, directedEdge{
+				left:       edge1.right,
+				right:      edge2.right,
+				isImplicit: true,
+			})
+		} else if edge1.joinType == LeftOuterJoin && edge1.right == edge2.left {
+			implicitEdges = append(implicitEdges, directedEdge{
+				left:       edge1.left,
+				right:      edge2.right,
+				isImplicit: true,
+			})
 		}
 	}
 	return
@@ -139,8 +150,8 @@ type joinReOrderSolver struct {
 }
 
 type directedEdge struct {
-	start      LogicalPlan
-	end        LogicalPlan
+	left       LogicalPlan
+	right      LogicalPlan
 	joinType   JoinType
 	isImplicit bool
 }
