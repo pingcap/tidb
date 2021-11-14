@@ -144,11 +144,9 @@ set @@tidb_enable_vectorized_expression = false;
 
 -- test for builtin function aes_encrypt()
 set @@block_encryption_mode='aes-128-ecb';
-select hex(aes_encrypt(E4B880E4BA8CE4B889, '123')) as a, hex(aes_encrypt(D2BBB6FEC8FD, '123')) as b;
+select hex(aes_encrypt(123456789, '123')) as a, hex(aes_encrypt(987654321, '123')) as b;
 set @@block_encryption_mode='aes-128-ofb';
-select hex(aes_encrypt(E4B880E4BA8CE4B889, '1234567890123456', '1234567890123456')) as a, hex(aes_encrypt(D2BBB6FEC8FD, '1234567890123456', '1234567890123456')) as b;
+select hex(aes_encrypt(123456789, '1234567890123456', '1234567890123456')) as a, hex(aes_encrypt(987654321, '1234567890123456', '1234567890123456')) as b;
 set @@tidb_enable_vectorized_expression = true;
-select hex(aes_encrypt(E4B880E4BA8CE4B889, '1234567890123456', '1234567890123456')) as a, hex(aes_encrypt(D2BBB6FEC8FD, '1234567890123456', '1234567890123456')) as b;
-set @@block_encryption_mode='aes-128-ecb';
-select hex(aes_encrypt(E4B880E4BA8CE4B889, '123')) as a, hex(aes_encrypt(D2BBB6FEC8FD, '123')) as b;
+select hex(aes_encrypt(123456789, '1234567890123456', '1234567890123456')) as a, hex(aes_encrypt(987654321, '1234567890123456', '1234567890123456')) as b;
 set @@tidb_enable_vectorized_expression = false;
