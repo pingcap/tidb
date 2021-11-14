@@ -166,13 +166,13 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode
 	var usedEdges []*expression.ScalarFunction
 	// Check whether all of these plans that must be joining before left node or right have already are joined .
 	// If not then return directly.
-	for _, node := range []LogicalPlan{leftNode, rightNode} {
-		for _, remainPlan := range s.remainJoinGroup {
-			if _, ok := s.directMap[remainPlan.p][node]; ok {
-				return nil, nil
-			}
-		}
-	}
+	//for _, node := range []LogicalPlan{leftNode, rightNode} {
+	//	for _, remainPlan := range s.remainJoinGroup {
+	//		if _, ok := s.directMap[remainPlan.p][node]; ok {
+	//			return nil, nil
+	//		}
+	//	}
+	//}
 
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
 	copy(remainOtherConds, s.otherConds)
