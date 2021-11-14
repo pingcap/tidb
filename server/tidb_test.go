@@ -691,55 +691,59 @@ func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 }
 
 // TestOnlySocket for server configuration without network interface for mysql clients
-func (ts *tidbTestSuite) TestOnlySocket(c *C) {
+func TestOnlySocket(t *testing.T) {
 	osTempDir := os.TempDir()
 	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 	defer os.RemoveAll(tempDir)
-	cli := newTestServerClient()
+
+	cli := newTestingServerClient()
 	cfg := newTestConfig()
 	cfg.Socket = socketFile
 	cfg.Host = "" // No network interface listening for mysql traffic
 	cfg.Status.ReportStatus = false
 
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
 	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	go func() {
 		err := server.Run()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
-	c.Assert(server.listener, IsNil)
-	c.Assert(server.socket, NotNil)
+	require.Nil(t, server.listener)
+	require.NotNil(t, server.socket)
 
 	// Test with Socket connection + Setup user1@% for all host access
 	defer func() {
-		cli.runTests(c, func(config *mysql.Config) {
+		cli.runTests(t, func(config *mysql.Config) {
 			config.User = "root"
 			config.Net = "unix"
 			config.Addr = socketFile
 		},
-			func(dbt *DBTest) {
-				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'%'")
-				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'localhost'")
-				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'127.0.0.1'")
+			func(dbt *testkit.DBTestKit) {
+				dbt.MustQuery("DROP USER IF EXISTS 'user1'@'%'")
+				dbt.MustQuery("DROP USER IF EXISTS 'user1'@'localhost'")
+				dbt.MustQuery("DROP USER IF EXISTS 'user1'@'127.0.0.1'")
 			})
 	}()
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.User = "root"
 		config.Net = "unix"
 		config.Addr = socketFile
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
-			cli.checkRows(c, rows, "root@localhost")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
-			dbt.mustQuery("CREATE USER user1@'%'")
-			dbt.mustQuery("GRANT SELECT ON test.* TO user1@'%'")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
+			cli.checkRows(t, rows, "root@localhost")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.MustQuery("CREATE USER user1@'%'")
+			dbt.MustQuery("GRANT SELECT ON test.* TO user1@'%'")
 		})
 	// Test with Network interface connection with all hosts, should fail since server not configured
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
@@ -747,86 +751,86 @@ func (ts *tidbTestSuite) TestOnlySocket(c *C) {
 		config.DBName = "test"
 		config.Addr = "127.0.0.1"
 	}))
-	c.Assert(err, IsNil, Commentf("Connect succeeded when not configured!?!"))
+	require.NoErrorf(t, err, "Connect succeeded when not configured!?!")
 	defer db.Close()
 	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "user1"
 		config.DBName = "test"
 		config.Addr = "127.0.0.1"
 	}))
-	c.Assert(err, IsNil, Commentf("Connect succeeded when not configured!?!"))
+	require.NoErrorf(t, err, "Connect succeeded when not configured!?!")
 	defer db.Close()
 	// Test with unix domain socket file connection with all hosts
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.Net = "unix"
 		config.Addr = socketFile
 		config.User = "user1"
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
-			cli.checkRows(c, rows, "user1@localhost")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
+			cli.checkRows(t, rows, "user1@localhost")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
 		})
 
 	// Setup user1@127.0.0.1 for loop back network interface access
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.Net = "unix"
 		config.Addr = socketFile
 		config.User = "root"
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
-			cli.checkRows(c, rows, "root@localhost")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
-			dbt.mustQuery("CREATE USER user1@127.0.0.1")
-			dbt.mustQuery("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
+			cli.checkRows(t, rows, "root@localhost")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.MustQuery("CREATE USER user1@127.0.0.1")
+			dbt.MustQuery("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
 		})
 	// Test with unix domain socket file connection with all hosts
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.Net = "unix"
 		config.Addr = socketFile
 		config.User = "user1"
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
-			cli.checkRows(c, rows, "user1@localhost")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
+			cli.checkRows(t, rows, "user1@localhost")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
 		})
 
 	// Setup user1@localhost for socket (and if MySQL compatible; loop back network interface access)
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.Net = "unix"
 		config.Addr = socketFile
 		config.User = "root"
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
-			cli.checkRows(c, rows, "root@localhost")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
-			dbt.mustQuery("CREATE USER user1@localhost")
-			dbt.mustQuery("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
+			cli.checkRows(t, rows, "root@localhost")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.MustQuery("CREATE USER user1@localhost")
+			dbt.MustQuery("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
 		})
 	// Test with unix domain socket file connection with all hosts
-	cli.runTests(c, func(config *mysql.Config) {
+	cli.runTests(t, func(config *mysql.Config) {
 		config.Net = "unix"
 		config.Addr = socketFile
 		config.User = "user1"
 		config.DBName = "test"
 	},
-		func(dbt *DBTest) {
-			rows := dbt.mustQuery("select user()")
-			cli.checkRows(c, rows, "user1@localhost")
-			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("select user()")
+			cli.checkRows(t, rows, "user1@localhost")
+			rows = dbt.MustQuery("show grants")
+			cli.checkRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
 		})
 
 }
