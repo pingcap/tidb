@@ -73,7 +73,7 @@ var (
 	// ErrUserAlreadyExists return for creating a existent user.
 	ErrUserAlreadyExists = dbterror.ClassSchema.NewStd(mysql.ErrUserAlreadyExists)
 	// ErrTableLocked returns when the table was locked by other session.
-	ErrTableLocked = dbterror.ClassSchema.NewStd(mysql.ErrLockOrActiveTransaction)
+	ErrTableLocked = dbterror.ClassSchema.NewStd(mysql.ErrTableLocked)
 	// ErrWrongObject returns when the table/view/sequence is not the expected object.
 	ErrWrongObject = dbterror.ClassSchema.NewStd(mysql.ErrWrongObject)
 	// ErrAdminCheckTable returns when the check table in temporary mode.

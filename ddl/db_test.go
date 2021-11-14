@@ -6127,8 +6127,10 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	c.Assert(terror.ErrorEqual(err, table.ErrLockOrActiveTransaction), IsTrue)
 	// Test alter/drop database when other session is holding the table locks of the database.
 	tk2.MustExec("create database test_lock2")
-	tk2.MustExec("alter database test_lock2 charset='utf8mb4'")
-	tk2.MustExec("drop database test_lock2")
+	_, err = tk2.Exec("drop database test")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
+	_, err = tk2.Exec("alter database test charset='utf8mb4'")
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
 
 	// Test for admin cleanup table locks.
 	tk.MustExec("unlock tables")
