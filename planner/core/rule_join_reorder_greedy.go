@@ -95,13 +95,13 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 		joinGroup2 := s.curJoinGroup[j]
 		if set, ok := s.directMap[joinGroup1.p]; ok {
 			if _, ok = set[joinGroup2.p]; ok {
-				return false
+				return true
 			}
 		}
 
 		if set, ok := s.directMap[joinGroup2.p]; ok {
 			if _, ok = set[joinGroup1.p]; ok {
-				return true
+				return false
 			}
 		}
 
