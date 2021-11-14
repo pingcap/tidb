@@ -30,6 +30,7 @@ type Checker struct {
 	is  infoschema.InfoSchema
 }
 
+// ErrLockedTableDropped returns error when try to drop the table with write lock
 var ErrLockedTableDropped = errors.New("other table can be accessed after locked table dropped")
 
 // NewChecker return new lock Checker.
@@ -75,7 +76,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 	if tb.Meta().Lock == nil {
 		return nil
 	}
-	if privilege == mysql.DropPriv {
+	if privilege == mysql.DropPriv && tb.Meta().Name.O == table {
 		switch tb.Meta().Lock.Tp {
 		case model.TableLockWrite:
 			return ErrLockedTableDropped
