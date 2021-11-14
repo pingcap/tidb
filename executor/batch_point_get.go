@@ -167,7 +167,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 }
 
 // CacheTable always use memBuffer in session as snapshot.
-// cacheTableSnapshot inherits kv.Snapshot and override the BatchGet methods to return empty.
+// cacheTableSnapshot inherits kv.Snapshot and override the BatchGet methods and Get methods.
 type cacheTableSnapshot struct {
 	kv.Snapshot
 	memBuffer kv.MemBuffer
@@ -197,6 +197,15 @@ func (s cacheTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[st
 	}
 
 	return values, nil
+}
+
+func (s cacheTableSnapshot) Get(ctx context.Context, key kv.Key) ([]byte, error) {
+	return s.memBuffer.Get(ctx, key)
+}
+
+// MockNewCacheTableSnapShot only serves for test.
+func MockNewCacheTableSnapShot(snapshot kv.Snapshot, memBuffer kv.MemBuffer) *cacheTableSnapshot {
+	return &cacheTableSnapshot{snapshot, memBuffer}
 }
 
 // Close implements the Executor interface.
