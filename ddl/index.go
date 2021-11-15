@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -540,6 +539,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		// reorganization -> public
+		/*
 		tbl, err := getTable(d.store, schemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -578,6 +578,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 		w.reorgCtx.cleanNotifyReorgCancel()
+		*/
 
 		indexInfo.State = model.StatePublic
 		// Set column index flag.
