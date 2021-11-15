@@ -216,7 +216,7 @@ func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.E
 		sameLens, allPoints := true, true
 		numCols := int(0)
 		for j, ran := range res.Ranges {
-			if !ran.IsPoint(sctx.GetSessionVars().StmtCtx) {
+			if isPoint, _ := ran.IsPoint(sctx.GetSessionVars().StmtCtx); !isPoint {
 				allPoints = false
 				break
 			}

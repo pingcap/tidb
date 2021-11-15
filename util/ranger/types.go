@@ -80,29 +80,29 @@ func (ran *Range) Clone() *Range {
 }
 
 // IsPoint returns if the range is a point.
-func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
+func (ran *Range) IsPoint(sc *stmtctx.StatementContext) (isPoint bool, hasNull bool) {
 	if len(ran.LowVal) != len(ran.HighVal) {
-		return false
+		return false, false
 	}
 	for i := range ran.LowVal {
 		a := ran.LowVal[i]
 		b := ran.HighVal[i]
 		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
-			return false
+			return false, false
 		}
 		cmp, err := a.CompareDatum(sc, &b)
 		if err != nil {
-			return false
+			return false, false
 		}
 		if cmp != 0 {
-			return false
+			return false, false
 		}
 
 		if a.IsNull() {
-			return false
+			hasNull = true
 		}
 	}
-	return !ran.LowExclude && !ran.HighExclude
+	return !ran.LowExclude && !ran.HighExclude, hasNull
 }
 
 // IsPointNullable returns if the range is a point.

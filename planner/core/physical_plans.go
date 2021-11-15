@@ -1199,10 +1199,11 @@ func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
 func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *stmtctx.StatementContext) bool {
+	rangeIsPoint, _ := p.Ranges[0].IsPoint(sc)
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
-		p.Ranges[0].IsPoint(sc)
+		rangeIsPoint
 }
 
 // PhysicalSelection represents a filter.
