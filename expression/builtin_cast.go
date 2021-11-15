@@ -1908,20 +1908,25 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
-// WrapWithCharsetConvert wraps `expr` with converting charset.
-func WrapWithCharsetConvert(ctx sessionctx.Context, expr Expression, funcName string) Expression {
+// charsetConvertMap contains the builtin functions which arguments need to be converted to the correct charset.
+var charsetConvertMap = map[string]struct{}{
+	ast.Hex: {}, ast.Length: {}, ast.OctetLength: {}, ast.ASCII: {},
+	ast.ToBase64: {},
+}
+
+// WrapWithConvertCharset wraps `expr` with converting charset sig.
+func WrapWithConvertCharset(ctx sessionctx.Context, expr Expression, funcName string) Expression {
 	retTp := expr.GetType()
 	if _, err := charset.GetDefaultCollationLegacy(retTp.Charset); err != nil {
-		const charsetConv = "charset_convert"
-		switch funcName {
-		case ast.Hex:
-			bf, err := newBaseBuiltinFunc(ctx, charsetConv, []Expression{expr}, retTp.EvalType())
+		const convChs = "convert_charset"
+		if _, ok := charsetConvertMap[funcName]; ok {
+			bf, err := newBaseBuiltinFunc(ctx, convChs, []Expression{expr}, retTp.EvalType())
 			if err != nil {
 				return expr
 			}
-			chsSig := &builtinCharsetConvSig{bf}
+			chsSig := &builtinConvertCharsetSig{bf}
 			return &ScalarFunction{
-				FuncName: model.NewCIStr(charsetConv),
+				FuncName: model.NewCIStr(convChs),
 				RetType:  retTp,
 				Function: chsSig,
 			}

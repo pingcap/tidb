@@ -20,19 +20,19 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-var _ builtinFunc = &builtinCharsetConvSig{}
+var _ builtinFunc = &builtinConvertCharsetSig{}
 
-type builtinCharsetConvSig struct {
+type builtinConvertCharsetSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinCharsetConvSig) Clone() builtinFunc {
-	newSig := &builtinCharsetConvSig{}
+func (b *builtinConvertCharsetSig) Clone() builtinFunc {
+	newSig := &builtinConvertCharsetSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-func (b *builtinCharsetConvSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
+func (b *builtinConvertCharsetSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -50,11 +50,11 @@ func (b *builtinCharsetConvSig) evalString(row chunk.Row) (res string, isNull bo
 	return padZeroForBinaryType(res, b.tp, b.ctx)
 }
 
-func (b *builtinCharsetConvSig) vectorized() bool {
+func (b *builtinConvertCharsetSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinCharsetConvSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinConvertCharsetSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {

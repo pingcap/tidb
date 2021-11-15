@@ -222,15 +222,6 @@ func (b *builtinLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-
-	argTp := b.args[0].GetType()
-	if !types.IsBinaryStr(argTp) {
-		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
-		if err == nil {
-			return int64(len(dBytes)), false, nil
-		}
-	}
-
 	return int64(len([]byte(val))), false, nil
 }
 
@@ -271,13 +262,6 @@ func (b *builtinASCIISig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	if len(val) == 0 {
 		return 0, false, nil
-	}
-	argTp := b.args[0].GetType()
-	if !types.IsBinaryStr(argTp) {
-		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
-		if err == nil {
-			return int64(dBytes[0]), false, nil
-		}
 	}
 	return int64(val[0]), false, nil
 }
@@ -3624,11 +3608,6 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
-	}
-	argTp := b.args[0].GetType()
-	str, err = charset.NewEncoding(argTp.Charset).EncodeString(str)
-	if err != nil {
-		return "", false, err
 	}
 	needEncodeLen := base64NeededEncodedLength(len(str))
 	if needEncodeLen == -1 {
