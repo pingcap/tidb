@@ -112,55 +112,55 @@ func TestGetFirstKeyFromRequest(t *testing.T) {
 	var testK2 = []byte("TEST-2")
 	var req *tikvrpc.Request
 
-	require.Equal(t, nil, GetFirstKeyFromRequest(nil))
+	require.Nil(t, GetFirstKeyFromRequest(nil))
 
 	req = &tikvrpc.Request{Req: (*kvrpcpb.GetRequest)(nil)}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.GetRequest{Key: nil}}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.GetRequest{Key: testK1}}
 	require.Equal(t, testK1, GetFirstKeyFromRequest(req))
 
 	req = &tikvrpc.Request{Req: (*kvrpcpb.BatchGetRequest)(nil)}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.BatchGetRequest{Keys: nil}}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.BatchGetRequest{Keys: [][]byte{}}}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.BatchGetRequest{Keys: [][]byte{testK2, testK1}}}
 	require.Equal(t, testK2, GetFirstKeyFromRequest(req))
 
 	req = &tikvrpc.Request{Req: (*kvrpcpb.ScanRequest)(nil)}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.ScanRequest{StartKey: nil}}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.ScanRequest{StartKey: testK1}}
 	require.Equal(t, testK1, GetFirstKeyFromRequest(req))
 
 	req = &tikvrpc.Request{Req: (*kvrpcpb.PrewriteRequest)(nil)}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.PrewriteRequest{Mutations: nil}}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.PrewriteRequest{Mutations: []*kvrpcpb.Mutation{}}}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.PrewriteRequest{Mutations: []*kvrpcpb.Mutation{{Key: testK2}, {Key: testK1}}}}
 	require.Equal(t, testK2, GetFirstKeyFromRequest(req))
 
 	req = &tikvrpc.Request{Req: (*kvrpcpb.CommitRequest)(nil)}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.CommitRequest{Keys: nil}}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.CommitRequest{Keys: [][]byte{}}}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.CommitRequest{Keys: [][]byte{testK1, testK1}}}
 	require.Equal(t, testK1, GetFirstKeyFromRequest(req))
 
 	req = &tikvrpc.Request{Req: (*kvrpcpb.BatchRollbackRequest)(nil)}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.BatchRollbackRequest{Keys: nil}}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.BatchRollbackRequest{Keys: [][]byte{}}}
-	require.Equal(t, nil, GetFirstKeyFromRequest(req))
+	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.BatchRollbackRequest{Keys: [][]byte{testK2, testK1}}}
 	require.Equal(t, testK2, GetFirstKeyFromRequest(req))
 }
