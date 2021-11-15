@@ -4615,7 +4615,6 @@ func (s *testIntegrationSuite) TestGroupBySetVar(c *C) {
 			output[i].Plan = s.testData.ConvertRowsToStrings(res.Rows())
 		})
 		res.Check(testkit.Rows(output[i].Plan...))
-
 	}
 }
 
