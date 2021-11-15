@@ -132,3 +132,23 @@ func (s *testDBSuite2) TestAlterTableNoCache(c *C) {
 	tk.MustExec("alter table nocache_t nocache")
 	tk.MustExec("alter table nocache_t nocache")
 }
+
+func (s *testDBSuite2) TestIndexOnCacheTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	/*Test cache table can't add/drop/rename index */
+	tk.MustExec("drop table if exists cache_index")
+	tk.MustExec("create table cache_index (c1 int primary key, c2 int, c3 int, index ok2(c2))")
+	defer tk.MustExec("drop table if exists cache_index")
+	tk.MustExec("alter table cache_index cache")
+	tk.MustGetErrCode("create index cache_c2 on cache_index(c2)", errno.ErrOptOnCacheTable)
+	tk.MustGetErrCode("alter table cache_index add index k2(c2)", errno.ErrOptOnCacheTable)
+	tk.MustGetErrCode("alter table cache_index drop index ok2", errno.ErrOptOnCacheTable)
+	/*Test rename index*/
+	tk.MustGetErrCode("alter table cache_index rename index ok2 to ok", errno.ErrOptOnCacheTable)
+	/*Test drop different indexes*/
+	tk.MustExec("drop table if exists cache_index_1")
+	tk.MustExec("create table cache_index_1 (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));")
+	tk.MustExec("alter table cache_index_1 cache")
+	tk.MustGetErrCode("alter table cache_index_1 drop index i1, drop index i2;", errno.ErrOptOnCacheTable)
+}
