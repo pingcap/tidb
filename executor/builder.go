@@ -4676,6 +4676,7 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 	}
 	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS)
 	if cacheData != nil {
+		b.ctx.GetSessionVars().StmtCtx.ReadFromTableCache = true
 		return cacheData
 	}
 	go func() {
