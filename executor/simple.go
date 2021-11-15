@@ -663,8 +663,10 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 	sql := new(strings.Builder)
 	// when an active role of current user is revoked,
 	// it should be removed from activeRoles
-	activeRoles := e.ctx.GetSessionVars().ActiveRoles
-	currentUser := e.ctx.GetSessionVars().User.Username
+	activeRoles, currentUser := e.ctx.GetSessionVars().ActiveRoles, ""
+	if e.ctx.GetSessionVars().User != nil {
+		currentUser = e.ctx.GetSessionVars().User.Username
+	}
 	for _, user := range s.Users {
 		exists, err := userExists(ctx, e.ctx, user.Username, user.Hostname)
 		if err != nil {
