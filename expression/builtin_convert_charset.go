@@ -19,22 +19,26 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-var _ builtinFunc = &builtinConvertCharsetSig{}
+// InternalFuncToBinary accepts a string and returns another string encoded in a given charset.
+const InternalFuncToBinary = "to_binary"
 
-type builtinConvertCharsetSig struct {
+var _ builtinFunc = &builtinInternalToBinarySig{}
+
+type builtinInternalToBinarySig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinConvertCharsetSig) Clone() builtinFunc {
-	newSig := &builtinConvertCharsetSig{}
+func (b *builtinInternalToBinarySig) Clone() builtinFunc {
+	newSig := &builtinInternalToBinarySig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-func (b *builtinConvertCharsetSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
+func (b *builtinInternalToBinarySig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -45,11 +49,11 @@ func (b *builtinConvertCharsetSig) evalString(row chunk.Row) (res string, isNull
 	return res, false, err
 }
 
-func (b *builtinConvertCharsetSig) vectorized() bool {
+func (b *builtinInternalToBinarySig) vectorized() bool {
 	return true
 }
 
-func (b *builtinConvertCharsetSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -77,27 +81,31 @@ func (b *builtinConvertCharsetSig) vecEvalString(input *chunk.Chunk, result *chu
 	return nil
 }
 
-// charsetConvertMap contains the builtin functions which arguments need to be converted to the correct charset.
-var charsetConvertMap = map[string]struct{}{
+// toBinaryMap contains the builtin functions which arguments need to be converted to the correct charset.
+var toBinaryMap = map[string]struct{}{
 	ast.Hex: {}, ast.Length: {}, ast.OctetLength: {}, ast.ASCII: {},
 	ast.ToBase64: {},
 }
 
-// WrapWithConvertCharset wraps `expr` with converting charset sig.
+// BuildToBinaryFunction builds a to_binary ScalarFunction from the Expression.
+func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) Expression {
+	bf, err := newBaseBuiltinFunc(ctx, InternalFuncToBinary, []Expression{expr}, tp.EvalType())
+	if err != nil {
+		return expr
+	}
+	chsSig := &builtinInternalToBinarySig{bf}
+	return &ScalarFunction{
+		FuncName: model.NewCIStr(InternalFuncToBinary),
+		RetType:  tp,
+		Function: chsSig,
+	}
+}
+
+// WrapWithConvertCharset wraps `expr` with to_binary sig.
 func WrapWithConvertCharset(ctx sessionctx.Context, expr Expression, funcName string) Expression {
 	retTp := expr.GetType()
-	const convChs = "convert_charset"
-	if _, ok := charsetConvertMap[funcName]; ok {
-		bf, err := newBaseBuiltinFunc(ctx, convChs, []Expression{expr}, retTp.EvalType())
-		if err != nil {
-			return expr
-		}
-		chsSig := &builtinConvertCharsetSig{bf}
-		return &ScalarFunction{
-			FuncName: model.NewCIStr(convChs),
-			RetType:  retTp,
-			Function: chsSig,
-		}
+	if _, ok := toBinaryMap[funcName]; ok {
+		return BuildToBinaryFunction(ctx, expr, retTp)
 	}
 	return expr
 }

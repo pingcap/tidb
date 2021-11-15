@@ -166,7 +166,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 		isDeferredConst := false
 		for i := 0; i < len(args); i++ {
 			arg := args[i]
-			if sf, ok := arg.(*ScalarFunction); ok && sf.FuncName.L == "convert_charset" {
+			if sf, ok := arg.(*ScalarFunction); ok && sf.FuncName.L == InternalFuncToBinary {
 				arg = FoldConstant(sf)
 			}
 			switch x := arg.(type) {
