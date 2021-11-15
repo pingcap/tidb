@@ -157,11 +157,8 @@ func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, errors.Trace(err)
 	}
 	// Double Check if policy exits while ddl executing
-	if placementPolicyRef != nil {
-		_, err = checkPlacementPolicyExistAndCancelNonExistJob(t, job, placementPolicyRef.ID)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, placementPolicyRef); err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	// Notice: dbInfo.DirectPlacementOpts and dbInfo.PlacementPolicyRef can not be both not nil, which checked before constructing ddl job.

@@ -1,9 +1,24 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package errormanager
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -94,6 +109,7 @@ type ErrorManager struct {
 	taskID         int64
 	schemaEscaped  string
 	remainingError config.MaxError
+	dupResolution  config.DuplicateResolutionAlgorithm
 }
 
 // New creates a new error manager.
@@ -111,7 +127,7 @@ func New(db *sql.DB, cfg *config.Config) *ErrorManager {
 
 // Init creates the schemas and tables to store the task information.
 func (em *ErrorManager) Init(ctx context.Context) error {
-	if em.db == nil {
+	if em.db == nil || (em.remainingError.Type.Load() == 0 && em.dupResolution == config.DupeResAlgNone) {
 		return nil
 	}
 
@@ -120,15 +136,21 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 		Logger: log.L(),
 	}
 
-	sqls := [][2]string{
-		{"create task info schema", createSchema},
-		{"create syntax error table", createSyntaxErrorTable},
-		{"create type error table", createTypeErrorTable},
-		{"create conflict error table", createConflictErrorTable},
+	sqls := make([][2]string, 0)
+	sqls = append(sqls, [2]string{"create task info schema", createSchema})
+	if em.remainingError.Syntax.Load() > 0 {
+		sqls = append(sqls, [2]string{"create syntax error table", createSyntaxErrorTable})
+	}
+	if em.remainingError.Type.Load() > 0 {
+		sqls = append(sqls, [2]string{"create type error table", createTypeErrorTable})
+	}
+	if em.dupResolution != config.DupeResAlgNone && em.remainingError.Conflict.Load() > 0 {
+		sqls = append(sqls, [2]string{"create conflict error table", createConflictErrorTable})
 	}
 
 	for _, sql := range sqls {
-		err := exec.Exec(ctx, sql[0], fmt.Sprintf(sql[1], em.schemaEscaped))
+		// trim spaces for unit test pattern matching
+		err := exec.Exec(ctx, sql[0], strings.TrimSpace(fmt.Sprintf(sql[1], em.schemaEscaped)))
 		if err != nil {
 			return err
 		}
@@ -148,6 +170,11 @@ func (em *ErrorManager) RecordTypeError(
 	rowText string,
 	encodeErr error,
 ) error {
+	// elide the encode error if needed.
+	if em.remainingError.Type.Dec() < 0 {
+		return encodeErr
+	}
+
 	if em.db != nil {
 		errMsg := encodeErr.Error()
 		logger = logger.With(
@@ -172,11 +199,6 @@ func (em *ErrorManager) RecordTypeError(
 		); err != nil {
 			return multierr.Append(encodeErr, err)
 		}
-	}
-
-	// elide the encode error if needed.
-	if em.remainingError.Type.Dec() < 0 {
-		return encodeErr
 	}
 	return nil
 }
