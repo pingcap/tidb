@@ -50,7 +50,7 @@ func TestPushCollationDown(t *testing.T) {
 		require.NoError(t, err)
 		expr, err := PBToExpr(pbExpr[0], tps, sc)
 		require.NoError(t, err)
-		_, eColl := expr.CharsetAndCollation(nil)
+		_, eColl := expr.CharsetAndCollation()
 		require.Equal(t, coll, eColl)
 	}
 }

@@ -132,3 +132,12 @@ set @@tidb_enable_vectorized_expression = true;
 select char(a using gbk), char(a using utf8), char(a) from t;
 select char(12345678 using gbk);
 set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function compress()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
+set @@tidb_enable_vectorized_expression = true;
+select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
+set @@tidb_enable_vectorized_expression = false;

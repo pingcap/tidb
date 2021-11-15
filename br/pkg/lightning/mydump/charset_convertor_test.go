@@ -84,23 +84,3 @@ func (s testCharsetConvertorSuite) TestInvalidCharReplace(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(gbkToUTF8Data, DeepEquals, string(expectedData))
 }
-
-func (s testCharsetConvertorSuite) TestLoadCharsetFromConfig(c *C) {
-	cases := map[string]Charset{
-		"binary":  Binary,
-		"BINARY":  Binary,
-		"GBK":     GBK,
-		"gbk":     GBK,
-		"Gbk":     GBK,
-		"gB18030": GB18030,
-		"GB18030": GB18030,
-	}
-	for k, v := range cases {
-		charset, err := loadCharsetFromConfig(k)
-		c.Assert(err, IsNil)
-		c.Assert(charset, Equals, v)
-	}
-
-	_, err := loadCharsetFromConfig("Unknown")
-	c.Assert(err, ErrorMatches, "found unsupported data-character-set: Unknown")
-}
