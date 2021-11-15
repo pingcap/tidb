@@ -26,7 +26,6 @@ import (
 )
 
 func TestDDLAfterLoad(t *testing.T) {
-	t.Parallel()
 	testKit, do, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -60,7 +59,6 @@ func TestDDLAfterLoad(t *testing.T) {
 }
 
 func TestDDLTable(t *testing.T) {
-	t.Parallel()
 	testKit, do, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -100,7 +98,6 @@ func TestDDLTable(t *testing.T) {
 }
 
 func TestDDLHistogram(t *testing.T) {
-	t.Parallel()
 	testKit, do, clean := createTestKitAndDom(t)
 	defer clean()
 	h := do.StatsHandle()
@@ -188,7 +185,6 @@ func TestDDLHistogram(t *testing.T) {
 }
 
 func TestDDLPartition(t *testing.T) {
-	t.Parallel()
 	testKit, do, clean := createTestKitAndDom(t)
 	defer clean()
 	testkit.WithPruneMode(testKit, variable.Static, func() {

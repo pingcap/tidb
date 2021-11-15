@@ -198,7 +198,7 @@ type IndexReaderExecutor struct {
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
-	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
+	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
@@ -210,7 +210,7 @@ func (e *IndexReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
+	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		req.Reset()
 		return nil
 	}
@@ -262,13 +262,7 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 
 	return e.open(ctx, kvRanges)
 }
-func isReadFromCache(tbl table.Table, stmt *stmtctx.StatementContext) bool {
-	if tbl != nil && tbl.Meta() != nil && tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
-		cond, _ := stmt.GetCacheTable(tbl.Meta().ID)
-		return cond
-	}
-	return false
-}
+
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
@@ -285,9 +279,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	e.kvRanges = kvRanges
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// In a test case IndexReaderExecutor is mocked and e.table is nil.
-	// Cache table is similar with temporary table, if it satisfies the read condition.
 	// Avoid sending distsql request to TIKV.
-	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
+	if e.table != nil && e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
@@ -411,8 +404,8 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		return err
 	}
 
-	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.	Cache table is similar with temporary table.
-	if e.table.Meta().TempTableType != model.TempTableNone || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
+	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
+	if e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
@@ -675,7 +668,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
-	if e.table.Meta().TempTableType != model.TempTableNone || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
+	if e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
@@ -699,7 +692,7 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.table.Meta().TempTableType != model.TempTableNone || isReadFromCache(e.table, e.ctx.GetSessionVars().StmtCtx) {
+	if e.table.Meta().TempTableType != model.TempTableNone {
 		req.Reset()
 		return nil
 	}

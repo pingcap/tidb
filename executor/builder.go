@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -54,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/cteutil"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
@@ -1041,6 +1041,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		return x
 	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), reader)}
+	us.cacheTable = v.CacheTable
 	// Get the handle column index of the below Plan.
 	us.belowHandleCols = v.HandleCols
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
@@ -1264,7 +1265,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 
 	// consider collations
 	for i := range v.EqualConditions {
-		chs, coll := v.EqualConditions[i].CharsetAndCollation(e.ctx)
+		chs, coll := v.EqualConditions[i].CharsetAndCollation()
 		leftTypes[i].Charset, leftTypes[i].Collate = chs, coll
 		rightTypes[i].Charset, rightTypes[i].Collate = chs, coll
 	}
@@ -3135,8 +3136,7 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 		return nil, false, nil, nil
 	}
 	if lookUpContent[0].keyColIDs == nil {
-		return nil, false, nil,
-			dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("cannot get column IDs when dynamic pruning")
+		return nil, false, nil, plannercore.ErrInternal.GenWithStack("cannot get column IDs when dynamic pruning")
 	}
 	keyColOffsets := make([]int, len(lookUpContent[0].keyColIDs))
 	for i, colID := range lookUpContent[0].keyColIDs {
@@ -3148,8 +3148,7 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 			}
 		}
 		if offset == -1 {
-			return nil, false, nil,
-				dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("invalid column offset when dynamic pruning")
+			return nil, false, nil, plannercore.ErrInternal.GenWithStack("invalid column offset when dynamic pruning")
 		}
 		keyColOffsets[i] = offset
 	}
@@ -4364,7 +4363,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		partTblID:        plan.PartTblID,
 		columns:          plan.Columns,
 	}
-
+	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		e.cacheTable = b.getCacheTable(plan.TblInfo, startTS)
+	}
 	if plan.TblInfo.TempTableType != model.TempTableNone {
 		// Temporary table should not do any lock operations
 		e.lock = false
@@ -4661,5 +4662,34 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 		return errors.New("can not stale read temporary table")
 	}
 
+	return nil
+}
+
+func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64) kv.MemBuffer {
+	tbl, ok := b.is.TableByID(tblInfo.ID)
+	if !ok {
+		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
+		return nil
+	}
+	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS)
+	if cacheData != nil {
+		b.ctx.GetSessionVars().StmtCtx.ReadFromTableCache = true
+		return cacheData
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logutil.BgLogger().Error("panic in the recoverable goroutine",
+					zap.Reflect("r", r),
+					zap.Stack("stack trace"))
+			}
+		}()
+		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
+			if err != nil {
+				log.Warn("Update Lock Info Error")
+			}
+		}
+	}()
 	return nil
 }
