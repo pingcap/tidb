@@ -675,17 +675,17 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 		high = kv.Key(high).PrefixNext()
 	}
 
-	var hasNull bool
-	for _, highVal := range ran.HighVal {
-		if highVal.IsNull() {
-			hasNull = true
-			break
-		}
-	}
+	//var hasNull bool
+	//for _, highVal := range ran.HighVal {
+	//	if highVal.IsNull() {
+	//		hasNull = true
+	//		break
+	//	}
+	//}
 
-	if hasNull {
-		// Append 0 to make unique-key range [null, null] to be a scan rather than point-get.
-		high = kv.Key(high).Next()
-	}
+	//if hasNull {
+	//	// Append 0 to make unique-key range [null, null] to be a scan rather than point-get.
+	//	high = kv.Key(high).Next()
+	//}
 	return low, high, nil
 }
