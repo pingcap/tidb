@@ -17,17 +17,22 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -974,6 +979,87 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 	))
 }
 
+func (s *testDBSuite6) TestDropDatabaseGCPlacement(c *C) {
+	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists db2")
+
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (id int) primary_region='r0' regions='r0'")
+	defer tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create database db2")
+	tk.MustExec("create table db2.t0 (id int)")
+	tk.MustExec("create table db2.t1 (id int) primary_region='r1' regions='r1,r2'")
+	tk.MustExec(`create table db2.t2 (id int) primary_region='r1' regions='r1,r2' PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100) primary_region='r2' regions='r2',
+        PARTITION p1 VALUES LESS THAN (1000)
+	)`)
+
+	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
+	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	tk.MustExec("drop database db2")
+
+	bundles, err := infosync.GetAllRuleBundles(context.TODO())
+	c.Assert(err, IsNil)
+	c.Assert(len(bundles), Equals, 4)
+
+	gcWorker, err := gcworker.NewMockGCWorker(s.store)
+	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
+
+	bundles, err = infosync.GetAllRuleBundles(context.TODO())
+	c.Assert(err, IsNil)
+	c.Assert(len(bundles), Equals, 1)
+	c.Assert(bundles[0].ID, Equals, placement.GroupID(t.Meta().ID))
+}
+
+func (s *testDBSuite6) TestDropTableGCPlacement(c *C) {
+	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t0 (id int)")
+	defer tk.MustExec("drop table if exists t0")
+
+	tk.MustExec("create table t1 (id int) primary_region='r1' regions='r1,r2'")
+	defer tk.MustExec("drop table if exists t1")
+
+	tk.MustExec(`create table t2 (id int) primary_region='r1' regions='r1,r2' PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100) primary_region='r2' regions='r2',
+        PARTITION p1 VALUES LESS THAN (1000)
+	)`)
+	defer tk.MustExec("drop table if exists t2")
+
+	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
+	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+
+	tk.MustExec("drop table t2")
+
+	bundles, err := infosync.GetAllRuleBundles(context.TODO())
+	c.Assert(err, IsNil)
+	c.Assert(len(bundles), Equals, 3)
+
+	gcWorker, err := gcworker.NewMockGCWorker(s.store)
+	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
+
+	bundles, err = infosync.GetAllRuleBundles(context.TODO())
+	c.Assert(err, IsNil)
+	c.Assert(len(bundles), Equals, 1)
+	c.Assert(bundles[0].ID, Equals, placement.GroupID(t1.Meta().ID))
+}
+
 func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1059,6 +1145,59 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 		"  PARTITION `p0` VALUES LESS THAN (100),\n" +
 		"  PARTITION `p1` VALUES LESS THAN (1000)\n" +
 		")"))
+}
+
+func (s *testDBSuite6) TestDropTablePartitionGCPlacement(c *C) {
+	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t0 (id int)")
+	defer tk.MustExec("drop table if exists t0")
+
+	tk.MustExec("create table t1 (id int) primary_region='r1' regions='r1,r2'")
+	defer tk.MustExec("drop table if exists t1")
+
+	tk.MustExec(`create table t2 (id int) primary_region='r1' regions='r1,r2' PARTITION BY RANGE (id) (
+        PARTITION p0 VALUES LESS THAN (100) primary_region='r2' regions='r2',
+        PARTITION p1 VALUES LESS THAN (1000) primary_region='r3' regions='r3'
+	)`)
+	defer tk.MustExec("drop table if exists t2")
+
+	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
+	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	t2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+
+	tk.MustExec("alter table t2 drop partition p0")
+
+	bundles, err := infosync.GetAllRuleBundles(context.TODO())
+	c.Assert(err, IsNil)
+	c.Assert(len(bundles), Equals, 4)
+
+	gcWorker, err := gcworker.NewMockGCWorker(s.store)
+	c.Assert(gcWorker.DeleteRanges(context.TODO(), math.MaxInt64), IsNil)
+
+	bundles, err = infosync.GetAllRuleBundles(context.TODO())
+	c.Assert(err, IsNil)
+	c.Assert(len(bundles), Equals, 3)
+	bundlesMap := make(map[string]*placement.Bundle)
+	for _, bundle := range bundles {
+		bundlesMap[bundle.ID] = bundle
+	}
+	_, ok := bundlesMap[placement.GroupID(t1.Meta().ID)]
+	c.Assert(ok, IsTrue)
+
+	_, ok = bundlesMap[placement.GroupID(t2.Meta().ID)]
+	c.Assert(ok, IsTrue)
+
+	_, ok = bundlesMap[placement.GroupID(t2.Meta().Partition.Definitions[1].ID)]
+	c.Assert(ok, IsTrue)
 }
 
 func (s *testDBSuite6) TestAlterTablePartitionPlacement(c *C) {
