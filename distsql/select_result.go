@@ -203,11 +203,12 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		ifBreak, err := func() (bool, error) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
-			if r.exit {
-				return true, nil
-			}
 			if r.selectResp != nil {
 				r.memConsume(-atomic.LoadInt64(&r.selectRespSize))
+			}
+			if r.exit {
+				r.selectResp = nil
+				return true, nil
 			}
 			if resultSubset == nil {
 				r.selectResp = nil
