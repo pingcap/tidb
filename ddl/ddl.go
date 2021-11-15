@@ -400,6 +400,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				time.Sleep(time.Second * 2)
 			}
 		}
+		d.sessPool.put(sctx)
 	}()
 
 	return nil

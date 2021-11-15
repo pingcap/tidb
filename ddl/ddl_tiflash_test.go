@@ -45,15 +45,13 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 		}),
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
-	fmt.Printf("HAAAHAHHAAA2\n")
 
 	c.Assert(err, IsNil)
 
 	session.SetSchemaLease(0)
-	fmt.Printf("HAAAHAHHAAA3\n")
 	session.DisableStats4Test()
-	fmt.Printf("HAAAHAHHAAA4\n")
 
+	fmt.Printf("HAAAHAHHAAA2\n")
 	s.dom, err = session.BootstrapSession(s.store)
 	fmt.Printf("HAAAHAHHAAA5\n")
 	c.Assert(err, IsNil)
