@@ -175,3 +175,14 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	require.NoError(t, err)
 	return tblInfo
 }
+
+func TestIssue29520(t *testing.T) {
+	store, close := testkit.CreateMockStore(t)
+	defer close()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_mutation_checker=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c year, PRIMARY KEY (c) CLUSTERED, KEY i1(c))")
+	tk.MustExec("insert into t values('2020')")
+}
