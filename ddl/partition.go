@@ -116,6 +116,25 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+
+		// modify placement settings
+		for _, def := range addingDefinitions {
+			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+
+		bundles, err := alterTablePartitionBundles(t, tblInfo, addingDefinitions)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		if err = infosync.PutRuleBundles(context.TODO(), bundles); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
@@ -153,28 +172,6 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			return ver, errors.Trace(err)
 		}
 
-		var bundles []*placement.Bundle
-		// bundle for table should be recomputed because it includes some default configs for partitions
-		tblBundle, err := newBundleFromTblInfo(t, job, tblInfo)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		if tblBundle != nil {
-			bundles = append(bundles, tblBundle)
-		}
-
-		partitionBundles, err := newBundlesFromPartitionDefs(t, job, addingDefinitions)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		bundles = append(bundles, partitionBundles...)
-
-		if err = infosync.PutRuleBundles(context.TODO(), bundles); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
-
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddTablePartition, TableInfo: tblInfo, PartInfo: partInfo})
@@ -183,6 +180,28 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
+	var bundles []*placement.Bundle
+
+	// bundle for table should be recomputed because it includes some default configs for partitions
+	tblBundle, err := placement.NewTableBundle(t, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if tblBundle != nil {
+		bundles = append(bundles, tblBundle)
+	}
+
+	partitionBundles, err := placement.NewPartitionListBundles(t, addingDefinitions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bundles = append(bundles, partitionBundles...)
+	return bundles, nil
 }
 
 // updatePartitionInfo merge `addingDefinitions` into `Definitions` in the tableInfo.
@@ -1194,7 +1213,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
-	bundles, err := newBundlesFromPartitionDefs(t, job, newPartitions)
+	bundles, err := placement.NewPartitionListBundles(t, newPartitions)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1457,7 +1476,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
 	bundles := make([]*placement.Bundle, 0, 3)
 
-	ptBundle, err := newBundleFromTblInfo(t, job, pt)
+	ptBundle, err := placement.NewTableBundle(t, pt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1465,7 +1484,7 @@ func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.Ta
 		bundles = append(bundles, ptBundle)
 	}
 
-	parBundle, err := newBundleFromPartitionDef(t, job, *newPar)
+	parBundle, err := placement.NewPartitionBundle(t, *newPar)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1473,7 +1492,7 @@ func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.Ta
 		bundles = append(bundles, parBundle)
 	}
 
-	ntBundle, err := newBundleFromTblInfo(t, job, nt)
+	ntBundle, err := placement.NewTableBundle(t, nt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
