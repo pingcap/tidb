@@ -67,7 +67,7 @@ if [ "$table_count" -ne "2" ];then
     exit 1
 fi
 
-meta_count=($(run_sql "SELECT COUNT(*) FROM mysql.stats_meta where count > 0;" | awk '/COUNT/{print $2}'))
+meta_count=$(run_sql "SHOW STATS_META" | grep Row_count | grep -v "Row_count: 0" | wc -l)
 if [ "$meta_count" -ne "2" ];then
     echo "meta_count=$meta_count is incorrent"
     echo "TEST: [$TEST_NAME] failed!"
@@ -90,7 +90,7 @@ if [ "$table_count" -ne "2" ];then
     exit 1
 fi
 
-meta_count=($(run_sql "SELECT COUNT(*) FROM mysql.stats_meta where count > 0;" | awk '/COUNT/{print $2}'))
+meta_count=$(run_sql "SHOW STATS_META" | grep Row_count | grep -v "Row_count: 0" | wc -l)
 if [ "$meta_count" -ne "2" ];then
     echo "meta_count=$meta_count is incorrent"
     echo "TEST: [$TEST_NAME] failed!"
