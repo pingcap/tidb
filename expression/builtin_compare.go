@@ -1465,6 +1465,8 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		} else {
 			return args
 		}
+	} else if ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
+		RemoveMutableConst(ctx, args)
 	}
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
