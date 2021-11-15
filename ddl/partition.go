@@ -119,10 +119,8 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 
 		// modify placement settings
 		for _, def := range addingDefinitions {
-			if def.PlacementPolicyRef != nil {
-				if _, err = checkPlacementPolicyExistAndCancelNonExistJob(t, job, def.PlacementPolicyRef.ID); err != nil {
-					return ver, errors.Trace(err)
-				}
+			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
+				return ver, errors.Trace(err)
 			}
 		}
 

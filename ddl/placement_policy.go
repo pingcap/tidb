@@ -124,11 +124,17 @@ func checkPlacementPolicyExistAndCancelNonExistJob(t *meta.Meta, job *model.Job,
 	return nil, err
 }
 
+func checkPlacementPolicyRefValidAndCanNonValidJob(t *meta.Meta, job *model.Job, ref *model.PolicyRefInfo) (*model.PolicyInfo, error) {
+	if ref == nil {
+		return nil, nil
+	}
+
+	return checkPlacementPolicyExistAndCancelNonExistJob(t, job, ref.ID)
+}
+
 func checkAllTablePlacementPoliciesExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo) error {
-	if tblInfo.PlacementPolicyRef != nil {
-		if _, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, tblInfo.PlacementPolicyRef.ID); err != nil {
-			return errors.Trace(err)
-		}
+	if _, err := checkPlacementPolicyRefValidAndCanNonValidJob(t, job, tblInfo.PlacementPolicyRef); err != nil {
+		return errors.Trace(err)
 	}
 
 	if tblInfo.Partition == nil {
@@ -136,11 +142,7 @@ func checkAllTablePlacementPoliciesExistAndCancelNonExistJob(t *meta.Meta, job *
 	}
 
 	for _, def := range tblInfo.Partition.Definitions {
-		if def.PlacementPolicyRef == nil {
-			continue
-		}
-
-		if _, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, def.PlacementPolicyRef.ID); err != nil {
+		if _, err := checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
 			return errors.Trace(err)
 		}
 	}

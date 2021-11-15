@@ -1283,10 +1283,8 @@ func onAlterTablePartitionOptions(d *ddlCtx, t *meta.Meta, job *model.Job) (ver 
 		return ver, errors.Trace(err)
 	}
 
-	if partitionDef.PlacementPolicyRef != nil {
-		if _, err = checkPlacementPolicyExistAndCancelNonExistJob(t, job, partitionDef.PlacementPolicyRef.ID); err != nil {
-			return ver, errors.Trace(err)
-		}
+	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, partitionDef.PlacementPolicyRef); err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	bundle, err := placement.NewPartitionBundle(t, *partitionDef)
@@ -1328,10 +1326,8 @@ func onAlterTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	tblInfo.PlacementPolicyRef = policyRefInfo
 	tblInfo.DirectPlacementOpts = placementSettings
 
-	if policyRefInfo != nil {
-		if _, err = checkPlacementPolicyExistAndCancelNonExistJob(t, job, policyRefInfo.ID); err != nil {
-			return 0, errors.Trace(err)
-		}
+	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, policyRefInfo); err != nil {
+		return 0, errors.Trace(err)
 	}
 
 	bundle, err := placement.NewTableBundle(t, tblInfo)
