@@ -392,6 +392,8 @@ func (s *testDBSuite6) TestAlterDBPlacement(c *C) {
 
 	// DirectOption Test
 	tk.MustExec("ALTER DATABASE TestAlterDB PRIMARY_REGION=\"se\" FOLLOWERS=2 REGIONS=\"se\";")
+	// Test for information_schema.schemata
+	tk.MustQuery("SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME, TIDB_PLACEMENT_POLICY_NAME, TIDB_DIRECT_PLACEMENT FROM information_schema.schemata WHERE SCHEMA_NAME='TestAlterDB'").Check(testkit.Rows(`def TestAlterDB utf8mb4 utf8mb4_bin <nil> PRIMARY_REGION="se" REGIONS="se" FOLLOWERS=2`))
 	// Test for Show Create Database
 	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
 		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
