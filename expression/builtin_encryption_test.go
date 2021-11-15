@@ -192,6 +192,47 @@ func TestAESDecrypt(t *testing.T) {
 	require.NoError(t, err)
 	testNullInput(t, ctx, ast.AesDecrypt)
 	testAmbiguousInput(t, ctx, ast.AesDecrypt)
+
+	// Test GBK String
+	gbkStr, _ := charset.NewEncoding("gbk").EncodeString("你好")
+	gbkTests := []struct {
+		mode   string
+		chs    string
+		origin interface{}
+		params []interface{}
+		crypt  string
+	}{
+		// test for ecb
+		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"123"}, "CEBD80EEC6423BEAFA1BB30FD7625CBC"},
+		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"123"}, "6AFA9D7BA2C1AED1603E804F75BB0127"},
+		{"aes-128-ecb", "utf8mb4", "123", []interface{}{"你好"}, "E03F6D9C1C86B82F5620EE0AA9BD2F6A"},
+		{"aes-128-ecb", "gbk", "123", []interface{}{gbkStr}, "31A2D26529F0E6A38D406379ABD26FA5"},
+		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"你好"}, "3E2D8211DAE17143F22C2C5969A35263"},
+		{"aes-128-ecb", "gbk", gbkStr, []interface{}{gbkStr}, "84982910338160D037615D283AD413DE"},
+		// test for cbc
+		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"123", "1234567890123456"}, "B95509A516ACED59C3DF4EC41C538D83"},
+		{"aes-128-cbc", "gbk", gbkStr, []interface{}{"123", "1234567890123456"}, "D4322D091B5DDE0DEB35B1749DA2483C"},
+		{"aes-128-cbc", "utf8mb4", "123", []interface{}{"你好", "1234567890123456"}, "E19E86A9E78E523267AFF36261AD117D"},
+		{"aes-128-cbc", "gbk", "123", []interface{}{gbkStr, "1234567890123456"}, "5A2F8F2C1841CC4E1D1640F1EA2A1A23"},
+		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"你好", "1234567890123456"}, "B73637C73302C909EA63274C07883E71"},
+		{"aes-128-cbc", "gbk", gbkStr, []interface{}{gbkStr, "1234567890123456"}, "61E13E9B00F2E757F4E925D3268227A0"},
+	}
+
+	for _, tt := range gbkTests {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
+		require.NoError(t, err)
+		err = variable.SetSessionSystemVar(ctx.GetSessionVars(), variable.BlockEncryptionMode, tt.mode)
+		require.NoError(t, err)
+		args := []types.Datum{fromHex(tt.crypt)}
+		for _, param := range tt.params {
+			args = append(args, types.NewDatum(param))
+		}
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		str, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str)
+	}
 }
 
 func testNullInput(t *testing.T, ctx sessionctx.Context, fnName string) {
@@ -462,17 +503,24 @@ func decodeHex(str string) []byte {
 func TestCompress(t *testing.T) {
 	t.Parallel()
 	ctx := createContext(t)
+	fc := funcs[ast.Compress]
+	gbkStr, _ := charset.NewEncoding("gbk").EncodeString("你好")
 	tests := []struct {
+		chs    string
 		in     interface{}
 		expect interface{}
 	}{
-		{"hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
-		{"", ""},
-		{nil, nil},
+		{"", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
+		{"", "", ""},
+		{"", nil, nil},
+		{"utf8mb4", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
+		{"gbk", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
+		{"utf8mb4", "你好", string(decodeHex("06000000789C7AB277C1D3A57B01010000FFFF10450489"))},
+		{"gbk", gbkStr, string(decodeHex("04000000789C3AF278D76140000000FFFF07F40325"))},
 	}
-
-	fc := funcs[ast.Compress]
 	for _, test := range tests {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, test.chs)
+		require.NoErrorf(t, err, "%v", test)
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)

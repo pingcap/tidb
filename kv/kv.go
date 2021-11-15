@@ -405,9 +405,7 @@ type Driver interface {
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
 	// Begin a global transaction
-	Begin() (Transaction, error)
-	// BeginWithOption begins a transaction with given option
-	BeginWithOption(option tikv.StartTSOption) (Transaction, error)
+	Begin(opts ...tikv.TxnOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot
