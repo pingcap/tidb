@@ -1075,7 +1075,7 @@ var defaultSysVars = []*SysVar{
 		s.SetEnableCascadesPlanner(TiDBOptOn(val))
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMerge, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMerge, Value: On, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.SetEnableIndexMerge(TiDBOptOn(val))
 		return nil
 	}},
