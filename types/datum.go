@@ -1499,9 +1499,10 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 	case KindString, KindBytes, KindBinaryLiteral:
 		e, err = ParseEnum(target.Elems, d.GetString(), target.Collate)
 	case KindMysqlEnum:
-		e, err = ParseEnum(target.Elems, d.GetMysqlEnum().Name, target.Collate)
-		if err == nil && d.i == 0 {
-			e.Value = 0
+		if d.i == 0 {
+			e = Enum{}
+		} else {
+			e, err = ParseEnum(target.Elems, d.GetMysqlEnum().Name, target.Collate)
 		}
 	case KindMysqlSet:
 		e, err = ParseEnum(target.Elems, d.GetMysqlSet().Name, target.Collate)
