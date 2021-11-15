@@ -417,13 +417,10 @@ func (s *mysqlSuite) TestWriteRowsErrorDowngrading(c *C) {
 		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "9.csv", int64(0), nonRetryableError.Error(), "(3)").
 		WillReturnResult(driver.ResultNoRows)
+	// the forth row will exceed the error threshold, won't record this error
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
 		WillReturnError(nonRetryableError)
-	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
-		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "10.csv", int64(0), nonRetryableError.Error(), "(4)").
-		WillReturnResult(driver.ResultNoRows)
 
 	ctx := context.Background()
 	logger := log.L()

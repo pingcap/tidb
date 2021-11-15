@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 func (b *builtinAesDecryptSig) vectorized() bool {
@@ -584,6 +583,9 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
+	bufTp := b.args[0].GetType()
+	bufEnc := charset.NewEncoding(bufTp.Charset)
+	var encodedBuf []byte
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
@@ -592,14 +594,19 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 
-		str := buf.GetString(i)
+		str := buf.GetBytes(i)
 
 		// According to doc: Empty strings are stored as empty strings.
 		if len(str) == 0 {
 			result.AppendString("")
 		}
 
-		compressed, err := deflate(hack.Slice(str))
+		strBuf, err := bufEnc.Encode(encodedBuf, str)
+		if err != nil {
+			return err
+		}
+
+		compressed, err := deflate(strBuf)
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -617,7 +624,7 @@ func (b *builtinCompressSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		defer deallocateByteSlice(buffer)
 		buffer = buffer[:resultLength]
 
-		binary.LittleEndian.PutUint32(buffer, uint32(len(str)))
+		binary.LittleEndian.PutUint32(buffer, uint32(len(strBuf)))
 		copy(buffer[4:], compressed)
 
 		if shouldAppendSuffix {
