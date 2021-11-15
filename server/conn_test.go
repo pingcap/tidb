@@ -969,7 +969,7 @@ func TestAuthPlugin2(t *testing.T) {
 		user:   "root",
 	}
 	ctx := context.Background()
-	se, err := session.CreateSession4Test(store)
+	se, _ := session.CreateSession4Test(store)
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
