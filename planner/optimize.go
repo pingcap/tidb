@@ -99,10 +99,33 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 	return nil
 }
 
+func matchSQLBinding(node ast.Node, sctx sessionctx.Context) (bindRecord *bindinfo.BindRecord, scope string, matched bool) {
+	useBinding := sctx.GetSessionVars().UsePlanBaselines
+	stmtNode, ok := node.(ast.StmtNode)
+	if !ok {
+		useBinding = false
+	}
+	if !useBinding {
+		return nil, "", false
+	}
+	var err error
+	bindRecord, scope, err = getBindRecord(sctx, stmtNode)
+	if err != nil || bindRecord == nil || len(bindRecord.Bindings) == 0 {
+		return nil, "", false
+	}
+	return bindRecord, scope, true
+}
+
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	sessVars := sctx.GetSessionVars()
+
+	bindRecord, scope, useBinding := matchSQLBinding(node, sctx)
+	// add the extra Limit after matching the bind record
+	if stmtNode, ok := node.(ast.StmtNode); ok {
+		node = plannercore.TryAddExtraLimit(sctx, stmtNode)
+	}
 
 	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
 	// engine in not read only stmt.
@@ -144,30 +167,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	sctx.PrepareTSFuture(ctx)
 
-	useBinding := sessVars.UsePlanBaselines
-	stmtNode, ok := node.(ast.StmtNode)
-	if !ok {
-		useBinding = false
-	}
-	var (
-		bindRecord *bindinfo.BindRecord
-		scope      string
-		err        error
-	)
-	if useBinding {
-		bindRecord, scope, err = getBindRecord(sctx, stmtNode)
-		if err != nil || bindRecord == nil || len(bindRecord.Bindings) == 0 {
-			useBinding = false
-		}
-	}
-	if useBinding && sessVars.SelectLimit != math.MaxUint64 {
-		sessVars.StmtCtx.AppendWarning(errors.New("sql_select_limit is set, ignore SQL bindings"))
-		useBinding = false
-	}
-
 	var names types.NameSlice
 	var bestPlan, bestPlanFromBind plannercore.Plan
+	var err error
 	if useBinding {
+		stmtNode := node.(ast.StmtNode) // must be StmtNode if useBinding is true
 		minCost := math.MaxFloat64
 		var (
 			bindStmtHints stmtctx.StmtHints
@@ -236,7 +240,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}()
 	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil {
 		// Check bestPlanFromBind firstly to avoid nil stmtNode.
-		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
+		if _, ok := node.(*ast.SelectStmt); ok && !bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
 			sessVars.StmtCtx.StmtHints = originStmtHints
 			defPlan, _, _, err := optimize(ctx, sctx, node, is)
 			if err != nil {
@@ -256,7 +260,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			defPlanHintsStr := hint.RestoreOptimizerHints(defPlanHints)
 			binding := bindRecord.FindBinding(defPlanHintsStr)
 			if binding == nil {
-				handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, defPlanHintsStr)
+				handleEvolveTasks(ctx, sctx, bindRecord, node.(ast.StmtNode), defPlanHintsStr)
 			}
 		}
 	}
@@ -279,7 +283,7 @@ func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
 	switch node.(type) {
 	// allow change variables (otherwise can't unset read-only mode)
 	case *ast.SetStmt,
-		// allow analyze table
+	// allow analyze table
 		*ast.AnalyzeTableStmt,
 		*ast.UseStmt,
 		*ast.ShowStmt,
