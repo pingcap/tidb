@@ -748,6 +748,9 @@ type Assignment struct {
 	// ColName indicates its original column name in table schema. It's used for outputting helping message when executing meets some errors.
 	ColName model.CIStr
 	Expr    Expression
+	// LazyErr is used in statement like `INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);`, ErrSubqueryMoreThan1Row
+	// should be evaluated after the duplicate situation is detected in the executing procedure.
+	LazyErr error
 }
 
 // VarAssignment represents a variable assignment in Set, such as set global a = 1.

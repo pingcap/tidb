@@ -796,7 +796,8 @@ func (tr *TableRestore) postProcess(
 			nextStage = checkpoints.CheckpointStatusChecksumSkipped
 		}
 
-		if err == nil {
+		// Don't call FinishTable when other lightning will calculate checksum.
+		if err == nil && !hasDupe && needChecksum {
 			err = metaMgr.FinishTable(ctx)
 		}
 
