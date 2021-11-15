@@ -2227,3 +2227,15 @@ func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c
 	errMsg := "[table:1366]Incorrect string value '\\xEC\\xBD' for column 'a'"
 	tk.MustGetErrMsg("alter table t modify column a varchar(31) collate utf8mb4_general_ci;", errMsg)
 }
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeTimestampToInt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08');")
+	tk.MustExec("insert into t values();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2020-07-10 01:05:08"))
+	tk.MustExec("alter table t modify column c1 bigint;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 20200710010508"))
+}
