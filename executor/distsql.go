@@ -494,6 +494,8 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize int) error {
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	workCh := make(chan *lookupTableTask, 1)
 	if err := e.startIndexWorker(ctx, workCh, initBatchSize); err != nil {
 		return err
@@ -540,6 +542,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	}
 	tps := e.getRetTpsByHandle()
 	idxID := e.getIndexPlanRootID()
+	finishedCh := e.finished
 	idxWorkerWg := e.idxWorkerWg
 	idxWorkerWg.Add(1)
 	go func() {
@@ -547,7 +550,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 		worker := &indexWorker{
 			idxLookup:       e,
 			workCh:          workCh,
-			finished:        e.finished,
+			finished:        finishedCh,
 			resultCh:        e.resultCh,
 			keepOrder:       e.keepOrder,
 			checkIndexValue: e.checkIndexValue,
@@ -571,7 +574,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			// check if executor is closed
 			finished := false
 			select {
-			case <-e.finished:
+			case <-finishedCh:
 				finished = true
 			default:
 			}
@@ -591,7 +594,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				break
 			}
 			e.mu.Lock()
-			if e.finished == nil {
+			select {
+			case <-finishedCh:
+				finished = true
+			default:
+			}
+			if finished {
 				result.Close()
 				e.mu.Unlock()
 				break
