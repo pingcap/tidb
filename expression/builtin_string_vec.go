@@ -2301,16 +2301,26 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	for i := 0; i < l-1; i++ {
 		bufint[i] = buf[i].Int64s()
 	}
+	var resultBytes []byte
+	enc := charset.NewEncoding(b.tp.Charset)
 	for i := 0; i < n; i++ {
 		bigints = bigints[0:0]
 		for j := 0; j < l-1; j++ {
 			if buf[j].IsNull(i) {
+				result.AppendNull()
 				continue
 			}
 			bigints = append(bigints, bufint[j][i])
 		}
-		tempString := string(b.convertToBytes(bigints))
-		result.AppendString(tempString)
+		dBytes := b.convertToBytes(bigints)
+
+		resultBytes, err := enc.Decode(resultBytes, dBytes)
+		if err != nil {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(string(resultBytes))
 	}
 	return nil
 }
@@ -2463,7 +2473,6 @@ func (b *builtinToBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 
 	argTp := b.args[0].GetType()
 	enc := charset.NewEncoding(argTp.Charset)
-	isBinaryStr := types.IsBinaryStr(argTp)
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
@@ -2471,12 +2480,9 @@ func (b *builtinToBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			result.AppendNull()
 			continue
 		}
-		str := buf.GetString(i)
-		if !isBinaryStr {
-			str, err = enc.EncodeString(str)
-			if err != nil {
-				return err
-			}
+		str, err := enc.EncodeString(buf.GetString(i))
+		if err != nil {
+			return err
 		}
 		needEncodeLen := base64NeededEncodedLength(len(str))
 		if needEncodeLen == -1 {
