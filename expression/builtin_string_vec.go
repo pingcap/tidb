@@ -702,9 +702,8 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 			if err != nil {
 				result.AppendNull()
 				continue
-			} else {
-				result.AppendString(target)
 			}
+			result.AppendString(target)
 		} else {
 			if isRetBinary {
 				str, err := enc.EncodeString(exprI)
