@@ -3508,6 +3508,15 @@
           "              └─Projection 10000.00 batchCop[tiflash]  lt(test.ts.id, 10)->Column#14, test.ts.col_1, gt(cast(test.ts.col_0, double BINARY), 10)->Column#16",
           "                └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0 order by col_0<=>null) from ts",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:group_concat(distinct Column#6 order by Column#7 separator \",\")->Column#5",
+          "└─Projection 10000.00 root  test.ts.col_0, nulleq(test.ts.col_0, <nil>)->Column#7",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
