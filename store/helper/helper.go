@@ -901,7 +901,7 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 	}()
 
 	data, err := ioutil.ReadAll(resp.Body)
-	fmt.Printf("GetPDRegionStats return %v\n", string(data))
+	fmt.Printf("!!!! GetPDRegionStats return %v\n", string(data))
 	dec := json.NewDecoder(resp.Body)
 
 	return dec.Decode(stats)
@@ -930,6 +930,9 @@ func (h *Helper) DeletePlacementRule(group string, ruleId string) error {
 	if err != nil {
 		return err
 	}
+	if resp.StatusCode != 200{
+		return errors.New("DeletePlacementRule returns error")
+	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
 			log.Error("err", zap.Error(err))
@@ -949,9 +952,13 @@ func (h *Helper) SetPlacementRule(rule placement.Rule) error {
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
 	)
-	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", bytes.NewBuffer(m))
+	buf := bytes.NewBuffer(m)
+	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", buf)
 	if err != nil {
 		return err
+	}
+	if resp.StatusCode != 200{
+		return errors.New("SetPlacementRule returns error")
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
@@ -973,10 +980,16 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 		group,
 	)
 
+	fmt.Printf("!!!! pd %v\n", getURL)
 	resp, err := util.InternalHTTPClient().Get(getURL)
 	if err != nil {
 		return nil, err
 	}
+
+	if resp.StatusCode != 200{
+		return nil, errors.New("GetGroupRules returns error")
+	}
+
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
 			log.Error("err", zap.Error(err))
@@ -1012,7 +1025,7 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 		util.InternalHTTPSchema(),
 		pdAddrs[0])
 
-	fmt.Printf("%v", postURL)
+	fmt.Printf("!!!! PostAccelerateSchedule %v\n", postURL)
 
 	if err != nil {
 		return err
@@ -1054,7 +1067,7 @@ func (h *Helper) GetPDRegionStats2(tableID int64, stats *PDRegionStats) error {
 		url.QueryEscape(string(startKey)),
 		url.QueryEscape(string(endKey)))
 
-	fmt.Printf("startUrl %v\n", statURL)
+	fmt.Printf("!!!! startUrl %v\n", statURL)
 
 	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
