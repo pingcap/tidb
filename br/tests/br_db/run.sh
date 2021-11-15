@@ -67,8 +67,32 @@ if [ "$table_count" -ne "2" ];then
     exit 1
 fi
 
-meta_count=$(run_sql "SHOW STATS_META where Row_count > 0;")
+meta_count=($(run_sql "SELECT COUNT(*) FROM mysql.stats_meta where count > 0;" | awk '/COUNT/{print $2}'))
 if [ "$meta_count" -ne "2" ];then
+    echo "meta_count=$meta_count is incorrent"
+    echo "TEST: [$TEST_NAME] failed!"
+    exit 1
+fi
+
+# backup db with query
+echo "backup db with query"
+run_sql "BACKUP DATABASE $DB TO \"local://$TEST_DIR/${DB}_sql\";"
+
+run_sql "DROP DATABASE $DB;"
+
+# restore db with query
+echo "restore db with query"
+run_sql "RESTORE DATABASE $DB FROM \"local://$TEST_DIR/${DB}_sql\";"
+
+table_count=$(run_sql "use $DB; show tables;" | grep "Tables_in" | wc -l)
+if [ "$table_count" -ne "2" ];then
+    echo "TEST: [$TEST_NAME] failed!"
+    exit 1
+fi
+
+meta_count=($(run_sql "SELECT COUNT(*) FROM mysql.stats_meta where count > 0;" | awk '/COUNT/{print $2}'))
+if [ "$meta_count" -ne "2" ];then
+    echo "meta_count=$meta_count is incorrent"
     echo "TEST: [$TEST_NAME] failed!"
     exit 1
 fi
