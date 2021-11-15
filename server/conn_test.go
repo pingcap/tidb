@@ -952,8 +952,10 @@ func TestAuthPlugin2(t *testing.T) {
 	defer clean()
 
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
+
 	drv := NewTiDBDriver(store)
 	srv, err := NewServer(cfg, drv)
 	require.NoError(t, err)
