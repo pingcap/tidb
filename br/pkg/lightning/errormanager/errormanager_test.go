@@ -45,6 +45,8 @@ func (e errorManagerSuite) TestInit(c *C) {
 	c.Assert(em.remainingError.Type.Load(), Equals, cfg.App.MaxError.Type.Load())
 	c.Assert(em.remainingError.Conflict.Load(), Equals, cfg.App.MaxError.Conflict.Load())
 
+	em.remainingError.Type.Store(0)
+	em.dupResolution = config.DupeResAlgNone
 	ctx := context.Background()
 	err = em.Init(ctx)
 	c.Assert(err, IsNil)
