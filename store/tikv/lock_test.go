@@ -671,3 +671,40 @@ func (s *testLockSuite) TestBatchResolveTxnFallenBackFromAsyncCommit(c *C) {
 	_, err = t3.Get(context.Background(), []byte("fb2"))
 	errMsgMustContain(c, err, "key not exist")
 }
+
+func (s *testLockSuite) TestPrewriteEncountersLargerTsLock(c *C) {
+	t1, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t1.Set([]byte("k1"), []byte("v1"))
+	t1.Set([]byte("k2"), []byte("v2"))
+
+	// t2 has larger TS. Let t2 prewrite only the secondary lock.
+	t2, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t2.Set([]byte("k1"), []byte("v1"))
+	t2.Set([]byte("k2"), []byte("v2"))
+	committer, err := newTwoPhaseCommitterWithInit(t2, 1)
+	c.Assert(err, IsNil)
+	committer.lockTTL = 20000 // set TTL to 20s
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/twoPCRequestBatchSizeLimit", "return"), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/twoPCRequestBatchSizeLimit")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/prewritePrimary", "pause"), IsNil)
+	ch := make(chan struct{})
+	go func() {
+		err = committer.prewriteMutations(NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil), committer.mutations)
+		c.Assert(err, IsNil)
+		ch <- struct{}{}
+	}()
+	time.Sleep(200 * time.Millisecond) // make prewrite earlier than t1 commits
+
+	// Set 1 second timeout. If we still need to wait until t2 expires, we will get a timeout error
+	// instead of write conflict.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err = t1.Commit(ctx)
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue)
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/prewritePrimary"), IsNil)
+	<-ch
+}
