@@ -48,6 +48,8 @@ func (s *testDBSuite2) TestAlterTableCache(c *C) {
 	c.Assert(terror.ErrorEqual(domain.ErrInfoSchemaChanged, err), IsTrue)
 	/* Test can skip schema checker */
 	tk.MustExec("begin")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t1 (a int)")
 	tk.MustExec("insert into t1 set a=2;")
 	tk2.MustExec("alter table t2 cache")
 	tk.MustExec("commit")
