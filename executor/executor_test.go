@@ -8833,7 +8833,6 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 			c.Assert(sqlDigest.String(), Equals, expectSQLDigest.String(), commentf)
 			c.Assert(planDigest.String(), Equals, expectPlanDigest.String())
 			if len(ca.tagLabels) > 0 {
-				fmt.Printf(">>>>> %s: %v %v\n", ca.sql, ca.tagLabels[0], tagLabel)
 				c.Assert(tagLabel, Equals, ca.tagLabels[0])
 				ca.tagLabels = ca.tagLabels[1:] // next label
 			}
