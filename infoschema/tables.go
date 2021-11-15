@@ -1079,7 +1079,7 @@ var tableClusterInfoCols = []columnInfo{
 	{name: "STATUS_ADDRESS", tp: mysql.TypeVarchar, size: 64},
 	{name: "VERSION", tp: mysql.TypeVarchar, size: 64},
 	{name: "GIT_HASH", tp: mysql.TypeVarchar, size: 64},
-	{name: "START_TIME", tp: mysql.TypeVarchar, size: 32},
+	{name: "START_TIME", tp: mysql.TypeDatetime, size: -1},
 	{name: "UPTIME", tp: mysql.TypeVarchar, size: 32},
 	{name: "SERVER_ID", tp: mysql.TypeLonglong, size: 21, comment: "invalid if the configuration item `enable-global-kill` is set to FALSE"},
 }
