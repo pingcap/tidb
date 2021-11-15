@@ -1261,9 +1261,8 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "IndexReader 16.00 root partition:p0 index:Selection",
-          "└─Selection 16.00 cop[tikv]  or(eq(test_partition_1.t1.a, 1), and(isnull(test_partition_1.t1.a), eq(test_partition_1.t1.b, 10)))",
-          "  └─IndexRangeScan 20.00 cop[tikv] table:t1, index:a(a, b, id) range:[NULL,NULL], [1,1], keep order:false, stats:pseudo"
+          "IndexReader 10.10 root partition:p0 index:IndexRangeScan",
+          "└─IndexRangeScan 10.10 cop[tikv] table:t1, index:a(a, b, id) range:[NULL 10,NULL 10], [1,1], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2233,9 +2232,8 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "IndexReader 200.00 root partition:p0 index:Selection",
-          "└─Selection 200.00 cop[tikv]  or(le(test_partition_1.t1.a, 1), and(isnull(test_partition_1.t1.a), ge(test_partition_1.t1.b, 10)))",
-          "  └─IndexRangeScan 250.00 cop[tikv] table:t1, index:a(a, b, id) range:[NULL,1], keep order:false, stats:pseudo"
+          "IndexReader 4195.83 root partition:p0 index:IndexRangeScan",
+          "└─IndexRangeScan 4195.83 cop[tikv] table:t1, index:a(a, b, id) range:[NULL 10,NULL +inf], [-inf,1], keep order:false, stats:pseudo"
         ]
       },
       {
