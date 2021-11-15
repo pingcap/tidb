@@ -859,16 +859,33 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 		Value:       m.Value,
 		Secondaries: req.Secondaries,
 	}
+	// Note that this is not fully consistent with TiKV. TiKV doesn't always get the value from Write CF. In
+	// AssertionLevel_Fast, TiKV skips checking assertion if Write CF is not read, in order not to harm the performance.
+	// However, unistore can always check it. It's better not to assume the store's behavior about assertion when the
+	// mode is set to AssertionLevel_Fast.
 	if req.AssertionLevel != kvrpcpb.AssertionLevel_Off {
 		if item == nil || item.IsEmpty() {
 			if m.Assertion == kvrpcpb.Assertion_Exist {
 				log.Error("ASSERTION FAIL!!! non-exist for must exist key", zap.Stringer("mutation", m))
-				return nil, errors.New("assertion fail, non-exist for must exist key - " + m.String())
+				return nil, &ErrAssertionFailed{
+					StartTS:          req.StartVersion,
+					Key:              m.Key,
+					Assertion:        m.Assertion,
+					ExistingStartTS:  0,
+					ExistingCommitTS: 0,
+				}
 			}
 		} else {
 			if m.Assertion == kvrpcpb.Assertion_NotExist {
 				log.Error("ASSERTION FAIL!!! exist for must non-exist key", zap.Stringer("mutation", m))
-				return nil, errors.New("assertion fail, exist for must non-exist key - " + m.String())
+				userMeta := mvcc.DBUserMeta(item.UserMeta())
+				return nil, &ErrAssertionFailed{
+					StartTS:          req.StartVersion,
+					Key:              m.Key,
+					Assertion:        m.Assertion,
+					ExistingStartTS:  userMeta.StartTS(),
+					ExistingCommitTS: userMeta.CommitTS(),
+				}
 			}
 		}
 	}
