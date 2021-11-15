@@ -544,6 +544,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	idxID := e.getIndexPlanRootID()
 	finishedCh := e.finished
 	idxWorkerWg := e.idxWorkerWg
+	resultCh := e.resultCh
 	idxWorkerWg.Add(1)
 	go func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
@@ -551,7 +552,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			idxLookup:       e,
 			workCh:          workCh,
 			finished:        finishedCh,
-			resultCh:        e.resultCh,
+			resultCh:        resultCh,
 			keepOrder:       e.keepOrder,
 			checkIndexValue: e.checkIndexValue,
 			maxBatchSize:    e.ctx.GetSessionVars().IndexLookupSize,
@@ -630,7 +631,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			}
 		}
 		close(workCh)
-		close(e.resultCh)
+		close(resultCh)
 		idxWorkerWg.Done()
 	}()
 	return nil
