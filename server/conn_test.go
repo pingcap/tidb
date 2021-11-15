@@ -544,7 +544,7 @@ func TestGetSessionVarsWaitTimeout(t *testing.T) {
 		},
 		ctx: tc,
 	}
-	require.Equal(t, uint64(0), cc.getSessionVarsWaitTimeout(context.Background()))
+	require.Equal(t, uint64(variable.DefWaitTimeout), cc.getSessionVarsWaitTimeout(context.Background()))
 }
 
 func mapIdentical(m1, m2 map[string]string) bool {
