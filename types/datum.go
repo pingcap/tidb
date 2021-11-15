@@ -1500,6 +1500,7 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		e, err = ParseEnum(target.Elems, d.GetString(), target.Collate)
 	case KindMysqlEnum:
 		if d.i == 0 {
+			// Enum zero value should keep unchanged.
 			e = Enum{}
 		} else {
 			e, err = ParseEnum(target.Elems, d.GetMysqlEnum().Name, target.Collate)
