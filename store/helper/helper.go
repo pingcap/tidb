@@ -911,7 +911,7 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 func (h *Helper) DeletePlacementRule(group string, ruleId string) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	deleteURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rule/%v/%v",
@@ -944,7 +944,7 @@ func (h *Helper) DeletePlacementRule(group string, ruleId string) error {
 func (h *Helper) SetPlacementRule(rule placement.Rule) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	m, _ := json.Marshal(rule)
 
@@ -971,7 +971,7 @@ func (h *Helper) SetPlacementRule(rule placement.Rule) error {
 func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	getURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rules/group/%s",
@@ -1014,7 +1014,7 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	startKey := tablecodec.GenTableRecordPrefix(tableID)
 	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
@@ -1053,7 +1053,7 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 func (h *Helper) GetPDRegionStats2(tableID int64, stats *PDRegionStats) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	startKey := tablecodec.GenTableRecordPrefix(tableID)

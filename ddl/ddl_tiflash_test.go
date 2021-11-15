@@ -1,5 +1,4 @@
 package ddl_test
-
 import (
 	"fmt"
 	. "github.com/pingcap/check"
@@ -24,6 +23,9 @@ type tiflashDDLTestSuite struct {
 	dom   *domain.Domain
 }
 
+
+var _ = Suite(&tiflashDDLTestSuite{})
+
 func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	fmt.Printf("HAAAHAHHAAA\n")
 	var err error
@@ -43,15 +45,20 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 		}),
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
+	fmt.Printf("HAAAHAHHAAA2\n")
 
 	c.Assert(err, IsNil)
 
 	session.SetSchemaLease(0)
+	fmt.Printf("HAAAHAHHAAA3\n")
 	session.DisableStats4Test()
+	fmt.Printf("HAAAHAHHAAA4\n")
 
 	s.dom, err = session.BootstrapSession(s.store)
+	fmt.Printf("HAAAHAHHAAA5\n")
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
+	fmt.Printf("HAAAHAHHAAA6\n")
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
@@ -97,6 +104,7 @@ func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) (bool, err
 }
 
 func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
+	fmt.Printf("ZZZZZZZZZZ\n")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
