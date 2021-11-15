@@ -427,7 +427,7 @@ type partialTableWorker struct {
 }
 
 func (w *partialTableWorker) syncErr(ctx context.Context, resultCh chan<- *lookupTableTask, err error) {
-	logutil.Logger(ctx).Error("got error when read table handles", zap(err.Error()))
+	logutil.Logger(ctx).Error("got error when read table handles", zap.Error(err))
 	doneCh := make(chan error, 1)
 	doneCh <- err
 	resultCh <- &lookupTableTask{
@@ -723,7 +723,7 @@ type partialIndexWorker struct {
 }
 
 func (w *partialIndexWorker) syncErr(ctx context.Context, resultCh chan<- *lookupTableTask, err error) {
-	logutil.Logger(ctx).Error("got error when read index handles", zap(err.Error()))
+	logutil.Logger(ctx).Error("got error when read index handles", zap.Error(err))
 	doneCh := make(chan error, 1)
 	doneCh <- err
 	resultCh <- &lookupTableTask{
