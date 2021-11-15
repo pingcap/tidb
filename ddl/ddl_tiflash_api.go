@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/placement"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
+	//ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type PollTiFlashReplicaStatusContext struct {
@@ -81,39 +80,45 @@ func MakeBaseRule() placement.Rule {
 
 func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 	// TODO lastHandledSchemaVersionTso checking can be removed.
-	ddlGlobalSchemaVersion := 0
+	//ddlGlobalSchemaVersion := 0
 
-	resp, err := d.etcdCli.Get(d.ctx, ddlutil.DDLGlobalSchemaVersion)
-	if err == nil {
-		if len(resp.Kvs) > 0 {
-			ddlGlobalSchemaVersion, err = strconv.Atoi(string(resp.Kvs[0].Value))
-			if err != nil {
-				errors.Trace(err)
-			}
-		}
-	}
+	//etcdCli := d.etcdCli
+	//if etcdCli == nil {
+	//	return errors.New("Etcd is nil")
+	//}
+	//
+	//resp, err := etcdCli.Get(d.ctx, ddlutil.DDLGlobalSchemaVersion)
+	//if err == nil {
+	//	if len(resp.Kvs) > 0 {
+	//		ddlGlobalSchemaVersion, err = strconv.Atoi(string(resp.Kvs[0].Value))
+	//		if err != nil {
+	//			errors.Trace(err)
+	//		}
+	//	}
+	//}
+	//
+	//lastHandledSchemaVersionTso := "0_tso_0"
+	//resp, err = etcdCli.Get(d.ctx, ddlutil.TiFlashLastHandledSchemaVersion)
+	//if err == nil {
+	//	if len(resp.Kvs) > 0 {
+	//		lastHandledSchemaVersionTso = string(resp.Kvs[0].Value)
+	//	}
+	//}
+	//
+	//splitVec := strings.Split(lastHandledSchemaVersionTso, "_tso_")
+	//lastHandledSchemaVersion, err := strconv.Atoi(splitVec[0])
+	//if err != nil {
+	//	return errors.Trace(err)
+	//}
+	//lastHandledSchemaTso, err := strconv.Atoi(splitVec[1])
+	//if err != nil {
+	//	return errors.Trace(err)
+	//}
+	//
+	//curTso := time.Now().Unix()
 
-	lastHandledSchemaVersionTso := "0_tso_0"
-	resp, err = d.etcdCli.Get(d.ctx, ddlutil.TiFlashLastHandledSchemaVersion)
-	if err == nil {
-		if len(resp.Kvs) > 0 {
-			lastHandledSchemaVersionTso = string(resp.Kvs[0].Value)
-		}
-	}
-
-	splitVec := strings.Split(lastHandledSchemaVersionTso, "_tso_")
-	lastHandledSchemaVersion, err := strconv.Atoi(splitVec[0])
-	if err != nil {
-		return errors.Trace(err)
-	}
-	lastHandledSchemaTso, err := strconv.Atoi(splitVec[1])
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	curTso := time.Now().Unix()
-
-	if true || ddlGlobalSchemaVersion != lastHandledSchemaVersion || int64(lastHandledSchemaTso+300) <= curTso {
+	if true {
+	//|| ddlGlobalSchemaVersion != lastHandledSchemaVersion || int64(lastHandledSchemaTso+300) <= curTso {
 		// Need to update table
 		allUpdate, err := d.TiFlashReplicaTableUpdate(ctx)
 		if err != nil {
@@ -121,8 +126,9 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 		}
 		if allUpdate {
 			// Need to update pd's schema version
-			v := fmt.Sprintf("%v_tso_%v", ddlGlobalSchemaVersion, curTso)
-			d.etcdCli.Put(d.ctx, "/tiflash/cluster/last_handled_schema_version", v)
+
+			//v := fmt.Sprintf("%v_tso_%v", ddlGlobalSchemaVersion, curTso)
+			//etcdCli.Put(d.ctx, "/tiflash/cluster/last_handled_schema_version", v)
 		}
 
 	}
@@ -319,6 +325,9 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 
 	// main body of table_update
 	schema := d.GetInfoSchemaWithInterceptor(ctx)
+	if schema == nil {
+		return allReplicaReady, errors.New("Schema is nil")
+	}
 
 	// compute table_list
 	var tableList []PollTiFlashReplicaStatusContext = make([]PollTiFlashReplicaStatusContext, 0)
@@ -600,14 +609,14 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 		} else {
 			ruleNew := MakeNewRule(tb.ID, tb.Count, tb.LocationLabels)
 			fmt.Printf("!!!! Set new rule %v\n", ruleNew)
-			tikvHelper.SetPlacementRule(*ruleNew)
+			//tikvHelper.SetPlacementRule(*ruleNew)
 		}
 	}
 
 	// remove rules of non-existing table
 	for _, v := range allRules {
 		fmt.Printf("!!!! Remove rule %v\n", v.ID)
-		//tikvHelper.DeletePlacementRule("tiflash", v.ID)
+		tikvHelper.DeletePlacementRule("tiflash", v.ID)
 	}
 
 	return nil

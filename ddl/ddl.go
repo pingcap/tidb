@@ -386,6 +386,22 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	variable.RegisterStatistics(d)
 
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
+
+	go func() {
+		sctx, err := d.sessPool.get()
+		if err != nil {
+			fmt.Printf("!!!! Error %v\n", err)
+		}else{
+			for {
+				err = d.PollTiFlashReplicaStatus(sctx)
+				if err != nil{
+					fmt.Printf("!!!! Poll Error %v\n", err)
+				}
+				time.Sleep(time.Second * 2)
+			}
+		}
+	}()
+
 	return nil
 }
 
