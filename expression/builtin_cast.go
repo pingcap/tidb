@@ -1926,7 +1926,6 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 		argLen = mysql.MaxIntWidth
 	}
 	// Because we can't control the length of cast(float as char) for now, we can't determine the argLen.
-	// Decimal is precison number, no need to truncate.
 	if exprTp.Tp == mysql.TypeFloat || exprTp.Tp == mysql.TypeDouble {
 		argLen = -1
 	}
