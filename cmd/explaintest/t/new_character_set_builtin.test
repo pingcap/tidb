@@ -141,3 +141,14 @@ select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
 set @@tidb_enable_vectorized_expression = true;
 select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
 set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function aes_decrypt()
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_decrypt(0xC54279F381B0710E145E94106F03C94C, '123')) as a, hex(aes_decrypt(0x7A747EC6F1906276D036B1F3CE27BAAB, '123')) as b;
+set @@block_encryption_mode='aes-128-ofb';
+select hex(aes_decrypt(0x91C44DE866D0745252, '1234567890123456', '1234567890123456')) as a, hex(aes_decrypt(0xA7C77BF214A1, '1234567890123456', '1234567890123456')) as b;
+set @@tidb_enable_vectorized_expression = true;
+select hex(aes_decrypt(0x91C44DE866D0745252, '1234567890123456', '1234567890123456')) as a, hex(aes_decrypt(0xA7C77BF214A1, '1234567890123456', '1234567890123456')) as b;
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_decrypt(0xC54279F381B0710E145E94106F03C94C, '123')) as a, hex(aes_decrypt(0x7A747EC6F1906276D036B1F3CE27BAAB, '123')) as b;
+set @@tidb_enable_vectorized_expression = false;
