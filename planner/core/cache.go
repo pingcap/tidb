@@ -38,7 +38,7 @@ var (
 	// The value is false unless "prepared-plan-cache-enabled" is true in configuration.
 	preparedPlanCacheEnabledValue int32 = 0
 	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
-	PreparedPlanCacheCapacity uint = 100
+	PreparedPlanCacheCapacity uint = 1000
 	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
 	PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-server-memory-quota".

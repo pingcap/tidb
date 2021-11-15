@@ -424,11 +424,8 @@ func init() {
 	}
 }
 
-// SequenceSchema is implemented by infoSchema and used by sequence function in expression package.
-// Otherwise calling information schema will cause import cycle problem.
-type SequenceSchema interface {
-	SequenceByName(schema, sequence model.CIStr) (SequenceTable, error)
-}
+// GetSequenceByName could be used in expression package without import cycle problem.
+var GetSequenceByName func(is interface{}, schema, sequence model.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.

@@ -40,7 +40,6 @@ type collationInfo struct {
 
 	charset   string
 	collation string
-	flen      int
 }
 
 func (c *collationInfo) HasCoercibility() bool {
@@ -69,18 +68,7 @@ func (c *collationInfo) SetCharsetAndCollation(chs, coll string) {
 	c.charset, c.collation = chs, coll
 }
 
-func (c *collationInfo) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
-	if c.charset != "" || c.collation != "" {
-		return c.charset, c.collation
-	}
-
-	if ctx != nil && ctx.GetSessionVars() != nil {
-		c.charset, c.collation = ctx.GetSessionVars().GetCharsetInfo()
-	}
-	if c.charset == "" || c.collation == "" {
-		c.charset, c.collation = charset.GetDefaultCharsetAndCollate()
-	}
-	c.flen = types.UnspecifiedLength
+func (c *collationInfo) CharsetAndCollation() (string, string) {
 	return c.charset, c.collation
 }
 
@@ -101,10 +89,10 @@ type CollationInfo interface {
 	// SetRepertoire sets a specified repertoire for this expression.
 	SetRepertoire(r Repertoire)
 
-	// CharsetAndCollation ...
-	CharsetAndCollation(ctx sessionctx.Context) (string, string)
+	// CharsetAndCollation gets charset and collation.
+	CharsetAndCollation() (string, string)
 
-	// SetCharsetAndCollation ...
+	// SetCharsetAndCollation sets charset and collation.
 	SetCharsetAndCollation(chs, coll string)
 }
 
@@ -257,8 +245,8 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 	case ast.Database, ast.User, ast.CurrentUser, ast.Version, ast.CurrentRole, ast.TiDBVersion:
 		chs, coll := charset.GetDefaultCharsetAndCollate()
 		return &ExprCollation{CoercibilitySysconst, UNICODE, chs, coll}, nil
-	case ast.Format:
-		// Format function should return ASCII repertoire, MySQL's doc says it depend on character_set_connection, but it not ture from its source code.
+	case ast.Format, ast.Space, ast.ToBase64, ast.UUID, ast.Hex, ast.MD5, ast.SHA, ast.SHA2:
+		// should return ASCII repertoire, MySQL's doc says it depends on character_set_connection, but it not true from its source code.
 		ec = &ExprCollation{Coer: CoercibilityCoercible, Repe: ASCII}
 		ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
 		return ec, nil

@@ -1267,6 +1267,12 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
 		er.err = variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+		if err := variable.CheckSysVarIsRemoved(name); err != nil {
+			// Removed vars still return an error, but we customize it from
+			// "unknown" to an explanation of why it is not supported.
+			// This is important so users at least know they had the name correct.
+			er.err = err
+		}
 		return
 	}
 	if sem.IsEnabled() && sem.IsInvisibleSysVar(sysVar.Name) {
@@ -1440,11 +1446,20 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		er.ctxStackAppend(expression.NewNull(), types.EmptyName)
 		return
 	}
-	maybeOverOptimized := expression.MaybeOverOptimized4PlanCache(er.sctx, args)
-	if !maybeOverOptimized && leftEt == types.ETInt {
+	if leftEt == types.ETInt {
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
+				if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{c}) {
+					if c.GetType().EvalType() == types.ETString {
+						// To keep the result be compatible with MySQL, refine `int non-constant <cmp> str constant`
+						// here and skip this refine operation in all other cases for safety.
+						er.sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
+						expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
+					} else {
+						continue
+					}
+				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
 				if isExceptional {
 					args[i] = c
@@ -1992,6 +2007,13 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 			return s
 		}
 		return ret
+	} else if tablecodec.IsTableKey(key) {
+		ret, err := decodeTableKey(key, tableID, tbl, loc)
+		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return s
+		}
+		return ret
 	}
 	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
 	return s
@@ -2128,6 +2150,15 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 	ret["table_id"] = tableID
 	ret["index_id"] = indexID
 	ret["index_vals"] = strings.Join(indexValues, ", ")
+	retStr, err := json.Marshal(ret)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return string(retStr), nil
+}
+
+func decodeTableKey(key []byte, tableID int64, tbl table.Table, loc *time.Location) (string, error) {
+	ret := map[string]int64{"table_id": tableID}
 	retStr, err := json.Marshal(ret)
 	if err != nil {
 		return "", errors.Trace(err)

@@ -587,7 +587,7 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")
 	tk.MustExec("insert into t1 values (1,2),(3,4)")
 	tk.MustExec("analyze table t1")
-	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warning
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t1.")) // 1 note.
 	c.Assert(s.dom.StatsHandle().LoadNeededHistograms(), IsNil)
 	tk.MustExec("CREATE ROLE r_t1 ;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
@@ -711,12 +711,13 @@ func (s *testInfoschemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Ser
 		}, nil
 	}))
 	// mock PD API
-	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
 	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
+			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
 			StartTimestamp int64  `json:"start_timestamp"`
 		}{
+			Version:        "4.0.0-alpha",
 			GitHash:        "mock-pd-githash",
 			StartTimestamp: s.startTime.Unix(),
 		}, nil
@@ -917,7 +918,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk.MustQuery("select TABLE_SCHEMA, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;").Check(testkit.Rows(
 		"test 2",
 	))
-	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 25)
+	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 26)
 
 	// More tests about the privileges.
 	tk.MustExec("create user 'testuser'@'localhost'")
@@ -943,14 +944,14 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 		Hostname: "localhost",
 	}, nil, nil), Equals, true)
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("25"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("26"))
 
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser3",
 		Hostname: "localhost",
 	}, nil, nil), Equals, true)
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("25"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("26"))
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {

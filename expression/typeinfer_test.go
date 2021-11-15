@@ -15,9 +15,10 @@
 package expression_test
 
 import (
+	"fmt"
 	"math"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -25,44 +26,26 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/net/context"
 )
 
-var _ = SerialSuites(&testInferTypeSuite{})
-
-type typeInferTestCase struct {
-	sql     string
-	tp      byte
-	chs     string
-	flag    uint
-	flen    int
-	decimal int
-}
-
-type testInferTypeSuite struct {
-	*parser.Parser
-}
-
-func (s *testInferTypeSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
-}
-
-func (s *testInferTypeSuite) TearDownSuite(c *C) {
-}
-
-func (s *testInferTypeSuite) TestInferType(c *C) {
+func TestInferType(t *testing.T) {
+	t.Parallel()
 	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		dom.Close()
-		store.Close()
+		err = store.Close()
+		require.NoError(t, err)
 	}()
+	s := InferTypeSuite{}
 	se, err := session.CreateSession4Test(store)
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	sql := `create table t (
@@ -131,36 +114,47 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4MiscellaneousFunc()...)
 	tests = append(tests, s.createTestCase4GetVarFunc()...)
 
-	sctx := testKit.Se.(sessionctx.Context)
-	c.Assert(sctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, mysql.DefaultCharset), IsNil)
-	c.Assert(sctx.GetSessionVars().SetSystemVar(variable.CollationConnection, mysql.DefaultCollationName), IsNil)
+	sctx := testKit.Session().(sessionctx.Context)
+	require.NoError(t, sctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, mysql.DefaultCharset))
+	require.NoError(t, sctx.GetSessionVars().SetSystemVar(variable.CollationConnection, mysql.DefaultCollationName))
 
 	ctx := context.Background()
+	par := parser.New()
 	for _, tt := range tests {
 		sql := "select " + tt.sql + " from t"
-		comment := Commentf("for %s", sql)
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil, comment)
+		comment := fmt.Sprintf("for %s", sql)
+		stmt, err := par.ParseOneStmt(sql, "", "")
+		require.NoError(t, err, comment)
 
 		err = se.NewTxn(context.Background())
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		ret := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(sctx, stmt, plannercore.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmt, ret.InfoSchema)
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		tp := p.Schema().Columns[0].RetType
-
-		c.Check(tp.Tp, Equals, tt.tp, comment)
-		c.Check(tp.Charset, Equals, tt.chs, comment)
-		c.Check(tp.Flag, Equals, tt.flag, comment)
-		c.Check(tp.Flen, Equals, tt.flen, comment)
-		c.Check(tp.Decimal, Equals, tt.decimal, comment)
+		require.Equal(t, tt.tp, tp.Tp, comment)
+		require.Equal(t, tt.chs, tp.Charset, comment)
+		require.Equal(t, tt.flag, tp.Flag, comment)
+		require.Equal(t, tt.flen, tp.Flen, comment)
+		require.Equal(t, tt.decimal, tp.Decimal, comment)
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4Constants() []typeInferTestCase {
+type typeInferTestCase struct {
+	sql     string
+	tp      byte
+	chs     string
+	flag    uint
+	flen    int
+	decimal int
+}
+
+type InferTypeSuite struct{}
+
+func (s *InferTypeSuite) createTestCase4Constants() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"1", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 1, 0},
 		{"-1", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 2, 0},
@@ -185,7 +179,7 @@ func (s *testInferTypeSuite) createTestCase4Constants() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4Cast() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4Cast() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"CAST(c_int_d AS BINARY)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, -1, -1}, // TODO: Flen should be 11.
 		{"CAST(c_int_d AS BINARY(5))", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 5, -1},
@@ -228,7 +222,7 @@ func (s *testInferTypeSuite) createTestCase4Cast() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4Columns() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4Columns() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"c_bit        ", mysql.TypeBit, charset.CharsetBin, mysql.UnsignedFlag, 10, 0},
 		{"c_year       ", mysql.TypeYear, charset.CharsetBin, mysql.UnsignedFlag | mysql.ZerofillFlag, 4, 0},
@@ -264,7 +258,7 @@ func (s *testInferTypeSuite) createTestCase4Columns() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"strcmp(c_char, c_char)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 2, 0},
 		{"space(c_int_d)", mysql.TypeLongBlob, mysql.DefaultCharset, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
@@ -513,7 +507,7 @@ func (s *testInferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4MathFuncs() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4MathFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"cos(c_double_d)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"sin(c_double_d)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
@@ -721,7 +715,7 @@ func (s *testInferTypeSuite) createTestCase4MathFuncs() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4ArithmeticFuncs() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4ArithmeticFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"c_int_d + c_int_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"c_int_d + c_bigint_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
@@ -815,7 +809,7 @@ func (s *testInferTypeSuite) createTestCase4ArithmeticFuncs() []typeInferTestCas
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4LogicalFuncs() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4LogicalFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"c_int_d and c_int_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag, 1, 0},
 		{"c_int_d xor c_int_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag, 1, 0},
@@ -825,7 +819,7 @@ func (s *testInferTypeSuite) createTestCase4LogicalFuncs() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4ControlFuncs() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"ifnull(c_int_d, c_int_d)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 		{"ifnull(c_int_d, c_decimal)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
@@ -853,7 +847,7 @@ func (s *testInferTypeSuite) createTestCase4ControlFuncs() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4Aggregations() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4Aggregations() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"sum(c_int_d)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 32, 0},
 		{"sum(c_float_d)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
@@ -876,7 +870,7 @@ func (s *testInferTypeSuite) createTestCase4Aggregations() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4InfoFunc() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4InfoFunc() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"last_insert_id(       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag | mysql.NotNullFlag, mysql.MaxIntWidth, 0},
 		{"last_insert_id(c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
@@ -890,7 +884,7 @@ func (s *testInferTypeSuite) createTestCase4InfoFunc() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4EncryptionFuncs() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4EncryptionFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"md5(c_int_d      )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 32, types.UnspecifiedLength},
 		{"md5(c_bigint_d   )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 32, types.UnspecifiedLength},
@@ -1022,7 +1016,7 @@ func (s *testInferTypeSuite) createTestCase4EncryptionFuncs() []typeInferTestCas
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4CompareFuncs() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4CompareFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"coalesce(c_int_d, 1)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 		{"coalesce(NULL, c_int_d)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
@@ -1066,7 +1060,7 @@ func (s *testInferTypeSuite) createTestCase4CompareFuncs() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4Miscellaneous() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4Miscellaneous() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"sleep(c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, 0},
 		{"sleep(c_float_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 21, 0},
@@ -1169,7 +1163,7 @@ func (s *testInferTypeSuite) createTestCase4Miscellaneous() []typeInferTestCase 
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4OpFuncs() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4OpFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"c_int_d      is true", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag, 1, 0},
 		{"c_decimal    is true", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag, 1, 0},
@@ -1195,7 +1189,7 @@ func (s *testInferTypeSuite) createTestCase4OpFuncs() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4OtherFuncs() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4OtherFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"1 in (c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag, 1, 0},
 		{"1 in (c_decimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag, 1, 0},
@@ -1227,7 +1221,7 @@ func (s *testInferTypeSuite) createTestCase4OtherFuncs() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{`time_format('150:02:28', '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 44, types.UnspecifiedLength},
 		{`time_format(123456, '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 44, types.UnspecifiedLength},
@@ -1908,7 +1902,7 @@ func (s *testInferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4LikeFuncs() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4LikeFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"c_int_d       rlike c_text_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag, 1, 0},
 		{"c_bigint_d    rlike c_text_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.IsBooleanFlag, 1, 0},
@@ -1946,7 +1940,7 @@ func (s *testInferTypeSuite) createTestCase4LikeFuncs() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4Literals() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4Literals() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"time       '00:00:00'", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
 		{"time       '00'", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
@@ -1958,7 +1952,7 @@ func (s *testInferTypeSuite) createTestCase4Literals() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4JSONFuncs() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4JSONFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"json_type(c_json)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 51, types.UnspecifiedLength},
 		// TODO: Flen of json_unquote doesn't follow MySQL now.
@@ -1974,7 +1968,7 @@ func (s *testInferTypeSuite) createTestCase4JSONFuncs() []typeInferTestCase {
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4MiscellaneousFunc() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4MiscellaneousFunc() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"get_lock(c_char, c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"get_lock(c_char, c_bigint_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
@@ -1994,7 +1988,7 @@ func (s *testInferTypeSuite) createTestCase4MiscellaneousFunc() []typeInferTestC
 	}
 }
 
-func (s *testInferTypeSuite) createTestCase4GetVarFunc() []typeInferTestCase {
+func (s *InferTypeSuite) createTestCase4GetVarFunc() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"@a", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, 10, 0},
 		{"@b", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},

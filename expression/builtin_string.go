@@ -222,6 +222,15 @@ func (b *builtinLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+
+	argTp := b.args[0].GetType()
+	if !types.IsBinaryStr(argTp) {
+		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
+		if err == nil {
+			return int64(len(dBytes)), false, nil
+		}
+	}
+
 	return int64(len([]byte(val))), false, nil
 }
 
@@ -262,6 +271,13 @@ func (b *builtinASCIISig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	if len(val) == 0 {
 		return 0, false, nil
+	}
+	argTp := b.args[0].GetType()
+	if !types.IsBinaryStr(argTp) {
+		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
+		if err == nil {
+			return int64(dBytes[0]), false, nil
+		}
 	}
 	return int64(val[0]), false, nil
 }
@@ -706,7 +722,7 @@ func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLowerSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Lower)
 	} else {
-		sig = &builtinLowerUTF8Sig{bf}
+		sig = &builtinLowerUTF8Sig{bf, charset.NewEncoding(argTp.Charset)}
 		sig.setPbCode(tipb.ScalarFuncSig_LowerUTF8)
 	}
 	return sig, nil
@@ -714,11 +730,15 @@ func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinLowerUTF8Sig struct {
 	baseBuiltinFunc
+	encoding *charset.Encoding
 }
 
 func (b *builtinLowerUTF8Sig) Clone() builtinFunc {
 	newSig := &builtinLowerUTF8Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	if b.encoding != nil {
+		newSig.encoding = charset.NewEncoding(b.encoding.Name())
+	}
 	return newSig
 }
 
@@ -730,7 +750,7 @@ func (b *builtinLowerUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, 
 		return d, isNull, err
 	}
 
-	return strings.ToLower(d), false, nil
+	return b.encoding.ToLower(d), false, nil
 }
 
 type builtinLowerSig struct {
@@ -901,7 +921,7 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinUpperSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Upper)
 	} else {
-		sig = &builtinUpperUTF8Sig{bf}
+		sig = &builtinUpperUTF8Sig{bf, charset.NewEncoding(argTp.Charset)}
 		sig.setPbCode(tipb.ScalarFuncSig_UpperUTF8)
 	}
 	return sig, nil
@@ -909,11 +929,15 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinUpperUTF8Sig struct {
 	baseBuiltinFunc
+	encoding *charset.Encoding
 }
 
 func (b *builtinUpperUTF8Sig) Clone() builtinFunc {
 	newSig := &builtinUpperUTF8Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	if b.encoding != nil {
+		newSig.encoding = charset.NewEncoding(b.encoding.Name())
+	}
 	return newSig
 }
 
@@ -925,7 +949,7 @@ func (b *builtinUpperUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, 
 		return d, isNull, err
 	}
 
-	return strings.ToUpper(d), false, nil
+	return b.encoding.ToUpper(d), false, nil
 }
 
 type builtinUpperSig struct {
@@ -1094,6 +1118,13 @@ func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, errUnknownCharacterSet.GenWithStackByArgs(transcodingName)
 	}
+	// convert function should always derive to CoercibilityImplicit
+	bf.SetCoercibility(CoercibilityImplicit)
+	if bf.tp.Charset == charset.CharsetASCII {
+		bf.SetRepertoire(ASCII)
+	} else {
+		bf.SetRepertoire(UNICODE)
+	}
 	// Result will be a binary string if converts charset to BINARY.
 	// See https://dev.mysql.com/doc/refman/5.7/en/charset-binary-set.html
 	if types.IsBinaryStr(bf.tp) {
@@ -1135,9 +1166,24 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	if encoding == nil {
 		return "", true, errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
 	}
+	// if expr is binary string and convert meet error, we should return NULL.
+	if types.IsBinaryStr(b.args[0].GetType()) {
+		target, _, err := transform.String(encoding.NewEncoder(), expr)
+		if err != nil {
+			return "", true, err
+		}
 
-	target, _, err := transform.String(encoding.NewDecoder(), expr)
-	return target, err != nil, err
+		// we should convert target into utf8 internal.
+		exprInternal, _, _ := transform.String(encoding.NewDecoder(), target)
+		return exprInternal, false, nil
+	}
+	if types.IsBinaryStr(b.tp) {
+		enc := charset.NewEncoding(b.args[0].GetType().Charset)
+		expr, err = enc.EncodeString(expr)
+		return expr, false, err
+	}
+	enc := charset.NewEncoding(b.tp.Charset)
+	return string(enc.EncodeInternal(nil, []byte(expr))), false, nil
 }
 
 type substringFunctionClass struct {
@@ -1658,11 +1704,9 @@ func (b *builtinHexStrArgSig) evalString(row chunk.Row) (string, bool, error) {
 		return d, isNull, err
 	}
 	dBytes := hack.Slice(d)
-	if b.encoding.Enabled() {
-		dBytes, err = b.encoding.Encode(nil, dBytes)
-		if err != nil {
-			return d, false, err
-		}
+	dBytes, err = b.encoding.Encode(nil, dBytes)
+	if err != nil {
+		return d, false, err
 	}
 	return strings.ToUpper(hex.EncodeToString(dBytes)), false, nil
 }
@@ -1881,33 +1925,23 @@ func (b *builtinTrim3ArgsSig) evalString(row chunk.Row) (d string, isNull bool, 
 		return d, isNull, err
 	}
 	remstr, isRemStrNull, err = b.args[1].EvalString(b.ctx, row)
-	if err != nil {
-		return d, isNull, err
+	if err != nil || isRemStrNull {
+		return d, isRemStrNull, err
 	}
 	x, isNull, err = b.args[2].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return d, isNull, err
 	}
 	direction = ast.TrimDirectionType(x)
-	if direction == ast.TrimLeading {
-		if isRemStrNull {
-			d = strings.TrimLeft(str, spaceChars)
-		} else {
-			d = trimLeft(str, remstr)
-		}
-	} else if direction == ast.TrimTrailing {
-		if isRemStrNull {
-			d = strings.TrimRight(str, spaceChars)
-		} else {
-			d = trimRight(str, remstr)
-		}
-	} else {
-		if isRemStrNull {
-			d = strings.Trim(str, spaceChars)
-		} else {
-			d = trimLeft(str, remstr)
-			d = trimRight(d, remstr)
-		}
+	switch direction {
+	case ast.TrimLeading:
+		d = trimLeft(str, remstr)
+	case ast.TrimTrailing:
+		d = trimRight(str, remstr)
+	default:
+		d = trimLeft(str, remstr)
+		d = trimRight(d, remstr)
+
 	}
 	return d, false, nil
 }
@@ -2412,8 +2446,14 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 		bigints = append(bigints, val)
 	}
-	result := string(b.convertToBytes(bigints))
-	return result, false, nil
+
+	dBytes := b.convertToBytes(bigints)
+	resultBytes, err := charset.NewEncoding(b.tp.Charset).Decode(nil, dBytes)
+	if err != nil {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return "", true, nil
+	}
+	return string(resultBytes), false, nil
 }
 
 type charLengthFunctionClass struct {
@@ -3593,6 +3633,11 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
+	}
+	argTp := b.args[0].GetType()
+	str, err = charset.NewEncoding(argTp.Charset).EncodeString(str)
+	if err != nil {
+		return "", false, err
 	}
 	needEncodeLen := base64NeededEncodedLength(len(str))
 	if needEncodeLen == -1 {
