@@ -1915,12 +1915,19 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 		return expr
 	}
 	argLen := exprTp.Flen
+	// If expr is decimal, we should take the decimal point ,negative sign and the leading zero(0.xxx)
+	// into consideration, so we set `expr.GetType().Flen + 3` as the `argLen`.
+	// Since the length of float and double is not accurate, we do not handle
+	// them.
+	if exprTp.Tp == mysql.TypeNewDecimal && argLen != int(types.UnspecifiedFsp) {
+		argLen += 3
+	}
 	if exprTp.EvalType() == types.ETInt {
 		argLen = mysql.MaxIntWidth
 	}
 	// Because we can't control the length of cast(float as char) for now, we can't determine the argLen.
 	// Decimal is precison number, no need to truncate.
-	if exprTp.Tp == mysql.TypeFloat || exprTp.Tp == mysql.TypeDouble || exprTp.Tp == mysql.TypeNewDecimal {
+	if exprTp.Tp == mysql.TypeFloat || exprTp.Tp == mysql.TypeDouble {
 		argLen = -1
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
