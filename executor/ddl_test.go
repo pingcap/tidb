@@ -20,7 +20,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -44,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	newtestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
@@ -1614,17 +1612,13 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 
 // See issue: https://github.com/pingcap/tidb/issues/29752
 // Ref https://dev.mysql.com/doc/refman/8.0/en/rename-table.html
-func TestRenameTableWithLocked(t *testing.T) {
-	t.Parallel()
+func (s *testRecoverTable) TestRenameTableWithLocked(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
 
-	store, clean := newtestkit.CreateMockStore(t)
-	defer clean()
-
-	tk := newtestkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database renamedb")
 	tk.MustExec("create database renamedb2")
 	tk.MustExec("use renamedb")
