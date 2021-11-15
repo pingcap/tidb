@@ -5033,15 +5033,22 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
 	var result *testkit.Result
+
+	// Row Keys
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000002B5F72800000000000A5D3' )")
 	result.Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"43"}`))
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000325f7205bff199999999999a013131000000000000f9' )")
 	result.Check(testkit.Rows(`{"handle":"{1.1, 11}","table_id":50}`))
 
+	// Index Keys
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
 	result.Check(testkit.Rows(`{"index_id":1,"index_vals":"RW01, 768221109, ","table_id":411}`))
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000695F698000000000000001038000000000004E20' )")
 	result.Check(testkit.Rows(`{"index_id":1,"index_vals":"20000","table_id":105}`))
+
+	// Table keys
+	result = tk.MustQuery("select tidb_decode_key( '7480000000000000FF4700000000000000F8' )")
+	result.Check(testkit.Rows(`{"table_id":71}`))
 
 	// Test invalid record/index key.
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000FF2E5F728000000011FFE1A3000000000000' )")
@@ -10430,6 +10437,53 @@ func (s *testIntegrationSuite) TestLastInsertId(c *C) {
 	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("2 2"))
 	tk.MustExec(`INSERT INTO lastinsertid VALUES (NULL);`)
 	tk.MustQuery("SELECT @@last_insert_id, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
+}
+
+func (s *testIntegrationSuite) TestTimestamp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec("SET time_zone = '+00:00';")
+	defer tk.MustExec("SET time_zone = DEFAULT;")
+	timestampStr1 := fmt.Sprintf("%s", tk.MustQuery("SELECT @@timestamp;").Rows()[0])
+	timestampStr1 = timestampStr1[1:]
+	timestampStr1 = timestampStr1[:len(timestampStr1)-1]
+	timestamp1, err := strconv.ParseFloat(timestampStr1, 64)
+	c.Assert(err, IsNil)
+	nowStr1 := fmt.Sprintf("%s", tk.MustQuery("SELECT NOW(6);").Rows()[0])
+	now1, err := time.Parse("[2006-01-02 15:04:05.000000]", nowStr1)
+	c.Assert(err, IsNil)
+	tk.MustExec("set @@timestamp = 12345;")
+	tk.MustQuery("SELECT @@timestamp;").Check(testkit.Rows("12345"))
+	tk.MustQuery("SELECT NOW();").Check(testkit.Rows("1970-01-01 03:25:45"))
+	tk.MustQuery("SELECT NOW();").Check(testkit.Rows("1970-01-01 03:25:45"))
+	tk.MustExec("set @@timestamp = default;")
+	time.Sleep(2 * time.Microsecond)
+	timestampStr2 := fmt.Sprintf("%s", tk.MustQuery("SELECT @@timestamp;").Rows()[0])
+	timestampStr2 = timestampStr2[1:]
+	timestampStr2 = timestampStr2[:len(timestampStr2)-1]
+	timestamp2, err := strconv.ParseFloat(timestampStr2, 64)
+	c.Assert(err, IsNil)
+	nowStr2 := fmt.Sprintf("%s", tk.MustQuery("SELECT NOW(6);").Rows()[0])
+	now2, err := time.Parse("[2006-01-02 15:04:05.000000]", nowStr2)
+	c.Assert(err, IsNil)
+	c.Assert(timestamp1, Less, timestamp2)
+	c.Assert(now1.UnixNano(), Less, now2.UnixNano())
+	tk.MustExec("set @@timestamp = 12345;")
+	tk.MustQuery("SELECT @@timestamp;").Check(testkit.Rows("12345"))
+	tk.MustQuery("SELECT NOW();").Check(testkit.Rows("1970-01-01 03:25:45"))
+	tk.MustQuery("SELECT NOW();").Check(testkit.Rows("1970-01-01 03:25:45"))
+	tk.MustExec("set @@timestamp = 0;")
+	time.Sleep(2 * time.Microsecond)
+	timestampStr3 := fmt.Sprintf("%s", tk.MustQuery("SELECT @@timestamp;").Rows()[0])
+	timestampStr3 = timestampStr3[1:]
+	timestampStr3 = timestampStr3[:len(timestampStr3)-1]
+	timestamp3, err := strconv.ParseFloat(timestampStr3, 64)
+	c.Assert(err, IsNil)
+	nowStr3 := fmt.Sprintf("%s", tk.MustQuery("SELECT NOW(6);").Rows()[0])
+	now3, err := time.Parse("[2006-01-02 15:04:05.000000]", nowStr3)
+	c.Assert(err, IsNil)
+	c.Assert(timestamp2, Less, timestamp3)
+	c.Assert(now2.UnixNano(), Less, now3.UnixNano())
 }
 
 func (s *testIntegrationSuite) TestIdentity(c *C) {
