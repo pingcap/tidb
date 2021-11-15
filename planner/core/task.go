@@ -1302,7 +1302,7 @@ func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*
 		if pos == -1 {
 			return false
 		}
-		if schema.Columns[pos].IsPrefix == true {
+		if schema.Columns[pos].IsPrefix {
 			return false
 		}
 	}
