@@ -128,8 +128,8 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 				return -1
 			}
 			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
-				val, err := constVal.Eval(chunk.Row{})
-				if err != nil || val.IsNull() {
+				_, err := constVal.Eval(chunk.Row{})
+				if err != nil {
 					// treat col<=>null as range scan instead of point get to avoid incorrect results
 					// when nullable unique index has multiple matches for filter x is null
 					return -1
@@ -150,8 +150,8 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 				return -1
 			}
 			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
-				val, err := constVal.Eval(chunk.Row{})
-				if err != nil || val.IsNull() {
+				_, err := constVal.Eval(chunk.Row{})
+				if err != nil {
 					return -1
 				}
 				for i, col := range cols {
