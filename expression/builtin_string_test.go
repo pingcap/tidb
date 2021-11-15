@@ -2226,21 +2226,27 @@ func TestOrd(t *testing.T) {
 	cases := []struct {
 		args     interface{}
 		expected int64
+		chs      string
 		isNil    bool
 		getErr   bool
 	}{
-		{"2", 50, false, false},
-		{2, 50, false, false},
-		{"23", 50, false, false},
-		{23, 50, false, false},
-		{2.3, 50, false, false},
-		{nil, 0, true, false},
-		{"", 0, false, false},
-		{"你好", 14990752, false, false},
-		{"にほん", 14909867, false, false},
-		{"한국", 15570332, false, false},
-		{"👍", 4036989325, false, false},
-		{"א", 55184, false, false},
+		{"2", 50, "", false, false},
+		{2, 50, "", false, false},
+		{"23", 50, "", false, false},
+		{23, 50, "", false, false},
+		{2.3, 50, "", false, false},
+		{nil, 0, "", true, false},
+		{"", 0, "", false, false},
+		{"你好", 14990752, "", false, false},
+		{"にほん", 14909867, "", false, false},
+		{"한국", 15570332, "", false, false},
+		{"👍", 4036989325, "", false, false},
+		{"א", 55184, "", false, false},
+		// TODO: Uncomment it when gbk be added into charsetInfos
+		// {"abc", 97, "gbk", false, false},
+		// {"一二三", 53947, "gbk", false, false},
+		// {"àáèé", 43172,"gbk",  false, false},
+		// {"数据库", 51965,"gbk",  false, false},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Ord, primitiveValsToConstants(ctx, []interface{}{c.args})...)
@@ -2260,30 +2266,6 @@ func TestOrd(t *testing.T) {
 	}
 	_, err := funcs[ast.Ord].getFunction(ctx, []Expression{NewZero()})
 	require.NoError(t, err)
-
-	// Test GBK String
-	tbl := []struct {
-		input  string
-		chs    string
-		result int64
-	}{
-		{"abc", "gbk", 97},
-		{"一二三", "gbk", 53947},
-		{"一二三", "", 14989440},
-		{"àáèé", "gbk", 43172},
-		{"àáèé", "", 50080},
-		{"数据库", "gbk", 51965},
-		{"数据库", "", 15111600},
-	}
-	for _, c := range tbl {
-		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
-		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.Ord, primitiveValsToConstants(ctx, []interface{}{c.input})...)
-		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
-		require.NoError(t, err)
-		require.Equal(t, c.result, d.GetInt64())
-	}
 }
 
 func TestElt(t *testing.T) {

@@ -2916,7 +2916,6 @@ func (b *builtinOrdSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ord
 func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
-	strBytes := hack.Slice(str)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
@@ -2928,7 +2927,7 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	enc := charset.NewEncoding(charSet)
-	leftMost, err := enc.EncodeFirstChar(nil, strBytes)
+	leftMost, err := enc.EncodeFirstChar(nil, hack.Slice(str))
 	if err != nil {
 		return 0, false, err
 	}
@@ -2942,12 +2941,7 @@ func chooseOrdFunc(charSet string) (func([]byte) int64, error) {
 	}
 	desc, err := charset.GetCharsetInfo(charSet)
 	if err != nil {
-		// TODO: After gbk added to charset, this compare should be removed
-		if strings.EqualFold(charSet, charset.CharsetGBK) {
-			desc = &charset.Charset{Maxlen: 2}
-		} else {
-			return nil, err
-		}
+		return nil, err
 	}
 	if desc.Maxlen == 1 {
 		return ordSingleByte, nil
