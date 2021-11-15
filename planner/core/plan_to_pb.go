@@ -212,6 +212,20 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 		if len(rg.LowVal) != len(idx.Columns) {
 			return false
 		}
+		if !rg.LowExclude {
+			for _, v := range rg.LowVal {
+				if v.IsNull() {
+					return false
+				}
+			}
+		}
+		if !rg.HighExclude {
+			for _, v := range rg.HighVal {
+				if v.IsNull() {
+					return false
+				}
+			}
+		}
 	}
 	return true
 }
