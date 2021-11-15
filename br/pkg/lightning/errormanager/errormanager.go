@@ -117,6 +117,7 @@ func New(db *sql.DB, cfg *config.Config) *ErrorManager {
 	em := &ErrorManager{
 		taskID:         cfg.TaskID,
 		remainingError: cfg.App.MaxError,
+		dupResolution:  cfg.TikvImporter.DuplicateResolution,
 	}
 	if len(cfg.App.TaskInfoSchemaName) != 0 {
 		em.db = db
