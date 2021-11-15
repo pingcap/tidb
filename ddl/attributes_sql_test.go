@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -28,10 +29,16 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testDBSuite8) TestAlterTableAttributes(c *C) {
+var _ = SerialSuites(&testAttributesDDLSerialSuite{})
+
+type testAttributesDDLSerialSuite struct{}
+
+func (s *testAttributesDDLSerialSuite) TestAlterTableAttributes(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -40,31 +47,33 @@ func (s *testDBSuite8) TestAlterTableAttributes(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (c int);`)
+	tk.MustExec(`create table alter_t (c int);`)
 
 	// normal cases
-	_, err = tk.Exec(`alter table t1 attributes="merge_option=allow";`)
+	_, err = tk.Exec(`alter table alter_t attributes="merge_option=allow";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 attributes="merge_option=allow,key=value";`)
+	_, err = tk.Exec(`alter table alter_t attributes="merge_option=allow,key=value";`)
 	c.Assert(err, IsNil)
 
 	// space cases
-	_, err = tk.Exec(`alter table t1 attributes=" merge_option=allow ";`)
+	_, err = tk.Exec(`alter table alter_t attributes=" merge_option=allow ";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 attributes=" merge_option = allow , key = value ";`)
+	_, err = tk.Exec(`alter table alter_t attributes=" merge_option = allow , key = value ";`)
 	c.Assert(err, IsNil)
 
 	// without equal
-	_, err = tk.Exec(`alter table t1 attributes " merge_option=allow ";`)
+	_, err = tk.Exec(`alter table alter_t attributes " merge_option=allow ";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 attributes " merge_option=allow , key=value ";`)
+	_, err = tk.Exec(`alter table alter_t attributes " merge_option=allow , key=value ";`)
 	c.Assert(err, IsNil)
 }
 
-func (s *testDBSuite8) TestAlterTablePartitionAttributes(c *C) {
+func (s *testAttributesDDLSerialSuite) TestAlterTablePartitionAttributes(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -73,7 +82,7 @@ func (s *testDBSuite8) TestAlterTablePartitionAttributes(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (c int)
+	tk.MustExec(`create table alter_p (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11),
@@ -82,28 +91,30 @@ PARTITION BY RANGE (c) (
 );`)
 
 	// normal cases
-	_, err = tk.Exec(`alter table t1 partition p0 attributes="merge_option=allow";`)
+	_, err = tk.Exec(`alter table alter_p partition p0 attributes="merge_option=allow";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p1 attributes="merge_option=allow,key=value";`)
+	_, err = tk.Exec(`alter table alter_p partition p1 attributes="merge_option=allow,key=value";`)
 	c.Assert(err, IsNil)
 
 	// space cases
-	_, err = tk.Exec(`alter table t1 partition p2 attributes=" merge_option=allow ";`)
+	_, err = tk.Exec(`alter table alter_p partition p2 attributes=" merge_option=allow ";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p3 attributes=" merge_option = allow , key = value ";`)
+	_, err = tk.Exec(`alter table alter_p partition p3 attributes=" merge_option = allow , key = value ";`)
 	c.Assert(err, IsNil)
 
 	// without equal
-	_, err = tk.Exec(`alter table t1 partition p1 attributes " merge_option=allow ";`)
+	_, err = tk.Exec(`alter table alter_p partition p1 attributes " merge_option=allow ";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p1 attributes " merge_option=allow , key=value ";`)
+	_, err = tk.Exec(`alter table alter_p partition p1 attributes " merge_option=allow , key=value ";`)
 	c.Assert(err, IsNil)
 }
 
-func (s *testDBSuite8) TestTruncateTable(c *C) {
+func (s *testAttributesDDLSerialSuite) TestTruncateTable(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -112,56 +123,58 @@ func (s *testDBSuite8) TestTruncateTable(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (c int)
+	tk.MustExec(`create table truncate_t (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
 );`)
 
-	// add rules
-	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	// add attributes
+	_, err = tk.Exec(`alter table truncate_t attributes="key=value";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
+	_, err = tk.Exec(`alter table truncate_t partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows), Equals, 2)
 	// truncate table
-	_, err = tk.Exec(`truncate table t1;`)
+	_, err = tk.Exec(`truncate table truncate_t;`)
 	c.Assert(err, IsNil)
 	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows1), Equals, 2)
-	// check table t1's attribute
-	c.Assert(rows1[0][0], Equals, "schema/test/t1")
+	// check table truncate_t's attribute
+	c.Assert(rows1[0][0], Equals, "schema/test/truncate_t")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
 	c.Assert(rows1[0][3], Not(Equals), rows[0][3])
 	// check partition p0's attribute
-	c.Assert(rows1[1][0], Equals, "schema/test/t1/p0")
+	c.Assert(rows1[1][0], Equals, "schema/test/truncate_t/p0")
 	c.Assert(rows1[1][2], Equals, `"key1=value1"`)
 	c.Assert(rows1[1][3], Not(Equals), rows[1][3])
 
 	// test only table
-	tk.MustExec(`create table t2 (c int);`)
+	tk.MustExec(`create table truncate_ot (c int);`)
 
 	// add attribute
-	_, err = tk.Exec(`alter table t2 attributes="key=value";`)
+	_, err = tk.Exec(`alter table truncate_ot attributes="key=value";`)
 	c.Assert(err, IsNil)
 	rows2 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows2), Equals, 3)
 	// truncate table
-	_, err = tk.Exec(`truncate table t2;`)
+	_, err = tk.Exec(`truncate table truncate_ot;`)
 	c.Assert(err, IsNil)
 	rows3 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows3), Equals, 3)
-	// check table t1's attribute
-	c.Assert(rows3[2][0], Equals, "schema/test/t2")
-	c.Assert(rows3[2][2], Equals, `"key=value"`)
-	c.Assert(rows3[2][3], Not(Equals), rows2[2][3])
+	// check table truncate_ot's attribute
+	c.Assert(rows3[0][0], Equals, "schema/test/truncate_ot")
+	c.Assert(rows3[0][2], Equals, `"key=value"`)
+	c.Assert(rows3[0][3], Not(Equals), rows2[0][3])
 }
 
-func (s *testDBSuite8) TestRenameTable(c *C) {
+func (s *testAttributesDDLSerialSuite) TestRenameTable(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -170,56 +183,58 @@ func (s *testDBSuite8) TestRenameTable(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (c int)
+	tk.MustExec(`create table rename_t (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
 );`)
 
-	// add rules
-	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	// add attributes
+	_, err = tk.Exec(`alter table rename_t attributes="key=value";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
+	_, err = tk.Exec(`alter table rename_t partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows), Equals, 2)
 	// rename table
-	_, err = tk.Exec(`rename table t1 to t2;`)
+	_, err = tk.Exec(`rename table rename_t to rename_t1;`)
 	c.Assert(err, IsNil)
 	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows1), Equals, 2)
-	// check table t2's attribute
-	c.Assert(rows1[0][0], Equals, "schema/test/t2")
+	// check table rename_t1's attribute
+	c.Assert(rows1[0][0], Equals, "schema/test/rename_t1")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
 	c.Assert(rows1[0][3], Equals, rows[0][3])
 	// check partition p0's attribute
-	c.Assert(rows1[1][0], Equals, "schema/test/t2/p0")
+	c.Assert(rows1[1][0], Equals, "schema/test/rename_t1/p0")
 	c.Assert(rows1[1][2], Equals, `"key1=value1"`)
 	c.Assert(rows1[1][3], Equals, rows[1][3])
 
 	// test only table
-	tk.MustExec(`create table t3 (c int);`)
+	tk.MustExec(`create table rename_ot (c int);`)
 
 	// add attribute
-	_, err = tk.Exec(`alter table t3 attributes="key=value";`)
+	_, err = tk.Exec(`alter table rename_ot attributes="key=value";`)
 	c.Assert(err, IsNil)
 	rows2 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows2), Equals, 3)
 	// rename table
-	_, err = tk.Exec(`rename table t3 to t4;`)
+	_, err = tk.Exec(`rename table rename_ot to rename_ot1;`)
 	c.Assert(err, IsNil)
 	rows3 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows3), Equals, 3)
-	// check table t4's attribute
-	c.Assert(rows3[2][0], Equals, "schema/test/t4")
-	c.Assert(rows3[2][2], Equals, `"key=value"`)
-	c.Assert(rows3[2][3], Equals, rows2[2][3])
+	// check table rename_ot1's attribute
+	c.Assert(rows3[0][0], Equals, "schema/test/rename_ot1")
+	c.Assert(rows3[0][2], Equals, `"key=value"`)
+	c.Assert(rows3[0][3], Equals, rows2[0][3])
 }
 
-func (s *testDBSuite8) TestRecoverTable(c *C) {
+func (s *testAttributesDDLSerialSuite) TestRecoverTable(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -228,7 +243,7 @@ func (s *testDBSuite8) TestRecoverTable(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (c int)
+	tk.MustExec(`create table recover_t (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
@@ -243,35 +258,37 @@ PARTITION BY RANGE (c) (
 	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
 
-	// add rules
-	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	// add attributes
+	_, err = tk.Exec(`alter table recover_t attributes="key=value";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
+	_, err = tk.Exec(`alter table recover_t partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows), Equals, 2)
 	// drop table
-	_, err = tk.Exec(`drop table t1;`)
+	_, err = tk.Exec(`drop table recover_t;`)
 	c.Assert(err, IsNil)
 	// recover table
-	_, err = tk.Exec(`recover table t1;`)
+	_, err = tk.Exec(`recover table recover_t;`)
 	c.Assert(err, IsNil)
 	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows1), Equals, 2)
-	// check table t1's attribute
-	c.Assert(rows1[0][0], Equals, "schema/test/t1")
+	// check table recover_t's attribute
+	c.Assert(rows1[0][0], Equals, "schema/test/recover_t")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
 	c.Assert(rows1[0][3], Equals, rows[0][3])
 	// check partition p0's attribute
-	c.Assert(rows1[1][0], Equals, "schema/test/t1/p0")
+	c.Assert(rows1[1][0], Equals, "schema/test/recover_t/p0")
 	c.Assert(rows1[1][2], Equals, `"key1=value1"`)
 	c.Assert(rows1[1][3], Equals, rows[1][3])
 }
 
-func (s *testDBSuite8) TestFlashbackTable(c *C) {
+func (s *testAttributesDDLSerialSuite) TestFlashbackTable(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -280,7 +297,7 @@ func (s *testDBSuite8) TestFlashbackTable(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (c int)
+	tk.MustExec(`create table flash_t (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
@@ -295,52 +312,54 @@ PARTITION BY RANGE (c) (
 	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
 
-	// add rules
-	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	// add attributes
+	_, err = tk.Exec(`alter table flash_t attributes="key=value";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
+	_, err = tk.Exec(`alter table flash_t partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows), Equals, 2)
 	// drop table
-	_, err = tk.Exec(`drop table t1;`)
+	_, err = tk.Exec(`drop table flash_t;`)
 	c.Assert(err, IsNil)
 	// flashback table
-	_, err = tk.Exec(`flashback table t1 to t2;`)
+	_, err = tk.Exec(`flashback table flash_t to flash_t1;`)
 	c.Assert(err, IsNil)
 	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows1), Equals, 2)
-	// check table t2's attribute
-	c.Assert(rows1[0][0], Equals, "schema/test/t2")
+	// check table flash_t1's attribute
+	c.Assert(rows1[0][0], Equals, "schema/test/flash_t1")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
 	c.Assert(rows1[0][3], Equals, rows[0][3])
 	// check partition p0's attribute
-	c.Assert(rows1[1][0], Equals, "schema/test/t2/p0")
+	c.Assert(rows1[1][0], Equals, "schema/test/flash_t1/p0")
 	c.Assert(rows1[1][2], Equals, `"key1=value1"`)
 	c.Assert(rows1[1][3], Equals, rows[1][3])
 
 	// truncate table
-	_, err = tk.Exec(`truncate table t2;`)
+	_, err = tk.Exec(`truncate table flash_t1;`)
 	c.Assert(err, IsNil)
 	// flashback table
-	_, err = tk.Exec(`flashback table t2 to t3;`)
+	_, err = tk.Exec(`flashback table flash_t1 to flash_t2;`)
 	c.Assert(err, IsNil)
 	rows2 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows1), Equals, 2)
-	// check table t3's attribute
-	c.Assert(rows2[0][0], Equals, "schema/test/t3")
+	// check table flash_t2's attribute
+	c.Assert(rows2[0][0], Equals, "schema/test/flash_t2")
 	c.Assert(rows2[0][2], Equals, `"key=value"`)
 	c.Assert(rows2[0][3], Equals, rows[0][3])
 	// check partition p0's attribute
-	c.Assert(rows2[1][0], Equals, "schema/test/t3/p0")
+	c.Assert(rows2[1][0], Equals, "schema/test/flash_t2/p0")
 	c.Assert(rows2[1][2], Equals, `"key1=value1"`)
 	c.Assert(rows2[1][3], Equals, rows[1][3])
 }
 
-func (s *testDBSuite8) TestDropTable(c *C) {
+func (s *testAttributesDDLSerialSuite) TestDropTable(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -349,7 +368,7 @@ func (s *testDBSuite8) TestDropTable(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (c int)
+	tk.MustExec(`create table drop_t (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
@@ -371,15 +390,15 @@ PARTITION BY RANGE (c) (
 	gcWorker, err := gcworker.NewMockGCWorker(store)
 	c.Assert(err, IsNil)
 
-	// add rules
-	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	// add attributes
+	_, err = tk.Exec(`alter table drop_t attributes="key=value";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
+	_, err = tk.Exec(`alter table drop_t partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows), Equals, 2)
 	// drop table
-	_, err = tk.Exec(`drop table t1;`)
+	_, err = tk.Exec(`drop table drop_t;`)
 	c.Assert(err, IsNil)
 
 	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
@@ -388,10 +407,12 @@ PARTITION BY RANGE (c) (
 	c.Assert(len(rows), Equals, 0)
 }
 
-func (s *testDBSuite8) TestCreateWithSameName(c *C) {
+func (s *testAttributesDDLSerialSuite) TestCreateWithSameName(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -400,7 +421,7 @@ func (s *testDBSuite8) TestCreateWithSameName(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (c int)
+	tk.MustExec(`create table recreate_t (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
@@ -422,29 +443,29 @@ PARTITION BY RANGE (c) (
 	gcWorker, err := gcworker.NewMockGCWorker(store)
 	c.Assert(err, IsNil)
 
-	// add rules
-	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	// add attributes
+	_, err = tk.Exec(`alter table recreate_t attributes="key=value";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
+	_, err = tk.Exec(`alter table recreate_t partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows), Equals, 2)
 	// drop table
-	_, err = tk.Exec(`drop table t1;`)
+	_, err = tk.Exec(`drop table recreate_t;`)
 	c.Assert(err, IsNil)
 
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows), Equals, 2)
 
-	tk.MustExec(`create table t1 (c int)
+	tk.MustExec(`create table recreate_t (c int)
 	PARTITION BY RANGE (c) (
 		PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p1 VALUES LESS THAN (11)
 	);`)
-	// add rules
-	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	// add attributes
+	_, err = tk.Exec(`alter table recreate_t attributes="key=value";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p1 attributes="key1=value1";`)
+	_, err = tk.Exec(`alter table recreate_t partition p1 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows), Equals, 3)
@@ -455,7 +476,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(len(rows), Equals, 2)
 
 	// drop table
-	_, err = tk.Exec(`drop table t1;`)
+	_, err = tk.Exec(`drop table recreate_t;`)
 	c.Assert(err, IsNil)
 	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
 	c.Assert(err, IsNil)
@@ -463,10 +484,12 @@ PARTITION BY RANGE (c) (
 	c.Assert(len(rows), Equals, 0)
 }
 
-func (s *testDBSuite8) TestPartition(c *C) {
+func (s *testAttributesDDLSerialSuite) TestPartition(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -475,69 +498,71 @@ func (s *testDBSuite8) TestPartition(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (c int)
+	tk.MustExec(`create table part (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11),
 	PARTITION p2 VALUES LESS THAN (20)
 );`)
-	tk.MustExec(`create table t2 (c int);`)
+	tk.MustExec(`create table part1 (c int);`)
 
-	// add rules
-	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	// add attributes
+	_, err = tk.Exec(`alter table part attributes="key=value";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
+	_, err = tk.Exec(`alter table part partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p1 attributes="key2=value2";`)
+	_, err = tk.Exec(`alter table part partition p1 attributes="key2=value2";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows), Equals, 3)
 	// drop partition
 	// partition p0's attribute will be deleted
-	_, err = tk.Exec(`alter table t1 drop partition p0;`)
+	_, err = tk.Exec(`alter table part drop partition p0;`)
 	c.Assert(err, IsNil)
 	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows1), Equals, 2)
-	c.Assert(rows1[0][0], Equals, "schema/test/t1")
+	c.Assert(rows1[0][0], Equals, "schema/test/part")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
 	c.Assert(rows1[0][3], Equals, rows[0][3])
-	c.Assert(rows1[1][0], Equals, "schema/test/t1/p1")
+	c.Assert(rows1[1][0], Equals, "schema/test/part/p1")
 	c.Assert(rows1[1][2], Equals, `"key2=value2"`)
 	c.Assert(rows1[1][3], Equals, rows[2][3])
 
 	// truncate partition
 	// partition p1's key range will be updated
-	_, err = tk.Exec(`alter table t1 truncate partition p1;`)
+	_, err = tk.Exec(`alter table part truncate partition p1;`)
 	c.Assert(err, IsNil)
 	rows2 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows2), Equals, 2)
-	c.Assert(rows2[0][0], Equals, "schema/test/t1")
+	c.Assert(rows2[0][0], Equals, "schema/test/part")
 	c.Assert(rows2[0][2], Equals, `"key=value"`)
 	c.Assert(rows2[0][3], Not(Equals), rows1[0][3])
-	c.Assert(rows2[1][0], Equals, "schema/test/t1/p1")
+	c.Assert(rows2[1][0], Equals, "schema/test/part/p1")
 	c.Assert(rows2[1][2], Equals, `"key2=value2"`)
 	c.Assert(rows2[1][3], Not(Equals), rows1[1][3])
 
 	// exchange partition
-	// partition p1's attribute will be exchanged to table t2
+	// partition p1's attribute will be exchanged to table part1
 	_, err = tk.Exec(`set @@tidb_enable_exchange_partition=1;`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 exchange partition p1 with table t2;`)
+	_, err = tk.Exec(`alter table part exchange partition p1 with table part1;`)
 	c.Assert(err, IsNil)
 	rows3 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
 	c.Assert(len(rows3), Equals, 2)
-	c.Assert(rows3[0][0], Equals, "schema/test/t1")
+	c.Assert(rows3[0][0], Equals, "schema/test/part")
 	c.Assert(rows3[0][2], Equals, `"key=value"`)
 	c.Assert(rows3[0][3], Equals, rows2[0][3])
-	c.Assert(rows3[1][0], Equals, "schema/test/t2")
+	c.Assert(rows3[1][0], Equals, "schema/test/part1")
 	c.Assert(rows3[1][2], Equals, `"key2=value2"`)
 	c.Assert(rows3[1][3], Equals, rows2[1][3])
 }
 
-func (s *testDBSuite8) TestDropSchema(c *C) {
+func (s *testAttributesDDLSerialSuite) TestDropSchema(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -546,19 +571,19 @@ func (s *testDBSuite8) TestDropSchema(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (c int)
+	tk.MustExec(`create table drop_s1 (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
 );`)
-	tk.MustExec(`create table t2 (c int);`)
+	tk.MustExec(`create table drop_s2 (c int);`)
 
-	// add rules
-	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	// add attributes
+	_, err = tk.Exec(`alter table drop_s1 attributes="key=value";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
+	_, err = tk.Exec(`alter table drop_s1 partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t2 attributes="key=value";`)
+	_, err = tk.Exec(`alter table drop_s2 attributes="key=value";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Rows()
 	c.Assert(len(rows), Equals, 3)
@@ -569,10 +594,12 @@ PARTITION BY RANGE (c) (
 	c.Assert(len(rows), Equals, 0)
 }
 
-func (s *testDBSuite8) TestDefaultKeyword(c *C) {
+func (s *testAttributesDDLSerialSuite) TestDefaultKeyword(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), true)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -581,26 +608,26 @@ func (s *testDBSuite8) TestDefaultKeyword(c *C) {
 	}()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t1 (c int)
+	tk.MustExec(`create table def (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
 );`)
 
-	// add rules
-	_, err = tk.Exec(`alter table t1 attributes="key=value";`)
+	// add attributes
+	_, err = tk.Exec(`alter table def attributes="key=value";`)
 	c.Assert(err, IsNil)
-	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
+	_, err = tk.Exec(`alter table def partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.attributes;`).Rows()
 	c.Assert(len(rows), Equals, 2)
 	// reset the partition p0's attribute
-	_, err = tk.Exec(`alter table t1 partition p0 attributes=default;`)
+	_, err = tk.Exec(`alter table def partition p0 attributes=default;`)
 	c.Assert(err, IsNil)
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Rows()
 	c.Assert(len(rows), Equals, 1)
-	// reset the table t1's attribute
-	_, err = tk.Exec(`alter table t1 attributes=default;`)
+	// reset the table def's attribute
+	_, err = tk.Exec(`alter table def attributes=default;`)
 	c.Assert(err, IsNil)
 	rows = tk.MustQuery(`select * from information_schema.attributes;`).Rows()
 	c.Assert(len(rows), Equals, 0)
