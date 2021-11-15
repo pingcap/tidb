@@ -74,7 +74,6 @@ func cleanStats(tk *testkit.TestKit, do *domain.Domain) {
 }
 
 func TestConversion(t *testing.T) {
-	t.Parallel()
 	tk, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	tk.MustExec("use test")
@@ -126,7 +125,6 @@ func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *handl
 }
 
 func TestDumpGlobalStats(t *testing.T) {
-	t.Parallel()
 	tk, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	tk.MustExec("use test")
@@ -153,7 +151,6 @@ func TestDumpGlobalStats(t *testing.T) {
 }
 
 func TestLoadGlobalStats(t *testing.T) {
-	t.Parallel()
 	tk, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	tk.MustExec("use test")
@@ -180,7 +177,6 @@ func TestLoadGlobalStats(t *testing.T) {
 }
 
 func TestDumpPartitions(t *testing.T) {
-	t.Parallel()
 	tk, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	tk.MustExec("use test")
@@ -226,7 +222,6 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestDumpAlteredTable(t *testing.T) {
-	t.Parallel()
 	tk, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	tk.MustExec("use test")
@@ -246,7 +241,6 @@ func TestDumpAlteredTable(t *testing.T) {
 
 func TestDumpCMSketchWithTopN(t *testing.T) {
 	// Just test if we can store and recover the Top N elements stored in database.
-	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -288,7 +282,6 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 }
 
 func TestDumpPseudoColumns(t *testing.T) {
-	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -306,7 +299,6 @@ func TestDumpPseudoColumns(t *testing.T) {
 }
 
 func TestDumpExtendedStats(t *testing.T) {
-	t.Parallel()
 	tk, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	tk.MustExec("set session tidb_enable_extended_stats = on")
@@ -344,7 +336,6 @@ func TestDumpExtendedStats(t *testing.T) {
 }
 
 func TestDumpVer2Stats(t *testing.T) {
-	t.Parallel()
 	tk, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	tk.MustExec("set @@tidb_analyze_version = 2")
