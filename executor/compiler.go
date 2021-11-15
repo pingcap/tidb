@@ -235,16 +235,22 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 		}
 	case *ast.CreateBindingStmt:
 		var resNode ast.ResultSetNode
+		var tableRef *ast.TableRefsClause
 		if x.OriginNode != nil {
 			switch n := x.OriginNode.(type) {
 			case *ast.SelectStmt:
-				resNode = n.From.TableRefs
+				tableRef = n.From
 			case *ast.DeleteStmt:
-				resNode = n.TableRefs.TableRefs
+				tableRef = n.TableRefs
 			case *ast.UpdateStmt:
-				resNode = n.TableRefs.TableRefs
+				tableRef = n.TableRefs
 			case *ast.InsertStmt:
-				resNode = n.Table.TableRefs
+				tableRef = n.Table
+			}
+			if tableRef != nil {
+				resNode = tableRef.TableRefs
+			} else {
+				resNode = nil
 			}
 			dbLabels := getDbFromResultNode(resNode)
 			for _, db := range dbLabels {
@@ -255,13 +261,18 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 		if len(dbLabelSet) == 0 && x.HintedNode != nil {
 			switch n := x.HintedNode.(type) {
 			case *ast.SelectStmt:
-				resNode = n.From.TableRefs
+				tableRef = n.From
 			case *ast.DeleteStmt:
-				resNode = n.TableRefs.TableRefs
+				tableRef = n.TableRefs
 			case *ast.UpdateStmt:
-				resNode = n.TableRefs.TableRefs
+				tableRef = n.TableRefs
 			case *ast.InsertStmt:
-				resNode = n.Table.TableRefs
+				tableRef = n.Table
+			}
+			if tableRef != nil {
+				resNode = tableRef.TableRefs
+			} else {
+				resNode = nil
 			}
 			dbLabels := getDbFromResultNode(resNode)
 			for _, db := range dbLabels {

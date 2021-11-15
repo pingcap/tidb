@@ -1295,6 +1295,23 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 	return topN
 }
 
+// canPushToIndexPlan checks if this TopN can be pushed to the index side of copTask.
+// It can be pushed to the index side when all columns used by ByItems are available from the index side and
+//   there's no prefix index column.
+func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*expression.Column) bool {
+	schema := indexPlan.Schema()
+	for _, col := range byItemCols {
+		pos := schema.ColumnIndex(col)
+		if pos == -1 {
+			return false
+		}
+		if schema.Columns[pos].IsPrefix {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
@@ -1307,7 +1324,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
-		if !copTask.indexPlanFinished && len(copTask.indexPlan.Schema().ColumnsIndices(cols)) > 0 {
+		if !copTask.indexPlanFinished && p.canPushToIndexPlan(copTask.indexPlan, cols) {
 			pushedDownTopN = p.getPushedDownTopN(copTask.indexPlan)
 			copTask.indexPlan = pushedDownTopN
 		} else {
@@ -1458,6 +1475,18 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 			ret = false
 			break
 		}
+		orderBySize := len(aggFunc.OrderByItems)
+		if orderBySize > 0 {
+			exprs := make([]expression.Expression, 0, orderBySize)
+			for _, item := range aggFunc.OrderByItems {
+				exprs = append(exprs, item.Expr)
+			}
+			if !expression.CanExprsPushDownWithExtraInfo(sc, exprs, client, storeType, false) {
+				reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs in order-by clause"
+				ret = false
+				break
+			}
+		}
 		pb := aggregation.AggFuncToPBExpr(sctx, client, aggFunc)
 		if pb == nil {
 			reason = "AggFunc `" + aggFunc.Name + "` can not be converted to pb expr"
@@ -1546,6 +1575,7 @@ func BuildFinalModeAggregation(
 	for i, aggFunc := range original.AggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
 		finalAggFunc.Name = aggFunc.Name
+		finalAggFunc.OrderByItems = aggFunc.OrderByItems
 		args := make([]expression.Expression, 0, len(aggFunc.Args))
 		if aggFunc.HasDistinct {
 			/*
@@ -1563,7 +1593,8 @@ func BuildFinalModeAggregation(
 				// 1. add all args to partial.GroupByItems
 				foundInGroupBy := false
 				for j, gbyExpr := range partial.GroupByItems {
-					if gbyExpr.Equal(sctx, distinctArg) {
+					if gbyExpr.Equal(sctx, distinctArg) && gbyExpr.GetType().Equal(distinctArg.GetType()) {
+						// if the two expressions exactly the same in terms of data types and collation, then can avoid it.
 						foundInGroupBy = true
 						ret = partialGbySchema.Columns[j]
 						break
@@ -1700,7 +1731,6 @@ func BuildFinalModeAggregation(
 		finalAggFunc.Args = args
 		finalAggFunc.RetTp = aggFunc.RetTp
 		final.AggFuncs[i] = finalAggFunc
-		finalAggFunc.OrderByItems = aggFunc.OrderByItems
 	}
 	partial.Schema.Append(partialGbySchema.Columns...)
 	return

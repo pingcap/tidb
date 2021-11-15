@@ -66,3 +66,89 @@ select md5(a), md5(b), md5(c) from t;
 set @@tidb_enable_vectorized_expression = true;
 select md5(a), md5(b), md5(c) from t;
 set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function decode()/encode()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select decode(encode(a,"monty"),"monty") = a, md5(decode(encode(b,"monty"),"monty")) = md5(b), decode(encode(c,"monty"),"monty") = c from t;
+set @@tidb_enable_vectorized_expression = true;
+select decode(encode(a,"monty"),"monty") = a, md5(decode(encode(b,"monty"),"monty")) = md5(b), decode(encode(c,"monty"),"monty") = c from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function password()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select password(a), password(b), password(c) from t;
+set @@tidb_enable_vectorized_expression = true;
+select password(a), password(b), password(c) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function sha1()/sha()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select sha1(a), sha1(b), sha1(c) from t;
+select sha(a), sha(b), sha(c) from t;
+set @@tidb_enable_vectorized_expression = true;
+select sha1(a), sha1(b), sha1(c) from t;
+select sha(a), sha(b), sha(c) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function sha2()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select sha2(a, 0), sha2(b, 0), sha2(c, 0) from t;
+select sha2(a, 224), sha2(b, 224), sha2(c, 224) from t;
+select sha2(a, 256), sha2(b, 256), sha2(c, 256) from t;
+select sha2(a, 384), sha2(b, 384), sha2(c, 384) from t;
+select sha2(a, 514), sha2(b, 514), sha2(c, 514) from t;
+set @@tidb_enable_vectorized_expression = true;
+select sha2(a, 0), sha2(b, 0), sha2(c, 0) from t;
+select sha2(a, 224), sha2(b, 224), sha2(c, 224) from t;
+select sha2(a, 256), sha2(b, 256), sha2(c, 256) from t;
+select sha2(a, 384), sha2(b, 384), sha2(c, 384) from t;
+select sha2(a, 514), sha2(b, 514), sha2(c, 514) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for push md5() builtin function down to unistore
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(b) from t where md5(b) = 'a45d4af7b243e7f393fa09bed72ac73e';
+set @@tidb_enable_vectorized_expression = true;
+select md5(b) from t where md5(b) = 'a45d4af7b243e7f393fa09bed72ac73e';
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function char()
+drop table if exists t;
+create table t (a char(20));
+insert into t values ('65'), ('123456'), ('123456789');
+select char(a using gbk), char(a using utf8), char(a) from t;
+select char(12345678 using gbk);
+set @@tidb_enable_vectorized_expression = true;
+select char(a using gbk), char(a using utf8), char(a) from t;
+select char(12345678 using gbk);
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function compress()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
+set @@tidb_enable_vectorized_expression = true;
+select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function aes_decrypt()
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_decrypt(0xC54279F381B0710E145E94106F03C94C, '123')) as a, hex(aes_decrypt(0x7A747EC6F1906276D036B1F3CE27BAAB, '123')) as b;
+set @@block_encryption_mode='aes-128-ofb';
+select hex(aes_decrypt(0x91C44DE866D0745252, '1234567890123456', '1234567890123456')) as a, hex(aes_decrypt(0xA7C77BF214A1, '1234567890123456', '1234567890123456')) as b;
+set @@tidb_enable_vectorized_expression = true;
+select hex(aes_decrypt(0x91C44DE866D0745252, '1234567890123456', '1234567890123456')) as a, hex(aes_decrypt(0xA7C77BF214A1, '1234567890123456', '1234567890123456')) as b;
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_decrypt(0xC54279F381B0710E145E94106F03C94C, '123')) as a, hex(aes_decrypt(0x7A747EC6F1906276D036B1F3CE27BAAB, '123')) as b;
+set @@tidb_enable_vectorized_expression = false;
