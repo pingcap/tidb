@@ -24,7 +24,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -1608,34 +1607,4 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
-}
-
-// See issue: https://github.com/pingcap/tidb/issues/29752
-// Ref https://dev.mysql.com/doc/refman/8.0/en/rename-table.html
-func (s *testRecoverTable) TestRenameTableWithLocked(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableTableLock = true
-	})
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database renamedb")
-	tk.MustExec("create database renamedb2")
-	tk.MustExec("use renamedb")
-	tk.MustExec("DROP TABLE IF EXISTS t1;")
-	tk.MustExec("CREATE TABLE t1 (a int);")
-
-	tk.MustExec("LOCK TABLES t1 WRITE;")
-	tk.MustGetErrCode("drop database renamedb2;", errno.ErrLockOrActiveTransaction)
-	tk.MustExec("RENAME TABLE t1 TO t2;")
-	tk.MustQuery("select * from renamedb.t2").Check(testkit.Rows())
-	tk.MustExec("UNLOCK TABLES")
-	tk.MustExec("RENAME TABLE t2 TO t1;")
-	tk.MustQuery("select * from renamedb.t1").Check(testkit.Rows())
-
-	tk.MustExec("LOCK TABLES t1 READ;")
-	tk.MustGetErrCode("RENAME TABLE t1 TO t2;", errno.ErrTableNotLockedForWrite)
-	tk.MustExec("UNLOCK TABLES")
-
-	tk.MustExec("drop database renamedb")
 }
