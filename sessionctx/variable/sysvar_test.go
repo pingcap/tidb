@@ -807,3 +807,13 @@ func TestDDLWorkers(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, val, "100") // unchanged
 }
+
+func TestDefaultCharsetAndCollation(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := GetSessionOrGlobalSystemVar(vars, CharacterSetConnection)
+	require.NoError(t, err)
+	require.Equal(t, val, mysql.DefaultCharset)
+	val, err = GetSessionOrGlobalSystemVar(vars, CollationConnection)
+	require.NoError(t, err)
+	require.Equal(t, val, mysql.DefaultCollationName)
+}
