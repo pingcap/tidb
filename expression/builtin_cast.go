@@ -29,7 +29,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -1906,33 +1905,6 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	types.SetBinChsClnFlag(tp)
 	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
 	return BuildCastFunction(ctx, expr, tp)
-}
-
-// charsetConvertMap contains the builtin functions which arguments need to be converted to the correct charset.
-var charsetConvertMap = map[string]struct{}{
-	ast.Hex: {}, ast.Length: {}, ast.OctetLength: {}, ast.ASCII: {},
-	ast.ToBase64: {},
-}
-
-// WrapWithConvertCharset wraps `expr` with converting charset sig.
-func WrapWithConvertCharset(ctx sessionctx.Context, expr Expression, funcName string) Expression {
-	retTp := expr.GetType()
-	if _, err := charset.GetDefaultCollationLegacy(retTp.Charset); err != nil {
-		const convChs = "convert_charset"
-		if _, ok := charsetConvertMap[funcName]; ok {
-			bf, err := newBaseBuiltinFunc(ctx, convChs, []Expression{expr}, retTp.EvalType())
-			if err != nil {
-				return expr
-			}
-			chsSig := &builtinConvertCharsetSig{bf}
-			return &ScalarFunction{
-				FuncName: model.NewCIStr(convChs),
-				RetType:  retTp,
-				Function: chsSig,
-			}
-		}
-	}
-	return expr
 }
 
 // WrapWithCastAsString wraps `expr` with `cast` if the return type of expr is

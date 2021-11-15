@@ -15,8 +15,10 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -40,14 +42,7 @@ func (b *builtinConvertCharsetSig) evalString(row chunk.Row) (res string, isNull
 	tp := b.args[0].GetType()
 	enc := charset.NewEncoding(tp.Charset)
 	res, err = enc.EncodeString(val)
-	if err != nil {
-		return res, false, err
-	}
-	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
-	if err != nil {
-		return res, false, err
-	}
-	return padZeroForBinaryType(res, b.tp, b.ctx)
+	return res, false, err
 }
 
 func (b *builtinConvertCharsetSig) vectorized() bool {
@@ -77,20 +72,32 @@ func (b *builtinConvertCharsetSig) vecEvalString(input *chunk.Chunk, result *chu
 		if err != nil {
 			return err
 		}
-		str, err = types.ProduceStrWithSpecifiedTp(str, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
-		if err != nil {
-			return err
-		}
-		var d bool
-		str, d, err = padZeroForBinaryType(str, b.tp, b.ctx)
-		if err != nil {
-			return err
-		}
-		if d {
-			result.AppendNull()
-		} else {
-			result.AppendString(str)
-		}
+		result.AppendString(str)
 	}
 	return nil
+}
+
+// charsetConvertMap contains the builtin functions which arguments need to be converted to the correct charset.
+var charsetConvertMap = map[string]struct{}{
+	ast.Hex: {}, ast.Length: {}, ast.OctetLength: {}, ast.ASCII: {},
+	ast.ToBase64: {},
+}
+
+// WrapWithConvertCharset wraps `expr` with converting charset sig.
+func WrapWithConvertCharset(ctx sessionctx.Context, expr Expression, funcName string) Expression {
+	retTp := expr.GetType()
+	const convChs = "convert_charset"
+	if _, ok := charsetConvertMap[funcName]; ok {
+		bf, err := newBaseBuiltinFunc(ctx, convChs, []Expression{expr}, retTp.EvalType())
+		if err != nil {
+			return expr
+		}
+		chsSig := &builtinConvertCharsetSig{bf}
+		return &ScalarFunction{
+			FuncName: model.NewCIStr(convChs),
+			RetType:  retTp,
+			Function: chsSig,
+		}
+	}
+	return expr
 }
