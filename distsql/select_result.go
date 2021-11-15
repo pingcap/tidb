@@ -199,69 +199,73 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		r.mu.Lock()
-		if r.exit {
-			r.mu.Unlock()
-			break
-		}
-		if r.selectResp != nil {
-			r.memConsume(-atomic.LoadInt64(&r.selectRespSize))
-		}
-		if resultSubset == nil {
-			r.selectResp = nil
-			atomic.StoreInt64(&r.selectRespSize, 0)
-			if !r.durationReported {
-				// final round of fetch
-				// TODO: Add a label to distinguish between success or failure.
-				// https://github.com/pingcap/tidb/issues/11397
-				metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
-				r.durationReported = true
+
+		ifBreak, err := func() (bool, error) {
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			if r.exit {
+				return true, nil
 			}
-			r.mu.Unlock()
+			if r.selectResp != nil {
+				r.memConsume(-atomic.LoadInt64(&r.selectRespSize))
+			}
+			if resultSubset == nil {
+				r.selectResp = nil
+				atomic.StoreInt64(&r.selectRespSize, 0)
+				if !r.durationReported {
+					// final round of fetch
+					// TODO: Add a label to distinguish between success or failure.
+					// https://github.com/pingcap/tidb/issues/11397
+					metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
+					r.durationReported = true
+				}
+				return true, nil
+			}
+			r.selectResp = new(tipb.SelectResponse)
+			err = r.selectResp.Unmarshal(resultSubset.GetData())
+			if err != nil {
+				return true, errors.Trace(err)
+			}
+			respSize := int64(r.selectResp.Size())
+			atomic.StoreInt64(&r.selectRespSize, respSize)
+			r.memConsume(respSize)
+			if err := r.selectResp.Error; err != nil {
+				return true, dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
+			}
+			sessVars := r.ctx.GetSessionVars()
+			if atomic.LoadUint32(&sessVars.Killed) == 1 {
+				return true, errors.Trace(errQueryInterrupted)
+			}
+			sc := sessVars.StmtCtx
+			for _, warning := range r.selectResp.Warnings {
+				sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
+			}
+			if r.feedback != nil {
+				r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
+			}
+			r.partialCount++
+
+			hasStats, ok := resultSubset.(CopRuntimeStats)
+			if ok {
+				copStats := hasStats.GetCopRuntimeStats()
+				if copStats != nil {
+					r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime())
+					copStats.CopTime = duration
+					sc.MergeExecDetails(&copStats.ExecDetails, nil)
+				}
+			}
+			if len(r.selectResp.Chunks) != 0 {
+				return true, nil
+			}
+			return false, nil
+		}()
+		if err != nil {
+			return err
+		}
+		if ifBreak {
 			return nil
 		}
-		r.selectResp = new(tipb.SelectResponse)
-		err = r.selectResp.Unmarshal(resultSubset.GetData())
-		if err != nil {
-			r.mu.Unlock()
-			return errors.Trace(err)
-		}
-		respSize := int64(r.selectResp.Size())
-		atomic.StoreInt64(&r.selectRespSize, respSize)
-		r.memConsume(respSize)
-		if err := r.selectResp.Error; err != nil {
-			r.mu.Unlock()
-			return dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
-		}
-		sessVars := r.ctx.GetSessionVars()
-		if atomic.LoadUint32(&sessVars.Killed) == 1 {
-			r.mu.Unlock()
-			return errors.Trace(errQueryInterrupted)
-		}
-		sc := sessVars.StmtCtx
-		for _, warning := range r.selectResp.Warnings {
-			sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
-		}
-		if r.feedback != nil {
-			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
-		}
-		r.partialCount++
-
-		hasStats, ok := resultSubset.(CopRuntimeStats)
-		if ok {
-			copStats := hasStats.GetCopRuntimeStats()
-			if copStats != nil {
-				r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime())
-				copStats.CopTime = duration
-				sc.MergeExecDetails(&copStats.ExecDetails, nil)
-			}
-		}
-		r.mu.Unlock()
-		if len(r.selectResp.Chunks) != 0 {
-			break
-		}
 	}
-	return nil
 }
 
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
