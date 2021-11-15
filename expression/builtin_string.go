@@ -2446,8 +2446,14 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 		bigints = append(bigints, val)
 	}
-	result := string(b.convertToBytes(bigints))
-	return result, false, nil
+
+	dBytes := b.convertToBytes(bigints)
+	resultBytes, err := charset.NewEncoding(b.tp.Charset).Decode(nil, dBytes)
+	if err != nil {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return "", true, nil
+	}
+	return string(resultBytes), false, nil
 }
 
 type charLengthFunctionClass struct {
@@ -3629,10 +3635,9 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 		return "", isNull, err
 	}
 	argTp := b.args[0].GetType()
-	if !types.IsBinaryStr(argTp) {
-		if encodedStr, err := charset.NewEncoding(argTp.Charset).EncodeString(str); err == nil {
-			str = encodedStr
-		}
+	str, err = charset.NewEncoding(argTp.Charset).EncodeString(str)
+	if err != nil {
+		return "", false, err
 	}
 	needEncodeLen := base64NeededEncodedLength(len(str))
 	if needEncodeLen == -1 {
