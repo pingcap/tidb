@@ -65,13 +65,8 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-<<<<<<< HEAD
-	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20211029104011-2fd3841894de
-	github.com/tikv/pd v1.1.0-beta.0.20211029083450-e65f0c55b6ae
-=======
 	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20211103022933-5ae005dac331
 	github.com/tikv/pd v1.1.0-beta.0.20211104095303-69c86d05d379
->>>>>>> 3d9196dde... *: allow setting @@tidb_tso_client_batch_max_wait_time to a float millisecond (#29699)
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/uber/jaeger-lib v2.4.1+incompatible // indirect
