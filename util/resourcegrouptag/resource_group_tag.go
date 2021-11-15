@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
@@ -112,6 +113,24 @@ func GetFirstKeyFromRequest(req *tikvrpc.Request) (firstKey []byte) {
 		r := req.Req.(*kvrpcpb.BatchRollbackRequest)
 		if r != nil && len(r.Keys) > 0 {
 			firstKey = r.Keys[0]
+		}
+	case *coprocessor.Request:
+		r := req.Req.(*coprocessor.Request)
+		if r != nil && len(r.Ranges) > 0 {
+			if keyRange := r.Ranges[0]; keyRange != nil {
+				firstKey = keyRange.Start
+			}
+		}
+	case *coprocessor.BatchRequest:
+		r := req.Req.(*coprocessor.BatchRequest)
+		if r != nil && len(r.Regions) > 0 {
+			if region := r.Regions[0]; region != nil {
+				if len(region.Ranges) > 0 {
+					if keyRange := region.Ranges[0]; keyRange != nil {
+						firstKey = keyRange.Start
+					}
+				}
+			}
 		}
 	}
 	return

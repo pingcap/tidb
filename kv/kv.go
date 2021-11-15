@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/trxevents"
-	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -336,10 +336,8 @@ type Request struct {
 	IsStaleness bool
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
-	// ResourceGroupTag indicates the kv request task group.
-	ResourceGroupTag []byte
-	// ResourceGroupTagLabel indicates the key label of the kv request.
-	ResourceGroupTagLabel tipb.ResourceGroupTagLabel
+	// ResourceGroupTagger indicates the kv request task group tagger.
+	ResourceGroupTagger tikvrpc.ResourceGroupTagger
 }
 
 const (

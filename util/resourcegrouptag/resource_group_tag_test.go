@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/hack"
@@ -162,6 +163,28 @@ func TestGetFirstKeyFromRequest(t *testing.T) {
 	req = &tikvrpc.Request{Req: &kvrpcpb.BatchRollbackRequest{Keys: [][]byte{}}}
 	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &kvrpcpb.BatchRollbackRequest{Keys: [][]byte{testK2, testK1}}}
+	require.Equal(t, testK2, GetFirstKeyFromRequest(req))
+
+	req = &tikvrpc.Request{Req: (*coprocessor.Request)(nil)}
+	require.Nil(t, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &coprocessor.Request{Ranges: nil}}
+	require.Nil(t, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &coprocessor.Request{Ranges: []*coprocessor.KeyRange{}}}
+	require.Nil(t, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &coprocessor.Request{Ranges: []*coprocessor.KeyRange{{Start: testK1}}}}
+	require.Equal(t, testK1, GetFirstKeyFromRequest(req))
+
+	req = &tikvrpc.Request{Req: (*coprocessor.BatchRequest)(nil)}
+	require.Nil(t, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &coprocessor.BatchRequest{Regions: nil}}
+	require.Nil(t, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &coprocessor.BatchRequest{Regions: []*coprocessor.RegionInfo{}}}
+	require.Nil(t, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &coprocessor.BatchRequest{Regions: []*coprocessor.RegionInfo{{Ranges: nil}}}}
+	require.Nil(t, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &coprocessor.BatchRequest{Regions: []*coprocessor.RegionInfo{{Ranges: []*coprocessor.KeyRange{}}}}}
+	require.Nil(t, GetFirstKeyFromRequest(req))
+	req = &tikvrpc.Request{Req: &coprocessor.BatchRequest{Regions: []*coprocessor.RegionInfo{{Ranges: []*coprocessor.KeyRange{{Start: testK2}}}}}}
 	require.Equal(t, testK2, GetFirstKeyFromRequest(req))
 }
 

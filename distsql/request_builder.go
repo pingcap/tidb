@@ -34,7 +34,9 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -151,16 +153,6 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 			builder.Request.Concurrency = 1
 		}
 	}
-	if variable.TopSQLEnabled() && len(dag.Executors) > 0 {
-		switch dag.Executors[0].Tp {
-		case tipb.ExecType_TypeIndexScan:
-			builder.SetResourceGroupTagLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex)
-		case tipb.ExecType_TypeTableScan:
-			builder.SetResourceGroupTagLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow)
-		default:
-			builder.SetResourceGroupTagLabel(tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
-		}
-	}
 	return builder
 }
 
@@ -224,12 +216,6 @@ func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 	return builder
 }
 
-// SetResourceGroupTagLabel sets `ResourceGroupTagLabel` property.
-func (builder *RequestBuilder) SetResourceGroupTagLabel(label tipb.ResourceGroupTagLabel) *RequestBuilder {
-	builder.Request.ResourceGroupTagLabel = label
-	return builder
-}
-
 func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 	switch builder.Tp {
 	case kv.ReqTypeAnalyze:
@@ -262,7 +248,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	builder.SetResourceGroupTag(sv.StmtCtx)
+	builder.SetResourceGroupTagger(sv.StmtCtx)
 	return builder
 }
 
@@ -298,10 +284,12 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 	return builder
 }
 
-// SetResourceGroupTag sets the request resource group tag.
-func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext) *RequestBuilder {
+// SetResourceGroupTagger sets the request resource group tagger.
+func (builder *RequestBuilder) SetResourceGroupTagger(sc *stmtctx.StatementContext) *RequestBuilder {
 	if variable.TopSQLEnabled() {
-		builder.Request.ResourceGroupTag = sc.GetResourceGroupTagByLabel(builder.Request.ResourceGroupTagLabel)
+		builder.Request.ResourceGroupTagger = func(req *tikvrpc.Request) {
+			req.ResourceGroupTag = sc.GetResourceGroupTagByFirstKey(resourcegrouptag.GetFirstKeyFromRequest(req))
+		}
 	}
 	return builder
 }
