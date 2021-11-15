@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -928,11 +929,19 @@ func MaybeOverOptimized4PlanCache(ctx sessionctx.Context, exprs []Expression) bo
 		RemoveMutableConst(ctx, exprs)
 		return false
 	}
-	return containMutableConst(ctx, exprs)
+	return containMutableConst(exprs)
+}
+
+func maybeOverOptimized4PlanCacheWithStmtCtx(sc *stmtctx.StatementContext, exprs []Expression) bool {
+	// If we do not enable plan cache, all the optimization can work correctly.
+	if !sc.UseCache || sc.MaybeOverOptimized4PlanCache {
+		return false
+	}
+	return containMutableConst(exprs)
 }
 
 // containMutableConst checks if the expressions contain a lazy constant.
-func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
+func containMutableConst(exprs []Expression) bool {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
@@ -940,7 +949,7 @@ func containMutableConst(ctx sessionctx.Context, exprs []Expression) bool {
 				return true
 			}
 		case *ScalarFunction:
-			if containMutableConst(ctx, v.GetArgs()) {
+			if containMutableConst(v.GetArgs()) {
 				return true
 			}
 		}

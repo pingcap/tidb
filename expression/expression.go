@@ -1281,6 +1281,9 @@ func PushDownExprsWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression
 	for _, expr := range exprs {
 		if canExprPushDown(expr, pc, storeType, canEnumPush) {
 			pushed = append(pushed, expr)
+			if maybeOverOptimized4PlanCacheWithStmtCtx(sc, []Expression{expr}) {
+				remained = append(remained, expr.Clone())
+			}
 		} else {
 			remained = append(remained, expr)
 		}
