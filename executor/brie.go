@@ -471,8 +471,11 @@ func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 }
 
 func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
-	exec := gs.se.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx, sql, args...)
+	stmt, err := gs.se.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, sql, args...)
+	if err != nil {
+		return err
+	}
+	_, _, err = gs.se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(ctx, stmt)
 	return err
 }
 
