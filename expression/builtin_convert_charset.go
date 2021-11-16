@@ -50,8 +50,7 @@ func (c *tidbConvertCharsetFunctionClass) getFunction(ctx sessionctx.Context, ar
 		// TODO(tangenta): set pbcode for to_binary() sig.
 		sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
 	default:
-		msg := fmt.Sprintf("unexpected argTp: %d", argTp)
-		panic(msg)
+		return nil, fmt.Errorf("unexpected argTp: %d", argTp)
 	}
 	return sig, nil
 }
@@ -119,18 +118,18 @@ var toBinaryMap = map[string]struct{}{
 
 // WrapWithToBinary wraps `expr` with to_binary sig.
 func WrapWithToBinary(ctx sessionctx.Context, expr Expression, funcName string) Expression {
-	retTp := expr.GetType()
-	if _, err := charset.GetDefaultCollationLegacy(retTp.Charset); err != nil {
+	exprTp := expr.GetType()
+	if _, err := charset.GetDefaultCollationLegacy(exprTp.Charset); err != nil {
 		if _, ok := toBinaryMap[funcName]; ok {
-			bf, err := newBaseBuiltinFunc(ctx, InternalFuncToBinary, []Expression{expr}, retTp.EvalType())
+			fc := funcs[InternalFuncToBinary]
+			sig, err := fc.getFunction(ctx, []Expression{expr})
 			if err != nil {
 				return expr
 			}
-			chsSig := &builtinInternalToBinarySig{bf}
 			sf := &ScalarFunction{
 				FuncName: model.NewCIStr(InternalFuncToBinary),
-				RetType:  retTp,
-				Function: chsSig,
+				RetType:  exprTp,
+				Function: sig,
 			}
 			return FoldConstant(sf)
 		}
