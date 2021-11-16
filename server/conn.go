@@ -213,6 +213,9 @@ func (cc *clientConn) String() string {
 // https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::AuthSwitchRequest
 // https://bugs.mysql.com/bug.php?id=93044
 func (cc *clientConn) authSwitchRequest(ctx context.Context, plugin string) ([]byte, error) {
+	failpoint.Inject("FakeAuthSwitch", func() {
+		failpoint.Return([]byte(plugin), nil)
+	})
 	enclen := 1 + len(plugin) + 1 + len(cc.salt) + 1
 	data := cc.alloc.AllocWithLen(4, enclen)
 	data = append(data, mysql.AuthSwitchRequest) // switch request
@@ -854,6 +857,9 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 		return nil, err
 	}
 	userplugin, err := cc.ctx.AuthPluginForUser(&auth.UserIdentity{Username: cc.user, Hostname: host})
+	failpoint.Inject("FakeUser", func(val failpoint.Value) {
+		userplugin = val.(string)
+	})
 	if err != nil {
 		// This happens if the account doesn't exist
 		logutil.Logger(ctx).Warn("Failed to get authentication method for user",
@@ -872,12 +878,14 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 		// This happens if the account doesn't exist or if the account doesn't have
 		// a password set.
 		if resp.AuthPlugin != mysql.AuthNativePassword {
-			resp.AuthPlugin = mysql.AuthNativePassword
-			authData, err := cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
-			if err != nil {
-				return nil, err
+			if resp.Capability&mysql.ClientPluginAuth > 0 {
+				resp.AuthPlugin = mysql.AuthNativePassword
+				authData, err := cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
+				if err != nil {
+					return nil, err
+				}
+				return authData, nil
 			}
-			return authData, nil
 		}
 		return nil, nil
 	}
