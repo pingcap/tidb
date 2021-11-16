@@ -854,3 +854,23 @@ func (s *configTestSuite) TestCheckpointKeepStrategy(c *C) {
 		c.Assert(res, DeepEquals, []byte(value))
 	}
 }
+
+func (s configTestSuite) TestLoadCharsetFromConfig(c *C) {
+	cases := map[string]config.Charset{
+		"binary":  config.Binary,
+		"BINARY":  config.Binary,
+		"GBK":     config.GBK,
+		"gbk":     config.GBK,
+		"Gbk":     config.GBK,
+		"gB18030": config.GB18030,
+		"GB18030": config.GB18030,
+	}
+	for k, v := range cases {
+		charset, err := config.ParseCharset(k)
+		c.Assert(err, IsNil)
+		c.Assert(charset, Equals, v)
+	}
+
+	_, err := config.ParseCharset("Unknown")
+	c.Assert(err, ErrorMatches, "found unsupported data-character-set: Unknown")
+}
