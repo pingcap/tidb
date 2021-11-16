@@ -100,16 +100,43 @@ func (s *subClient) run(wg *sync.WaitGroup) {
 	}()
 
 	for task := range s.sendTask {
-		ctx, cancel := context.WithTimeout(context.Background(), task.timeout)
+		ctx, cancel := context.WithCancel(context.Background())
 		start := time.Now()
-		err := s.doSend(ctx, task.data)
-		cancel()
-		if err != nil {
-			logutil.BgLogger().Warn("[top-sql] client failed to send data to subscriber", zap.Error(err))
-			reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+
+		var err error
+		doneCh := make(chan struct{})
+		go func(task struct {
+			data    reportData
+			timeout time.Duration
+		}) {
+			defer func() {
+				doneCh <- struct{}{}
+			}()
+			err = s.doSend(ctx, task.data)
+			if err != nil {
+				reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+			} else {
+				reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
+			}
+		}(task)
+
+		select {
+		case <-doneCh:
+			cancel()
+			if err != nil {
+				logutil.BgLogger().Warn(
+					"[top-sql] client failed to send data to subscriber",
+					zap.Error(err),
+				)
+				return
+			}
+		case <-time.After(task.timeout):
+			cancel()
+			logutil.BgLogger().Warn(
+				"[top-sql] client failed to send data to subscriber due to timeout",
+				zap.Duration("timeout", task.timeout),
+			)
 			return
-		} else {
-			reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
 		}
 	}
 }
