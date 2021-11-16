@@ -51,7 +51,7 @@ func newLonglong(value int64) *Constant {
 
 func newString(value string, collation string) *Constant {
 	return &Constant{
-		Value: types.NewStringDatum(value),
+		Value:   types.NewStringDatum(value),
 		RetType: types.NewFieldTypeWithCollation(mysql.TypeVarchar, collation, 255),
 	}
 }
@@ -236,7 +236,7 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 	tests := []struct {
 		condition Expression
 		result    string
-	} {
+	}{
 		{
 			condition: newFunction(ast.Length, newFunctionWithType(
 				InternalFuncToBinary, mysql.TypeVarchar,
