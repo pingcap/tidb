@@ -744,7 +744,7 @@ func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
 		FastAuthFail     = 4
 	)
 
-	// Currently we always send a "FastAuthFail" as the cached part of the protocl isn't implemented yet.
+	// Currently we always send a "FastAuthFail" as the cached part of the protocol isn't implemented yet.
 	// This triggers the client to send the full response.
 	err := cc.writePacket([]byte{0, 0, 0, 0, ShaCommand, FastAuthFail})
 	if err != nil {
@@ -896,7 +896,7 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 			resp.AuthPlugin = userplugin
 			return authData, nil
 		} else if userplugin != mysql.AuthNativePassword {
-			// MySQL 5.1 and older don't support authenticaton plugins yet
+			// MySQL 5.1 and older don't support authentication plugins yet
 			return nil, errNotSupportedAuthMode
 		}
 	}
