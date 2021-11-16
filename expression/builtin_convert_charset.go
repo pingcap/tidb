@@ -104,7 +104,7 @@ func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.Fi
 // WrapWithToBinary wraps `expr` with to_binary sig.
 func WrapWithToBinary(ctx sessionctx.Context, expr Expression, funcName string) Expression {
 	retTp := expr.GetType()
-	if _, err := charset.GetDefaultCollationLegacy(retTp.Charset); err == nil {
+	if _, err := charset.GetDefaultCollationLegacy(retTp.Charset); err != nil {
 		if _, ok := toBinaryMap[funcName]; ok {
 			return BuildToBinaryFunction(ctx, expr, retTp)
 		}
