@@ -874,10 +874,10 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 		if resp.AuthPlugin != mysql.AuthNativePassword {
 			resp.AuthPlugin = mysql.AuthNativePassword
 			authData, err := cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
-			return authData, nil
 			if err != nil {
 				return nil, err
 			}
+			return authData, nil
 		}
 		return nil, nil
 	}
