@@ -15,16 +15,46 @@
 package expression
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // InternalFuncToBinary accepts a string and returns another string encoded in a given charset.
 const InternalFuncToBinary = "to_binary"
+
+type tidbConvertCharsetFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbConvertCharsetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, c.verifyArgs(args)
+	}
+	argFieldTp := args[0].GetType()
+	argTp := argFieldTp.EvalType()
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, argTp)
+	if err != nil {
+		return nil, err
+	}
+	var sig builtinFunc
+	switch argTp {
+	case types.ETString:
+		sig = &builtinInternalToBinarySig{bf}
+		// TODO(tangenta): set pbcode for to_binary() sig.
+		sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
+	default:
+		msg := fmt.Sprintf("unexpected argTp: %d", argTp)
+		panic(msg)
+	}
+	return sig, nil
+}
 
 var _ builtinFunc = &builtinInternalToBinarySig{}
 
@@ -87,26 +117,22 @@ var toBinaryMap = map[string]struct{}{
 	ast.ToBase64: {},
 }
 
-// BuildToBinaryFunction builds a to_binary ScalarFunction from the Expression.
-func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) Expression {
-	bf, err := newBaseBuiltinFunc(ctx, InternalFuncToBinary, []Expression{expr}, tp.EvalType())
-	if err != nil {
-		return expr
-	}
-	chsSig := &builtinInternalToBinarySig{bf}
-	return &ScalarFunction{
-		FuncName: model.NewCIStr(InternalFuncToBinary),
-		RetType:  tp,
-		Function: chsSig,
-	}
-}
-
 // WrapWithToBinary wraps `expr` with to_binary sig.
 func WrapWithToBinary(ctx sessionctx.Context, expr Expression, funcName string) Expression {
 	retTp := expr.GetType()
 	if _, err := charset.GetDefaultCollationLegacy(retTp.Charset); err != nil {
 		if _, ok := toBinaryMap[funcName]; ok {
-			return BuildToBinaryFunction(ctx, expr, retTp)
+			bf, err := newBaseBuiltinFunc(ctx, InternalFuncToBinary, []Expression{expr}, retTp.EvalType())
+			if err != nil {
+				return expr
+			}
+			chsSig := &builtinInternalToBinarySig{bf}
+			sf := &ScalarFunction{
+				FuncName: model.NewCIStr(InternalFuncToBinary),
+				RetType:  retTp,
+				Function: chsSig,
+			}
+			return FoldConstant(sf)
 		}
 	}
 	return expr

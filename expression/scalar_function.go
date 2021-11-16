@@ -183,8 +183,6 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		return BuildCastFunction(ctx, args[0], retType), nil
 	case ast.GetVar:
 		return BuildGetVarFunction(ctx, args[0], retType)
-	case InternalFuncToBinary:
-		return BuildToBinaryFunction(ctx, args[0], retType), nil
 	}
 	fc, ok := funcs[funcName]
 	if !ok {

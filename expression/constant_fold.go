@@ -165,11 +165,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 		allConstArg := true
 		isDeferredConst := false
 		for i := 0; i < len(args); i++ {
-			arg := args[i]
-			if sf, ok := arg.(*ScalarFunction); ok && sf.FuncName.L == InternalFuncToBinary {
-				arg = FoldConstant(sf)
-			}
-			switch x := arg.(type) {
+			switch x := args[i].(type) {
 			case *Constant:
 				isDeferredConst = isDeferredConst || x.DeferredExpr != nil || x.ParamMarker != nil
 				argIsConst[i] = true
