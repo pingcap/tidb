@@ -17,6 +17,8 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/memory"
 	"strings"
 	"sync"
 	"time"
@@ -95,7 +97,7 @@ func generateTableSplitKeyForInt(tid int64, splitNum []int) [][]byte {
 	return results
 }
 
-func generateIndexSplitKeyForInt(tid, idx int64, splitNum []int) [][]byte {
+func generateIndexSplitKeyForInt(sc *stmtctx.StatementContext, tid, idx int64, splitNum []int) [][]byte {
 	results := make([][]byte, 0, len(splitNum))
 	for _, num := range splitNum {
 		d := new(types.Datum)
@@ -104,7 +106,7 @@ func generateIndexSplitKeyForInt(tid, idx int64, splitNum []int) [][]byte {
 		if err != nil {
 			panic(err)
 		}
-		results = append(results, tablecodec.EncodeIndexSeekKey(tid, idx, b))
+		results = append(results, tablecodec.EncodeIndexSeekKey(sc, tid, idx, b))
 	}
 	return results
 }
@@ -202,8 +204,9 @@ func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
 	tid := tbl.Meta().ID
 	idx := tbl.Meta().Indices[0].ID
 
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC, MemTracker: memory.NewTracker(0, 1<<30)}
 	// construct two regions split by 100
-	splitKeys := generateIndexSplitKeyForInt(tid, idx, []int{100})
+	splitKeys := generateIndexSplitKeyForInt(sc, tid, idx, []int{100})
 	regionIDs := manipulateCluster(cluster, splitKeys)
 
 	noDelayThreshold := time.Millisecond * 100

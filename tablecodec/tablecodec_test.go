@@ -16,6 +16,7 @@ package tablecodec
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 	"math"
 	"testing"
 	"time"
@@ -335,12 +336,12 @@ func TestCutKeyNew(t *testing.T) {
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC, MemTracker: memory.NewTracker(0, 1<<30)}
 	encodedValue, err := codec.EncodeKey(sc, nil, values...)
 	require.NoError(t, err)
 	tableID := int64(4)
 	indexID := int64(5)
-	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
+	indexKey := EncodeIndexSeekKey(sc, tableID, indexID, encodedValue)
 	valuesBytes, handleBytes, err := CutIndexKeyNew(indexKey, 3)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
@@ -364,7 +365,7 @@ func TestCutKey(t *testing.T) {
 	require.NoError(t, err)
 	tableID := int64(4)
 	indexID := int64(5)
-	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
+	indexKey := EncodeIndexSeekKey(sc, tableID, indexID, encodedValue)
 	valuesMap, handleBytes, err := CutIndexKey(indexKey, colIDs)
 	require.NoError(t, err)
 	for i, colID := range colIDs {
@@ -394,7 +395,7 @@ func TestIndexKey(t *testing.T) {
 	t.Parallel()
 	tableID := int64(4)
 	indexID := int64(5)
-	indexKey := EncodeIndexSeekKey(tableID, indexID, []byte{})
+	indexKey := EncodeIndexSeekKey(nil, tableID, indexID, []byte{})
 	tTableID, tIndexID, isRecordKey, err := DecodeKeyHead(indexKey)
 	require.NoError(t, err)
 	require.Equal(t, tableID, tTableID)
@@ -482,7 +483,7 @@ func TestDecodeIndexKey(t *testing.T) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	encodedValue, err := codec.EncodeKey(sc, nil, values...)
 	require.NoError(t, err)
-	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
+	indexKey := EncodeIndexSeekKey(sc, tableID, indexID, encodedValue)
 
 	decodeTableID, decodeIndexID, decodeValues, err := DecodeIndexKey(indexKey)
 	require.NoError(t, err)
@@ -508,8 +509,8 @@ func TestRange(t *testing.T) {
 	require.Less(t, string(e1), string(s2))
 	require.Less(t, string(s2), string(e2))
 
-	s1, e1 = GetTableIndexKeyRange(42, 666)
-	s2, e2 = GetTableIndexKeyRange(42, 667)
+	s1, e1 = GetTableIndexKeyRange(nil, 42, 666)
+	s2, e2 = GetTableIndexKeyRange(nil, 42, 667)
 	require.Less(t, string(s1), string(e1))
 	require.Less(t, string(e1), string(s2))
 	require.Less(t, string(s2), string(e2))

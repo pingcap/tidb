@@ -4080,6 +4080,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		if err != nil {
 			return nil, err
 		}
+		tmpDatumRangesLen := len(tmpDatumRanges)
 		for _, nextColRan := range nextColRanges {
 			for _, ran := range ranges {
 				ran.LowVal[lastPos] = nextColRan.LowVal[0]
@@ -4089,9 +4090,17 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 				tmpDatumRanges = append(tmpDatumRanges, ran.Clone())
 			}
 		}
+		if len(tmpDatumRanges) > tmpDatumRangesLen {
+			for _, ran := range tmpDatumRanges[tmpDatumRangesLen:] {
+				sc.MemTracker.Consume(2 * types.EstimatedMemUsage(ran.LowVal, len(ran.LowVal)))
+			}
+		}
 	}
 
 	if cwc == nil {
+		if len(kvRanges) != 0 {
+			sc.MemTracker.Consume(2 * int64(len(kvRanges[0].StartKey)*len(kvRanges)))
+		}
 		sort.Slice(kvRanges, func(i, j int) bool {
 			return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
 		})

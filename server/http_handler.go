@@ -1322,7 +1322,7 @@ func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tb
 	for _, index := range tbl.Indices() {
 		indexID := index.Meta().ID
 		indexName := index.Meta().Name.String()
-		startKey, endKey := tablecodec.GetTableIndexKeyRange(tableID, indexID)
+		startKey, endKey := tablecodec.GetTableIndexKeyRange(nil, tableID, indexID)
 		startKey = codec.EncodeBytes([]byte{}, startKey)
 		endKey = codec.EncodeBytes([]byte{}, endKey)
 		name := tableName + "-" + indexName
@@ -1450,7 +1450,7 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 		indexID := index.Meta().ID
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
-		startKey, endKey := tablecodec.GetTableIndexKeyRange(id, indexID)
+		startKey, endKey := tablecodec.GetTableIndexKeyRange(nil, id, indexID)
 		regions, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 		if err != nil {
 			return nil, err

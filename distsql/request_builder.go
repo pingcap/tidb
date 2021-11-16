@@ -587,8 +587,8 @@ func IndexRangesToKVRangesForTables(sc *stmtctx.StatementContext, tids []int64, 
 			high = kv.Key(high).PrefixNext()
 		}
 		for _, tid := range tids {
-			startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
-			endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)
+			startKey := tablecodec.EncodeIndexSeekKey(sc, tid, idxID, low)
+			endKey := tablecodec.EncodeIndexSeekKey(sc, tid, idxID, high)
 			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 		}
 	}
@@ -650,8 +650,8 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 			return nil, err
 		}
 		for _, tid := range tids {
-			startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
-			endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)
+			startKey := tablecodec.EncodeIndexSeekKey(sc, tid, idxID, low)
+			endKey := tablecodec.EncodeIndexSeekKey(sc, tid, idxID, high)
 			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 		}
 	}
@@ -660,11 +660,17 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 
 func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []byte, error) {
 	low, err := codec.EncodeKey(sc, nil, ran.LowVal...)
+	sc.MemTracker.Consume(int64(cap(low)))
 	if err != nil {
 		return nil, nil, err
 	}
 	if ran.LowExclude {
+		// PrefixNext builds a new Key whose length equals to `low`. The memory
+		// consumption needs to be considered since the consumption is high when
+		// the count of `ran` is hugh.
+		sc.MemTracker.Consume(int64(cap(low)))
 		low = kv.Key(low).PrefixNext()
+		sc.MemTracker.Consume(-int64(cap(low)))
 	}
 	high, err := codec.EncodeKey(sc, nil, ran.HighVal...)
 	if err != nil {
@@ -672,7 +678,9 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 	}
 
 	if !ran.HighExclude {
+		sc.MemTracker.Consume(int64(cap(high)))
 		high = kv.Key(high).PrefixNext()
+		sc.MemTracker.Consume(-int64(cap(high)))
 	}
 
 	var hasNull bool

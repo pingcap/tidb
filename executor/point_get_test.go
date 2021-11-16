@@ -17,6 +17,8 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/memory"
 	"strings"
 	"sync"
 	"time"
@@ -616,6 +618,7 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Se.GetSessionVars().StmtCtx = &stmtctx.StatementContext{TimeZone: time.UTC, MemTracker: memory.NewTracker(0, 1<<30)}
 	tk.MustExec("create table t (a varchar(64) primary key, b int)")
 	tk.MustExec("insert t values ('a', 1), ('b', 2), ('c', 3)")
 	tk.MustExec("begin pessimistic")
@@ -623,7 +626,7 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	tid := tk.GetTableID("t")
 	idxVal, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewStringDatum("b"))
 	c.Assert(err, IsNil)
-	pk := tablecodec.EncodeIndexSeekKey(tid, 1, idxVal)
+	pk := tablecodec.EncodeIndexSeekKey(tk.Se.GetSessionVars().StmtCtx, tid, 1, idxVal)
 	txnCtx := tk.Se.GetSessionVars().TxnCtx
 	val, ok := txnCtx.GetKeyInPessimisticLockCache(pk)
 	c.Assert(ok, IsTrue)

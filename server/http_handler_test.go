@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 	"io"
 	"net"
 	"net/http"
@@ -93,7 +94,8 @@ func TestRegionIndexRange(t *testing.T) {
 	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.Local}, nil, indexValues...)
 	require.NoError(t, err)
 
-	startKey := tablecodec.EncodeIndexSeekKey(sTableID, sIndex, encodedValue)
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC, MemTracker: memory.NewTracker(0, 1<<30)}
+	startKey := tablecodec.EncodeIndexSeekKey(sc, sTableID, sIndex, encodedValue)
 	recordPrefix := tablecodec.GenTableRecordPrefix(eTableID)
 	endKey := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
 

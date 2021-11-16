@@ -20,6 +20,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 )
 
 const (
@@ -49,7 +50,7 @@ func EncodeBytes(b []byte, data []byte) []byte {
 	// that is `(len(data) / 8 + 1) * 9` in our implement.
 	dLen := len(data)
 	reallocSize := (dLen/encGroupSize + 1) * (encGroupSize + 1)
-	result := reallocBytes(b, reallocSize)
+	result := reallocBytes(nil, b, reallocSize)
 	for idx := 0; idx <= dLen; idx += encGroupSize {
 		remain := dLen - idx
 		padCount := 0
@@ -150,7 +151,7 @@ func DecodeBytesDesc(b []byte, buf []byte) ([]byte, []byte, error) {
 // efficient in both space and time compare to EncodeBytes. Note that the encoded
 // result is not memcomparable.
 func EncodeCompactBytes(b []byte, data []byte) []byte {
-	b = reallocBytes(b, binary.MaxVarintLen64+len(data))
+	b = reallocBytes(nil, b, binary.MaxVarintLen64+len(data))
 	b = EncodeVarint(b, int64(len(data)))
 	return append(b, data...)
 }
@@ -202,11 +203,14 @@ func reverseBytes(b []byte) {
 }
 
 // reallocBytes is like realloc.
-func reallocBytes(b []byte, n int) []byte {
+func reallocBytes(sc *stmtctx.StatementContext, b []byte, n int) []byte {
 	newSize := len(b) + n
 	if cap(b) < newSize {
 		bs := make([]byte, len(b), newSize)
 		copy(bs, b)
+		if sc != nil && sc.MemTracker != nil {
+			sc.MemTracker.Consume(int64(cap(bs) - cap(b)))
+		}
 		return bs
 	}
 

@@ -82,7 +82,8 @@ type IndexLookUpJoin struct {
 
 	memTracker *memory.Tracker // track memory usage.
 
-	stats *indexLookUpJoinRuntimeStats
+	stats           *indexLookUpJoinRuntimeStats
+	ctxCancelReason atomic.Value
 }
 
 type outerCtx struct {
@@ -145,6 +146,7 @@ type innerWorker struct {
 	outerCtx    outerCtx
 	ctx         sessionctx.Context
 	executorChk *chunk.Chunk
+	lookup      *IndexLookUpJoin
 
 	indexRanges           []*ranger.Range
 	nextColCompareFilters *plannercore.ColWithCmpFuncManager
@@ -222,6 +224,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.keyOff2IdxOff,
 		stats:         innerStats,
+		lookup:        e,
 	}
 	if e.lastColHelper != nil {
 		// nextCwf.TmpConstant needs to be reset for every individual
@@ -298,6 +301,9 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 	select {
 	case task = <-e.resultCh:
 	case <-ctx.Done():
+		if err := e.ctxCancelReason.Load(); err != nil {
+			return nil, err.(error)
+		}
 		return nil, ctx.Err()
 	}
 	if task == nil {
@@ -310,6 +316,9 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 			return nil, err
 		}
 	case <-ctx.Done():
+		if err := e.ctxCancelReason.Load(); err != nil {
+			return nil, err.(error)
+		}
 		return nil, ctx.Err()
 	}
 
@@ -338,8 +347,10 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("outerWorker panicked", zap.String("stack", string(buf)))
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
-			task.doneCh <- errors.Errorf("%v", r)
-			ow.pushToChan(ctx, task, ow.resultCh)
+			err := errors.Errorf("%v", r)
+			task.doneCh <- err
+			ow.lookup.ctxCancelReason.Store(err)
+			ow.lookup.cancelFunc()
 		}
 		close(ow.resultCh)
 		close(ow.innerCh)
@@ -454,8 +465,11 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("innerWorker panicked", zap.String("stack", string(buf)))
+			err := errors.Errorf("%v", r)
 			// "task != nil" is guaranteed when panic happened.
-			task.doneCh <- errors.Errorf("%v", r)
+			task.doneCh <- err
+			iw.lookup.ctxCancelReason.Store(err)
+			iw.lookup.cancelFunc()
 		}
 		wg.Done()
 	}()
@@ -519,6 +533,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 		numRows := chk.NumRows()
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 			dLookUpKey, dHashKey, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
+			iw.lookup.memTracker.Consume(types.EstimatedMemUsage(dLookUpKey, len(dLookUpKey)))
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrWrongValue) {
 					// We ignore rows with invalid datetime.
@@ -665,6 +680,9 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	for {
 		select {
 		case <-ctx.Done():
+			if err := iw.lookup.ctxCancelReason.Load(); err != nil {
+				return err.(error)
+			}
 			return ctx.Err()
 		default:
 		}

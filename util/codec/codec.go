@@ -55,7 +55,7 @@ const (
 	sizeFloat64 = unsafe.Sizeof(float64(0))
 )
 
-func preRealloc(b []byte, vals []types.Datum, comparable bool) []byte {
+func preRealloc(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparable bool) []byte {
 	var size int
 	for i := range vals {
 		switch vals[i].Kind() {
@@ -75,13 +75,13 @@ func preRealloc(b []byte, vals []types.Datum, comparable bool) []byte {
 			return b
 		}
 	}
-	return reallocBytes(b, size)
+	return reallocBytes(sc, b, size)
 }
 
 // encode will encode a datum and append it to a byte slice. If comparable is true, the encoded bytes can be sorted as it's original order.
 // If hash is true, the encoded bytes can be checked equal as it's original value.
 func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparable bool) (_ []byte, err error) {
-	b = preRealloc(b, vals, comparable)
+	b = preRealloc(sc, b, vals, comparable)
 	for i, length := 0, len(vals); i < length; i++ {
 		switch vals[i].Kind() {
 		case types.KindInt64:

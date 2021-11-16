@@ -2166,7 +2166,7 @@ func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo,
 	// Check global index entry.
 	encodedValue, err := codec.EncodeKey(sc, nil, idxVals...)
 	c.Assert(err, IsNil)
-	key := tablecodec.EncodeIndexSeekKey(tblInfo.ID, indexInfo.ID, encodedValue)
+	key := tablecodec.EncodeIndexSeekKey(nil, tblInfo.ID, indexInfo.ID, encodedValue)
 	c.Assert(err, IsNil)
 	value, err := txn.Get(context.Background(), key)
 	c.Assert(err, IsNil)

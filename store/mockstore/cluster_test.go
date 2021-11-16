@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -52,7 +53,7 @@ func TestClusterSplit(t *testing.T) {
 	idxID := int64(2)
 	colID := int64(3)
 	handle := int64(1)
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC, MemTracker: memory.NewTracker(0, 1<<30)}
 	for i := 0; i < 1000; i++ {
 		rowKey := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(handle))
 		colValue := types.NewStringDatum(strconv.Itoa(int(handle)))
@@ -64,7 +65,7 @@ func TestClusterSplit(t *testing.T) {
 
 		encodedIndexValue, err1 := codec.EncodeKey(sc, nil, []types.Datum{colValue, types.NewIntDatum(handle)}...)
 		require.NoError(t, err1)
-		idxKey := tablecodec.EncodeIndexSeekKey(tblID, idxID, encodedIndexValue)
+		idxKey := tablecodec.EncodeIndexSeekKey(sc, tblID, idxID, encodedIndexValue)
 		txn.Set(idxKey, []byte{'0'})
 		handle++
 	}

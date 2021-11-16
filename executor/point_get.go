@@ -466,7 +466,7 @@ func EncodeUniqueIndexKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxI
 	if err != nil {
 		return nil, err
 	}
-	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
+	return tablecodec.EncodeIndexSeekKey(ctx.GetSessionVars().StmtCtx, tID, idxInfo.ID, encodedIdxVals), nil
 }
 
 // EncodeUniqueIndexValuesForKey encodes unique index values for a key.
