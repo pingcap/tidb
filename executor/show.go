@@ -1193,9 +1193,12 @@ func (e *ShowExec) fetchShowCreateView() error {
 
 func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf *bytes.Buffer) {
 	sqlMode := ctx.GetSessionVars().SQLMode
-
 	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
-	fmt.Fprintf(buf, "DEFINER=%s@%s ", stringutil.Escape(tb.View.Definer.Username, sqlMode), stringutil.Escape(tb.View.Definer.Hostname, sqlMode))
+	if tb.View.Definer.AuthUsername == "" || tb.View.Definer.AuthHostname == "" {
+		fmt.Fprintf(buf, "DEFINER=%s@%s ", stringutil.Escape(tb.View.Definer.Username, sqlMode), stringutil.Escape(tb.View.Definer.Hostname, sqlMode))
+	} else {
+		fmt.Fprintf(buf, "DEFINER=%s@%s ", stringutil.Escape(tb.View.Definer.AuthUsername, sqlMode), stringutil.Escape(tb.View.Definer.AuthHostname, sqlMode))
+	}
 	fmt.Fprintf(buf, "SQL SECURITY %s ", tb.View.Security.String())
 	fmt.Fprintf(buf, "VIEW %s (", stringutil.Escape(tb.Name.O, sqlMode))
 	for i, col := range tb.Columns {
