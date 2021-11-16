@@ -18,11 +18,13 @@ import (
 	"context"
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -747,4 +749,130 @@ func (ts *testSuite) TestViewColumns(c *C) {
 			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
 			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
 	}
+}
+
+func (ts *testSuite) TestTxnAssertion(c *C) {
+	// TODO: Locks produced by this test may be left without cleaning up, causing the test runs longer than expected.
+	// This is caused by that client-go didn't clean up the transaction when `initKeysAndMutations` returns error.
+
+	se, err := session.CreateSession4Test(ts.store)
+	se.SetConnectionID(1)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk := testkit.NewTestKitWithSession(c, ts.store, se)
+
+	fpAdd := "github.com/pingcap/tidb/table/tables/addRecordForceAssertExist"
+	fpUpdate := "github.com/pingcap/tidb/table/tables/updateRecordForceAssertNotExist"
+	fpRemove := "github.com/pingcap/tidb/table/tables/removeRecordForceAssertNotExist"
+
+	runStmtInTxn := func(pessimistic bool, stmts ...string) error {
+		if pessimistic {
+			tk.MustExec("begin pessimistic")
+		} else {
+			tk.MustExec("begin optimistic")
+		}
+		for _, stmt := range stmts {
+			tk.MustExec(stmt)
+		}
+		return tk.ExecToErr("commit")
+	}
+
+	withFailpoint := func(fp string, f func()) {
+		c.Assert(failpoint.Enable(fp, "return"), IsNil)
+		defer func() {
+			c.Assert(failpoint.Disable(fp), IsNil)
+		}()
+		f()
+	}
+
+	expectAssertionErr := func(assertionLevel string, err error) {
+		if assertionLevel == "STRICT" {
+			c.Assert(err, NotNil)
+			c.Assert(strings.Contains(err.Error(), "assertion failed"), IsTrue)
+		} else {
+			c.Assert(err, IsNil)
+		}
+	}
+
+	testAssertionBasicImpl := func(level string) {
+		tk.MustExec("set @@tidb_txn_assertion_level = " + level)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(id int primary key, v int)")
+
+		// Auto commit
+		tk.MustExec("insert into t values (1, 10)")
+		tk.MustExec("update t set v = v + 1 where id = 1")
+		tk.MustExec("delete from t where id = 1")
+
+		// Optimistic
+		tk.MustExec("insert into t values (2, 20), (3, 30)")
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into t values (1, 10)")
+		tk.MustExec("update t set v = v + 1 where id = 2")
+		tk.MustExec("delete from t where id = 3")
+		tk.MustExec("commit")
+
+		// Pessimistic
+		tk.MustExec("delete from t")
+		tk.MustExec("insert into t values (2, 20), (3, 30)")
+		tk.MustExec("begin pessimistic")
+		tk.MustExec("insert into t values (1, 10)")
+		tk.MustExec("update t set v = v + 1 where id = 2")
+		tk.MustExec("delete from t where id = 3")
+		tk.MustExec("commit")
+
+		// Inject incorrect assertion so that it must fail.
+
+		// Auto commit
+		tk.MustExec("delete from t")
+		tk.MustExec("insert into t values (2, 20), (3, 30)")
+		withFailpoint(fpAdd, func() {
+			err = tk.ExecToErr("insert into t values (1, 10)")
+			expectAssertionErr(level, err)
+		})
+		withFailpoint(fpUpdate, func() {
+			err = tk.ExecToErr("update t set v = v + 1 where id = 2")
+			expectAssertionErr(level, err)
+		})
+		withFailpoint(fpRemove, func() {
+			err = tk.ExecToErr("delete from t where id = 3")
+			expectAssertionErr(level, err)
+		})
+
+		// Optimistic
+		tk.MustExec("delete from t")
+		tk.MustExec("insert into t values (2, 20), (3, 30)")
+		withFailpoint(fpAdd, func() {
+			err = runStmtInTxn(false, "insert into t values (1, 10)")
+			expectAssertionErr(level, err)
+		})
+		withFailpoint(fpUpdate, func() {
+			err = runStmtInTxn(false, "update t set v = v + 1 where id = 2")
+			expectAssertionErr(level, err)
+		})
+		withFailpoint(fpRemove, func() {
+			err = runStmtInTxn(false, "delete from t where id = 3")
+			expectAssertionErr(level, err)
+		})
+
+		// Pessimistic
+		tk.MustExec("delete from t")
+		tk.MustExec("insert into t values (2, 20), (3, 30)")
+		withFailpoint(fpAdd, func() {
+			err = runStmtInTxn(true, "insert into t values (1, 10)")
+			expectAssertionErr(level, err)
+		})
+		withFailpoint(fpUpdate, func() {
+			err = runStmtInTxn(true, "update t set v = v + 1 where id = 2")
+			expectAssertionErr(level, err)
+		})
+		withFailpoint(fpRemove, func() {
+			err = runStmtInTxn(true, "delete from t where id = 3")
+			expectAssertionErr(level, err)
+		})
+	}
+
+	testAssertionBasicImpl("STRICT")
+	testAssertionBasicImpl("OFF")
 }
