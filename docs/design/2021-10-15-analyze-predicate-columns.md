@@ -22,7 +22,7 @@ We want to support the `ANALYZE` option to only collect the statistics of predic
 ANALYZE TABLE TableNameList (ALL COLUMNS | PREDICATE COLUMNS | COLUMNS ColumnNameList)? AnalyzeOptionListOpt
 ANALYZE TABLE TableName (PARTITION PartitionNameList)? (PREDICATE COLUMNS | COLUMNS ColumnNameList)? AnalyzeOptionListOpt
 ```
-1. FOR `ANALYZE ALL COLUMNS`, the statistics of all columns would be collected.
+1. For `ANALYZE ALL COLUMNS`, the statistics of all columns would be collected.
 1. For `ANALYZE PREDICATE COLUMNS`, the statistics of predicate columns and indexed columns would be collected. If there is no predicate columns in record, TiDB would collect the statistics of all columns and give a warning to the client.
 2. For `ANALYZE COLUMNS ColumnNameList`, the statistics of the columns in `ColumnNameList` and indexed columns would be collected.
 3. By default, the statistics of all columns would be collected.
