@@ -2675,6 +2675,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
 			if len(spec.NewColumns) != 1 {
+				if !sctx.GetSessionVars().EnableChangeMultiSchema {
+					return errRunMultiSchemaChanges
+				}
 				err = d.AddColumns(sctx, ident, []*ast.AlterTableSpec{spec})
 			} else {
 				err = d.AddColumn(sctx, ident, spec)
