@@ -927,6 +927,8 @@ func TestHandleAuthPlugin(t *testing.T) {
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
 		chunkAlloc:   chunk.NewAllocator(),
+		collation:    mysql.DefaultCollationID,
+		peerHost:     "localhost",
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
@@ -935,6 +937,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 	ctx := context.Background()
 	resp := handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+		AuthPlugin: mysql.AuthNativePassword,
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
