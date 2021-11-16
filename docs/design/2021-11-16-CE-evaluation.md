@@ -98,5 +98,5 @@ All these intermediate results are outputted by the JSON file above.
 
 ## Rationale
 
+This approach can help us quantify the performance of CE under varied scenarios, and these intermediate results can also be used to diagnose the optimizer in the future.
 
-## Compatibility
