@@ -41,6 +41,9 @@ func clearAllBundles(c *C) {
 	bundles, err := infosync.GetAllRuleBundles(context.TODO())
 	c.Assert(err, IsNil)
 	clearBundles := make([]*placement.Bundle, 0, len(bundles))
+	for _, bundle := range bundles {
+		clearBundles = append(clearBundles, &placement.Bundle{ID: bundle.ID})
+	}
 	err = infosync.PutRuleBundles(context.TODO(), clearBundles)
 	c.Assert(err, IsNil)
 }
