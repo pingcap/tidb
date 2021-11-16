@@ -706,7 +706,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 			// we need ensure this column has the default value.
 			if _, hasDefault := defaultCols[col.Name.L]; !hasDefault {
 				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s`'s column %s cannot be ignored,"+
-					"because it doesn't hava a default value, please set tables.ignoreColumns properly",
+					"because it doesn't have a default value, please set tables.ignoreColumns properly",
 					tableInfo.DB, tableInfo.Name, col.Name.L))
 			}
 		} else {
@@ -763,7 +763,7 @@ outer:
 			if len(tblMeta.DataFiles) == 0 {
 				continue
 			}
-			tableHasUniQueIdx := false
+			tableHasUniqueIdx := false
 			csvCnt := 0
 			for _, f := range tblMeta.DataFiles {
 				if f.FileMeta.Type == mydump.SourceTypeCSV {
@@ -780,21 +780,21 @@ outer:
 			info := rc.dbInfos[tblMeta.DB].Tables[tblMeta.Name]
 			for _, idx := range info.Core.Indices {
 				if idx.Primary || idx.Unique {
-					tableHasUniQueIdx = true
+					tableHasUniqueIdx = true
 				}
 			}
 
 			if csvCnt >= 2 && hasUniqueIdx {
 				tableMeta = tblMeta
 				csvCount = csvCnt
-				hasUniqueIdx = tableHasUniQueIdx
+				hasUniqueIdx = tableHasUniqueIdx
 				// if a perfect table source is found, we can stop check more tables
 				break outer
 			}
-			if csvCnt > csvCount || (csvCnt == csvCount && !hasUniqueIdx && tableHasUniQueIdx) {
+			if csvCnt > csvCount || (csvCnt == csvCount && !hasUniqueIdx && tableHasUniqueIdx) {
 				tableMeta = tblMeta
 				csvCount = csvCnt
-				hasUniqueIdx = tableHasUniQueIdx
+				hasUniqueIdx = tableHasUniqueIdx
 			}
 		}
 	}
