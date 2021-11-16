@@ -906,11 +906,17 @@ func GetDisplayName(name string) string {
 func GetBuiltinList() []string {
 	res := make([]string, 0, len(funcs))
 	notImplementedFunctions := []string{ast.RowFunc, ast.IsTruthWithNull}
+	implicitFunctions := []string{InternalFuncToBinary}
 	for funcName := range funcs {
 		skipFunc := false
 		// Skip not implemented functions
 		for _, notImplFunc := range notImplementedFunctions {
 			if funcName == notImplFunc {
+				skipFunc = true
+			}
+		}
+		for _, implicitFunc := range implicitFunctions {
+			if funcName == implicitFunc {
 				skipFunc = true
 			}
 		}
