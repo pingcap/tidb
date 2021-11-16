@@ -12,33 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package aggfuncs_test
+package aggfuncs
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestMergePartialResult4Stddevpop(t *testing.T) {
-	t.Parallel()
-
-	tests := []aggTest{
-		buildAggTester(ast.AggFuncStddevPop, mysql.TypeDouble, 5, 1.4142135623730951, 0.816496580927726, 1.3169567191065923),
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	for _, test := range tests {
-		testMergePartialResult(t, test)
-	}
-}
-
-func TestStddevpop(t *testing.T) {
-	t.Parallel()
-
-	tests := []aggTest{
-		buildAggTester(ast.AggFuncStddevPop, mysql.TypeDouble, 5, nil, 1.4142135623730951),
-	}
-	for _, test := range tests {
-		testAggFunc(t, test)
-	}
+	goleak.VerifyTestMain(m, opts...)
 }

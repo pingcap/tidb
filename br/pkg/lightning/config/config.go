@@ -585,6 +585,48 @@ func (d *Duration) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`"%s"`, d.Duration)), nil
 }
 
+// Charset defines character set
+type Charset int
+
+const (
+	Binary Charset = iota
+	UTF8MB4
+	GB18030
+	GBK
+)
+
+// String return the string value of charset
+func (c Charset) String() string {
+	switch c {
+	case Binary:
+		return "binary"
+	case UTF8MB4:
+		return "utf8mb4"
+	case GB18030:
+		return "gb18030"
+	case GBK:
+		return "gbk"
+	default:
+		return "unknown_charset"
+	}
+}
+
+// ParseCharset parser character set for string
+func ParseCharset(dataCharacterSet string) (Charset, error) {
+	switch strings.ToLower(dataCharacterSet) {
+	case "", "binary":
+		return Binary, nil
+	case "utf8mb4":
+		return UTF8MB4, nil
+	case "gb18030":
+		return GB18030, nil
+	case "gbk":
+		return GBK, nil
+	default:
+		return Binary, errors.Errorf("found unsupported data-character-set: %s", dataCharacterSet)
+	}
+}
+
 func NewConfig() *Config {
 	return &Config{
 		App: Lightning{
@@ -785,6 +827,16 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 
 	if len(cfg.Mydumper.DataCharacterSet) == 0 {
 		cfg.Mydumper.DataCharacterSet = defaultCSVDataCharacterSet
+	}
+	charset, err1 := ParseCharset(cfg.Mydumper.DataCharacterSet)
+	if err1 != nil {
+		return err1
+	}
+	if charset == GBK || charset == GB18030 {
+		log.L().Warn(
+			"incompatible strings may be encountered during the transcoding process and will be replaced, please be aware of the risk of not being able to retain the original information",
+			zap.String("source-character-set", charset.String()),
+			zap.ByteString("invalid-char-replacement", []byte(cfg.Mydumper.DataInvalidCharReplace)))
 	}
 
 	if cfg.TikvImporter.Backend == "" {
