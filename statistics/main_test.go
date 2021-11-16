@@ -69,22 +69,19 @@ func GetStatsSuiteData() testdata.TestData {
 // TestStatistics batches tests sharing a test suite to reduce the setups
 // overheads.
 func TestStatistics(t *testing.T) {
-	s := createTestStatisticsSamples(t)
-
 	// fmsketch_test.go
-	t.Run("SubTestSketch", SubTestSketch(s))
-	t.Run("SubTestSketchProtoConversion", SubTestSketchProtoConversion(s))
-	t.Run("SubTestFMSketchCoding", SubTestFMSketchCoding(s))
+	t.Run("SubTestSketch", SubTestSketch())
+	t.Run("SubTestSketchProtoConversion", SubTestSketchProtoConversion())
+	t.Run("SubTestFMSketchCoding", SubTestFMSketchCoding())
 
 	// statistics_test.go
-	t.Run("SubTestColumnRange", SubTestColumnRange(s))
-	t.Run("SubTestIntColumnRanges", SubTestIntColumnRanges(s))
-	t.Run("SubTestIndexRanges", SubTestIndexRanges(s))
+	t.Run("SubTestColumnRange", SubTestColumnRange())
+	t.Run("SubTestIntColumnRanges", SubTestIntColumnRanges())
+	t.Run("SubTestIndexRanges", SubTestIndexRanges())
 
 	// statistics_serial_test.go
-	t.Run("SubTestBuild", SubTestBuild(s))
-	t.Run("SubTestHistogramProtoConversion", SubTestHistogramProtoConversion(s))
-
+	t.Run("SubTestBuild", SubTestBuild())
+	t.Run("SubTestHistogramProtoConversion", SubTestHistogramProtoConversion())
 }
 
 func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
