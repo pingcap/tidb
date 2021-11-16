@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/testkit/trequire"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -2221,7 +2222,9 @@ func TestInsert(t *testing.T) {
 }
 
 func TestOrd(t *testing.T) {
-	t.Parallel()
+	// TODO: Remove this and enable test parallel after new charset enabled
+	collate.SetCharsetFeatEnabledForTest(true)
+	defer collate.SetCharsetFeatEnabledForTest(false)
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
@@ -2242,13 +2245,14 @@ func TestOrd(t *testing.T) {
 		{"한국", 15570332, "", false, false},
 		{"👍", 4036989325, "", false, false},
 		{"א", 55184, "", false, false},
-		// TODO: Uncomment it when gbk be added into charsetInfos
-		// {"abc", 97, "gbk", false, false},
-		// {"一二三", 53947, "gbk", false, false},
-		// {"àáèé", 43172,"gbk",  false, false},
-		// {"数据库", 51965,"gbk",  false, false},
+		{"abc", 97, "gbk", false, false},
+		{"一二三", 53947, "gbk", false, false},
+		{"àáèé", 43172, "gbk", false, false},
+		{"数据库", 51965, "gbk", false, false},
 	}
 	for _, c := range cases {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.Ord, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 
