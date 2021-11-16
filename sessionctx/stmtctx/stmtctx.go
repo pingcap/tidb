@@ -699,6 +699,9 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	n := len(sc.mu.allExecDetails)
+	if n == 0 {
+		return nil
+	}
 	d := &CopTasksDetails{
 		NumCopTasks:       n,
 		MaxBackoffTime:    make(map[string]time.Duration),
@@ -707,9 +710,6 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 		TotBackoffTime:    make(map[string]time.Duration),
 		TotBackoffTimes:   make(map[string]int),
 		MaxBackoffAddress: make(map[string]string),
-	}
-	if n == 0 {
-		return d
 	}
 	d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
 	d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)

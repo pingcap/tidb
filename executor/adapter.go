@@ -21,6 +21,7 @@ import (
 	"math"
 	"runtime/trace"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -206,6 +207,11 @@ type ExecStmt struct {
 	Plan plannercore.Plan
 	// Text represents the origin query text.
 	Text string
+	// lazyTextToLog stores the desensitization SQL text for logging while initialized lazily
+	lazyTextToLog struct {
+		sync.Once
+		textToLog string
+	}
 
 	StmtNode ast.StmtNode
 
@@ -1193,7 +1199,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
-	stmtExecInfo := &stmtsummary.StmtExecInfo{
+	stmtExecInfo := stmtsummary.StmtExecInfo{
 		SchemaName:      strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:     sql,
 		Charset:         charset,
@@ -1228,19 +1234,22 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
-	stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
+	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtExecInfo)
 }
 
 // GetTextToLog return the query text to log.
 func (a *ExecStmt) GetTextToLog() string {
-	var sql string
-	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.EnableRedactLog {
-		sql, _ = sessVars.StmtCtx.SQLDigest()
-	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
-		sql = sensitiveStmt.SecureText()
-	} else {
-		sql = sessVars.StmtCtx.OriginalSQL + sessVars.PreparedParams.String()
-	}
-	return sql
+	a.lazyTextToLog.Do(func() {
+		var sql string
+		sessVars := a.Ctx.GetSessionVars()
+		if sessVars.EnableRedactLog {
+			sql, _ = sessVars.StmtCtx.SQLDigest()
+		} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+			sql = sensitiveStmt.SecureText()
+		} else {
+			sql = sessVars.StmtCtx.OriginalSQL + sessVars.PreparedParams.String()
+		}
+		a.lazyTextToLog.textToLog = sql
+	})
+	return a.lazyTextToLog.textToLog
 }
