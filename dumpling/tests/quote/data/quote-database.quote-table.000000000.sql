@@ -1,4 +1,5 @@
 /*!40101 SET NAMES binary*/;
+/*T![placement] SET PLACEMENT_CHECKS = 0*/;
 INSERT INTO `quo``te/table` (`quo``te/col`,`a`) VALUES
 (0,10),
 (1,9),
