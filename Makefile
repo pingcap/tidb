@@ -132,6 +132,15 @@ gotest: failpoint-enable
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
+gotest_in_verify_ci: failpoint-enable tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
+	@echo "Running in native mode."
+	@export log_level=info; export TZ='Asia/Shanghai'; \
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile tidb-junit-report.xml -- -v -p $(P) --race \
+	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -check.p true
+	-coverprofile="cov.tidb_unit_test.out" $(PACKAGES_TIDB_TESTS) > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+	tools/bin/gocov convert "cov.tidb_unit_test.out" | tools/bin/gocov-xml > tidb-coverage.xml
+	@$(FAILPOINT_DISABLE)
+
 race: failpoint-enable
 	@export log_level=debug; \
 	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
@@ -388,3 +397,12 @@ dumpling_bins:
 	@which bin/minio
 	@which bin/tidb-lightning
 	@which bin/sync_diff_inspector
+
+tools/bin/gotestsum: tools/check/go.mod
+	cd tools/check && $(GO) build -o ../bin/gotestsum gotest.tools/gotestsum
+
+tools/bin/gocov: tools/check/go.mod
+	cd tools/check && $(GO) build -o ../bin/gocov  github.com/axw/gocov/gocov
+
+tools/bin/gocov-xml: tools/check/go.mod
+	cd tools/check && $(GO) build -o ../bin/gocov-xml github.com/AlekSi/gocov-xml
