@@ -672,7 +672,7 @@ const (
 	DefMaxChunkSize                       = 1024
 	DefDMLBatchSize                       = 0
 	DefMaxPreparedStmtCount               = -1
-	DefWaitTimeout                        = 0
+	DefWaitTimeout                        = 28800
 	DefTiDBMemQuotaApplyCache             = 32 << 20 // 32MB.
 	DefTiDBMemQuotaHashJoin               = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin              = 32 << 30 // 32GB.
@@ -764,11 +764,12 @@ const (
 	DefTiDBTopSQLReportIntervalSeconds    = 60
 	DefTiDBTmpTableMaxSize                = 64 << 20 // 64MB.
 	DefTiDBEnableLocalTxn                 = false
-	DefTiDBTSOClientBatchMaxWaitTime      = 0 // 0ms
+	DefTiDBTSOClientBatchMaxWaitTime      = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy         = false
 	DefTiDBEnableOrderedResultMode        = false
 	DefTiDBEnablePseudoForOutdatedStats   = true
 	DefEnablePlacementCheck               = true
+	DefTimestamp                          = "0"
 )
 
 // Process global variables.
@@ -801,7 +802,7 @@ var (
 		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
 	EnableLocalTxn          = atomic.NewBool(DefTiDBEnableLocalTxn)
-	MaxTSOBatchWaitInterval = atomic.NewInt64(DefTiDBTSOClientBatchMaxWaitTime)
+	MaxTSOBatchWaitInterval = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy  = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly      = atomic.NewBool(DefTiDBRestrictedReadOnly)
 )
