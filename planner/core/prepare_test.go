@@ -1887,7 +1887,8 @@ func (s *testPrepareSerialSuite) TestIssue29805(c *C) {
 
 	tk.MustExec(`prepare stmt from 'select/*+ hash_agg() */ count(distinct col1) from PK_TCOLLATION10197 where col1 > ?;';`)
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustQuery("select/*+ hash_agg() */ count(distinct col1) from PK_TCOLLATION10197 where col1 > '龺';").Check(testkit.Rows("0"))
 }
 
 func (s *testPlanSerialSuite) TestPartitionTable(c *C) {
