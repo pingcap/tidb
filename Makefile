@@ -34,7 +34,7 @@ dev: checklist check explaintest devgotest gogenerate br_unit_test test_part_par
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
 
-check: fmt unconvert lint tidy testSuite check-static vet errdoc
+check: fmt unconvert lint tidy testSuite check-static vet errdoc license-eye
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -50,6 +50,10 @@ check-static: tools/bin/golangci-lint
 unconvert:tools/bin/unconvert
 	@echo "unconvert check(skip check the genenrated or copied code in lightning)"
 	@GO111MODULE=on tools/bin/unconvert $(UNCONVERT_PACKAGES)
+
+license-eye: tools/bin/license-eye
+	@echo "license-eye license check"
+	tools/bin/license-eye -c ./.licenserc.yml header check
 
 gogenerate:
 	@echo "go generate ./..."
@@ -230,6 +234,10 @@ tools/bin/golangci-lint:
 tools/bin/vfsgendev: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/vfsgendev github.com/shurcooL/vfsgen/cmd/vfsgendev
+
+tools/bin/license-eye: tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/license-eye github.com/apache/skywalking-eyes/cmd/license-eye
 
 # Usage:
 #

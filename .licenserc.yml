@@ -9,6 +9,7 @@ header:
     - '.gitattributes'
     - '.golangci.yml'
     - '.golangci_br.yml'
+    - '.licenserc.yml'
     - 'LICENSES/'
     - '**/*.md'
     - '**/*.json'
@@ -28,4 +29,3 @@ header:
     - '.github/'
     - 'parser/'
     - 'dumpling/'
-  comment: on-failure
