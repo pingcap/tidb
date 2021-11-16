@@ -891,7 +891,11 @@ var bufferPool = membuf.NewPool(1024, manual.Allocator{})
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
 	// TODO: Optimize the opts for better write.
-	opts := &pebble.Options{}
+	opts := &pebble.Options{
+		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
+			newRangePropertiesCollector,
+		},
+	}
 	return pebble.Open(dbPath, opts)
 }
 
@@ -932,7 +936,7 @@ func NewLocalBackend(
 	}
 
 	var duplicateDB *pebble.DB
-	if cfg.TikvImporter.DuplicateDetection {
+	if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		duplicateDB, err = openDuplicateDB(localFile)
 		if err != nil {
 			return backend.MakeBackend(nil), errors.Annotate(err, "open duplicate db failed")
@@ -970,7 +974,7 @@ func NewLocalBackend(
 
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
-		duplicateDetection:      cfg.TikvImporter.DuplicateDetection,
+		duplicateDetection:      cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
 		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
 		errorMgr:                errorMgr,
@@ -1347,9 +1351,15 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			sstMetasChan:       make(chan metaOrFlush),
 			tableInfo:          cfg.TableInfo,
 			duplicateDetection: local.duplicateDetection,
+			duplicateDB:        local.duplicateDB,
 			errorMgr:           local.errorMgr,
 		}
 		engineFile.sstIngester = dbSSTIngester{e: engineFile}
+		keyAdapter := KeyAdapter(noopKeyAdapter{})
+		if local.duplicateDetection {
+			keyAdapter = duplicateKeyAdapter{}
+		}
+		engineFile.keyAdapter = keyAdapter
 		if err = engineFile.loadEngineMeta(); err != nil {
 			return err
 		}
@@ -2087,7 +2097,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	return nil
 }
 
-func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (hasDupe bool, err error) {
+func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
 	if local.duplicateDB == nil {
 		return false, nil
 	}
@@ -2102,7 +2112,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 		return false, err
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
-	duplicateManager, err := NewDuplicateManager(local, ts)
+	duplicateManager, err := NewDuplicateManager(local, ts, opts)
 	if err != nil {
 		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
@@ -2113,7 +2123,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 	return hasDupe, nil
 }
 
-func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string) (bool, error) {
+func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	log.L().Info("Begin collect remote duplicate keys", zap.String("table", tableName))
 	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
@@ -2121,7 +2131,7 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
 
-	duplicateManager, err := NewDuplicateManager(local, ts)
+	duplicateManager, err := NewDuplicateManager(local, ts, opts)
 	if err != nil {
 		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
@@ -2139,13 +2149,13 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	}()
 
 	switch algorithm {
-	case config.DupeResAlgUnsafeNoop:
-		logger.Warn("[resolve-dupe] skipping resolution since algorithm is 'unsafe-noop'. this table will become inconsistent!")
+	case config.DupeResAlgRecord, config.DupeResAlgNone:
+		logger.Warn("[resolve-dupe] skipping resolution due to selected algorithm. this table will become inconsistent!", zap.Stringer("algorithm", algorithm))
 		return nil
-	case config.DupeResAlgKeepAnyOne:
-		panic("keep-any-one is not yet supported")
-	case config.DupeResAlgDelete:
+	case config.DupeResAlgRemove:
 		break
+	default:
+		panic(fmt.Sprintf("[resolve-dupe] unknown resolution algorithm %v", algorithm))
 	}
 
 	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
@@ -2156,13 +2166,24 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 		return err
 	}
 
-	// Collect all duplicating rows from downstream TiDB.
-	// TODO: what if there are 1,000,000 duplicate rows? need some pagination scheme.
-	handleRows, err := local.errorMgr.GetConflictKeys(ctx, tableName)
-	if err != nil {
-		return err
+	preRowID := int64(0)
+	for {
+		handleRows, lastRowID, err := local.errorMgr.GetConflictKeys(ctx, tableName, preRowID, 1000)
+		if err != nil {
+			return errors.Annotate(err, "cannot query conflict keys")
+		}
+		if len(handleRows) == 0 {
+			break
+		}
+		if err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder); err != nil {
+			return errors.Annotate(err, "cannot delete duplicated entries")
+		}
+		preRowID = lastRowID
 	}
+	return nil
+}
 
+func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, handleRows [][2][]byte, decoder *kv.TableKVDecoder) (err error) {
 	// Starts a Delete transaction.
 	txn, err := local.tikvCli.Begin()
 	if err != nil {
@@ -2170,8 +2191,12 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	}
 	txn.SetPessimistic(true)
 	defer func() {
-		if txn != nil && err != nil {
-			txn.Rollback()
+		if err == nil {
+			err = txn.Commit(ctx)
+		} else {
+			if rollbackErr := txn.Rollback(); rollbackErr != nil {
+				logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
+			}
 		}
 	}()
 
@@ -2204,11 +2229,7 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 	}
 
 	logger.Info("[resolve-dupe] number of KV pairs to be deleted", zap.Int("count", txn.Len()))
-
-	// Commit the transaction.
-	err = txn.Commit(ctx)
-	txn = nil
-	return errors.Annotate(err, "cannot delete duplicated entries")
+	return nil
 }
 
 func (e *File) unfinishedRanges(ranges []Range) []Range {
@@ -2345,11 +2366,9 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
-	versionStr, err := local.g.GetSQLExecutor().ObtainStringWithLog(
-		ctx,
-		"SELECT version();",
-		"check TiDB version",
-		log.L())
+	// TODO: support lightning via SQL
+	db, _ := local.g.GetDB()
+	versionStr, err := version.FetchVersion(ctx, db)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2363,8 +2382,8 @@ func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.Che
 		return err
 	}
 
-	tidbVersion, _ := version.ExtractTiDBVersion(versionStr)
-	return checkTiFlashVersion(ctx, local.g, checkCtx, *tidbVersion)
+	serverInfo := version.ParseServerInfo(versionStr)
+	return checkTiFlashVersion(ctx, local.g, checkCtx, *serverInfo.ServerVersion)
 }
 
 func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {

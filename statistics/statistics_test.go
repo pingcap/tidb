@@ -86,7 +86,7 @@ func (r *recordSet) Next(_ context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (r *recordSet) NewChunk() *chunk.Chunk {
+func (r *recordSet) NewChunk(chunk.Allocator) *chunk.Chunk {
 	fields := make([]*types.FieldType, 0, len(r.fields))
 	for _, field := range r.fields {
 		fields = append(fields, &field.Column.FieldType)
@@ -103,7 +103,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.Reco
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong), Version1)
 	ctx := context.Background()
 	for {
-		req := records.NewChunk()
+		req := records.NewChunk(nil)
 		err := records.Next(ctx, req)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
@@ -194,9 +194,11 @@ func TestPseudoTable(t *testing.T) {
 	colInfo := &model.ColumnInfo{
 		ID:        1,
 		FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		State:     model.StatePublic,
 	}
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti)
+	require.Equal(t, len(tbl.Columns), 1)
 	require.Greater(t, tbl.Count, int64(0))
 	sc := new(stmtctx.StatementContext)
 	count := tbl.ColumnLessRowCount(sc, types.NewIntDatum(100), colInfo.ID)
@@ -206,6 +208,15 @@ func TestPseudoTable(t *testing.T) {
 	require.Equal(t, 10, int(count))
 	count, _ = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
 	require.Equal(t, 250, int(count))
+	ti.Columns = append(ti.Columns, &model.ColumnInfo{
+		ID:        2,
+		FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		Hidden:    true,
+		State:     model.StatePublic,
+	})
+	tbl = PseudoTable(ti)
+	// We added a hidden column. The pseudo table still only have one column.
+	require.Equal(t, len(tbl.Columns), 1)
 }
 
 func buildCMSketch(values []types.Datum) *CMSketch {
