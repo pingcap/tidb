@@ -237,7 +237,7 @@ func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 }
 
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
-// "Concurrency", "IsolationLevel", "NotFillCache", "ReplicaRead", "SchemaVar".
+// "Concurrency", "IsolationLevel", "NotFillCache", "TaskID", "Priority", "ReplicaRead", "ResourceGroupTagger".
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
 	if builder.Request.Concurrency == 0 {
 		// Concurrency may be set to 1 by SetDAGRequest
