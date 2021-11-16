@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
@@ -107,7 +108,7 @@ func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) (bool, err
 	return false, nil
 }
 
-
+// When set TiFlash replica, tidb shall add one Pd Rule for this table.
 func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -124,7 +125,31 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
 	c.Assert(res, Equals, true)
 }
 
-var globalTiFlashPlacementRules map[string]placement.Rule = make(map[string]placement.Rule)
+
+// When drop/truncate table, Pd Rule shall be removed in limited time.
+func (s *tiflashDDLTestSuite) TestRemovePlacementRule(c *C) {
+	// TODO
+	gcworker.SetGcSafePointCacheInterval(time.Second * 1)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(z int)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	tk.MustExec("drop table t")
+	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
+	res, _ := s.CheckPlacementRule(*expectRule)
+	c.Assert(res, Equals, true)
+
+	time.Sleep(ddl.PollTiFlashInterval * 2)
+	res, _ = s.CheckPlacementRule(*expectRule)
+	c.Assert(res, Equals, false)
+
+}
+
+var globalTiFlashPlacementRules = make(map[string]placement.Rule)
 
 func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string) {
 	// mock PD http server
@@ -162,10 +187,27 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 			StartTimestamp: s.startTime.Unix(),
 		}, nil
 	}))
-	router.Handle("/pd/api/v1/config/rules/group/tiflash", fn.Wrap(func() (interface{}, error) {
-		return globalTiFlashPlacementRules, nil
-	}))
+	//router.HandleFunc("/pd/api/v1/config/rules/group/tiflash", fn.Wrap(func() (interface{}, error) {
+	//	fmt.Printf("!!!! handle rules %v %v %v\n", globalTiFlashPlacementRules, req.URL.Path, req.Method)
+	//	var result = make([]placement.Rule, 0)
+	//	for _, item := range globalTiFlashPlacementRules {
+	//		result = append(result, item)
+	//	}
+	//	return result, nil
+	//})).Methods(http.MethodGet)
+
+	router.HandleFunc("/pd/api/v1/config/rules/group/tiflash", func(w http.ResponseWriter, req *http.Request) {
+		fmt.Printf("!!!! handle rules %v %v %v\n", globalTiFlashPlacementRules, req.URL.Path, req.Method)
+		var result = make([]placement.Rule, 0)
+		for _, item := range globalTiFlashPlacementRules {
+			result = append(result, item)
+		}
+		w.WriteHeader(http.StatusOK)
+		m, _ := json.Marshal(result)
+		w.Write(m)
+	})//.Methods(http.MethodGet)
 	router.HandleFunc("/pd/api/v1/config/rule", func(w http.ResponseWriter, req *http.Request) {
+		fmt.Printf("!!!! url %v %v\n", req.URL.Path, req.Method)
 		buf := new(bytes.Buffer)
 		_, err := buf.ReadFrom(req.Body)
 		if err != nil {
@@ -178,10 +220,17 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		ruleId := fmt.Sprintf("table-%v-r", rule.ID)
-		globalTiFlashPlacementRules[ruleId] = rule
+		globalTiFlashPlacementRules[rule.ID] = rule
 		w.WriteHeader(http.StatusOK)
-	})
+	}).Methods(http.MethodPost)
+	router.HandleFunc("/pd/api/v1/config/rule/tiflash/{ruleid:.+}", func(w http.ResponseWriter, req *http.Request) {
+		fmt.Println("!!!! handle DELETE")
+		params := mux.Vars(req)
+		ruleId := params["ruleid"]
+		ruleId = strings.Trim(ruleId, "/")
+		delete(globalTiFlashPlacementRules, ruleId)
+		w.WriteHeader(http.StatusOK)
+	}).Methods(http.MethodDelete)
 	var mockConfig = func() (map[string]interface{}, error) {
 		configuration := map[string]interface{}{
 			"key1": "value1",

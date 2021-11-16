@@ -168,7 +168,6 @@ func isRuleMatch(rule placement.Rule, tb PollTiFlashReplicaStatusContext) (bool,
 				}
 			}
 		}
-
 		if isMatch && uint64(rule.Count) != tb.Count {
 			isMatch = false
 		}
@@ -587,8 +586,6 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 	for _, r := range allRulesArr {
 		allRules[r.ID] = r
 	}
-
-	fmt.Printf("!!!! allRules is %v\n", allRules)
 
 	// Cover getDropOrTruncateTableTiflash
 	GetDropOrTruncateTableTiflash(ctx, currentSchema, tikvHelper, &tableList)

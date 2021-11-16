@@ -195,6 +195,10 @@ const (
 	gcTimeout                 = 5 * time.Minute
 )
 
+func SetGcSafePointCacheInterval(interval time.Duration) {
+	gcSafePointCacheInterval = interval
+}
+
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 	logutil.Logger(ctx).Info("[gc worker] start",
 		zap.String("uuid", w.uuid))

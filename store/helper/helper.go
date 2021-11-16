@@ -930,7 +930,7 @@ func (h *Helper) DeletePlacementRule(group string, ruleId string) error {
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != 200{
+	if resp.StatusCode != 200 {
 		return errors.New("DeletePlacementRule returns error")
 	}
 	defer func() {
@@ -957,7 +957,7 @@ func (h *Helper) SetPlacementRule(rule placement.Rule) error {
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != 200{
+	if resp.StatusCode != 200 {
 		return errors.New("SetPlacementRule returns error")
 	}
 	defer func() {
@@ -980,13 +980,12 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 		group,
 	)
 
-	fmt.Printf("!!!! pd %v\n", getURL)
 	resp, err := util.InternalHTTPClient().Get(getURL)
 	if err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode != 200{
+	if resp.StatusCode != 200 {
 		return nil, errors.New("GetGroupRules returns error")
 	}
 
@@ -1001,6 +1000,8 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	fmt.Printf("!!!! GetGroupRules %v\n", buf.String())
 
 	var rules []placement.Rule
 	err = json.Unmarshal(buf.Bytes(), &rules)

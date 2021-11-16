@@ -89,6 +89,7 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = uint32(0)
+	PollTiFlashInterval = 2 * time.Second
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -401,7 +402,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				case <-d.ctx.Done():
 					d.sessPool.put(sctx)
 					return
-				case <-time.After(2 * time.Second):
+				case <-time.After(PollTiFlashInterval):
 				}
 			}
 		}
