@@ -895,7 +895,7 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 			}
 			resp.AuthPlugin = userplugin
 			return authData, nil
-		} else {
+		} else if userplugin != mysql.AuthNativePassword {
 			// MySQL 5.1 and older don't support authenticaton plugins yet
 			return nil, errNotSupportedAuthMode
 		}
