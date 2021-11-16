@@ -75,6 +75,9 @@ type Lightning struct {
 }
 
 func initEnv(cfg *config.GlobalConfig) error {
+	if cfg.App.Config.File == "" {
+		return nil
+	}
 	return log.InitLogger(&cfg.App.Config, cfg.TiDB.LogLevel)
 }
 
@@ -199,7 +202,9 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glu
 }
 
 func (l *Lightning) RunServer() error {
+	l.serverLock.Lock()
 	l.taskCfgs = config.NewConfigList()
+	l.serverLock.Unlock()
 	log.L().Info(
 		"Lightning server is running, post to /tasks to start an import task",
 		zap.Stringer("address", l.serverAddr),
@@ -413,12 +418,13 @@ func (l *Lightning) handleGetTask(w http.ResponseWriter) {
 		Current   *int64  `json:"current"`
 		QueuedIDs []int64 `json:"queue"`
 	}
-
+	l.serverLock.Lock()
 	if l.taskCfgs != nil {
 		response.QueuedIDs = l.taskCfgs.AllIDs()
 	} else {
 		response.QueuedIDs = []int64{}
 	}
+	l.serverLock.Unlock()
 
 	l.cancelLock.Lock()
 	if l.cancel != nil && l.curTask != nil {
@@ -460,7 +466,8 @@ func (l *Lightning) handleGetOneTask(w http.ResponseWriter, req *http.Request, t
 
 func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-
+	l.serverLock.Lock()
+	defer l.serverLock.Unlock()
 	if l.taskCfgs == nil {
 		// l.taskCfgs is non-nil only if Lightning is started with RunServer().
 		// Without the server mode this pointer is default to be nil.
