@@ -20,7 +20,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
@@ -33,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/testkit/trequire"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -1432,34 +1430,37 @@ func TestChar(t *testing.T) {
 	}()
 
 	tbl := []struct {
-		str    string
-		iNum   int64
-		fNum   float64
-		result string
+		str      string
+		iNum     int64
+		fNum     float64
+		charset  interface{}
+		result   interface{}
+		warnings int
 	}{
-		{"65", 66, 67.5, "ABD"},                  // float
-		{"65", 16740, 67.5, "AAdD"},              // large num
-		{"65", -1, 67.5, "A\xff\xff\xff\xffD"},   // nagtive int
-		{"a", -1, 67.5, "\x00\xff\xff\xff\xffD"}, // invalid 'a'
+		{"65", 66, 67.5, "utf8", "ABD", 0},               // float
+		{"65", 16740, 67.5, "utf8", "AAdD", 0},           // large num
+		{"65", -1, 67.5, nil, "A\xff\xff\xff\xffD", 0},   // nagtive int
+		{"a", -1, 67.5, nil, "\x00\xff\xff\xff\xffD", 0}, // invalid 'a'
+		// TODO: Uncomment it when issue #29685 be closed
+		// {"65", -1, 67.5, "utf8", nil, 1},                 // with utf8, return nil
+		// {"a", -1, 67.5, "utf8", nil, 2},                  // with utf8, return nil
+		// TODO: Uncomment it when gbk be added into charsetInfos
+		// {"1234567", 1234567, 1234567, "gbk", "謬謬謬", 0},  // test char for gbk
+		// {"123456789", 123456789, 123456789, "gbk", nil, 3}, // invalid 123456789 in gbk
 	}
 	for _, v := range tbl {
-		for _, char := range []interface{}{"utf8", nil} {
-			fc := funcs[ast.CharFunc]
-			f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(v.str, v.iNum, v.fNum, char)))
-			require.NoError(t, err)
-			require.NotNil(t, f)
-			r, err := evalBuiltinFunc(f, chunk.Row{})
-			require.NoError(t, err)
-			trequire.DatumEqual(t, types.NewDatum(v.result), r)
+		fc := funcs[ast.CharFunc]
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(v.str, v.iNum, v.fNum, v.charset)))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		trequire.DatumEqual(t, types.NewDatum(v.result), r)
+		if v.warnings != 0 {
+			warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+			require.Equal(t, v.warnings, len(warnings))
 		}
 	}
-
-	fc := funcs[ast.CharFunc]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("65", 66, nil)))
-	require.NoError(t, err)
-	r, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	trequire.DatumEqual(t, types.NewDatum("AB"), r)
 }
 
 func TestCharLength(t *testing.T) {
@@ -2646,83 +2647,6 @@ func TestWeightString(t *testing.T) {
 			require.Equal(t, expectWarn, obtainedWarns[0].Err.Error())
 		}
 	}
-}
-
-func TestCIWeightString(t *testing.T) {
-	t.Parallel()
-	ctx := createContext(t)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
-	type weightStringTest struct {
-		str     string
-		padding string
-		length  int
-		expect  interface{}
-	}
-
-	checkResult := func(collation string, tests []weightStringTest) {
-		fc := funcs[ast.WeightString]
-		for _, test := range tests {
-			str := types.NewCollationStringDatum(test.str, collation, utf8.RuneCountInString(test.str))
-			var f builtinFunc
-			var err error
-			if test.padding == "NONE" {
-				f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str}))
-			} else {
-				padding := types.NewDatum(test.padding)
-				length := types.NewDatum(test.length)
-				f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str, padding, length}))
-			}
-			require.NoError(t, err)
-			result, err := evalBuiltinFunc(f, chunk.Row{})
-			require.NoError(t, err)
-			if result.IsNull() {
-				require.Nil(t, test.expect)
-				continue
-			}
-			res, err := result.ToString()
-			require.NoError(t, err)
-			require.Equal(t, test.expect, res)
-		}
-	}
-
-	generalTests := []weightStringTest{
-		{"aAÁàãăâ", "NONE", 0, "\x00A\x00A\x00A\x00A\x00A\x00A\x00A"},
-		{"中", "NONE", 0, "\x4E\x2D"},
-		{"a", "CHAR", 5, "\x00A"},
-		{"a ", "CHAR", 5, "\x00A"},
-		{"中", "CHAR", 5, "\x4E\x2D"},
-		{"中 ", "CHAR", 5, "\x4E\x2D"},
-		{"a", "BINARY", 1, "a"},
-		{"ab", "BINARY", 1, "a"},
-		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
-		{"a ", "BINARY", 5, "a \x00\x00\x00"},
-		{"中", "BINARY", 1, "\xe4"},
-		{"中", "BINARY", 2, "\xe4\xb8"},
-		{"中", "BINARY", 3, "中"},
-		{"中", "BINARY", 5, "中\x00\x00"},
-	}
-
-	unicodeTests := []weightStringTest{
-		{"aAÁàãăâ", "NONE", 0, "\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3"},
-		{"中", "NONE", 0, "\xfb\x40\xce\x2d"},
-		{"a", "CHAR", 5, "\x0e3"},
-		{"a ", "CHAR", 5, "\x0e3"},
-		{"中", "CHAR", 5, "\xfb\x40\xce\x2d"},
-		{"中 ", "CHAR", 5, "\xfb\x40\xce\x2d"},
-		{"a", "BINARY", 1, "a"},
-		{"ab", "BINARY", 1, "a"},
-		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
-		{"a ", "BINARY", 5, "a \x00\x00\x00"},
-		{"中", "BINARY", 1, "\xe4"},
-		{"中", "BINARY", 2, "\xe4\xb8"},
-		{"中", "BINARY", 3, "中"},
-		{"中", "BINARY", 5, "中\x00\x00"},
-	}
-
-	checkResult("utf8mb4_general_ci", generalTests)
-	checkResult("utf8mb4_unicode_ci", unicodeTests)
 }
 
 func TestTranslate(t *testing.T) {

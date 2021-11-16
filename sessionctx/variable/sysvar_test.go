@@ -679,6 +679,11 @@ func TestSettersandGetters(t *testing.T) {
 		}
 		if !sv.HasGlobalScope() {
 			require.Nil(t, sv.SetGlobal)
+			if sv.Name == Timestamp {
+				// The Timestamp sysvar will have GetGlobal func even though it does not have global scope.
+				// It's GetGlobal func will only be called when "set timestamp = default".
+				continue
+			}
 			require.Nil(t, sv.GetGlobal)
 		}
 	}
@@ -747,6 +752,24 @@ func TestLastInsertID(t *testing.T) {
 	require.Equal(t, val, "21")
 }
 
+func TestTimestamp(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := GetSessionOrGlobalSystemVar(vars, Timestamp)
+	require.NoError(t, err)
+	require.NotEqual(t, "", val)
+
+	vars.systems[Timestamp] = "10"
+	val, err = GetSessionOrGlobalSystemVar(vars, Timestamp)
+	require.NoError(t, err)
+	require.Equal(t, "10", val)
+
+	vars.systems[Timestamp] = "0" // set to default
+	val, err = GetSessionOrGlobalSystemVar(vars, Timestamp)
+	require.NoError(t, err)
+	require.NotEqual(t, "", val)
+	require.NotEqual(t, "10", val)
+}
+
 func TestIdentity(t *testing.T) {
 	vars := NewSessionVars()
 	val, err := GetSessionOrGlobalSystemVar(vars, Identity)
@@ -783,4 +806,14 @@ func TestDDLWorkers(t *testing.T) {
 	val, err = svBatchSize.Validate(vars, "100", ScopeGlobal)
 	require.NoError(t, err)
 	require.Equal(t, val, "100") // unchanged
+}
+
+func TestDefaultCharsetAndCollation(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := GetSessionOrGlobalSystemVar(vars, CharacterSetConnection)
+	require.NoError(t, err)
+	require.Equal(t, val, mysql.DefaultCharset)
+	val, err = GetSessionOrGlobalSystemVar(vars, CollationConnection)
+	require.NoError(t, err)
+	require.Equal(t, val, mysql.DefaultCollationName)
 }

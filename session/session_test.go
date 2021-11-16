@@ -1528,7 +1528,7 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.GetRow(0).IsNull(0), IsTrue)
@@ -2433,7 +2433,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	}()
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	var count int
 	var numChunks int
 	for {
@@ -2470,7 +2470,7 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	c.Assert(err, IsNil)
 	var idx int
 	for {
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 		if req.NumRows() == 0 {
@@ -2504,7 +2504,7 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	c.Assert(err, IsNil)
 	var idx int
 	for {
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 		if req.NumRows() == 0 {
@@ -2539,7 +2539,7 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
 
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows(), Equals, 1)
@@ -2571,7 +2571,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 
 	var idx int
 	for {
-		req := rs.NewChunk()
+		req := rs.NewChunk(nil)
 		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 
@@ -2591,7 +2591,7 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	rs, err = tk.Exec("select * from chk2")
 	c.Assert(err, IsNil)
 
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), req)
 	c.Assert(err, IsNil)
 	c.Assert(req.NumRows(), Equals, 0)
@@ -2615,7 +2615,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	tk.Se.GetSessionVars().IndexLookupSize = 10
 	rs, err := tk.Exec("select * from chk order by k")
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	var count int
 	for {
 		err = rs.Next(context.TODO(), req)
@@ -2635,7 +2635,7 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 
 	rs, err = tk.Exec("select k from chk where c < 90 order by k")
 	c.Assert(err, IsNil)
-	req = rs.NewChunk()
+	req = rs.NewChunk(nil)
 	count = 0
 	for {
 		err = rs.Next(context.TODO(), req)
@@ -5718,26 +5718,28 @@ func (s *testSessionSuite) TestSetPDClientDynmaicOption(c *C) {
 	var err error
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 0.5;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0.5"))
 	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 1;")
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 1.5;")
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("1.5"))
 	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10;")
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
 	err = tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 0;")
 	c.Assert(err, NotNil)
-	if *withTiKV {
-		err = tk.ExecToErr("set global tidb_tso_client_batch_max_wait_time = -1;")
-		c.Assert(err, NotNil)
-		c.Assert(err, ErrorMatches, ".*invalid max TSO batch wait interval.*")
-		err = tk.ExecToErr("set global tidb_tso_client_batch_max_wait_time = 11;")
-		c.Assert(err, NotNil)
-		c.Assert(err, ErrorMatches, ".*invalid max TSO batch wait interval.*")
-	} else {
-		// Because the PD client in the unit test may be nil, so we only check the warning here.
-		tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -1;")
-		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'"))
-		tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 11;")
-		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
-	}
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -0.1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-0.1'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10.1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '10.1'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
+	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 11;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
+	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
 
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_tso_follower_proxy = on;")

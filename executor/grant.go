@@ -155,7 +155,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx,
 				`INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES (%?, %?, %?, %?);`,
-				mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd, authPlugin)
+				mysql.SystemDB, mysql.UserTable, strings.ToLower(user.User.Hostname), user.User.Username, pwd, authPlugin)
 			if err != nil {
 				return err
 			}
@@ -476,7 +476,7 @@ func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 	if err != nil {
 		return err
 	}
-	sqlexec.MustFormatSQL(sql, ` WHERE User=%? AND Host=%?`, user.User.Username, user.User.Hostname)
+	sqlexec.MustFormatSQL(sql, ` WHERE User=%? AND Host=%?`, user.User.Username, strings.ToLower(user.User.Hostname))
 
 	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql.String())
 	return err
@@ -807,7 +807,7 @@ func getRowsAndFields(ctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row
 
 func getRowFromRecordSet(ctx context.Context, se sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {

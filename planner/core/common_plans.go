@@ -735,6 +735,9 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 			if err != nil {
 				return err
 			}
+			if len(res.AccessConds) != len(ts.AccessCondition) {
+				return errors.New("rebuild range for cached plan failed")
+			}
 			ts.Ranges = res.Ranges
 		} else {
 			ts.Ranges = ranger.FullRange()
@@ -766,6 +769,9 @@ func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIn
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens)
 	if err != nil {
 		return err
+	}
+	if len(res.AccessConds) != len(is.AccessCondition) {
+		return errors.New("rebuild range for cached plan failed")
 	}
 	is.Ranges = res.Ranges
 	return
@@ -1471,8 +1477,16 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		// If the PointGetPlan needs to read data using unique index (double read), we
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
 		// and the data and index would be inconsistent!
-		isPointGet := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
-		return isPointGet, nil
+		// If the PointGetPlan needs to read data from Cache Table, we can't use max uint64,
+		// because math.MaxUint64 always make cacheData invalid.
+		noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
+		if !noSecondRead {
+			return false, nil
+		}
+		if v.TblInfo != nil && (v.TblInfo.TableCacheStatusType != model.TableCacheStatusDisable) {
+			return false, nil
+		}
+		return true, nil
 	default:
 		return false, nil
 	}
