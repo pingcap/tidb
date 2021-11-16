@@ -39,6 +39,28 @@ func TestWriteDatabaseMeta(t *testing.T) {
 	require.Equal(t, "/*!40101 SET NAMES binary*/;\nCREATE DATABASE `test`;\n", string(bytes))
 }
 
+func TestWritePolicyMeta(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	config := defaultConfigForTest(t)
+	config.OutputDirPath = dir
+
+	writer, clean := createTestWriter(config, t)
+	defer clean()
+
+	err := writer.WritePolicyMeta("test", "create placement policy `y` followers=2")
+	require.NoError(t, err)
+
+	p := path.Join(dir, "placement-policy-create.sql")
+	_, err = os.Stat(p)
+	require.NoError(t, err)
+
+	bytes, err := ioutil.ReadFile(p)
+	require.NoError(t, err)
+	require.Equal(t, "/*!40101 SET NAMES binary*/;\n/*T![placement] SET PLACEMENT_CHECKS = 0*/;\ncreate placement policy `y` followers=2;\n", string(bytes))
+}
+
 func TestWriteTableMeta(t *testing.T) {
 	t.Parallel()
 

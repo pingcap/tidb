@@ -114,6 +114,16 @@ func (w *Writer) handleTask(task Task) error {
 	}
 }
 
+// WritePolicyMeta writes database meta to a file
+func (w *Writer) WritePolicyMeta(db, createSQL string) error {
+	tctx, conf := w.tctx, w.conf
+	fileName, err := (&outputFileNamer{DB: db}).render(conf.OutputFileTemplate, outputFileTemplatePolicy)
+	if err != nil {
+		return err
+	}
+	return writeMetaToFile(tctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
+}
+
 // WriteDatabaseMeta writes database meta to a file
 func (w *Writer) WriteDatabaseMeta(db, createSQL string) error {
 	tctx, conf := w.tctx, w.conf
@@ -247,6 +257,7 @@ func writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, s storage.E
 		metaSQL: metaSQL,
 		specCmts: []string{
 			"/*!40101 SET NAMES binary*/;",
+			"/*T![placement] SET PLACEMENT_CHECKS = 0*/;",
 		},
 	}, fileWriter)
 }
