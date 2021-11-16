@@ -663,9 +663,9 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 	sql := new(strings.Builder)
 	// when an active role of current user is revoked,
 	// it should be removed from activeRoles
-	activeRoles, currentUser := e.ctx.GetSessionVars().ActiveRoles, ""
-	if e.ctx.GetSessionVars().User != nil {
-		currentUser = e.ctx.GetSessionVars().User.Username
+	activeRoles, curUser, curHost := e.ctx.GetSessionVars().ActiveRoles, "", ""
+	if user := e.ctx.GetSessionVars().User; user != nil {
+		curUser, curHost = user.AuthUsername, user.AuthHostname
 	}
 	for _, user := range s.Users {
 		exists, err := userExists(ctx, e.ctx, user.Username, user.Hostname)
@@ -701,7 +701,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 			}
 
 			// delete from activeRoles
-			if currentUser == user.Username {
+			if curUser == user.Username && curHost == user.Hostname {
 				for i := 0; i < len(activeRoles); i++ {
 					if activeRoles[i].Username == role.Username && activeRoles[i].Hostname == role.Hostname {
 						activeRoles = append(activeRoles[:i], activeRoles[i+1:]...)
