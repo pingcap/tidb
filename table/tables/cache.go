@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -29,15 +30,32 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
+// RenewLeaseType define the type for renew lease.
+type RenewLeaseType int
+
+const (
+	// RenewReadLease means renew read lease.
+	RenewReadLease RenewLeaseType = iota + 1
+	// RenewWriteLease means renew write lease.
+	RenewWriteLease
+)
+
 var (
 	_ table.Table       = &cachedTable{}
 	_ table.CachedTable = &cachedTable{}
 )
 
+type renewInfo struct {
+	ts uint64
+	*cacheData
+	op RenewLeaseType
+}
+
 type cachedTable struct {
 	TableCommon
 	cacheData atomic.Value
 	handle    StateRemote
+	renewCh   chan renewInfo
 }
 
 // cacheData pack the cache data and lease.
@@ -72,6 +90,13 @@ func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 	}
 	data := tmp.(*cacheData)
 	if ts >= data.Start && ts < data.Lease {
+		startTime := oracle.GetTimeFromTS(data.Start)
+		nowTime := oracle.GetTimeFromTS(ts)
+		after := nowTime.Sub(startTime)
+		// TODO make this configurable in the following PRs
+		if after >= (2 * time.Second) {
+			c.renewCh <- renewInfo{ts: ts, cacheData: data, op: RenewReadLease}
+		}
 		return data
 	}
 	return nil
@@ -92,8 +117,9 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 	ret := &cachedTable{
 		TableCommon: *tbl,
 		handle:      &mockStateRemoteHandle{mockStateRemote.Ch},
+		renewCh:     make(chan renewInfo, 10),
 	}
-
+	go ret.renewLease()
 	return ret, nil
 }
 
@@ -202,4 +228,31 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return errors.Trace(err)
 	}
 	return c.TableCommon.RemoveRecord(ctx, h, r)
+}
+
+func (c *cachedTable) renewLease() {
+	for renewInfo := range c.renewCh {
+		tid := c.Meta().ID
+		lease := leaseFromTS(renewInfo.ts)
+		succ, err := c.handle.RenewLease(tid, lease, renewInfo.op)
+		if err != nil {
+			log.Warn("Renew read lease error")
+		}
+		if succ {
+			c.cacheData.Store(&cacheData{
+				Start:     renewInfo.ts,
+				Lease:     lease,
+				MemBuffer: renewInfo.cacheData,
+			})
+		}
+	}
+}
+
+func (c *cachedTable) MockGetDataLease() (uint64, uint64) {
+	tmp := c.cacheData.Load()
+	if tmp == nil {
+		return 0, 0
+	}
+	data := tmp.(*cacheData)
+	return data.Start, data.Lease
 }

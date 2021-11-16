@@ -20,7 +20,6 @@ package table
 
 import (
 	"context"
-
 	"github.com/opentracing/opentracing-go"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -258,4 +257,7 @@ type CachedTable interface {
 	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
 	// you need to update the lock information and read the data from the original table
 	UpdateLockForRead(store kv.Storage, ts uint64) error
+
+	// MockGetDataLease only for test renew Lease
+	MockGetDataLease() (uint64, uint64)
 }

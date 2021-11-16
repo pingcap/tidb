@@ -15,11 +15,16 @@
 package tables_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/parser/model"
+	table2 "github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestCacheTableBasicScan(t *testing.T) {
@@ -388,4 +393,55 @@ func TestCacheTableBatchPointGet(t *testing.T) {
 	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13, 16)").Check(testkit.Rows("1 11 101", "3 13 999", "6 16 106"))
 	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 4)").Check(testkit.Rows("1 11 101"))
 	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 14)").Check(testkit.Rows("1 11 101"))
+}
+
+func TestRenewLease(t *testing.T) {
+	// Test RenewLeaseForRead
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	se := tk.Session()
+	table := &model.TableInfo{
+		ID:                   1,
+		Name:                 model.NewCIStr("t"),
+		Charset:              "utf8",
+		Collate:              "utf8_bin",
+		TableCacheStatusType: model.TableCacheStatusEnable,
+		PKIsHandle:           true,
+	}
+	ctx := context.Background()
+	tbl := tables.MockTableFromMeta(table)
+	cacheTable := tbl.(table2.CachedTable)
+	err := se.NewTxn(ctx)
+	require.NoError(t, err)
+	txn, err := se.Txn(true)
+	require.NoError(t, err)
+	data := cacheTable.TryReadFromCache(txn.StartTS())
+	require.Equal(t, data, nil)
+	for {
+		err := se.NewTxn(ctx)
+		require.NoError(t, err)
+		txn, err := se.Txn(true)
+		err = cacheTable.UpdateLockForRead(se.GetStore(), txn.StartTS())
+		if err == nil {
+			break
+		}
+	}
+	startTs, _ := cacheTable.MockGetDataLease()
+	physicalTime := oracle.GetTimeFromTS(startTs)
+	lease := oracle.GoTimeToTS(physicalTime.Add(2*time.Second + 500*time.Millisecond))
+	data = cacheTable.TryReadFromCache(lease)
+	require.NotNil(t, data)
+	physicalTime = oracle.GetTimeFromTS(lease)
+	newLease := oracle.GoTimeToTS(physicalTime.Add(3 * time.Second))
+	var i int
+	for i = 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		_, lease := cacheTable.MockGetDataLease()
+		if lease == newLease {
+			break
+		}
+	}
+	require.True(t, i < 10)
 }
