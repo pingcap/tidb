@@ -32,6 +32,16 @@ type mockStorage struct {
 	*copr.Store
 	memCache  kv.MemManager
 	LockWaits []*deadlockpb.WaitForEntry
+	pdAddrs []string
+}
+
+
+func ModifyPdAddrs(store interface{}, pdAddrs []string) bool {
+	if s, ok := store.(*mockStorage); ok {
+		s.pdAddrs = pdAddrs
+		return true
+	}
+	return false
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
@@ -49,7 +59,7 @@ func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
 }
 
 func (s *mockStorage) EtcdAddrs() ([]string, error) {
-	return nil, nil
+	return s.pdAddrs, nil
 }
 
 func (s *mockStorage) TLSConfig() *tls.Config {

@@ -1,8 +1,12 @@
 package ddl_test
+
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
+	"github.com/pingcap/fn"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -12,23 +16,30 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/tikv/client-go/v2/testutils"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"time"
 )
 
 type tiflashDDLTestSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
+	httpServer *httptest.Server
+	mockAddr   string
+	startTime  time.Time
 }
-
 
 var _ = Suite(&tiflashDDLTestSuite{})
 
 func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
-	fmt.Printf("HAAAHAHHAAA\n")
 	var err error
+
 	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
@@ -46,41 +57,35 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
 
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+
+
 	c.Assert(err, IsNil)
 
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 
-	fmt.Printf("HAAAHAHHAAA2\n")
 	s.dom, err = session.BootstrapSession(s.store)
-	fmt.Printf("HAAAHAHHAAA5\n")
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
-	fmt.Printf("HAAAHAHHAAA6\n")
+
+	mockstorage.ModifyPdAddrs(s.store, []string{s.mockAddr})
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
+	if s.httpServer != nil {
+		s.httpServer.Close()
+	}
+
 	s.dom.Close()
-	c.Assert(s.store.Close(), IsNil)
+	err := s.store.Close()
+	c.Assert(err, IsNil)
 }
 
 func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) (bool, error) {
-	tikvStore, ok := s.dom.Store().(helper.Storage)
-	if !ok {
-		return false, errors.New("Can not get Helper")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
-
-	allRulesArr, err := tikvHelper.GetGroupRules("tiflash")
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
 	matched := false
-	for _, r := range allRulesArr {
+	for _, r := range globalTiFlashPlacementRules {
 		if r.StartKeyHex == rule.StartKeyHex && r.EndKeyHex == rule.EndKeyHex && r.Count == rule.Count && len(r.LocationLabels) == len(rule.LocationLabels){
 			matched = true
 			for i, l := range r.LocationLabels {
@@ -90,6 +95,7 @@ func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) (bool, err
 				}
 			}
 			if matched {
+				fmt.Printf("!!!! Matched %v %v\n", r, rule)
 				break
 			}
 		}
@@ -101,21 +107,113 @@ func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) (bool, err
 	return false, nil
 }
 
+
 func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
-	fmt.Printf("ZZZZZZZZZZ\n")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(z int)")
 	tk.MustExec("alter table t set tiflash replica 1")
 
-	time.Sleep(time.Second * 3)
+	time.Sleep(time.Second * 2)
 
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
-	s.CheckPlacementRule(*expectRule)
-
+	res, _ := s.CheckPlacementRule(*expectRule)
+	c.Assert(res, Equals, true)
 }
 
+var globalTiFlashPlacementRules map[string]placement.Rule = make(map[string]placement.Rule)
 
+func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string) {
+	// mock PD http server
+	router := mux.NewRouter()
+	server := httptest.NewServer(router)
+	// mock store stats stat
+	mockAddr := strings.TrimPrefix(server.URL, "http://")
+	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
+		return &helper.StoresStat{
+			Count: 1,
+			Stores: []helper.StoreStat{
+				{
+					Store: helper.StoreBaseStat{
+						ID:             1,
+						Address:        "127.0.0.1:20160",
+						State:          0,
+						StateName:      "Up",
+						Version:        "4.0.0-alpha",
+						StatusAddress:  mockAddr,
+						GitHash:        "mock-tikv-githash",
+						StartTimestamp: s.startTime.Unix(),
+					},
+				},
+			},
+		}, nil
+	}))
+	// mock PD API
+	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
+	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
+		return struct {
+			GitHash        string `json:"git_hash"`
+			StartTimestamp int64  `json:"start_timestamp"`
+		}{
+			GitHash:        "mock-pd-githash",
+			StartTimestamp: s.startTime.Unix(),
+		}, nil
+	}))
+	router.Handle("/pd/api/v1/config/rules/group/tiflash", fn.Wrap(func() (interface{}, error) {
+		return globalTiFlashPlacementRules, nil
+	}))
+	router.HandleFunc("/pd/api/v1/config/rule", func(w http.ResponseWriter, req *http.Request) {
+		buf := new(bytes.Buffer)
+		_, err := buf.ReadFrom(req.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var rule placement.Rule
+		err = json.Unmarshal(buf.Bytes(), &rule)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		ruleId := fmt.Sprintf("table-%v-r", rule.ID)
+		globalTiFlashPlacementRules[ruleId] = rule
+		w.WriteHeader(http.StatusOK)
+	})
+	var mockConfig = func() (map[string]interface{}, error) {
+		configuration := map[string]interface{}{
+			"key1": "value1",
+			"key2": map[string]string{
+				"nest1": "n-value1",
+				"nest2": "n-value2",
+			},
+			"key3": map[string]interface{}{
+				"nest1": "n-value1",
+				"nest2": "n-value2",
+				"key4": map[string]string{
+					"nest3": "n-value4",
+					"nest4": "n-value5",
+				},
+			},
+		}
+		return configuration, nil
+	}
+	// PD config.
+	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
+	// TiDB/TiKV config.
+	router.Handle("/config", fn.Wrap(mockConfig))
+	// PD region.
+	router.Handle("/pd/api/v1/stats/region", fn.Wrap(func() (*helper.PDRegionStats, error) {
+		return &helper.PDRegionStats{
+			Count:            1,
+			EmptyCount:       1,
+			StorageSize:      1,
+			StorageKeys:      1,
+			StoreLeaderCount: map[uint64]int{1: 1},
+			StorePeerCount:   map[uint64]int{1: 1},
+		}, nil
+	}))
+	return server, mockAddr
+}

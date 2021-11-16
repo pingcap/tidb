@@ -389,7 +389,6 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 						return allReplicaReady, errors.Trace(err)
 					}
 					fmt.Printf("!!!! find replica %v\n", r)
-					fmt.Printf("!!!! find replica %v\n", r)
 					if i, ok := regionReplica[r]; ok {
 						regionReplica[r] = i + 1
 					} else {
@@ -438,7 +437,6 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	fmt.Printf("!!!! %v\n", tikvHelper)
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo != nil && tbReplicaInfo.Count == replicaInfo.Count &&
@@ -461,18 +459,18 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	// TODO maybe we should move into `updateVersionAndTableInfo`, since it can fail, and we shall rollback
-	//setRuleOk := false
-	//for retry := 0; retry < 2; retry++ {
-	//	ruleNew := MakeNewRule(tb.Meta().ID, replicaInfo.Count, replicaInfo.Labels)
-	//	fmt.Printf("Set new rule %v\n", ruleNew)
-	//	if tikvHelper.SetPlacementRule(*ruleNew) == nil {
-	//		setRuleOk = true
-	//		break
-	//	}
-	//}
-	//if setRuleOk == false {
-	//	return errors.New("Can not set placement rule for TiFlash")
-	//}
+	setRuleOk := false
+	for retry := 0; retry < 2; retry++ {
+		ruleNew := MakeNewRule(tb.Meta().ID, replicaInfo.Count, replicaInfo.Labels)
+		fmt.Printf("Set new rule %v\n", ruleNew)
+		if tikvHelper.SetPlacementRule(*ruleNew) == nil {
+			setRuleOk = true
+			break
+		}
+	}
+	if setRuleOk == false {
+		return errors.New("Can not set placement rule for TiFlash")
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,

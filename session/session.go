@@ -2428,17 +2428,13 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
-	fmt.Printf("!!!! BootstrapSession 1\n")
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
-		fmt.Printf("!!!! BootstrapSession 1.1\n")
 		runInBootstrapSession(store, bootstrap)
 	} else if ver < currentBootstrapVersion {
-		fmt.Printf("!!!! BootstrapSession 1.2\n")
 		runInBootstrapSession(store, upgrade)
 	}
 
-	fmt.Printf("!!!! BootstrapSession 2\n")
 	se, err := createSession(store)
 	if err != nil {
 		return nil, err
@@ -2451,7 +2447,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 	timeutil.SetSystemTZ(tz)
 
-	fmt.Printf("!!!! BootstrapSession 3\n")
 	// get the flag from `mysql`.`tidb` which indicating if new collations are enabled.
 	newCollationEnabled, err := loadCollationParameter(se)
 	if err != nil {
@@ -2485,7 +2480,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		})
 	}
 
-	fmt.Printf("!!!! BootstrapSession 1\n")
 	dom := domain.GetDomain(se)
 
 	se2, err := createSession(store)
@@ -2504,7 +2498,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	fmt.Printf("!!!! BootstrapSession 2\n")
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		se4, err := createSession(store)
 		if err != nil {
@@ -2526,7 +2519,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, err
 	}
 
-	fmt.Printf("!!!! BootstrapSession 3\n")
 	if len(cfg.Plugin.Load) > 0 {
 		err := plugin.Init(context.Background(), plugin.Config{EtcdClient: dom.GetEtcdClient()})
 		if err != nil {

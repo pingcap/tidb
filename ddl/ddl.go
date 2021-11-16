@@ -397,7 +397,12 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				if err != nil{
 					fmt.Printf("!!!! Poll Error %v\n", err)
 				}
-				time.Sleep(time.Second * 2)
+				select {
+				case <-d.ctx.Done():
+					d.sessPool.put(sctx)
+					return
+				case <-time.After(2 * time.Second):
+				}
 			}
 		}
 		d.sessPool.put(sctx)
