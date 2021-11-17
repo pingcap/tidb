@@ -70,6 +70,36 @@ var type2Str = map[byte]string{
 	mysql.TypeYear:        "year",
 }
 
+var str2Type = map[string]byte{
+	"bit":         mysql.TypeBit,
+	"text":        mysql.TypeBlob,
+	"date":        mysql.TypeDate,
+	"datetime":    mysql.TypeDatetime,
+	"unspecified": mysql.TypeUnspecified,
+	"decimal":     mysql.TypeNewDecimal,
+	"double":      mysql.TypeDatetime,
+	"enum":        mysql.TypeEnum,
+	"float":       mysql.TypeFloat,
+	"geometry":    mysql.TypeGeometry,
+	"mediumint":   mysql.TypeInt24,
+	"json":        mysql.TypeJSON,
+	"int":         mysql.TypeLong,
+	"bigint":      mysql.TypeLonglong,
+	"longtext":    mysql.TypeLongBlob,
+	"mediumtext":  mysql.TypeMediumBlob,
+	"null":        mysql.TypeNull,
+	"set":         mysql.TypeSet,
+	"smallint":    mysql.TypeShort,
+	"char":        mysql.TypeString,
+	"time":        mysql.TypeDuration,
+	"timestamp":   mysql.TypeTimestamp,
+	"tinyint":     mysql.TypeTiny,
+	"tinytext":    mysql.TypeTinyBlob,
+	"varchar":     mysql.TypeVarchar,
+	"var_string":  mysql.TypeVarString,
+	"year":        mysql.TypeYear,
+}
+
 // TypeStr converts tp to a string.
 func TypeStr(tp byte) (r string) {
 	return type2Str[tp]
@@ -103,12 +133,11 @@ func StrToType(ts string) (tp byte) {
 	} else if strings.Contains(ts, "binary") {
 		ts = strings.Replace(ts, "binary", "char", 1)
 	}
-	for tp, cs := range type2Str {
-		if cs == ts {
-			return tp
-		}
+
+	if tp, ok := str2Type[ts]; ok {
+		return tp
 	}
-	// this should never happen
+
 	return mysql.TypeUnspecified
 }
 
