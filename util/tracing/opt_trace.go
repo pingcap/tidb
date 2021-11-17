@@ -79,3 +79,11 @@ type LogicalRuleOptimizeTraceStep struct {
 	ID     int
 	TP     string
 }
+
+type CETraceRecord struct {
+	TableID   int64
+	TableName string
+	Type      string
+	Expr      string
+	RowCount  uint64
+}

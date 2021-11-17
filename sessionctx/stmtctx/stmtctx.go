@@ -197,6 +197,10 @@ type StatementContext struct {
 	EnableOptimizeTrace bool
 	// LogicalOptimizeTrace indicates the trace for optimize
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
+	// EnableOptimizerCETrace indicate if cardinality estimation internal process needs to be traced.
+	// CE Trace is currently a submodule of the optimizer trace and is controlled by a seperated option.
+	EnableOptimizerCETrace bool
+	OptimizerCETrace       []*tracing.CETraceRecord
 }
 
 // StmtHints are SessionVars related sql hints.
