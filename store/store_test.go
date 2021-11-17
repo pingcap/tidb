@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
+	kv2 "github.com/tikv/client-go/v2/kv"
 )
 
 const (
@@ -682,4 +683,104 @@ func (s *testKVSuite) TestRegister(c *C) {
 	c.Assert(err, IsNil)
 	err = Register("retry", &brokenStore{})
 	c.Assert(err, NotNil)
+}
+
+func (s *testKVSuite) TestSetAssertion(c *C) {
+	txn, err := s.s.Begin()
+	c.Assert(err, IsNil)
+
+	mustHaveAssertion := func(key []byte, assertion kv.FlagsOp) {
+		f, err1 := txn.GetMemBuffer().GetFlags(key)
+		c.Assert(err1, IsNil)
+		if assertion == kv.SetAssertExist {
+			c.Assert(f.HasAssertExists(), IsTrue)
+			c.Assert(f.HasAssertUnknown(), IsFalse)
+		} else if assertion == kv.SetAssertNotExist {
+			c.Assert(f.HasAssertNotExists(), IsTrue)
+			c.Assert(f.HasAssertUnknown(), IsFalse)
+		} else if assertion == kv.SetAssertUnknown {
+			c.Assert(f.HasAssertUnknown(), IsTrue)
+		} else if assertion == kv.SetAssertNone {
+			c.Assert(f.HasAssertion(), IsFalse)
+		} else {
+			c.Fatalf("unreachable")
+		}
+	}
+
+	testUnchangeable := func(key []byte, expectAssertion kv.FlagsOp) {
+		err = txn.SetAssertion(key, kv.SetAssertExist)
+		c.Assert(err, IsNil)
+		mustHaveAssertion(key, expectAssertion)
+		err = txn.SetAssertion(key, kv.SetAssertNotExist)
+		c.Assert(err, IsNil)
+		mustHaveAssertion(key, expectAssertion)
+		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		c.Assert(err, IsNil)
+		mustHaveAssertion(key, expectAssertion)
+		err = txn.SetAssertion(key, kv.SetAssertNone)
+		c.Assert(err, IsNil)
+		mustHaveAssertion(key, expectAssertion)
+	}
+
+	k1 := []byte("k1")
+	err = txn.SetAssertion(k1, kv.SetAssertExist)
+	c.Assert(err, IsNil)
+	mustHaveAssertion(k1, kv.SetAssertExist)
+	testUnchangeable(k1, kv.SetAssertExist)
+
+	k2 := []byte("k2")
+	err = txn.SetAssertion(k2, kv.SetAssertNotExist)
+	c.Assert(err, IsNil)
+	mustHaveAssertion(k2, kv.SetAssertNotExist)
+	testUnchangeable(k2, kv.SetAssertNotExist)
+
+	k3 := []byte("k3")
+	err = txn.SetAssertion(k3, kv.SetAssertUnknown)
+	c.Assert(err, IsNil)
+	mustHaveAssertion(k3, kv.SetAssertUnknown)
+	testUnchangeable(k3, kv.SetAssertUnknown)
+
+	k4 := []byte("k4")
+	err = txn.SetAssertion(k4, kv.SetAssertNone)
+	c.Assert(err, IsNil)
+	mustHaveAssertion(k4, kv.SetAssertNone)
+	err = txn.SetAssertion(k4, kv.SetAssertExist)
+	c.Assert(err, IsNil)
+	mustHaveAssertion(k4, kv.SetAssertExist)
+	testUnchangeable(k4, kv.SetAssertExist)
+
+	k5 := []byte("k5")
+	err = txn.Set(k5, []byte("v5"))
+	c.Assert(err, IsNil)
+	mustHaveAssertion(k5, kv.SetAssertNone)
+	err = txn.SetAssertion(k5, kv.SetAssertNotExist)
+	c.Assert(err, IsNil)
+	mustHaveAssertion(k5, kv.SetAssertNotExist)
+	testUnchangeable(k5, kv.SetAssertNotExist)
+
+	k6 := []byte("k6")
+	err = txn.SetAssertion(k6, kv.SetAssertNotExist)
+	c.Assert(err, IsNil)
+	err = txn.GetMemBuffer().SetWithFlags(k6, []byte("v6"), kv.SetPresumeKeyNotExists)
+	c.Assert(err, IsNil)
+	mustHaveAssertion(k6, kv.SetAssertNotExist)
+	testUnchangeable(k6, kv.SetAssertNotExist)
+	flags, err := txn.GetMemBuffer().GetFlags(k6)
+	c.Assert(err, IsNil)
+	c.Assert(flags.HasPresumeKeyNotExists(), IsTrue)
+	err = txn.GetMemBuffer().DeleteWithFlags(k6, kv.SetNeedLocked)
+	mustHaveAssertion(k6, kv.SetAssertNotExist)
+	testUnchangeable(k6, kv.SetAssertNotExist)
+	flags, err = txn.GetMemBuffer().GetFlags(k6)
+	c.Assert(err, IsNil)
+	c.Assert(flags.HasPresumeKeyNotExists(), IsTrue)
+	c.Assert(flags.HasNeedLocked(), IsTrue)
+
+	k7 := []byte("k7")
+	lockCtx := kv2.NewLockCtx(txn.StartTS(), 2000, time.Now())
+	err = txn.LockKeys(context.Background(), lockCtx, k7)
+	c.Assert(err, IsNil)
+	mustHaveAssertion(k7, kv.SetAssertNone)
+
+	c.Assert(txn.Rollback(), IsNil)
 }

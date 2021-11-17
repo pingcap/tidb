@@ -20,6 +20,8 @@ type KeyFlags uint8
 const (
 	flagPresumeKNE KeyFlags = 1 << iota
 	flagNeedLocked
+	flagAssertExists
+	flagAssertNotExists
 )
 
 // HasPresumeKeyNotExists returns whether the associated key use lazy check.
@@ -30,6 +32,26 @@ func (f KeyFlags) HasPresumeKeyNotExists() bool {
 // HasNeedLocked returns whether the key needed to be locked
 func (f KeyFlags) HasNeedLocked() bool {
 	return f&flagNeedLocked != 0
+}
+
+// HasAssertExists returns whether the key is asserted to already exist before the current transaction.
+func (f KeyFlags) HasAssertExists() bool {
+	return f&flagAssertExists != 0 && f&flagAssertNotExists == 0
+}
+
+// HasAssertNotExists returns whether the key is asserted not to exist before the current transaction.
+func (f KeyFlags) HasAssertNotExists() bool {
+	return f&flagAssertNotExists != 0 && f&flagAssertExists == 0
+}
+
+// HasAssertUnknown returns whether the key is unable to do any assertion.
+func (f KeyFlags) HasAssertUnknown() bool {
+	return f&flagAssertExists != 0 && f&flagAssertNotExists != 0
+}
+
+// HasAssertion returns whether assertion is set on this key.
+func (f KeyFlags) HasAssertion() bool {
+	return f&flagAssertExists != 0 || f&flagAssertNotExists != 0
 }
 
 // FlagsOp describes KeyFlags modify operation.
@@ -58,6 +80,15 @@ func ApplyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 			origin |= flagPresumeKNE
 		case SetNeedLocked:
 			origin |= flagNeedLocked
+		case SetAssertExist:
+			origin |= flagAssertExists
+			origin &= ^flagAssertNotExists
+		case SetAssertNotExist:
+			origin |= flagAssertNotExists
+			origin &= ^flagAssertExists
+		case SetAssertUnknown:
+			origin |= flagAssertExists
+			origin |= flagAssertNotExists
 		}
 	}
 	return origin
