@@ -34,28 +34,28 @@ For example, if the query is `select * from t where c1=a and c2>2`:
 Note: the reasons why we introduce a new approach instead of using `explain` directly are:
 
 1. It can only show one plan for a query, for example, for a join query, it can only show one join order;
-2. Its granularity is not fine enough, for example, for a CNF, it might just show the total estimated rows of the whole CNF instead of each fitler.
+2. Its granularity is not fine enough, for example, for a CNF, it might just show the total estimated rows of the whole CNF instead of each filter's.
 
 ### CE Evaluation
 When evaluating the CE module, we consider 3 dimensions below:
 
 1. Dataset: JOB, TPCH, TPCC and so on;
 2. Statistics Health Degree: 100%, 90%, 50%, 0%(no stats); 
-3. Estimation Type: Eq/Range/CNF/DNF/ Estimation, some particular Estimation(`like`), Join Estimation and so on;
+3. Estimation Type: EQ/Range/CNF/DNF/ Estimation, some particular Estimation(`like`), Join Estimation and so on;
 
-For each combination of the above dimensions, generate a q-error record, like `JOB-100%-EQ`:
+For each combination of the above dimensions, generate a `q-error` record, like `JOB-100%-EQ`:
 ![q-error-record](./imgs/q-error-record.png)
 
-These q-error records can be used to quantify the performance of CE under varied scenarios.
+These `q-error` records can be used to quantify the performance of CE under varied scenarios.
 
-And by comparing them, we can find potential issues of the CE, for example:
+And by comparing them, we can find potential issues of CE, for example:
 
-1. `*-0%(no-stats)-*`: if these kinds of records are bad, then we can think our default statistics is not good enough;
-2. `*-90%-*`: if these kinds of records are bad, then we can think our estimation strategies are not good enough under stale statistics;
-3. `*-*-DNF`: if these kinds of records are bad, then we can think the CE cannot handle DNF well;
+1. `*-0%(no-stats)-*`: if these kinds of records are bad, then the default statistics is not good enough;
+2. `*-90%-*`: if these kinds of records are bad, then current estimation strategies cannot deal with stale statistics well;
+3. `*-*-DNF`: if these kinds of records are bad, then it cannot handle DNF well;
 
 ### Interface
-We use the same interface with optimizer trace: trace target='estimation' <statement>.
+We use the same interface with optimizer trace: `trace target='estimation' <statement>`.
 And the output is a download URL:
 ```
 > trace target='estimation' select * from t where a < 10 and b > 10;
@@ -66,7 +66,7 @@ And the output is a download URL:
 +------------+
 ```
 
-And all trace information(intermediate results) is stored in a JSON file:
+All trace information(intermediate results) is stored in a JSON file:
 ```
 [{
     Type: "Column-Range",
@@ -87,7 +87,7 @@ And all trace information(intermediate results) is stored in a JSON file:
 ```
 
 ### Event Tracking in the Optimizer
-We introduced some event tracking into CE to record intermediate results, and now they are in:
+We introduced some event tracking into the optimizer to record intermediate results, and now they are in:
 
 1. EQ/Range estimation;
 2. DNF/CNF estimation;
