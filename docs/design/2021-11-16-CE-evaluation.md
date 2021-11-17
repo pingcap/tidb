@@ -1,6 +1,6 @@
-# Proposal: Support Analyze Predicate Columns
+# Proposal: CE Evaluation Framework
 
-- Author(s): [qw4990](https://github.com/qw4990)
+- Author(s): [qw4990](https://github.com/qw4990), [time-and-fate](https://github.com/time-and-fate)
 
 ## Abstract
 
