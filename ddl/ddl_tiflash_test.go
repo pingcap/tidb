@@ -19,11 +19,14 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/tikv/client-go/v2/testutils"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -120,10 +123,11 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(z int) partition by hash(z) partitions 3")
+	tk.MustExec("create table t(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
 	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("ALTER TABLE t ADD PARTITION (PARTITION pn VALUES LESS THAN (40))")
 
-	time.Sleep(ddl.PollTiFlashInterval * 2)
+	time.Sleep(ddl.PollTiFlashInterval * 5)
 	// Should get schema right now
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -137,6 +141,11 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTable(c *C) {
 	c.Assert(pi, NotNil)
 	for _, p := range pi.Definitions {
 		c.Assert(tb.Meta().TiFlashReplica.IsPartitionAvailable(p.ID), Equals, true)
+		if p.ID == 63 {
+			table, ok := s.tiflash.SyncStatus[int(p.ID)]
+			c.Assert(ok, Equals, true)
+			c.Assert(table.Accel, Equals, true)
+		}
 	}
 	c.Assert(len(pi.AddingDefinitions), Equals, 0)
 }
@@ -193,6 +202,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
 
 type mockTiFlashTableInfo struct {
 	Regions []int
+	Accel bool
 }
 
 func (m *mockTiFlashTableInfo) String() string {
@@ -296,7 +306,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		w.Write(m)
 	}) //.Methods(http.MethodGet)
 	router.HandleFunc("/pd/api/v1/config/rule", func(w http.ResponseWriter, req *http.Request) {
-		fmt.Printf("!!!! url %v %v\n", req.URL.Path, req.Method)
+		fmt.Printf("!!!! handle set url %v %v\n", req.URL.Path, req.Method)
 		buf := new(bytes.Buffer)
 		_, err := buf.ReadFrom(req.Body)
 		if err != nil {
@@ -319,8 +329,14 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 			return
 		}
 		// TODO Shall mock "/pd/api/v1/stats/region", and set correct region here, according to actual pd rule
-		s.tiflash.SyncStatus[tid] = mockTiFlashTableInfo{
-			Regions: []int{1},
+		if z, ok := s.tiflash.SyncStatus[tid]; ok {
+			z.Regions = []int{1}
+			s.tiflash.SyncStatus[tid] = z
+		}else{
+			s.tiflash.SyncStatus[tid] = mockTiFlashTableInfo {
+				Regions: []int{1},
+				Accel: false,
+			}
 		}
 	}).Methods(http.MethodPost)
 	router.HandleFunc("/pd/api/v1/config/rule/tiflash/{ruleid:.+}", func(w http.ResponseWriter, req *http.Request) {
@@ -364,5 +380,49 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 			StorePeerCount:   map[uint64]int{1: 1},
 		}, nil
 	}))
+
+	router.HandleFunc("/pd/api/v1/regions/accelerate-schedule", func(w http.ResponseWriter, req *http.Request) {
+		fmt.Println("!!!! handle accelerate")
+
+		buf := new(bytes.Buffer)
+		_, err := buf.ReadFrom(req.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		var dat = make(map[string]interface{})
+		err = json.Unmarshal(buf.Bytes(), &dat)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		endKey, ok := dat["end_key"].(string)
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		endKey, _ = url.QueryUnescape(endKey)
+		_, decodedEndKey, _ := codec.DecodeBytes([]byte(endKey), []byte{})
+		tableId := tablecodec.DecodeTableID(decodedEndKey)
+		tableId -= 1
+
+		table, ok := s.tiflash.SyncStatus[int(tableId)]
+		if ok {
+			fmt.Printf("!!!! Set to true1 %v\n", int(tableId))
+			table.Accel = true
+			s.tiflash.SyncStatus[int(tableId)] = table
+		} else{
+			fmt.Printf("!!!! Set to true2 %v\n", int(tableId))
+			s.tiflash.SyncStatus[int(tableId)] = mockTiFlashTableInfo{
+				Regions: []int{},
+				Accel: true,
+			}
+		}
+
+		fmt.Printf("!!!! resultin %v\n", s.tiflash.SyncStatus[int(tableId)].Accel)
+		w.WriteHeader(http.StatusOK)
+	}).Methods(http.MethodPost)
 	return server, mockAddr
 }

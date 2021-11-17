@@ -460,6 +460,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	tblInfo := tb.Meta()
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		// TODO Can we make it as a batch request?
+		fmt.Printf("!!!! Definitions %v AddingDefinitions %v\n", len(pi.Definitions), len(pi.AddingDefinitions))
 		for _, p := range pi.Definitions {
 			ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
@@ -469,10 +470,10 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		// partitions that in adding mid-state
 		for _, p := range pi.AddingDefinitions {
 			ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
-			tikvHelper.PostAccelerateSchedule(p.ID)
 			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 				return errors.Trace(err)
 			}
+			tikvHelper.PostAccelerateSchedule(p.ID)
 		}
 	} else {
 		ruleNew := MakeNewRule(tblInfo.ID, replicaInfo.Count, replicaInfo.Labels)
@@ -629,6 +630,3 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 	return nil
 }
 
-func (d *ddl) GetInfoCache() *infoschema.InfoCache {
-	return d.infoCache
-}
