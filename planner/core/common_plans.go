@@ -727,7 +727,16 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 		for _, colInfo := range pk.Columns {
 			if pkCol := expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]); pkCol != nil {
 				pkCols = append(pkCols, pkCol)
-				pkColsLen = append(pkColsLen, colInfo.Length)
+				// We need to consider the prefix index.
+				// For example: when we have 'a varchar(50), index idx(a(10))'
+				// So we will get 'colInfo.Length = 50' and 'pkCol.RetType.Flen = 10'.
+				// In 'hasPrefix' function from 'util/ranger/ranger.go' file,
+				// we use 'columnLength == types.UnspecifiedLength' to check whether we have prefix index.
+				if colInfo.Length != types.UnspecifiedLength && colInfo.Length == pkCol.RetType.Flen {
+					pkColsLen = append(pkColsLen, types.UnspecifiedLength)
+				} else {
+					pkColsLen = append(pkColsLen, colInfo.Length)
+				}
 			}
 		}
 		if len(pkCols) > 0 {
@@ -1477,8 +1486,16 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		// If the PointGetPlan needs to read data using unique index (double read), we
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
 		// and the data and index would be inconsistent!
-		isPointGet := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
-		return isPointGet, nil
+		// If the PointGetPlan needs to read data from Cache Table, we can't use max uint64,
+		// because math.MaxUint64 always make cacheData invalid.
+		noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
+		if !noSecondRead {
+			return false, nil
+		}
+		if v.TblInfo != nil && (v.TblInfo.TableCacheStatusType != model.TableCacheStatusDisable) {
+			return false, nil
+		}
+		return true, nil
 	default:
 		return false, nil
 	}

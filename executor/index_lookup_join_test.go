@@ -349,6 +349,51 @@ func (s *testSuite5) TestIssue24547(c *C) {
 	tk.MustExec("delete a from a inner join b on a.k1 = b.k1 and a.k2 = b.k2 where b.k2 <> '333'")
 }
 
+func (s *testSuite5) TestIssue27138(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+
+	tk.MustExec("set @old_tidb_partition_prune_mode=@@tidb_partition_prune_mode")
+	tk.MustExec("set @@tidb_partition_prune_mode=dynamic")
+	defer tk.MustExec("set @@tidb_partition_prune_mode=@old_tidb_partition_prune_mode")
+
+	tk.MustExec(`CREATE TABLE t1 (
+  id int(10) unsigned NOT NULL,
+  pc int(10) unsigned NOT NULL,
+  PRIMARY KEY (id,pc) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+PARTITION BY HASH( pc )
+PARTITIONS 1`)
+	defer tk.MustExec("drop table t1")
+
+	// Order of columns is also important to reproduce the bug!
+	tk.MustExec(`CREATE TABLE t2 (
+  prefiller bigint(20) NOT NULL,
+  pk tinyint(3) unsigned NOT NULL,
+  postfiller bigint(20) NOT NULL,
+  PRIMARY KEY (pk) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin `)
+	defer tk.MustExec("drop table t2")
+
+	// Why does the t2.prefiller need be at least 2^32 ? If smaller the bug will not appear!?!
+	tk.MustExec("insert into t2 values ( pow(2,32), 1, 1), ( pow(2,32)+1, 2, 0)")
+
+	// Why must it be = 1 and not 2?
+	tk.MustQuery("explain select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows("" +
+		"IndexJoin_15 10.00 root  inner join, inner:TableReader_14, outer key:test.t2.prefiller, inner key:test.t1.id, equal cond:eq(test.t2.prefiller, test.t1.id)]\n" +
+		"[├─HashAgg_25(Build) 8.00 root  group by:test.t2.prefiller, funcs:firstrow(test.t2.prefiller)->test.t2.prefiller]\n" +
+		"[│ └─TableReader_26 8.00 root  data:HashAgg_20]\n" +
+		"[│   └─HashAgg_20 8.00 cop[tikv]  group by:test.t2.prefiller, ]\n" +
+		"[│     └─Selection_24 10.00 cop[tikv]  eq(test.t2.postfiller, 1)]\n" +
+		"[│       └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo]\n" +
+		"[└─TableReader_14(Probe) 1.00 root partition:all data:TableRangeScan_13]\n" +
+		"[  └─TableRangeScan_13 1.00 cop[tikv] table:t1 range: decided by [test.t2.prefiller], keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	// without fix it fails with: "runtime error: index out of range [0] with length 0"
+	tk.MustQuery("select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows())
+}
+
 func (s *testSuite5) TestIssue27893(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
