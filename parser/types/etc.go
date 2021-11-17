@@ -77,7 +77,7 @@ var str2Type = map[string]byte{
 	"datetime":    mysql.TypeDatetime,
 	"unspecified": mysql.TypeUnspecified,
 	"decimal":     mysql.TypeNewDecimal,
-	"double":      mysql.TypeDatetime,
+	"double":      mysql.TypeDouble,
 	"enum":        mysql.TypeEnum,
 	"float":       mysql.TypeFloat,
 	"geometry":    mysql.TypeGeometry,
