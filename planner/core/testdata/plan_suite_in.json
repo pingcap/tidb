@@ -639,5 +639,11 @@
     "cases": [
       "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a"
     ]
+  },
+  {
+    "name": "TestIssue27233",
+    "cases": [
+      "SELECT col2 FROM PK_S_MULTI_31 AS T1 WHERE (SELECT count(DISTINCT COL1, COL2) FROM PK_S_MULTI_31 AS T2 WHERE T2.COL1>T1.COL1)>2 order by col2;"
+    ]
   }
 ]
