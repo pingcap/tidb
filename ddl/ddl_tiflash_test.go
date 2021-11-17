@@ -141,7 +141,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTable(c *C) {
 	c.Assert(pi, NotNil)
 	for _, p := range pi.Definitions {
 		c.Assert(tb.Meta().TiFlashReplica.IsPartitionAvailable(p.ID), Equals, true)
-		if p.ID == 63 {
+		if len(p.LessThan) == 1 && p.LessThan[0] == "40" {
 			table, ok := s.tiflash.SyncStatus[int(p.ID)]
 			c.Assert(ok, Equals, true)
 			c.Assert(table.Accel, Equals, true)
@@ -410,18 +410,15 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 
 		table, ok := s.tiflash.SyncStatus[int(tableId)]
 		if ok {
-			fmt.Printf("!!!! Set to true1 %v\n", int(tableId))
 			table.Accel = true
 			s.tiflash.SyncStatus[int(tableId)] = table
 		} else{
-			fmt.Printf("!!!! Set to true2 %v\n", int(tableId))
 			s.tiflash.SyncStatus[int(tableId)] = mockTiFlashTableInfo{
 				Regions: []int{},
 				Accel: true,
 			}
 		}
 
-		fmt.Printf("!!!! resultin %v\n", s.tiflash.SyncStatus[int(tableId)].Accel)
 		w.WriteHeader(http.StatusOK)
 	}).Methods(http.MethodPost)
 	return server, mockAddr
