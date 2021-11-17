@@ -94,6 +94,21 @@ func TypeToStr(tp byte, cs string) (r string) {
 	return ts
 }
 
+func StrToType(ts string) (tp byte) {
+	if strings.Contains(ts, "blob") {
+		ts = strings.Replace(ts, "blob", "text", 1)
+	} else if strings.Contains(ts, "binary") {
+		ts = strings.Replace(ts, "binary", "char", 1)
+	}
+	for tp, cs := range type2Str {
+		if cs == ts {
+			return tp
+		}
+	}
+	// this should never happen
+	return mysql.TypeUnspecified
+}
+
 var (
 	dig2bytes = [10]int{0, 1, 1, 2, 2, 3, 3, 4, 4, 4}
 )
