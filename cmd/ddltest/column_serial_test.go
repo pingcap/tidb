@@ -237,15 +237,3 @@ func TestCommitWhenSchemaChanged(t *testing.T) {
 	_, err = s1.Execute(ctx, "commit")
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), "err: %v", err)
 }
-
-func TestForIssue24621(t *testing.T) {
-	s := createDDLSuite(t)
-	defer s.teardown(t)
-
-	s.mustExec("use test")
-	s.mustExec("drop table if exists t")
-	s.mustExec("create table t(a char(250));")
-	s.mustExec("insert into t values('0123456789abc');")
-	_, err := s.exec("alter table t modify a char(12) null;")
-	require.EqualError(t, err, "[types:1265]Data truncated for column 'a', value is '0123456789abc'")
-}
