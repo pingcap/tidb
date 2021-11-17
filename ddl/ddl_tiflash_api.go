@@ -461,17 +461,27 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	// TODO maybe we should move into `updateVersionAndTableInfo`, since it can fail, and we shall rollback
-	setRuleOk := false
-	for retry := 0; retry < 2; retry++ {
-		ruleNew := MakeNewRule(tb.Meta().ID, replicaInfo.Count, replicaInfo.Labels)
-		fmt.Printf("Set new rule %v\n", ruleNew)
-		if tikvHelper.SetPlacementRule(*ruleNew) == nil {
-			setRuleOk = true
-			break
+	tblInfo := tb.Meta()
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		for _, p := range pi.Definitions {
+			ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
+			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
+				return errors.Trace(err)
+			}
 		}
-	}
-	if setRuleOk == false {
-		return errors.New("Can not set placement rule for TiFlash")
+		// partitions that in adding mid-state
+		for _, p := range pi.AddingDefinitions {
+			ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
+			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
+				return errors.Trace(err)
+			}
+		}
+	}else{
+		ruleNew := MakeNewRule(tblInfo.ID, replicaInfo.Count, replicaInfo.Labels)
+		fmt.Printf("Set new rule %v\n", ruleNew)
+		if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	job := &model.Job{
@@ -606,8 +616,8 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 			}
 			delete(allRules, ruleId)
 		} else {
-			ruleNew := MakeNewRule(tb.ID, tb.Count, tb.LocationLabels)
-			fmt.Printf("!!!! Set new rule %v\n", ruleNew)
+			//ruleNew := MakeNewRule(tb.ID, tb.Count, tb.LocationLabels)
+			//fmt.Printf("!!!! Set new rule %v\n", ruleNew)
 			//tikvHelper.SetPlacementRule(*ruleNew)
 		}
 	}

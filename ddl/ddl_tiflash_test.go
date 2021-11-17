@@ -117,7 +117,31 @@ func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) (bool, err
 }
 
 
+func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(z int) partition by hash(z) partitions 3")
+	tk.MustExec("alter table t set tiflash replica 1")
 
+	time.Sleep(ddl.PollTiFlashInterval * 2)
+	// Should get schema right now
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	replica := tb.Meta().TiFlashReplica
+	c.Assert(replica, NotNil)
+	c.Assert(replica.Available, Equals, true)
+	c.Assert(replica.Count, Equals, uint64(1))
+	c.Assert(replica.LocationLabels, DeepEquals, []string{})
+}
+
+
+func (s *tiflashDDLTestSuite) TestRemoveTiFlashReplica(c *C) {
+
+}
+
+
+// TiFlash Table shall be eventually available.
 func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
