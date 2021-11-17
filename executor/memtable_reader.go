@@ -981,17 +981,17 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 		row[12].SetNull()
 	}
 	if hisHotRegion.FlowBytes != 0 {
-		row[13].SetFloat64(float64(hisHotRegion.FlowBytes))
+		row[13].SetFloat64(hisHotRegion.FlowBytes)
 	} else {
 		row[13].SetNull()
 	}
 	if hisHotRegion.KeyRate != 0 {
-		row[14].SetFloat64(float64(hisHotRegion.KeyRate))
+		row[14].SetFloat64(hisHotRegion.KeyRate)
 	} else {
 		row[14].SetNull()
 	}
 	if hisHotRegion.QueryRate != 0 {
-		row[15].SetFloat64(float64(hisHotRegion.QueryRate))
+		row[15].SetFloat64(hisHotRegion.QueryRate)
 	} else {
 		row[15].SetNull()
 	}
