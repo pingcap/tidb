@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
 	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/trxevents"
@@ -96,11 +97,9 @@ func (s *checksumSuite) TestDoChecksumParallel(c *C) {
 
 	// db.Close() will close all connections from its idle pool, set it 1 to expect one close
 	db.SetMaxIdleConns(1)
-	var wg sync.WaitGroup
-	wg.Add(5)
+	var wg util.WaitGroupWrapper
 	for i := 0; i < 5; i++ {
-		go func() {
-			defer wg.Done()
+		wg.Run(func() {
 			checksum, err := DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
 			c.Assert(err, IsNil)
 			c.Assert(*checksum, DeepEquals, RemoteChecksum{
@@ -110,7 +109,7 @@ func (s *checksumSuite) TestDoChecksumParallel(c *C) {
 				TotalKVs:   7296873,
 				TotalBytes: 357601387,
 			})
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -136,14 +135,13 @@ func (s *checksumSuite) TestIncreaseGCLifeTimeFail(c *C) {
 	mock.ExpectClose()
 
 	ctx := MockDoChecksumCtx(db)
-	var wg sync.WaitGroup
-	wg.Add(5)
+	var wg util.WaitGroupWrapper
+
 	for i := 0; i < 5; i++ {
-		go func() {
+		wg.Run(func() {
 			_, errChecksum := DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t"})
 			c.Assert(errChecksum, ErrorMatches, "update GC lifetime failed: update gc error: context canceled")
-			wg.Done()
-		}()
+		})
 	}
 	wg.Wait()
 

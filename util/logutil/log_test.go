@@ -134,4 +134,6 @@ func TestGlobalLoggerReplace(t *testing.T) {
 
 	err = ReplaceLogger(conf)
 	require.NoError(t, err)
+	err = os.Remove(fileCfg.Filename)
+	require.NoError(t, err)
 }
