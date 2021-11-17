@@ -104,7 +104,7 @@ type CleanupIndex struct {
 	IndexName string
 }
 
-// CheckIndexRange is used for checking index data, output the index valuesdisable the cache that handle within begin and end.
+// CheckIndexRange is used for checking index data, output the index values disable the cache that handle within begin and end.
 type CheckIndexRange struct {
 	baseSchemaProducer
 
@@ -381,10 +381,10 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
+	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	prepared := preparedStmt.PreparedAst
-	var cacheKey kvcache.Key
 	if prepared.UseCache {
 		// disable the cache if cache table in prepared statement
 		for _, vInfo := range preparedStmt.VisitInfos {
@@ -399,10 +399,11 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			}
 		}
 	}
+	stmtCtx.UseCache = prepared.UseCache
+
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
-	stmtCtx.UseCache = prepared.UseCache
 	tps := make([]*types.FieldType, len(e.UsingVars))
 	for i, param := range e.UsingVars {
 		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
