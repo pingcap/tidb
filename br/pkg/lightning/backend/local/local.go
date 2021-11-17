@@ -61,11 +61,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/tikv/client-go/v2/oracle"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -801,6 +803,7 @@ type local struct {
 	pdCtl    *pdutil.PdController
 	conns    common.GRPCConns
 	splitCli split.SplitClient
+	tikvCli  *tikvclient.KVStore
 	tls      *common.TLS
 	pdAddr   string
 	g        glue.Glue
@@ -888,7 +891,11 @@ var bufferPool = membuf.NewPool(1024, manual.Allocator{})
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
 	// TODO: Optimize the opts for better write.
-	opts := &pebble.Options{}
+	opts := &pebble.Options{
+		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
+			newRangePropertiesCollector,
+		},
+	}
 	return pebble.Open(dbPath, opts)
 }
 
@@ -929,17 +936,30 @@ func NewLocalBackend(
 	}
 
 	var duplicateDB *pebble.DB
-	if cfg.TikvImporter.DuplicateDetection {
+	if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 		duplicateDB, err = openDuplicateDB(localFile)
 		if err != nil {
 			return backend.MakeBackend(nil), errors.Annotate(err, "open duplicate db failed")
 		}
 	}
 
+	// The following copies tikv.NewTxnClient without creating yet another pdClient.
+	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(cfg.TiDB.PdAddr, ","), tls.TLSConfig())
+	if err != nil {
+		return backend.MakeBackend(nil), err
+	}
+	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()))
+	pdCliForTiKV := &tikvclient.CodecPDClient{Client: pdCtl.GetPDClient()}
+	tikvCli, err := tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
+	if err != nil {
+		return backend.MakeBackend(nil), err
+	}
+
 	local := &local{
 		engines:  sync.Map{},
 		pdCtl:    pdCtl,
 		splitCli: splitCli,
+		tikvCli:  tikvCli,
 		tls:      tls,
 		pdAddr:   cfg.TiDB.PdAddr,
 		g:        g,
@@ -954,7 +974,7 @@ func NewLocalBackend(
 
 		engineMemCacheSize:      int(cfg.TikvImporter.EngineMemCacheSize),
 		localWriterMemCacheSize: int64(cfg.TikvImporter.LocalWriterMemCacheSize),
-		duplicateDetection:      cfg.TikvImporter.DuplicateDetection,
+		duplicateDetection:      cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
 		checkTiKVAvaliable:      cfg.App.CheckRequirements,
 		duplicateDB:             duplicateDB,
 		errorMgr:                errorMgr,
@@ -1173,6 +1193,9 @@ func (local *local) Close() {
 			log.L().Warn("remove local db file failed", zap.Error(err))
 		}
 	}
+
+	local.tikvCli.Close()
+	local.pdCtl.Close()
 }
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
@@ -1328,9 +1351,15 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 			sstMetasChan:       make(chan metaOrFlush),
 			tableInfo:          cfg.TableInfo,
 			duplicateDetection: local.duplicateDetection,
+			duplicateDB:        local.duplicateDB,
 			errorMgr:           local.errorMgr,
 		}
 		engineFile.sstIngester = dbSSTIngester{e: engineFile}
+		keyAdapter := KeyAdapter(noopKeyAdapter{})
+		if local.duplicateDetection {
+			keyAdapter = duplicateKeyAdapter{}
+		}
+		engineFile.keyAdapter = keyAdapter
 		if err = engineFile.loadEngineMeta(); err != nil {
 			return err
 		}
@@ -2068,44 +2097,139 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 	return nil
 }
 
-func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
+func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (hasDupe bool, err error) {
 	if local.duplicateDB == nil {
 		return false, nil
 	}
-	log.L().Info("Begin collect duplicate local keys", zap.String("table", tbl.Meta().Name.String()))
+
+	logger := log.With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[detect-dupe] collect duplicate local keys")
+	defer func() {
+		logger.End(zap.ErrorLevel, err)
+	}()
+
 	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return false, err
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
-	duplicateManager, err := NewDuplicateManager(local.errorMgr, local.splitCli, ts, local.tls, local.tcpConcurrency)
+	duplicateManager, err := NewDuplicateManager(local, ts, opts)
 	if err != nil {
 		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
-	hasDupe, err := duplicateManager.CollectDuplicateRowsFromLocalIndex(ctx, tbl, local.duplicateDB)
+	hasDupe, err = duplicateManager.CollectDuplicateRowsFromLocalIndex(ctx, tbl, tableName, local.duplicateDB)
 	if err != nil {
 		return false, errors.Annotate(err, "collect local duplicate rows failed")
 	}
 	return hasDupe, nil
 }
 
-func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
-	log.L().Info("Begin collect remote duplicate keys", zap.String("table", tbl.Meta().Name.String()))
+func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
+	log.L().Info("Begin collect remote duplicate keys", zap.String("table", tableName))
 	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return false, err
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
 
-	duplicateManager, err := NewDuplicateManager(local.errorMgr, local.splitCli, ts, local.tls, local.tcpConcurrency)
+	duplicateManager, err := NewDuplicateManager(local, ts, opts)
 	if err != nil {
 		return false, errors.Annotate(err, "open duplicatemanager failed")
 	}
-	hasDupe, err := duplicateManager.CollectDuplicateRowsFromTiKV(ctx, tbl)
+	hasDupe, err := duplicateManager.CollectDuplicateRowsFromTiKV(ctx, tbl, tableName)
 	if err != nil {
 		return false, errors.Annotate(err, "collect remote duplicate rows failed")
 	}
 	return hasDupe, nil
+}
+
+func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) (err error) {
+	logger := log.With(zap.String("table", tableName)).Begin(zap.InfoLevel, "[resolve-dupe] resolve duplicate rows")
+	defer func() {
+		logger.End(zap.ErrorLevel, err)
+	}()
+
+	switch algorithm {
+	case config.DupeResAlgRecord, config.DupeResAlgNone:
+		logger.Warn("[resolve-dupe] skipping resolution due to selected algorithm. this table will become inconsistent!", zap.Stringer("algorithm", algorithm))
+		return nil
+	case config.DupeResAlgRemove:
+		break
+	default:
+		panic(fmt.Sprintf("[resolve-dupe] unknown resolution algorithm %v", algorithm))
+	}
+
+	// TODO: reuse the *kv.SessionOptions from NewEncoder for picking the correct time zone.
+	decoder, err := kv.NewTableKVDecoder(tbl, tableName, &kv.SessionOptions{
+		SQLMode: mysql.ModeStrictAllTables,
+	})
+	if err != nil {
+		return err
+	}
+
+	preRowID := int64(0)
+	for {
+		handleRows, lastRowID, err := local.errorMgr.GetConflictKeys(ctx, tableName, preRowID, 1000)
+		if err != nil {
+			return errors.Annotate(err, "cannot query conflict keys")
+		}
+		if len(handleRows) == 0 {
+			break
+		}
+		if err := local.deleteDuplicateRows(ctx, logger, handleRows, decoder); err != nil {
+			return errors.Annotate(err, "cannot delete duplicated entries")
+		}
+		preRowID = lastRowID
+	}
+	return nil
+}
+
+func (local *local) deleteDuplicateRows(ctx context.Context, logger *log.Task, handleRows [][2][]byte, decoder *kv.TableKVDecoder) (err error) {
+	// Starts a Delete transaction.
+	txn, err := local.tikvCli.Begin()
+	if err != nil {
+		return err
+	}
+	txn.SetPessimistic(true)
+	defer func() {
+		if err == nil {
+			err = txn.Commit(ctx)
+		} else {
+			if rollbackErr := txn.Rollback(); rollbackErr != nil {
+				logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
+			}
+		}
+	}()
+
+	deleteKey := func(key []byte) error {
+		logger.Debug("[resolve-dupe] will delete key", logutil.Key("key", key))
+		return txn.Delete(key)
+	}
+
+	// Collect all rows & index keys into the deletion transaction.
+	// (if the number of duplicates is small this should fit entirely in memory)
+	// (Txn's MemBuf's bufferSizeLimit is currently infinity)
+	for _, handleRow := range handleRows {
+		logger.Debug("[resolve-dupe] found row to resolve",
+			logutil.Key("handle", handleRow[0]),
+			logutil.Key("row", handleRow[1]))
+
+		if err := deleteKey(handleRow[0]); err != nil {
+			return err
+		}
+
+		handle, err := decoder.DecodeHandleFromTable(handleRow[0])
+		if err != nil {
+			return err
+		}
+
+		err = decoder.IterRawIndexKeys(handle, handleRow[1], deleteKey)
+		if err != nil {
+			return err
+		}
+	}
+
+	logger.Info("[resolve-dupe] number of KV pairs to be deleted", zap.Int("count", txn.Len()))
+	return nil
 }
 
 func (e *File) unfinishedRanges(ranges []Range) []Range {
@@ -2242,11 +2366,9 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
-	versionStr, err := local.g.GetSQLExecutor().ObtainStringWithLog(
-		ctx,
-		"SELECT version();",
-		"check TiDB version",
-		log.L())
+	// TODO: support lightning via SQL
+	db, _ := local.g.GetDB()
+	versionStr, err := version.FetchVersion(ctx, db)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2260,8 +2382,8 @@ func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.Che
 		return err
 	}
 
-	tidbVersion, _ := version.ExtractTiDBVersion(versionStr)
-	return checkTiFlashVersion(ctx, local.g, checkCtx, *tidbVersion)
+	serverInfo := version.ParseServerInfo(versionStr)
+	return checkTiFlashVersion(ctx, local.g, checkCtx, *serverInfo.ServerVersion)
 }
 
 func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {

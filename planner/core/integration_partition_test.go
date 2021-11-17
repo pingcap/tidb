@@ -840,7 +840,6 @@ func TestListPartitionTempTable(t *testing.T) {
 	tk.MustExec("use list_partition_temp_table")
 	tk.MustExec("drop table if exists tlist")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
-	tk.MustExec("set tidb_enable_global_temporary_table = true")
 	err := tk.ExecToErr("create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows")
 	require.Regexp(t, ".*Cannot create temporary table with partitions.*", err)
 	err = tk.ExecToErr("create global temporary table t(a int, b int) partition by list columns (a) (partition p0 values in (0)) on commit delete rows")

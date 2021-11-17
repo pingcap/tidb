@@ -56,6 +56,7 @@ var (
 	outputRatio int
 )
 
+// #nosec G404
 func nextRow(r *rand.Rand, keySize int, valSize int) *comparableRow {
 	key := make([]types.Datum, keySize)
 	for i := range key {
@@ -188,6 +189,7 @@ func decodeMeta(fd *os.File) error {
  *		One 64-bit integer represent the row size in bytes, followed by the
  *      the actual row bytes.
  */
+// #nosec G404
 func export() error {
 	var outputBytes []byte
 

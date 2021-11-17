@@ -57,8 +57,9 @@ const FullRange = -1
 // partitionProcessor is here because it's easier to prune partition after predicate push down.
 type partitionProcessor struct{}
 
-func (s *partitionProcessor) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
-	return s.rewriteDataSource(lp)
+func (s *partitionProcessor) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+	p, err := s.rewriteDataSource(lp)
+	return p, err
 }
 
 func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, error) {
@@ -151,7 +152,8 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 			highLowVals = append(highLowVals, r.LowVal...)
 			pos, isNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(highLowVals).ToRow())
 			if err != nil {
-				return nil, nil, err
+				// If we failed to get the point position, we can just skip and ignore it.
+				continue
 			}
 			if isNull {
 				pos = 0
@@ -329,8 +331,7 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	}
 	used, err := s.pruneHashPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, names)
 	if err != nil {
-		// Just report warning and generate the tableDual
-		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(err)
+		return nil, err
 	}
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi))
@@ -1282,7 +1283,7 @@ func (s *partitionProcessor) resolveAccessPaths(ds *DataSource) error {
 	if err != nil {
 		return err
 	}
-	possiblePaths, err = filterPathByIsolationRead(ds.ctx, possiblePaths, ds.DBName)
+	possiblePaths, err = filterPathByIsolationRead(ds.ctx, possiblePaths, ds.tableInfo.Name, ds.DBName)
 	if err != nil {
 		return err
 	}
@@ -1533,7 +1534,7 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 		}
 		var expr expression.Expression
 		expr, err = expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), p.data[ith], v)
-		expr.SetCharsetAndCollation(f.CharsetAndCollation(sctx))
+		expr.SetCharsetAndCollation(f.CharsetAndCollation())
 		var val int64
 		val, isNull, err = expr.EvalInt(sctx, chunk.Row{})
 		return val > 0

@@ -636,6 +636,13 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustExec("create table test_error_code_null(c1 char(100) not null);")
 	sql = "insert into test_error_code_null (c1) values(null);"
 	tk.MustGetErrCode(sql, errno.ErrBadNull)
+	// disable tidb_enable_change_multi_schema
+	tk.MustExec("set global tidb_enable_change_multi_schema = false")
+	sql = "alter table test_error_code_null add column (x1 int, x2 int)"
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
+	sql = "alter table test_error_code_null add column (x1 int, x2 int)"
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("set global tidb_enable_change_multi_schema = true")
 }
 
 func (s *testIntegrationSuite3) TestTableDDLWithFloatType(c *C) {
@@ -2326,6 +2333,18 @@ func (s *testSerialDBSuite1) TestAddExpressionIndex(c *C) {
 	tk.MustExec("create table t(a int, key((a+1)), key((a+2)), key idx((a+3)), key((a+4)));")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (A INT, B INT, UNIQUE KEY ((A * 2)));")
+
+	// Test experiment switch.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = false
+	})
+	tk.MustGetErrMsg("create index d on t((repeat(a, 2)))", "[ddl:8200]Unsupported creating expression index containing unsafe functions without allow-expression-index in config")
+	tk.MustGetErrMsg("create table t(a char(10), key ((repeat(a, 2))));", "[ddl:8200]Unsupported creating expression index containing unsafe functions without allow-expression-index in config")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), key ((lower(a))))")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 }
 
 func (s *testSerialDBSuite1) TestCreateExpressionIndexError(c *C) {
@@ -2881,21 +2900,29 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustExec("drop table if exists t;")
 
 	// Grammar error.
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustGetErrCode("create global temporary table t(a double(0, 0))", errno.ErrParse)
 	tk.MustGetErrCode("create temporary table t(id int) on commit delete rows", errno.ErrParse)
 	tk.MustGetErrCode("create temporary table t(id int) on commit preserve rows", errno.ErrParse)
 	tk.MustGetErrCode("create table t(id int) on commit delete rows", errno.ErrParse)
 	tk.MustGetErrCode("create table t(id int) on commit preserve rows", errno.ErrParse)
 
-	tk.MustGetErrCode("create temporary table tplacement (id int) followers=4", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create temporary table tplacement (id int) primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create temporary table tplacement (id int) placement policy='x'", errno.ErrOptOnTemporaryTable)
-
 	// Not support yet.
 	tk.MustGetErrCode("create global temporary table t (id int) on commit preserve rows", errno.ErrUnsupportedDDLOperation)
-	// Engine type can only be 'memory' or empty for now.
-	tk.MustGetErrCode("create global temporary table t (id int) engine = 'innodb' on commit delete rows", errno.ErrUnsupportedDDLOperation)
+
+	// Engine type can be anyone, see https://github.com/pingcap/tidb/issues/28541.
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create global temporary table tengine (id int) engine = 'innodb' on commit delete rows")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create global temporary table tengine (id int) engine = 'memory' on commit delete rows")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create global temporary table tengine (id int) engine = 'myisam' on commit delete rows")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create temporary table tengine (id int) engine = 'innodb'")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create temporary table tengine (id int) engine = 'memory'")
+	tk.MustExec("drop table if exists tengine")
+	tk.MustExec("create temporary table tengine (id int) engine = 'myisam'")
+	tk.MustExec("drop table if exists tengine")
 
 	// Create local temporary table.
 	tk.MustExec("create database tmp_db")
@@ -2937,9 +2964,6 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
 	tk.MustExec("create temporary table if not exists b_local_temp_table (id int)")
 
-	// Engine type can only be 'memory' or empty for now.
-	tk.MustGetErrCode("create temporary table te (id int) engine = 'innodb'", errno.ErrUnsupportedDDLOperation)
-
 	// Stale read see the local temporary table but can't read on it.
 	tk.MustExec("START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3)")
 	tk.MustGetErrMsg("select * from overlap", "can not stale read temporary table")
@@ -2953,6 +2977,157 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
+}
+
+func (s *testIntegrationSuite3) TestAccessLocalTmpTableAfterDropDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists tmpdb")
+	tk.MustExec("create temporary table tmpdb.tmp(id int)")
+	tk.MustExec("drop database tmpdb")
+
+	tests := []struct {
+		sql         string
+		errcode     int
+		result      []string
+		queryResult []string
+	}{
+		{
+			sql:    "insert into tmpdb.tmp values(1)",
+			result: []string{"1"},
+		},
+		{
+			sql:         "select * from tmpdb.tmp t1 join tmpdb.tmp t2 where t1.id=t2.id",
+			queryResult: []string{"1 1"},
+		},
+		{
+			sql:         "select (select id from tmpdb.tmp) id1, t1.id id2 from (select * from tmpdb.tmp) t1 where t1.id=1",
+			queryResult: []string{"1 1"},
+		},
+		{
+			sql:    "update tmpdb.tmp set id=2 where id=1",
+			result: []string{"2"},
+		},
+		{
+			sql:    "delete from tmpdb.tmp where id=2",
+			result: []string{},
+		},
+		{
+			sql:    "insert into tmpdb.tmp select 1 from dual",
+			result: []string{"1"},
+		},
+		{
+			sql:    "update tmpdb.tmp t1, tmpdb.tmp t2 set t1.id=2 where t1.id=t2.id",
+			result: []string{"2"},
+		},
+		{
+			sql:    "delete t1 from tmpdb.tmp t1 join tmpdb.tmp t2 where t1.id=t2.id",
+			result: []string{},
+		},
+		{
+			sql:     "admin check table tmpdb.tmp",
+			errcode: errno.ErrOptOnTemporaryTable,
+		},
+		{
+			sql:     "alter table tmpdb.tmp add column name char(10)",
+			errcode: errno.ErrUnsupportedDDLOperation,
+		},
+	}
+
+	executeTests := func() {
+		tk.MustExec("truncate table tmpdb.tmp")
+		for _, test := range tests {
+			switch {
+			case test.errcode != 0:
+				tk.MustGetErrCode(test.sql, test.errcode)
+			case test.queryResult != nil:
+				tk.MustQuery(test.sql).Check(testkit.Rows(test.queryResult...))
+			case test.result != nil:
+				tk.MustExec(test.sql)
+				tk.MustQuery("select * from tmpdb.tmp").Check(testkit.Rows(test.result...))
+			default:
+				tk.MustExec(test.sql)
+			}
+		}
+	}
+
+	executeTests()
+
+	// Create the database again.
+	tk.MustExec("create database tmpdb")
+	executeTests()
+
+	// Create another table in the database and drop the database again.
+	tk.MustExec("create temporary table tmpdb.tmp2(id int)")
+	tk.MustExec("drop database tmpdb")
+	executeTests()
+}
+
+func (s *testSerialDBSuite) TestPlacementOnTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.tplacement1, db2.t1, db2.tplacement3, db2.tplacement5")
+	tk.MustExec("drop database if exists db2")
+	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("create placement policy x primary_region='r1' regions='r1'")
+	defer tk.MustExec("drop placement policy x")
+
+	// Cannot create temporary table with placement options
+	tk.MustGetErrCode("create global temporary table tplacement1 (id int) followers=4  on commit delete rows", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create global temporary table tplacement1 (id int) primary_region='us-east-1' regions='us-east-1,us-west-1' on commit delete rows", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create global temporary table tplacement1 (id int) placement policy='x' on commit delete rows", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create temporary table tplacement2 (id int) followers=4", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create temporary table tplacement2 (id int) primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create temporary table tplacement2 (id int) placement policy='x'", errno.ErrOptOnTemporaryTable)
+
+	// Cannot alter temporary table with placement options
+	tk.MustExec("create global temporary table tplacement1 (id int) on commit delete rows")
+	defer tk.MustExec("drop table tplacement1")
+	tk.MustGetErrCode("alter table tplacement1 followers=4", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("alter table tplacement1  primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("alter table tplacement1  placement policy='x'", errno.ErrOptOnTemporaryTable)
+
+	tk.MustExec("create temporary table tplacement2 (id int)")
+	tk.MustGetErrCode("alter table tplacement2 followers=4", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table tplacement2  primary_region='us-east-1' regions='us-east-1,us-west-1'", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table tplacement2  placement policy='x'", errno.ErrUnsupportedDDLOperation)
+
+	// Temporary table will not inherit placement from db
+	tk.MustExec("create database db2 placement policy x")
+	defer tk.MustExec("drop database db2")
+
+	tk.MustExec("create global temporary table db2.tplacement3 (id int) on commit delete rows")
+	defer tk.MustExec("drop table db2.tplacement3")
+	tk.MustQuery("show create table db2.tplacement3").Check(testkit.Rows(
+		"tplacement3 CREATE GLOBAL TEMPORARY TABLE `tplacement3` (\n" +
+			"  `id` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS",
+	))
+
+	tk.MustExec("create temporary table db2.tplacement4 (id int)")
+	tk.MustQuery("show create table db2.tplacement4").Check(testkit.Rows(
+		"tplacement4 CREATE TEMPORARY TABLE `tplacement4` (\n" +
+			"  `id` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec("create table db2.t1 (a int) placement policy 'default'")
+	defer tk.MustExec("drop table db2.t1")
+
+	tk.MustExec("create global temporary table db2.tplacement5 like db2.t1 on commit delete rows")
+	defer tk.MustExec("drop table db2.tplacement5")
+	tk.MustQuery("show create table db2.tplacement5").Check(testkit.Rows(
+		"tplacement5 CREATE GLOBAL TEMPORARY TABLE `tplacement5` (\n" +
+			"  `a` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS",
+	))
+
+	tk.MustExec("create temporary table db2.tplacement6 like db2.t1")
+	defer tk.MustExec("drop table db2.tplacement6")
+	tk.MustQuery("show create table db2.tplacement6").Check(testkit.Rows(
+		"tplacement6 CREATE TEMPORARY TABLE `tplacement6` (\n" +
+			"  `a` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }
 
 func (s *testIntegrationSuite3) TestAvoidCreateViewOnLocalTemporaryTable(c *C) {
@@ -3161,7 +3336,6 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	clearSQL := "drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2"
 	tk.MustExec(clearSQL)
 	defer tk.MustExec(clearSQL)
@@ -3235,7 +3409,6 @@ func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
 func (s *testIntegrationSuite3) TestDropWithLocalTemporaryTableKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	clearSQL := "drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2, testt.ltemp3"
 	tk.MustExec(clearSQL)
 	defer tk.MustExec(clearSQL)
@@ -3409,4 +3582,40 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("drop database testt")
 	tk.MustExec("truncate table testt.t3")
 	tk.MustQuery("select * from testt.t3").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite3) TestIssue29282(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists issue29828_t")
+	tk.MustExec("create table issue29828_t (id int)")
+	tk.MustExec("create temporary table issue29828_tmp(id int);")
+	tk.MustExec("insert into issue29828_tmp values(1)")
+	tk.MustExec("prepare stmt from 'insert into issue29828_t select * from issue29828_tmp';")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select *from issue29828_t").Check(testkit.Rows("1"))
+
+	tk.MustExec("create temporary table issue29828_tmp1(id int);")
+	tk.MustExec("insert into issue29828_tmp1 values(1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("prepare stmt1 from 'select * from issue29828_t for update union select * from issue29828_tmp1';")
+	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
+	ch := make(chan struct{}, 1)
+	tk1.MustExec("use test")
+	tk1.MustExec("begin pessimistic")
+	go func() {
+		// This query should block.
+		tk1.MustQuery("select * from issue29828_t where id = 1 for update;").Check(testkit.Rows("1"))
+		ch <- struct{}{}
+	}()
+
+	select {
+	case <-time.After(100 * time.Millisecond):
+		// Expected, query blocked, not finish within 100ms.
+		tk.MustExec("rollback")
+	case <-ch:
+		// Unexpected, test fail.
+		c.Fail()
+	}
 }

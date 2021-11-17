@@ -298,6 +298,10 @@ import (
 	any                   "ANY"
 	ascii                 "ASCII"
 	attributes            "ATTRIBUTES"
+	statsOptions          "STATS_OPTIONS"
+	statsSampleRate       "STATS_SAMPLE_RATE"
+	statsColChoice        "STATS_COL_CHOICE"
+	statsColList          "STATS_COL_LIST"
 	autoIdCache           "AUTO_ID_CACHE"
 	autoIncrement         "AUTO_INCREMENT"
 	autoRandom            "AUTO_RANDOM"
@@ -663,9 +667,10 @@ import (
 	placement             "PLACEMENT"
 	plan                  "PLAN"
 	position              "POSITION"
+	predicate             "PREDICATE"
 	primaryRegion         "PRIMARY_REGION"
 	recent                "RECENT"
-	recreator             "RECREATOR"
+	replayer              "REPLAYER"
 	running               "RUNNING"
 	s3                    "S3"
 	schedule              "SCHEDULE"
@@ -708,6 +713,7 @@ import (
 	cancel                     "CANCEL"
 	cardinality                "CARDINALITY"
 	cmSketch                   "CMSKETCH"
+	columnStatsUsage           "COLUMN_STATS_USAGE"
 	correlation                "CORRELATION"
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
@@ -721,6 +727,7 @@ import (
 	pessimistic                "PESSIMISTIC"
 	pump                       "PUMP"
 	samples                    "SAMPLES"
+	sampleRate                 "SAMPLERATE"
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsMeta                  "STATS_META"
@@ -888,7 +895,7 @@ import (
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockTablesStmt             "Lock tables statement"
-	PlanRecreatorStmt          "Plan recreator statement"
+	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
 	SelectStmt                 "SELECT statement"
@@ -1298,17 +1305,13 @@ import (
 	BRIEBooleanOptionName                  "Name of a BRIE option which takes a boolean as input"
 	BRIEStringOptionName                   "Name of a BRIE option which takes a string as input"
 	BRIEKeywordOptionName                  "Name of a BRIE option which takes a case-insensitive string as input"
-	PlacementCount                         "Placement rules count option"
-	PlacementLabelConstraints              "Placement rules label constraints option"
-	PlacementRole                          "Placement rules role option"
-	OldPlacementOptions                    "Placement rules options"
 	PlacementOption                        "Anonymous or direct placement option"
 	PlacementPolicyOption                  "Anonymous or placement policy option"
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
-	PlacementSpec                          "Placement rules specification"
-	PlacementSpecList                      "Placement rules specifications"
 	AttributesOpt                          "Attributes options"
+	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
+	StatsOptionsOpt                        "Stats options"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1495,41 +1498,6 @@ AlterTableStmt:
 		}
 	}
 
-PlacementRole:
-	"ROLE" "=" "FOLLOWER"
-	{
-		$$ = ast.PlacementRoleFollower
-	}
-|	"ROLE" "=" "LEADER"
-	{
-		$$ = ast.PlacementRoleLeader
-	}
-|	"ROLE" "=" "LEARNER"
-	{
-		$$ = ast.PlacementRoleLearner
-	}
-|	"ROLE" "=" "VOTER"
-	{
-		$$ = ast.PlacementRoleVoter
-	}
-
-PlacementCount:
-	"REPLICAS" "=" LengthNum
-	{
-		cnt := $3.(uint64)
-		if cnt == 0 {
-			yylex.AppendError(yylex.Errorf("Invalid placement option REPLICAS, it is not allowed to be 0"))
-			return 1
-		}
-		$$ = cnt
-	}
-
-PlacementLabelConstraints:
-	"CONSTRAINTS" "=" stringLit
-	{
-		$$ = $3
-	}
-
 PlacementOptionList:
 	DirectPlacementOption
 	{
@@ -1592,14 +1560,7 @@ DirectPlacementOption:
 
 PlacementOption:
 	DirectPlacementOption
-|	"PLACEMENT" "POLICY" EqOpt stringLit
-	{
-		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
-	}
-|	"PLACEMENT" "POLICY" EqOpt PolicyName
-	{
-		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
-	}
+|	PlacementPolicyOption
 
 PlacementPolicyOption:
 	"PLACEMENT" "POLICY" EqOpt stringLit
@@ -1610,85 +1571,13 @@ PlacementPolicyOption:
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
 	}
-
-OldPlacementOptions:
-	PlacementCount
+|	"PLACEMENT" "POLICY" EqOpt "DEFAULT"
 	{
-		$$ = &ast.PlacementSpec{
-			Replicas: $1.(uint64),
-		}
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
 	}
-|	PlacementLabelConstraints
+|	"PLACEMENT" "POLICY" "SET" "DEFAULT"
 	{
-		$$ = &ast.PlacementSpec{
-			Constraints: $1.(string),
-		}
-	}
-|	PlacementRole
-	{
-		$$ = &ast.PlacementSpec{
-			Role: $1.(ast.PlacementRole),
-		}
-	}
-|	OldPlacementOptions PlacementCount
-	{
-		spec := $1.(*ast.PlacementSpec)
-		if spec.Replicas != 0 {
-			yylex.AppendError(yylex.Errorf("Duplicate placement option REPLICAS"))
-			return 1
-		}
-		spec.Replicas = $2.(uint64)
-		$$ = spec
-	}
-|	OldPlacementOptions PlacementLabelConstraints
-	{
-		spec := $1.(*ast.PlacementSpec)
-		if len(spec.Constraints) > 0 {
-			yylex.AppendError(yylex.Errorf("Duplicate placement option CONSTRAINTS"))
-			return 1
-		}
-		spec.Constraints = $2.(string)
-		$$ = spec
-	}
-|	OldPlacementOptions PlacementRole
-	{
-		spec := $1.(*ast.PlacementSpec)
-		if spec.Role != ast.PlacementRoleNone {
-			yylex.AppendError(yylex.Errorf("Duplicate placement option ROLE"))
-			return 1
-		}
-		spec.Role = $2.(ast.PlacementRole)
-		$$ = spec
-	}
-
-PlacementSpec:
-	"ADD" "PLACEMENT" "POLICY" OldPlacementOptions
-	{
-		spec := $4.(*ast.PlacementSpec)
-		spec.Tp = ast.PlacementAdd
-		$$ = spec
-	}
-|	"ALTER" "PLACEMENT" "POLICY" OldPlacementOptions
-	{
-		spec := $4.(*ast.PlacementSpec)
-		spec.Tp = ast.PlacementAlter
-		$$ = spec
-	}
-|	"DROP" "PLACEMENT" "POLICY" PlacementRole
-	{
-		spec := &ast.PlacementSpec{Role: $4.(ast.PlacementRole)}
-		spec.Tp = ast.PlacementDrop
-		$$ = spec
-	}
-
-PlacementSpecList:
-	PlacementSpec
-	{
-		$$ = []*ast.PlacementSpec{$1.(*ast.PlacementSpec)}
-	}
-|	PlacementSpecList ',' PlacementSpec
-	{
-		$$ = append($1.([]*ast.PlacementSpec), $3.(*ast.PlacementSpec))
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
 	}
 
 AttributesOpt:
@@ -1699,6 +1588,16 @@ AttributesOpt:
 |	"ATTRIBUTES" EqOpt stringLit
 	{
 		$$ = &ast.AttributesSpec{Default: false, Attributes: $3}
+	}
+
+StatsOptionsOpt:
+	"STATS_OPTIONS" EqOpt "DEFAULT"
+	{
+		$$ = &ast.StatsOptionsSpec{Default: true}
+	}
+|	"STATS_OPTIONS" EqOpt stringLit
+	{
+		$$ = &ast.StatsOptionsSpec{Default: false, StatsOptions: $3}
 	}
 
 AlterTablePartitionOpt:
@@ -1883,12 +1782,11 @@ AlterTableSpec:
 			AttributesSpec: $1.(*ast.AttributesSpec),
 		}
 	}
-|	"ALTER" "PARTITION" Identifier PlacementSpecList %prec lowerThanComma
+|	StatsOptionsOpt
 	{
 		$$ = &ast.AlterTableSpec{
-			Tp:             ast.AlterTableAlterPartition,
-			PartitionNames: []model.CIStr{model.NewCIStr($3)},
-			PlacementSpecs: $4.([]*ast.PlacementSpec),
+			Tp:               ast.AlterTableStatsOptions,
+			StatsOptionsSpec: $1.(*ast.StatsOptionsSpec),
 		}
 	}
 |	"CHECK" "PARTITION" AllOrPartitionNameList
@@ -2275,11 +2173,17 @@ AlterTableSpec:
 			Visibility: $4.(ast.IndexVisibility),
 		}
 	}
-|	PlacementSpecList %prec lowerThanComma
+// 	Support caching or non-caching a table in memory for tidb, It can be found in the official Oracle document, see: https://docs.oracle.com/database/121/SQLRF/statements_3001.htm
+|	"CACHE"
 	{
 		$$ = &ast.AlterTableSpec{
-			Tp:             ast.AlterTablePlacement,
-			PlacementSpecs: $1.([]*ast.PlacementSpec),
+			Tp: ast.AlterTableCache,
+		}
+	}
+|	"NOCACHE"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableNoCache,
 		}
 	}
 
@@ -2656,9 +2560,9 @@ SplitSyntaxOption:
 	}
 
 AnalyzeTableStmt:
-	"ANALYZE" "TABLE" TableNameList AnalyzeOptionListOpt
+	"ANALYZE" "TABLE" TableNameList AllColumnsOrPredicateColumnsOpt AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), AnalyzeOpts: $4.([]ast.AnalyzeOpt)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), ColumnChoice: $4.(model.ColumnChoice), AnalyzeOpts: $5.([]ast.AnalyzeOpt)}
 	}
 |	"ANALYZE" "TABLE" TableName "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
@@ -2668,9 +2572,9 @@ AnalyzeTableStmt:
 	{
 		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$4.(*ast.TableName)}, IndexNames: $6.([]model.CIStr), IndexFlag: true, Incremental: true, AnalyzeOpts: $7.([]ast.AnalyzeOpt)}
 	}
-|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList AllColumnsOrPredicateColumnsOpt AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, PartitionNames: $5.([]model.CIStr), AnalyzeOpts: $6.([]ast.AnalyzeOpt)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, PartitionNames: $5.([]model.CIStr), ColumnChoice: $6.(model.ColumnChoice), AnalyzeOpts: $7.([]ast.AnalyzeOpt)}
 	}
 |	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
@@ -2693,22 +2597,53 @@ AnalyzeTableStmt:
 			AnalyzeOpts:    $9.([]ast.AnalyzeOpt),
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "UPDATE" "HISTOGRAM" "ON" ColumnNameList AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "UPDATE" "HISTOGRAM" "ON" IdentList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames:         []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames:        $7.([]*ast.ColumnName),
+			ColumnNames:        $7.([]model.CIStr),
 			AnalyzeOpts:        $8.([]ast.AnalyzeOpt),
 			HistogramOperation: ast.HistogramOperationUpdate,
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "DROP" "HISTOGRAM" "ON" ColumnNameList
+|	"ANALYZE" "TABLE" TableName "DROP" "HISTOGRAM" "ON" IdentList
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames:         []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames:        $7.([]*ast.ColumnName),
+			ColumnNames:        $7.([]model.CIStr),
 			HistogramOperation: ast.HistogramOperationDrop,
 		}
+	}
+|	"ANALYZE" "TABLE" TableName "COLUMNS" IdentList AnalyzeOptionListOpt
+	{
+		$$ = &ast.AnalyzeTableStmt{
+			TableNames:   []*ast.TableName{$3.(*ast.TableName)},
+			ColumnNames:  $5.([]model.CIStr),
+			ColumnChoice: model.ColumnList,
+			AnalyzeOpts:  $6.([]ast.AnalyzeOpt)}
+	}
+|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "COLUMNS" IdentList AnalyzeOptionListOpt
+	{
+		$$ = &ast.AnalyzeTableStmt{
+			TableNames:     []*ast.TableName{$3.(*ast.TableName)},
+			PartitionNames: $5.([]model.CIStr),
+			ColumnNames:    $7.([]model.CIStr),
+			ColumnChoice:   model.ColumnList,
+			AnalyzeOpts:    $8.([]ast.AnalyzeOpt)}
+	}
+
+AllColumnsOrPredicateColumnsOpt:
+	/* empty */
+	{
+		$$ = model.DefaultChoice
+	}
+|	"ALL" "COLUMNS"
+	{
+		$$ = model.AllColumns
+	}
+|	"PREDICATE" "COLUMNS"
+	{
+		$$ = model.PredicateColumns
 	}
 
 AnalyzeOptionListOpt:
@@ -2733,23 +2668,27 @@ AnalyzeOptionList:
 AnalyzeOption:
 	NUM "BUCKETS"
 	{
-		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumBuckets, Value: getUint64FromNUM($1)}
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumBuckets, Value: ast.NewValueExpr($1, "", "")}
 	}
 |	NUM "TOPN"
 	{
-		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumTopN, Value: getUint64FromNUM($1)}
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumTopN, Value: ast.NewValueExpr($1, "", "")}
 	}
 |	NUM "CMSKETCH" "DEPTH"
 	{
-		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptCMSketchDepth, Value: getUint64FromNUM($1)}
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptCMSketchDepth, Value: ast.NewValueExpr($1, "", "")}
 	}
 |	NUM "CMSKETCH" "WIDTH"
 	{
-		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptCMSketchWidth, Value: getUint64FromNUM($1)}
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptCMSketchWidth, Value: ast.NewValueExpr($1, "", "")}
 	}
 |	NUM "SAMPLES"
 	{
-		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumSamples, Value: getUint64FromNUM($1)}
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumSamples, Value: ast.NewValueExpr($1, "", "")}
+	}
+|	NumLiteral "SAMPLERATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr($1, "", "")}
 	}
 
 /*******************************************************************************************/
@@ -5761,6 +5700,10 @@ UnReservedKeyword:
 |	"ADVISE"
 |	"ASCII"
 |	"ATTRIBUTES"
+|	"STATS_OPTIONS"
+|	"STATS_SAMPLE_RATE"
+|	"STATS_COL_CHOICE"
+|	"STATS_COL_LIST"
 |	"AUTO_ID_CACHE"
 |	"AUTO_INCREMENT"
 |	"AFTER"
@@ -6095,6 +6038,7 @@ TiDBKeyword:
 |	"CANCEL"
 |	"CARDINALITY"
 |	"CMSKETCH"
+|	"COLUMN_STATS_USAGE"
 |	"CORRELATION"
 |	"DDL"
 |	"DEPENDENCY"
@@ -6106,6 +6050,7 @@ TiDBKeyword:
 |	"NODE_STATE"
 |	"PUMP"
 |	"SAMPLES"
+|	"SAMPLERATE"
 |	"STATISTICS"
 |	"STATS"
 |	"STATS_META"
@@ -6151,11 +6096,12 @@ NotKeywordToken:
 |	"MAX"
 |	"NOW"
 |	"RECENT"
-|	"RECREATOR"
+|	"REPLAYER"
 |	"RUNNING"
 |	"PLACEMENT"
 |	"PLAN"
 |	"POSITION"
+|	"PREDICATE"
 |	"S3"
 |	"STRICT"
 |	"SUBDATE"
@@ -7196,11 +7142,11 @@ FunctionCallNonKeyword:
 	}
 |	builtinTrim '(' TrimDirection "FROM" Expression ')'
 	{
-		nilVal := ast.NewValueExpr(nil, parser.charset, parser.collation)
+		spaceVal := ast.NewValueExpr(" ", parser.charset, parser.collation)
 		direction := &ast.TrimDirectionExpr{Direction: $3.(ast.TrimDirectionType)}
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
-			Args:   []ast.ExprNode{$5, nilVal, direction},
+			Args:   []ast.ExprNode{$5, spaceVal, direction},
 		}
 	}
 |	builtinTrim '(' TrimDirection Expression "FROM" Expression ')'
@@ -10674,6 +10620,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHealthy}
 	}
+|	"COLUMN_STATS_USAGE"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowColumnStatsUsage}
+	}
 |	"ANALYZE" "STATUS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowAnalyzeStatus}
@@ -10939,7 +10889,7 @@ Statement:
 |	KillStmt
 |	LoadDataStmt
 |	LoadStatsStmt
-|	PlanRecreatorStmt
+|	PlanReplayerStmt
 |	PreparedStmt
 |	PurgeImportStmt
 |	RollbackStmt
@@ -11217,6 +11167,26 @@ TableOption:
 		$$ = &ast.TableOption{Tp: ast.TableOptionStatsSamplePages, Default: true}
 		yylex.AppendError(yylex.Errorf("The STATS_SAMPLE_PAGES is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
+	}
+|	"STATS_BUCKETS" EqOpt LengthNum
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsBuckets, UintValue: $3.(uint64)}
+	}
+|	"STATS_TOPN" EqOpt LengthNum
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsTopN, UintValue: $3.(uint64)}
+	}
+|	"STATS_SAMPLE_RATE" EqOpt NumLiteral
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsSampleRate, Value: ast.NewValueExpr($3, "", "")}
+	}
+|	"STATS_COL_CHOICE" EqOpt stringLit
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsColsChoice, StrValue: $3}
+	}
+|	"STATS_COL_LIST" EqOpt stringLit
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionStatsColList, StrValue: $3}
 	}
 |	"SHARD_ROW_ID_BITS" EqOpt LengthNum
 	{
@@ -12948,14 +12918,34 @@ RevokeStmt:
 RevokeRoleStmt:
 	"REVOKE" RoleOrPrivElemList "FROM" UsernameList
 	{
-		r, err := convertToRole($2.([]*ast.RoleOrPriv))
-		if err != nil {
-			yylex.AppendError(err)
-			return 1
-		}
-		$$ = &ast.RevokeRoleStmt{
-			Roles: r,
-			Users: $4.([]*auth.UserIdentity),
+		// MySQL has special syntax for REVOKE ALL [PRIVILEGES], GRANT OPTION
+		// which uses the RevokeRoleStmt syntax but is of type RevokeStmt.
+		// It is documented at https://dev.mysql.com/doc/refman/5.7/en/revoke.html
+		// as the "second syntax" for REVOKE. It is only valid if *both*
+		// ALL PRIVILEGES + GRANT OPTION are specified in that order.
+		if isRevokeAllGrant($2.([]*ast.RoleOrPriv)) {
+			var users []*ast.UserSpec
+			for _, u := range $4.([]*auth.UserIdentity) {
+				users = append(users, &ast.UserSpec{
+					User: u,
+				})
+			}
+			$$ = &ast.RevokeStmt{
+				Privs:      []*ast.PrivElem{{Priv: mysql.AllPriv}, {Priv: mysql.GrantPriv}},
+				ObjectType: ast.ObjectTypeNone,
+				Level:      &ast.GrantLevel{Level: ast.GrantLevelGlobal},
+				Users:      users,
+			}
+		} else {
+			r, err := convertToRole($2.([]*ast.RoleOrPriv))
+			if err != nil {
+				yylex.AppendError(err)
+				return 1
+			}
+			$$ = &ast.RevokeRoleStmt{
+				Roles: r,
+				Users: $4.([]*auth.UserIdentity),
+			}
 		}
 	}
 
@@ -13622,9 +13612,9 @@ RowStmt:
 
 /********************************************************************
  *
- * Plan Recreator Statement
+ * Plan Replayer Statement
  *
- * PLAN RECREATOR
+ * PLAN REPLAYER
  * 		[DUMP EXPLAIN
  *			[ANALYZE]
  *			{ExplainableStmt
@@ -13634,10 +13624,10 @@ RowStmt:
  *  		  [LIMIT {[offset,] row_count | row_count OFFSET offset}]}
  *		| LOAD 'file_name']
  *******************************************************************/
-PlanRecreatorStmt:
-	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" ExplainableStmt
+PlanReplayerStmt:
+	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" ExplainableStmt
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    $5,
 			Analyze: false,
 			Load:    false,
@@ -13651,9 +13641,9 @@ PlanRecreatorStmt:
 
 		$$ = x
 	}
-|	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" "ANALYZE" ExplainableStmt
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" ExplainableStmt
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    $6,
 			Analyze: true,
 			Load:    false,
@@ -13667,9 +13657,9 @@ PlanRecreatorStmt:
 
 		$$ = x
 	}
-|	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    nil,
 			Analyze: false,
 			Load:    false,
@@ -13687,9 +13677,9 @@ PlanRecreatorStmt:
 
 		$$ = x
 	}
-|	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" "ANALYZE" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
+|	"PLAN" "REPLAYER" "DUMP" "EXPLAIN" "ANALYZE" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    nil,
 			Analyze: true,
 			Load:    false,
@@ -13707,9 +13697,9 @@ PlanRecreatorStmt:
 
 		$$ = x
 	}
-|	"PLAN" "RECREATOR" "LOAD" stringLit
+|	"PLAN" "REPLAYER" "LOAD" stringLit
 	{
-		x := &ast.PlanRecreatorStmt{
+		x := &ast.PlanReplayerStmt{
 			Stmt:    nil,
 			Analyze: false,
 			Load:    true,

@@ -331,12 +331,12 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 }
 
 // EncodeRowForRecord encodes a row to a string compatible with INSERT statements.
-func EncodeRowForRecord(encTable table.Table, sqlMode mysql.SQLMode, row []types.Datum) string {
+func EncodeRowForRecord(encTable table.Table, sqlMode mysql.SQLMode, row []types.Datum, columnPermutation []int) string {
 	enc := tidbEncoder{
 		tbl:  encTable,
 		mode: sqlMode,
 	}
-	resRow, err := enc.Encode(log.L(), row, 0, nil, "", 0)
+	resRow, err := enc.Encode(log.L(), row, 0, columnPermutation, "", 0)
 	if err != nil {
 		return fmt.Sprintf("/* ERROR: %s */", err)
 	}
@@ -394,12 +394,16 @@ func (be *tidbBackend) CleanupEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
+func (be *tidbBackend) CollectLocalDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
 }
 
-func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) (bool, error) {
+func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table, tableName string, opts *kv.SessionOptions) (bool, error) {
 	panic("Unsupported Operation")
+}
+
+func (be *tidbBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tableName string, algorithm config.DuplicateResolutionAlgorithm) error {
+	return nil
 }
 
 func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64) error {
@@ -416,7 +420,7 @@ rowLoop:
 			switch {
 			case err == nil:
 				continue rowLoop
-			case common.IsRetryableError(err):
+			case utils.IsRetryableError(err):
 				// retry next loop
 			default:
 				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
@@ -529,7 +533,7 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 					return errors.Trace(err)
 				}
 				// Retry the non-batch insert here if this is not the last retry.
-				if common.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
+				if utils.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
 					continue
 				}
 				firstRow := stmtTask.rows[0]
@@ -677,8 +681,7 @@ func (be *tidbBackend) LocalWriter(
 }
 
 type Writer struct {
-	be       *tidbBackend
-	errorMgr *errormanager.ErrorManager
+	be *tidbBackend
 }
 
 func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -178,7 +179,7 @@ func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, i
 // the join keys of EqualConditions
 func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*property.MPPPartitionColumn) {
 	for _, expr := range p.EqualConditions {
-		_, coll := expr.CharsetAndCollation(p.ctx)
+		_, coll := expr.CharsetAndCollation()
 		collateID := property.GetCollateIDByNameForPartition(coll)
 		leftKeys = append(leftKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[0].(*expression.Column), CollateID: collateID})
 		rightKeys = append(rightKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[1].(*expression.Column), CollateID: collateID})
@@ -514,6 +515,9 @@ type LogicalUnionScan struct {
 	conditions []expression.Expression
 
 	handleCols HandleCols
+
+	// cacheTable not nil means it's reading from cached table.
+	cacheTable kv.MemBuffer
 }
 
 // DataSource represents a tableScan without condition push down.
@@ -1231,6 +1235,7 @@ type ShowContents struct {
 	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName    string
 	Table     *ast.TableName  // Used for showing columns.
+	Partition model.CIStr     // Use for showing partition
 	Column    *ast.ColumnName // Used for `desc table column`.
 	IndexName model.CIStr
 	Flag      int                  // Some flag parsed from sql, such as FULL.

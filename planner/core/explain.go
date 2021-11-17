@@ -246,20 +246,6 @@ func (p *PhysicalTableScan) AccessObject(normalized bool) string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	var buffer strings.Builder
-	for i, pkCol := range p.PkCols {
-		switch i {
-		case 0:
-			buffer.WriteString("pk cols: (")
-			buffer.WriteString(pkCol.ExplainInfo())
-			buffer.WriteString(", ")
-		case len(p.PkCols) - 1:
-			buffer.WriteString(pkCol.ExplainInfo())
-			buffer.WriteString(")")
-		default:
-			buffer.WriteString(pkCol.ExplainInfo())
-			buffer.WriteString(", ")
-		}
-	}
 	if len(p.rangeDecidedBy) > 0 {
 		buffer.WriteString("range: decided by [")
 		for i, rangeDecidedBy := range p.rangeDecidedBy {

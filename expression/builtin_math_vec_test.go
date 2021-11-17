@@ -17,7 +17,6 @@ package expression
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -136,16 +135,16 @@ var vecBuiltinMathCases1 = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinMathEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinMathCases)
+func TestVectorizedBuiltinMathEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinMathCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinMathFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinMathCases)
+func TestVectorizedBuiltinMathFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinMathCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinMathFuncForRand(c *C) {
-	testVectorizedBuiltinFuncForRand(c, vecBuiltinMathCases1)
+func TestVectorizedBuiltinMathFuncForRand(t *testing.T) {
+	testVectorizedBuiltinFuncForRand(t, vecBuiltinMathCases1)
 }
 
 func BenchmarkVectorizedBuiltinMathEvalOneVec(b *testing.B) {

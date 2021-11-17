@@ -223,6 +223,7 @@ max-sql-length=1024
 refresh-interval=100
 history-size=100
 [experimental]
+allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
 [labels]
@@ -292,6 +293,7 @@ receiver-address = "127.0.0.1:10100"
 	require.True(t, conf.PessimisticTxn.DeadlockHistoryCollectRetryable)
 	require.False(t, conf.Experimental.EnableNewCharset)
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
+	require.True(t, conf.Experimental.AllowsExpressionIndex)
 
 	_, err = f.WriteString(`
 [log.file]
@@ -342,7 +344,8 @@ spilled-file-encryption-method = "aes128-ctr"
 	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
 	require.NoError(t, conf.Load(configFile))
 
-	// Make sure the example config is the same as default config.
+	// Make sure the example config is the same as default config except `auto_tls`.
+	conf.Security.AutoTLS = false
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
