@@ -15,21 +15,20 @@
 package resourcegrouptag
 
 import (
-	"bytes"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/tablecodec/rowindexcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
-var (
-	tablePrefix = []byte{'t'}
-	rowPrefix   = []byte("_r")
-	indexPrefix = []byte("_i")
-)
+// var (
+// 	tablePrefix = []byte{'t'}
+// 	rowPrefix   = []byte("_r")
+// 	indexPrefix = []byte("_i")
+// )
 
 // EncodeResourceGroupTag encodes sql digest and plan digest into resource group tag.
 func EncodeResourceGroupTag(sqlDigest, planDigest *parser.Digest, label tipb.ResourceGroupTagLabel) []byte {
@@ -64,24 +63,16 @@ func DecodeResourceGroupTag(data []byte) (sqlDigest []byte, err error) {
 	return tag.SqlDigest, nil
 }
 
-// GetResourceGroupLabelByKey determines the tipb.ResourceGroupTagLabel of key in a minimized way.
+// GetResourceGroupLabelByKey determines the tipb.ResourceGroupTagLabel of key.
 func GetResourceGroupLabelByKey(key []byte) tipb.ResourceGroupTagLabel {
-	// [ TABLE_PREFIX | TABLE_ID | ROW_PREFIX (INDEX_PREFIX) | ROW_ID (INDEX_ID) | ... ]   (name)
-	// [      1       |    8     |            2              |         8         | ... ]   (byte)
-	if len(key) < 11 {
-		return tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown
-	}
-	if !bytes.HasPrefix(key, tablePrefix) {
-		return tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown
-	}
-	key = key[9:]
-	if bytes.HasPrefix(key, rowPrefix) {
+	switch rowindexcodec.GetKeyKind(key) {
+	case rowindexcodec.KeyKindRow:
 		return tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow
-	}
-	if bytes.HasPrefix(key, indexPrefix) {
+	case rowindexcodec.KeyKindIndex:
 		return tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex
+	default:
+		return tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown
 	}
-	return tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown
 }
 
 // GetFirstKeyFromRequest gets the first Key of the request from tikvrpc.Request.
