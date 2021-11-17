@@ -463,6 +463,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	// TODO maybe we should move into `updateVersionAndTableInfo`, since it can fail, and we shall rollback
 	tblInfo := tb.Meta()
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		// TODO Can we make it as a batch request?
 		for _, p := range pi.Definitions {
 			ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
@@ -472,6 +473,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		// partitions that in adding mid-state
 		for _, p := range pi.AddingDefinitions {
 			ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
+			tikvHelper.PostAccelerateSchedule(p.ID)
 			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 				return errors.Trace(err)
 			}

@@ -133,6 +133,13 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTable(c *C) {
 	c.Assert(replica.Available, Equals, true)
 	c.Assert(replica.Count, Equals, uint64(1))
 	c.Assert(replica.LocationLabels, DeepEquals, []string{})
+
+	pi := tb.Meta().GetPartitionInfo()
+	c.Assert(pi, NotNil)
+	for _, p := range pi.Definitions {
+		c.Assert(tb.Meta().TiFlashReplica.IsPartitionAvailable(p.ID), Equals, true)
+	}
+	c.Assert(len(pi.AddingDefinitions), Equals, 0)
 }
 
 
