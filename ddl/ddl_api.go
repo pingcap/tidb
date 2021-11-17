@@ -2639,7 +2639,7 @@ func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error
 		if len(specs) > 1 {
 			return errRunMultiSchemaChanges
 		}
-		if len(specs) == 1 && len(specs[0].NewColumns) > 0 {
+		if len(specs) == 1 && len(specs[0].NewColumns) > 1 && specs[0].Tp == ast.AlterTableAddColumns {
 			return errRunMultiSchemaChanges
 		}
 	} else {
