@@ -298,6 +298,23 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		if len(lockKeys) > 0 {
 			hasKeysToLock = true
 		}
+		// Change the unique index LOCK into PUT record.
+		if len(indexKeys) > 0 {
+			if !e.txn.Valid() {
+				return kv.ErrInvalidTxn
+			}
+			membuf := e.txn.GetMemBuffer()
+			for _, idxKey := range indexKeys {
+				handleVal := handleVals[string(idxKey)]
+				if len(handleVal) == 0 {
+					continue
+				}
+				err = membuf.Set(idxKey, handleVal)
+				if err != nil {
+					return err
+				}
+			}
+		}
 	}
 	// Fetch all values.
 	values, err = batchGetter.BatchGet(ctx, keys)
@@ -309,6 +326,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	if e.lock && rc {
 		existKeys = make([]kv.Key, 0, 2*len(values))
 	}
+	changeLockToPutIdxKeys := make([]kv.Key, 0, len(indexKeys))
 	e.values = make([][]byte, 0, len(values))
 	for i, key := range keys {
 		val := values[string(key)]
@@ -325,6 +343,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			existKeys = append(existKeys, key)
 			if len(indexKeys) > 0 {
 				existKeys = append(existKeys, indexKeys[i])
+				changeLockToPutIdxKeys = append(changeLockToPutIdxKeys, indexKeys[i])
 			}
 		}
 	}
@@ -337,6 +356,22 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 			if len(existKeys) > 0 {
 				hasKeysToLock = true
+			}
+			if len(changeLockToPutIdxKeys) > 0 {
+				if !e.txn.Valid() {
+					return kv.ErrInvalidTxn
+				}
+				for _, idxKey := range changeLockToPutIdxKeys {
+					membuf := e.txn.GetMemBuffer()
+					handleVal := handleVals[string(idxKey)]
+					if len(handleVal) == 0 {
+						return kv.ErrNotExist
+					}
+					err = membuf.Set(idxKey, handleVal)
+					if err != nil {
+						return err
+					}
+				}
 			}
 		}
 		if hasKeysToLock {

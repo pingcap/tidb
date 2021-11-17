@@ -242,6 +242,18 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		}
 		return err
 	}
+
+	// MySQL supports an "init_connect" query, which can be run on initial connection.
+	// The query must return a non-error or the client is disconnected.
+	if err := cc.initConnect(ctx); err != nil {
+		logutil.Logger(ctx).Warn("init_connect failed", zap.Error(err))
+		initErr := errNewAbortingConnection.FastGenByArgs(cc.connectionID, "unconnected", cc.user, cc.peerHost, "init_connect command failed")
+		if err1 := cc.writeError(ctx, initErr); err1 != nil {
+			terror.Log(err1)
+		}
+		return initErr
+	}
+
 	data := cc.alloc.AllocWithLen(4, 32)
 	data = append(data, mysql.OKHeader)
 	data = append(data, 0, 0)
@@ -713,6 +725,58 @@ func (cc *clientConn) PeerHost(hasPassword string) (host string, err error) {
 	return
 }
 
+// skipInitConnect follows MySQL's rules of when init-connect should be skipped.
+// In 5.7 it is any user with SUPER privilege, but in 8.0 it is:
+// - SUPER or the CONNECTION_ADMIN dynamic privilege.
+// - (additional exception) users with expired passwords (not yet supported)
+// In TiDB CONNECTION_ADMIN is satisfied by SUPER, so we only need to check once.
+func (cc *clientConn) skipInitConnect() bool {
+	checker := cc.ctx.GetPrivilegeManager()
+	activeRoles := cc.ctx.GetSessionVars().ActiveRoles
+	return checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv)
+}
+
+// initConnect runs the initConnect SQL statement if it has been specified.
+// The semantics are MySQL compatible.
+func (cc *clientConn) initConnect(ctx context.Context) error {
+	val, err := cc.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.InitConnect)
+	if err != nil {
+		return err
+	}
+	if val == "" || cc.skipInitConnect() {
+		return nil
+	}
+	logutil.Logger(ctx).Debug("init_connect starting")
+	stmts, err := cc.ctx.Parse(ctx, val)
+	if err != nil {
+		return err
+	}
+	for _, stmt := range stmts {
+		rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
+		if err != nil {
+			return err
+		}
+		// init_connect does not care about the results,
+		// but they need to be drained because of lazy loading.
+		if rs != nil {
+			req := rs.NewChunk()
+			for {
+				if err = rs.Next(ctx, req); err != nil {
+					return err
+				}
+				if req.NumRows() == 0 {
+					break
+				}
+			}
+			if err := rs.Close(); err != nil {
+				return err
+			}
+		}
+	}
+	logutil.Logger(ctx).Debug("init_connect complete")
+	return nil
+}
+
 // Run reads client query and writes query result to client in for loop, if there is a panic during query handling,
 // it will be recovered and log the panic error.
 // This function returns and the connection is closed if there is an IO error or there is a panic.
@@ -870,7 +934,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	} else {
 		label := strconv.Itoa(int(cmd))
 		if err != nil {
-			metrics.QueryTotalCounter.WithLabelValues(label, "ERROR").Inc()
+			metrics.QueryTotalCounter.WithLabelValues(label, "Error").Inc()
 		} else {
 			metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
 		}

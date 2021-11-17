@@ -160,7 +160,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, CollationServer, mysql.DefaultCollationName},
 	{ScopeNone, "have_rtree_keys", "YES"},
 	{ScopeGlobal, "innodb_old_blocks_pct", "37"},
-	{ScopeGlobal, "innodb_file_format", "Antelope"},
+	{ScopeGlobal, "innodb_file_format", "Barracuda"},
+	{ScopeGlobal, "innodb_default_row_format", "dynamic"},
 	{ScopeGlobal, "innodb_compression_failure_threshold_pct", "5"},
 	{ScopeNone, "performance_schema_events_waits_history_long_size", "10000"},
 	{ScopeGlobal, "innodb_checksum_algorithm", "innodb"},
@@ -249,7 +250,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_rollback_on_timeout", "0"},
 	{ScopeGlobal | ScopeSession, "query_alloc_block_size", "8192"},
 	{ScopeGlobal, SlaveCompressedProtocol, "0"},
-	{ScopeGlobal | ScopeSession, InitConnect, ""},
+	{ScopeGlobal, InitConnect, ""},
 	{ScopeGlobal, "rpl_semi_sync_slave_trace_level", ""},
 	{ScopeNone, "have_compress", "YES"},
 	{ScopeNone, "thread_concurrency", "10"},
@@ -430,7 +431,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "version", mysql.ServerVersion},
 	{ScopeGlobal | ScopeSession, "transaction_alloc_block_size", "8192"},
 	{ScopeGlobal, "sql_slave_skip_counter", "0"},
-	{ScopeGlobal, "innodb_large_prefix", "OFF"},
+	{ScopeGlobal, "innodb_large_prefix", "ON"},
 	{ScopeNone, "performance_schema_max_cond_classes", "80"},
 	{ScopeGlobal, "innodb_io_capacity", "200"},
 	{ScopeGlobal, "max_binlog_cache_size", "18446744073709547520"},
@@ -652,6 +653,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 	{ScopeSession, TiDBLastTxnInfo, strconv.Itoa(DefCurretTS)},
+	{ScopeSession, TiDBLastQueryInfo, strconv.Itoa(DefCurretTS)},
 	{ScopeGlobal | ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
 	{ScopeGlobal | ScopeSession, TiDBAllowBatchCop, strconv.Itoa(DefTiDBAllowBatchCop)},
 	{ScopeGlobal | ScopeSession, TiDBInitChunkSize, strconv.Itoa(DefInitChunkSize)},
@@ -689,6 +691,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBSkipIsolationLevelCheck, BoolToIntStr(DefTiDBSkipIsolationLevelCheck)},
 
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableRateLimitAction, Value: boolToOnOff(DefTiDBEnableRateLimitAction)},
+
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBPProfSQLCPU, strconv.Itoa(DefTiDBPProfSQLCPU)},
@@ -741,7 +744,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBRedactLog, BoolToIntStr(DefTiDBRedactLog)},
 	{ScopeGlobal, TiDBEnableTelemetry, BoolToIntStr(DefTiDBEnableTelemetry)},
 	{ScopeGlobal | ScopeSession, TiDBEnableAmendPessimisticTxn, boolToOnOff(DefTiDBEnableAmendPessimisticTxn)},
-	{ScopeGlobal | ScopeSession, TiDBMultiStatementMode, Warn},
+	{ScopeGlobal | ScopeSession, TiDBMultiStatementMode, Off},
+	{ScopeGlobal | ScopeSession, TiDBEnableOrderedResultMode, boolToOnOff(DefTiDBEnableOrderedResultMode)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

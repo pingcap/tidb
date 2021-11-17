@@ -382,53 +382,53 @@ drop table if exists t;
 create table t(a int, b int);
 explain select a != any (select a from t t2) from t t1;
 id	estRows	task	access object	operator info
-Projection_8	10000.00	root		and(or(or(gt(Column#8, 1), ne(test.t.a, Column#7)), if(ne(Column#9, 0), <nil>, 0)), and(ne(Column#10, 0), if(isnull(test.t.a), <nil>, 1)))->Column#11
-└─HashJoin_9	10000.00	root		CARTESIAN inner join
-  ├─StreamAgg_14(Build)	1.00	root		funcs:max(Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:count(1)->Column#10
-  │ └─Projection_19	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#15
-  │   └─TableReader_18	10000.00	root		data:TableFullScan_17
-  │     └─TableFullScan_17	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader_12(Probe)	10000.00	root		data:TableFullScan_11
-    └─TableFullScan_11	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Projection_9	10000.00	root		and(or(or(gt(Column#11, 1), ne(test.t.a, Column#10)), if(ne(Column#12, 0), <nil>, 0)), and(ne(Column#13, 0), if(isnull(test.t.a), <nil>, 1)))->Column#14
+└─HashJoin_10	10000.00	root		CARTESIAN inner join
+  ├─StreamAgg_15(Build)	1.00	root		funcs:max(Column#16)->Column#10, funcs:count(distinct Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:count(1)->Column#13
+  │ └─Projection_20	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#18
+  │   └─TableReader_19	10000.00	root		data:TableFullScan_18
+  │     └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader_13(Probe)	10000.00	root		data:TableFullScan_12
+    └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select a = all (select a from t t2) from t t1;
 id	estRows	task	access object	operator info
-Projection_8	10000.00	root		or(and(and(le(Column#8, 1), eq(test.t.a, Column#7)), if(ne(Column#9, 0), <nil>, 1)), or(eq(Column#10, 0), if(isnull(test.t.a), <nil>, 0)))->Column#11
-└─HashJoin_9	10000.00	root		CARTESIAN inner join
-  ├─StreamAgg_14(Build)	1.00	root		funcs:firstrow(Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:count(1)->Column#10
-  │ └─Projection_19	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#15
-  │   └─TableReader_18	10000.00	root		data:TableFullScan_17
-  │     └─TableFullScan_17	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader_12(Probe)	10000.00	root		data:TableFullScan_11
-    └─TableFullScan_11	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Projection_9	10000.00	root		or(and(and(le(Column#11, 1), eq(test.t.a, Column#10)), if(ne(Column#12, 0), <nil>, 1)), or(eq(Column#13, 0), if(isnull(test.t.a), <nil>, 0)))->Column#14
+└─HashJoin_10	10000.00	root		CARTESIAN inner join
+  ├─StreamAgg_15(Build)	1.00	root		funcs:firstrow(Column#16)->Column#10, funcs:count(distinct Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:count(1)->Column#13
+  │ └─Projection_20	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(22,0) BINARY)->Column#18
+  │   └─TableReader_19	10000.00	root		data:TableFullScan_18
+  │     └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader_13(Probe)	10000.00	root		data:TableFullScan_12
+    └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
 drop table if exists s;
 create table s(a varchar(20), b varchar(20));
 explain select a in (select a from s where s.b = t.b) from t;
 id	estRows	task	access object	operator info
-HashJoin_10	10000.00	root		left outer semi join, equal:[eq(Column#8, Column#9)], other cond:eq(cast(test.t.a), cast(test.s.a))
-├─Projection_14(Build)	10000.00	root		test.s.a, cast(test.s.b, double BINARY)->Column#9
-│ └─TableReader_16	10000.00	root		data:TableFullScan_15
-│   └─TableFullScan_15	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─Projection_11(Probe)	10000.00	root		test.t.a, cast(test.t.b, double BINARY)->Column#8
-  └─TableReader_13	10000.00	root		data:TableFullScan_12
-    └─TableFullScan_12	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashJoin_11	10000.00	root		left outer semi join, equal:[eq(Column#11, Column#12)], other cond:eq(cast(test.t.a), cast(test.s.a))
+├─Projection_15(Build)	10000.00	root		test.s.a, cast(test.s.b, double BINARY)->Column#12
+│ └─TableReader_17	10000.00	root		data:TableFullScan_16
+│   └─TableFullScan_16	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─Projection_12(Probe)	10000.00	root		test.t.a, cast(test.t.b, double BINARY)->Column#11
+  └─TableReader_14	10000.00	root		data:TableFullScan_13
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
 id	estRows	task	access object	operator info
-HashJoin_8	10000.00	root		left outer semi join, equal:[eq(test.t.b, test.t.b)], other cond:eq(test.t.a, plus(test.t.a, test.t.b))
-├─TableReader_12(Build)	10000.00	root		data:TableFullScan_11
-│ └─TableFullScan_11	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader_10(Probe)	10000.00	root		data:TableFullScan_9
-  └─TableFullScan_9	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin_9	10000.00	root		left outer semi join, equal:[eq(test.t.b, test.t.b)], other cond:eq(test.t.a, plus(test.t.a, test.t.b))
+├─TableReader_13(Build)	10000.00	root		data:TableFullScan_12
+│ └─TableFullScan_12	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_11(Probe)	10000.00	root		data:TableFullScan_10
+  └─TableFullScan_10	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table t;
 create table t(a int not null, b int);
 explain select a in (select a from t t2 where t2.b = t1.b) from t t1;
 id	estRows	task	access object	operator info
-HashJoin_8	10000.00	root		left outer semi join, equal:[eq(test.t.b, test.t.b) eq(test.t.a, test.t.a)]
-├─TableReader_12(Build)	10000.00	root		data:TableFullScan_11
-│ └─TableFullScan_11	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader_10(Probe)	10000.00	root		data:TableFullScan_9
-  └─TableFullScan_9	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin_9	10000.00	root		left outer semi join, equal:[eq(test.t.b, test.t.b) eq(test.t.a, test.t.a)]
+├─TableReader_13(Build)	10000.00	root		data:TableFullScan_12
+│ └─TableFullScan_12	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_11(Probe)	10000.00	root		data:TableFullScan_10
+  └─TableFullScan_10	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select 1 from (select sleep(1)) t;
 id	estRows	task	access object	operator info
 Projection_4	1.00	root		1->Column#2

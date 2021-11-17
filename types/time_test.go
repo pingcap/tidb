@@ -106,6 +106,15 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		{"2018.01.01 00:00:00", "2018-01-01 00:00:00"},
 		{"2018/01/01-00:00:00", "2018-01-01 00:00:00"},
 		{"4710072", "2047-10-07 02:00:00"},
+		{"2016-06-01 00:00:00 00:00:00", "2016-06-01 00:00:00"},
+		{"2020-06-01 00:00:00ads!,?*da;dsx", "2020-06-01 00:00:00"},
+
+		// For issue 22231
+		{"2020-05-28 23:59:59 00:00:00", "2020-05-28 23:59:59"},
+		{"2020-05-28 23:59:59-00:00:00", "2020-05-28 23:59:59"},
+		{"2020-05-28 23:59:59T T00:00:00", "2020-05-28 23:59:59"},
+		{"2020-10-22 10:31-10:12", "2020-10-22 10:31:10"},
+		{"2018.01.01 01:00:00", "2018-01-01 01:00:00"},
 	}
 
 	for _, test := range table {
@@ -164,12 +173,12 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		"170118-12",
 		"1710-10",
 		"1710-1000",
-		"2020-10-22 10:31-10:12", // YYYY-MM-DD HH:MM-SS:HH (invalid)
 	}
 
 	for _, test := range errTable {
 		_, err := types.ParseDatetime(sc, test)
-		c.Assert(err, NotNil)
+		c.Assert(err != nil || sc.WarningCount() > 0, Equals, true)
+		sc.SetWarnings(nil)
 	}
 }
 
@@ -1066,7 +1075,7 @@ func (s *testTimeSuite) TestParseDateFormat(c *C) {
 		{"2011-11-11  10:10:10", []string{"2011", "11", "11", "10", "10", "10"}},
 		{"xx2011-11-11 10:10:10", nil},
 		{"T10:10:10", nil},
-		{"2011-11-11x", nil},
+		{"2011-11-11x", []string{"2011", "11", "11x"}},
 		{"xxx 10:10:10", nil},
 	}
 
@@ -1547,35 +1556,67 @@ func (s *testTimeSuite) TestExtractDatetimeNum(c *C) {
 }
 
 func (s *testTimeSuite) TestExtractDurationNum(c *C) {
-	in := types.Duration{Duration: time.Duration(3600 * 24 * 365), Fsp: types.DefaultFsp}
-	tbl := []struct {
+	type resultTbl struct {
 		unit   string
 		expect int64
-	}{
-		{"MICROSECOND", 31536},
-		{"SECOND", 0},
-		{"MINUTE", 0},
-		{"HOUR", 0},
-		{"SECOND_MICROSECOND", 31536},
-		{"MINUTE_MICROSECOND", 31536},
-		{"MINUTE_SECOND", 0},
-		{"HOUR_MICROSECOND", 31536},
-		{"HOUR_SECOND", 0},
-		{"HOUR_MINUTE", 0},
-		{"DAY_MICROSECOND", 31536},
-		{"DAY_SECOND", 0},
-		{"DAY_MINUTE", 0},
-		{"DAY_HOUR", 0},
+	}
+	type testCase struct {
+		in      types.Duration
+		resTbls []resultTbl
+	}
+	cases := []testCase{
+		{
+			in: types.Duration{Duration: time.Duration(3600 * 24 * 365), Fsp: types.DefaultFsp},
+			resTbls: []resultTbl{
+				{"MICROSECOND", 31536},
+				{"SECOND", 0},
+				{"MINUTE", 0},
+				{"HOUR", 0},
+				{"SECOND_MICROSECOND", 31536},
+				{"MINUTE_MICROSECOND", 31536},
+				{"MINUTE_SECOND", 0},
+				{"HOUR_MICROSECOND", 31536},
+				{"HOUR_SECOND", 0},
+				{"HOUR_MINUTE", 0},
+				{"DAY_MICROSECOND", 31536},
+				{"DAY_SECOND", 0},
+				{"DAY_MINUTE", 0},
+				{"DAY_HOUR", 0},
+			},
+		},
+		{
+			// "-10:59:1" = -10^9 * (10 * 3600 + 59 * 60 + 1)
+			in: types.Duration{Duration: time.Duration(-39541000000000), Fsp: types.DefaultFsp},
+			resTbls: []resultTbl{
+				{"MICROSECOND", 0},
+				{"SECOND", -1},
+				{"MINUTE", -59},
+				{"HOUR", -10},
+				{"SECOND_MICROSECOND", -1000000},
+				{"MINUTE_MICROSECOND", -5901000000},
+				{"MINUTE_SECOND", -5901},
+				{"HOUR_MICROSECOND", -105901000000},
+				{"HOUR_SECOND", -105901},
+				{"HOUR_MINUTE", -1059},
+				{"DAY_MICROSECOND", -105901000000},
+				{"DAY_SECOND", -105901},
+				{"DAY_MINUTE", -1059},
+				{"DAY_HOUR", -10},
+			},
+		},
 	}
 
-	for _, col := range tbl {
-		res, err := types.ExtractDurationNum(&in, col.unit)
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, col.expect)
+	for _, testcase := range cases {
+		in := testcase.in
+		for _, col := range testcase.resTbls {
+			res, err := types.ExtractDurationNum(&in, col.unit)
+			c.Assert(err, IsNil)
+			c.Assert(res, Equals, col.expect)
+		}
+		res, err := types.ExtractDurationNum(&in, "TEST_ERROR")
+		c.Assert(res, Equals, int64(0))
+		c.Assert(err, ErrorMatches, "invalid unit.*")
 	}
-	res, err := types.ExtractDurationNum(&in, "TEST_ERROR")
-	c.Assert(res, Equals, int64(0))
-	c.Assert(err, ErrorMatches, "invalid unit.*")
 }
 
 func (s *testTimeSuite) TestParseDurationValue(c *C) {

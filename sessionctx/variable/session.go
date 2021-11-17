@@ -672,8 +672,14 @@ type SessionVars struct {
 	// LastTxnInfo keeps track the info of last committed transaction
 	LastTxnInfo kv.TxnInfo
 
+	// LastQueryInfo keeps track the info of last query.
+	LastQueryInfo QueryInfo
+
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
+
+	// EnableStableResultMode if stabilize query results.
+	EnableStableResultMode bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -1409,6 +1415,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		MemoryUsageAlarmRatio.Store(floatVal)
 	case TiDBMultiStatementMode:
 		s.MultiStatementMode = TiDBOptMultiStmt(val)
+	case TiDBEnableOrderedResultMode:
+		s.EnableStableResultMode = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -1906,4 +1914,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
+}
+
+// QueryInfo represents the information of last executed query. It's used to expose information for test purpose.
+type QueryInfo struct {
+	StartTS     uint64 `json:"start_ts"`
+	ForUpdateTS uint64 `json:"for_update_ts"`
+	ErrMsg      string `json:"error,omitempty"`
 }

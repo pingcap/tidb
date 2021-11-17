@@ -395,6 +395,9 @@ type LogicalSelection struct {
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
+
+	// having selection can't be pushed down, because it must above the aggregation.
+	buildByHaving bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -963,6 +966,16 @@ type LogicalLimit struct {
 	limitHints limitHintInfo
 }
 
+// extraPIDInfo is used by SelectLock on partitioned table, the TableReader need
+// to return the partition id column.
+// Because SelectLock has to used that partition id to encode the lock key.
+// the child of SelectLock may be Join, so that table can be multiple extra PID columns.
+// fields are for each of the table, and TblIDs are the corresponding table IDs.
+type extraPIDInfo struct {
+	Columns []*expression.Column
+	TblIDs  []int64
+}
+
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	baseLogicalPlan
@@ -970,6 +983,9 @@ type LogicalLock struct {
 	Lock             ast.SelectLockType
 	tblID2Handle     map[int64][]*expression.Column
 	partitionedTable []table.PartitionedTable
+	// extraPIDInfo is used when it works on partition table, the child executor
+	// need to return an extra partition ID column in the chunk row.
+	extraPIDInfo
 }
 
 // WindowFrame represents a window function frame.
