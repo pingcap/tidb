@@ -620,3 +620,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 
 	return nil
 }
+
+func (d *ddl) GetInfoCache() *infoschema.InfoCache{
+	return d.infoCache
+}

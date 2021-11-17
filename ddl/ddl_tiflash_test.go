@@ -124,14 +124,16 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(z int)")
 	tk.MustExec("alter table t set tiflash replica 1")
+
+	time.Sleep(ddl.PollTiFlashInterval * 2)
+	// Should get schema right now
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-
-	time.Sleep(ddl.PollTiFlashInterval * 5)
-	c.Assert(tb.Meta().TiFlashReplica, NotNil)
-	c.Assert(tb.Meta().TiFlashReplica.Available, Equals, true)
-	c.Assert(tb.Meta().TiFlashReplica.Count, Equals, 1)
-	c.Assert(tb.Meta().TiFlashReplica.LocationLabels, Equals, nil)
+	replica := tb.Meta().TiFlashReplica
+	c.Assert(replica, NotNil)
+	c.Assert(replica.Available, Equals, true)
+	c.Assert(replica.Count, Equals, uint64(1))
+	c.Assert(replica.LocationLabels, DeepEquals, []string{})
 }
 
 
@@ -337,3 +339,4 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 	}))
 	return server, mockAddr
 }
+
