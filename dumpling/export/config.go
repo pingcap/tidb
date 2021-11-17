@@ -65,6 +65,7 @@ const (
 	flagCsvSeparator             = "csv-separator"
 	flagCsvDelimiter             = "csv-delimiter"
 	flagOutputFilenameTemplate   = "output-filename-template"
+	flagOutputFilename   = "output-filename"
 	flagCompleteInsert           = "complete-insert"
 	flagParams                   = "params"
 	flagReadTimeout              = "read-timeout"
@@ -110,6 +111,7 @@ type Config struct {
 	LogFile       string
 	LogFormat     string
 	OutputDirPath string
+	OutputFileName string
 	StatusAddr    string
 	Snapshot      string
 	Consistency   string
@@ -156,6 +158,7 @@ func DefaultConfig() *Config {
 		FileSize:           UnspecifiedSize,
 		StatementSize:      DefaultStatementSize,
 		OutputDirPath:      ".",
+		OutputFileName:     "",
 		ServerInfo:         ServerInfoUnknown,
 		SortByPk:           true,
 		Tables:             nil,
@@ -248,6 +251,7 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvSeparator, ",", "The separator for csv files, default ','")
 	flags.String(flagCsvDelimiter, "\"", "The delimiter for values in csv files, default '\"'")
 	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension)")
+	flags.String(flagOutputFilename, "", "The full output filename")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
 	flags.Bool(FlagHelp, false, "Print help message and quit")
@@ -295,6 +299,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	conf.OutputDirPath, err = flags.GetString(flagOutput)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.OutputFileName, err = flags.GetString(flagOutputFilename)
 	if err != nil {
 		return errors.Trace(err)
 	}
