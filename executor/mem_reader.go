@@ -157,7 +157,7 @@ type memTableReader struct {
 
 	// Used when extracting handles from row in memTableReader.getMemRowsHandle.
 	handleCols plannercore.HandleCols
-	cacheTable    kv.MemBuffer
+	cacheTable kv.MemBuffer
 }
 
 type allocBuf struct {
