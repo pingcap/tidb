@@ -80,6 +80,7 @@ type LogicalRuleOptimizeTraceStep struct {
 	TP     string
 }
 
+// CETraceRecord records an expression and related cardinality estimation result.
 type CETraceRecord struct {
 	TableID   int64
 	TableName string
