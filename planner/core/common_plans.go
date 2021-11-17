@@ -104,7 +104,7 @@ type CleanupIndex struct {
 	IndexName string
 }
 
-// CheckIndexRange is used for checking index data, output the index values that handle within begin and end.
+// CheckIndexRange is used for checking index data, output the index valuesdisable the cache that handle within begin and end.
 type CheckIndexRange struct {
 	baseSchemaProducer
 
@@ -384,24 +384,25 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	prepared := preparedStmt.PreparedAst
-	// disable the cache if cache table in prepared statement
-	for _, vInfo := range preparedStmt.VisitInfos {
-		tbl, err := is.TableByName(model.NewCIStr(vInfo.db), model.NewCIStr(vInfo.table))
-		// if table does not exist, skip it, may be it is a `create table` statement
-		if err != nil {
-			continue
-		}
-		tblInfo := tbl.Meta()
-		if tblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-			prepared.UseCache = false
-			break
+	var cacheKey kvcache.Key
+	if prepared.UseCache {
+		// disable the cache if cache table in prepared statement
+		for _, vInfo := range preparedStmt.VisitInfos {
+			tbl, err := is.TableByName(model.NewCIStr(vInfo.db), model.NewCIStr(vInfo.table))
+			// if table does not exist, skip it, maybe it is a `create table` statement
+			if err != nil {
+				continue
+			}
+			if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+				prepared.UseCache = false
+				break
+			}
 		}
 	}
-	stmtCtx.UseCache = prepared.UseCache
-	var cacheKey kvcache.Key
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
+	stmtCtx.UseCache = prepared.UseCache
 	tps := make([]*types.FieldType, len(e.UsingVars))
 	for i, param := range e.UsingVars {
 		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
