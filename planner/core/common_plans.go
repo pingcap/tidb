@@ -727,7 +727,16 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 		for _, colInfo := range pk.Columns {
 			if pkCol := expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]); pkCol != nil {
 				pkCols = append(pkCols, pkCol)
-				pkColsLen = append(pkColsLen, colInfo.Length)
+				// We need to consider the prefix index.
+				// For example: when we have 'a varchar(50), index idx(a(10))'
+				// So we will get 'colInfo.Length = 50' and 'pkCol.RetType.Flen = 10'.
+				// In 'hasPrefix' function from 'util/ranger/ranger.go' file,
+				// we use 'columnLength == types.UnspecifiedLength' to check whether we have prefix index.
+				if colInfo.Length != types.UnspecifiedLength && colInfo.Length == pkCol.RetType.Flen {
+					pkColsLen = append(pkColsLen, types.UnspecifiedLength)
+				} else {
+					pkColsLen = append(pkColsLen, colInfo.Length)
+				}
 			}
 		}
 		if len(pkCols) > 0 {
