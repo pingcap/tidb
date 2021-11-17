@@ -1515,9 +1515,6 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 			e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 		}
 	}
-	if err != nil {
-		err = errors.Wrap(ErrTruncated, "convert to MySQL enum failed: "+err.Error())
-	}
 	ret.SetMysqlEnum(e, target.Collate)
 	return ret, err
 }
