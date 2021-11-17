@@ -3987,6 +3987,9 @@ func setDefaultValueWithBinaryPadding(col *table.Column, value interface{}) erro
 			padding := make([]byte, col.Flen-len(value.(string)))
 			col.DefaultValue = string(append([]byte(col.DefaultValue.(string)), padding...))
 		}
+		if v, ok := col.DefaultValue.(string); ok {
+			col.DefaultValue = strings.TrimRight(v, " ")
+		}
 	}
 	return nil
 }
