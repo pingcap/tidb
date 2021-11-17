@@ -140,23 +140,6 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 	return ds, nil
 }
 
-// Used when memIndexMergeReader.partialPlans[i] is TableScan.
-func (m *memTableReader) getMemRowsHandle() ([]kv.Handle, error) {
-	rows, err := m.getMemRows()
-	if err != nil {
-		return nil, err
-	}
-	handles := make([]kv.Handle, 0, len(rows))
-	for _, row := range rows {
-		handle, err := m.handleCols.BuildHandleByDatums(row)
-		if err != nil {
-			return nil, err
-		}
-		handles = append(handles, handle)
-	}
-	return handles, nil
-}
-
 type memTableReader struct {
 	ctx           sessionctx.Context
 	table         *model.TableInfo
@@ -326,6 +309,23 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 	}
 
 	return values, nil
+}
+
+// Used when memIndexMergeReader.partialPlans[i] is TableScan.
+func (m *memTableReader) getMemRowsHandle() ([]kv.Handle, error) {
+	rows, err := m.getMemRows()
+	if err != nil {
+		return nil, err
+	}
+	handles := make([]kv.Handle, 0, len(rows))
+	for _, row := range rows {
+		handle, err := m.handleCols.BuildHandleByDatums(row)
+		if err != nil {
+			return nil, err
+		}
+		handles = append(handles, handle)
+	}
+	return handles, nil
 }
 
 func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
@@ -668,8 +668,8 @@ func (m *memIndexMergeReader) getMemRows() ([][]types.Datum, error) {
 	return memTblReader.getMemRows()
 }
 
-func getColIDAndPkColIDs(table table.Table, columns []*model.ColumnInfo) (colIDs map[int64]int, pkColIDs []int64, rd *rowcodec.BytesDecoder) {
-	colIDs = make(map[int64]int, len(columns))
+func getColIDAndPkColIDs(table table.Table, columns []*model.ColumnInfo) (map[int64]int, []int64, *rowcodec.BytesDecoder) {
+	colIDs := make(map[int64]int, len(columns))
 	for i, col := range columns {
 		colIDs[col.ID] = i
 	}
@@ -684,12 +684,12 @@ func getColIDAndPkColIDs(table table.Table, columns []*model.ColumnInfo) (colIDs
 			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
-	pkColIDs = tables.TryGetCommonPkColumnIds(tblInfo)
+	pkColIDs := tables.TryGetCommonPkColumnIds(tblInfo)
 	if len(pkColIDs) == 0 {
 		pkColIDs = []int64{-1}
 	}
-	rd = rowcodec.NewByteDecoder(colInfos, pkColIDs, nil, nil)
-	return
+	rd := rowcodec.NewByteDecoder(colInfos, pkColIDs, nil, nil)
+	return colIDs, pkColIDs, rd
 }
 
 // Union all handles of different Indexes.
@@ -700,8 +700,8 @@ func unionHandles(kvRanges [][]kv.KeyRange, memIndexReaders []*memIndexReader, m
 	if len(memTableReaders) != len(memIndexReaders) {
 		return nil, errors.Errorf("len(kvRanges) should be equal to len(memIndexReaders)")
 	}
-	hMap := kv.NewHandleMap()
 
+	hMap := kv.NewHandleMap()
 	var handles []kv.Handle
 	for i, reader := range memIndexReaders {
 		if reader == nil {
@@ -714,9 +714,6 @@ func unionHandles(kvRanges [][]kv.KeyRange, memIndexReaders []*memIndexReader, m
 		}
 		if err != nil {
 			return nil, err
-		}
-		if len(handles) == 0 {
-			continue
 		}
 		// Filter same row.
 		for _, h := range handles {

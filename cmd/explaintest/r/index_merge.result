@@ -41,6 +41,20 @@ Projection_5	1841.86	root		test.t1.c1, test.t1.c2, test.t1.c3
 //// expect empty
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;
 c1	c2	c3
+
+delete from t1;
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;
+id	estRows	task	access object	operator info
+Projection_5	1841.86	root		test.t1.c1, test.t1.c2, test.t1.c3
+└─UnionScan_6	1841.86	root		lt(test.t1.c3, 10), or(lt(test.t1.c1, 10), lt(test.t1.c2, 10))
+  └─IndexMerge_11	1841.86	root		
+    ├─IndexRangeScan_7(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    └─Selection_10(Probe)	1841.86	cop[tikv]		lt(test.t1.c3, 10)
+      └─TableRowIDScan_9	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+//// expect empty
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;
+c1	c2	c3
 commit;
 
 
@@ -75,6 +89,19 @@ c1	c2	c3
 1	1	1
 
 update t1 set c3 = 100 where c3 = 1;
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;
+id	estRows	task	access object	operator info
+UnionScan_6	1106.67	root		lt(test.t1.c3, 10), or(lt(test.t1.c1, 10), lt(test.t1.c2, 10))
+└─IndexMerge_11	1106.67	root		
+  ├─TableRangeScan_7(Build)	3333.33	cop[tikv]	table:t1	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─Selection_10(Probe)	1106.67	cop[tikv]		lt(test.t1.c3, 10)
+    └─TableRowIDScan_9	3330.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
+//// expect empty
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;
+c1	c2	c3
+
+delete from t1;
 explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;
 id	estRows	task	access object	operator info
 UnionScan_6	1106.67	root		lt(test.t1.c3, 10), or(lt(test.t1.c1, 10), lt(test.t1.c2, 10))
