@@ -274,6 +274,9 @@ func (d *ddl) UpdateTiFlashHttpAddress(store *helper.StoreStat) error {
 	}
 	// report to pd
 	key := fmt.Sprintf("/tiflash/cluster/http_port/%v", store.Store.Address)
+	if d.etcdCli == nil{
+		return errors.New("No etcdCli")
+	}
 	resp, err := d.etcdCli.Get(d.ctx, key)
 	origin := ""
 	for _, kv := range resp.Kvs {
@@ -312,7 +315,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 		for _, l := range store.Store.Labels {
 			if l.Key == "engine" && l.Value == "tiflash" {
 				tiflashStores[store.Store.ID] = store
-				fmt.Printf("!!!! tiflashStores has tiflash %v %v\n", store.Store.ID, store.Store.Address)
+				fmt.Printf("!!!! tiflashStores has tiflash %v Addr %v Status %v\n", store.Store.ID, store.Store.Address, store.Store.StatusAddress)
 			}
 		}
 	}
@@ -347,7 +350,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 		// TODO Can we batch request table?
 
 		fmt.Printf("!!!! Table %v Available is %v\n", tb.ID, tb.Available)
-		if !tb.Available {
+		if true || !tb.Available {
 			allReplicaReady = false
 
 			// set_accelerate_schedule
@@ -363,7 +366,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 					store.Store.StatusAddress,
 					tb.ID,
 				)
-				fmt.Printf("!!!! startUrl %v\n", statURL)
+				fmt.Printf("!!!! tiflashStatUrl %v\n", statURL)
 				resp, err := util.InternalHTTPClient().Get(statURL)
 				if err != nil {
 					continue
