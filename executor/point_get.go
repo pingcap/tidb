@@ -58,6 +58,10 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 	}
+
+	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		e.cacheTable = b.getCacheTable(p.TblInfo, startTS)
+	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
 	e.Init(p, startTS)
@@ -96,7 +100,8 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats *runtimeStatsWithSnapshot
+	stats      *runtimeStatsWithSnapshot
+	cacheTable kv.MemBuffer
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -149,6 +154,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
 		e.snapshot = e.ctx.GetSnapshotWithTS(snapshotTS)
+	}
+	if e.cacheTable != nil {
+		e.snapshot = cacheTableSnapshot{e.snapshot, e.cacheTable}
 	}
 	if err := e.verifyTxnScope(); err != nil {
 		return err
