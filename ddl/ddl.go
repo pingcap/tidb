@@ -89,7 +89,7 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = uint32(0)
-	PollTiFlashInterval = 2 * time.Second
+	PollTiFlashInterval    = 2 * time.Second
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -392,10 +392,10 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		sctx, err := d.sessPool.get()
 		if err != nil {
 			fmt.Printf("!!!! Error %v\n", err)
-		}else{
+		} else {
 			for {
 				err = d.PollTiFlashReplicaStatus(sctx)
-				if err != nil{
+				if err != nil {
 					fmt.Printf("!!!! Poll Error %v\n", err)
 				}
 				select {

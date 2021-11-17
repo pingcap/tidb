@@ -45,8 +45,8 @@ import (
 )
 
 type PollTiFlashReplicaStatusContext struct {
-	ID           int64
-	Count   uint64
+	ID             int64
+	Count          uint64
 	LocationLabels []string
 	Available      bool
 	HighPriority   bool
@@ -118,7 +118,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 	//curTso := time.Now().Unix()
 
 	if true {
-	//|| ddlGlobalSchemaVersion != lastHandledSchemaVersion || int64(lastHandledSchemaTso+300) <= curTso {
+		//|| ddlGlobalSchemaVersion != lastHandledSchemaVersion || int64(lastHandledSchemaTso+300) <= curTso {
 		// Need to update table
 		allUpdate, err := d.TiFlashReplicaTableUpdate(ctx)
 		if err != nil {
@@ -241,8 +241,6 @@ func GetTiflashHttpAddr(host string, statusAddr string) (string, error) {
 	return addr, nil
 }
 
-
-
 func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]PollTiFlashReplicaStatusContext) {
 	if tblInfo.TiFlashReplica == nil {
 		// reject tables that has no tiflash replica such like `INFORMATION_SCHEMA`
@@ -274,7 +272,7 @@ func (d *ddl) UpdateTiFlashHttpAddress(store *helper.StoreStat) error {
 	}
 	// report to pd
 	key := fmt.Sprintf("/tiflash/cluster/http_port/%v", store.Store.Address)
-	if d.etcdCli == nil{
+	if d.etcdCli == nil {
 		return errors.New("No etcdCli")
 	}
 	resp, err := d.etcdCli.Get(d.ctx, key)
@@ -323,7 +321,6 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 	for _, store := range tiflashStores {
 		d.UpdateTiFlashHttpAddress(&store)
 	}
-
 
 	// main body of table_update
 	schema := d.GetInfoSchemaWithInterceptor(ctx)
@@ -398,7 +395,6 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 					}
 				}
 			}
-
 
 			// TODO Is it necessary, or we can get from TiDB?
 			var stats helper.PDRegionStats
@@ -478,7 +474,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 				return errors.Trace(err)
 			}
 		}
-	}else{
+	} else {
 		ruleNew := MakeNewRule(tblInfo.ID, replicaInfo.Count, replicaInfo.Labels)
 		fmt.Printf("Set new rule %v\n", ruleNew)
 		if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
@@ -633,6 +629,6 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 	return nil
 }
 
-func (d *ddl) GetInfoCache() *infoschema.InfoCache{
+func (d *ddl) GetInfoCache() *infoschema.InfoCache {
 	return d.infoCache
 }

@@ -30,12 +30,12 @@ import (
 )
 
 type tiflashDDLTestSuite struct {
-	store kv.Storage
+	store        kv.Storage
 	dom          *domain.Domain
 	pdHttpServer *httptest.Server
 	pdMockAddr   string
 	startTime    time.Time
-	tiflash  mockTiFlash
+	tiflash      mockTiFlash
 }
 
 var _ = Suite(&tiflashDDLTestSuite{})
@@ -64,10 +64,10 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	s.startTime = time.Now()
 	server, addr := s.setUpMockTiFlashHTTPServer()
 	s.tiflash = mockTiFlash{
-		Addr: "",
-		StatusAddr: addr,
+		Addr:         "",
+		StatusAddr:   addr,
 		StatusServer: server,
-		SyncStatus: make(map[int]mockTiFlashTableInfo),
+		SyncStatus:   make(map[int]mockTiFlashTableInfo),
 	}
 
 	c.Assert(err, IsNil)
@@ -95,10 +95,10 @@ func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
 func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) (bool, error) {
 	matched := false
 	for _, r := range globalTiFlashPlacementRules {
-		if r.StartKeyHex == rule.StartKeyHex && r.EndKeyHex == rule.EndKeyHex && r.Count == rule.Count && len(r.LocationLabels) == len(rule.LocationLabels){
+		if r.StartKeyHex == rule.StartKeyHex && r.EndKeyHex == rule.EndKeyHex && r.Count == rule.Count && len(r.LocationLabels) == len(rule.LocationLabels) {
 			matched = true
 			for i, l := range r.LocationLabels {
-				if l != rule.LocationLabels[i]{
+				if l != rule.LocationLabels[i] {
 					matched = false
 					break
 				}
@@ -110,12 +110,11 @@ func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) (bool, err
 		}
 	}
 
-	if matched{
+	if matched {
 		return true, nil
 	}
 	return false, nil
 }
-
 
 func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -142,11 +141,9 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTable(c *C) {
 	c.Assert(len(pi.AddingDefinitions), Equals, 0)
 }
 
-
 func (s *tiflashDDLTestSuite) TestRemoveTiFlashReplica(c *C) {
 
 }
-
 
 // TiFlash Table shall be eventually available.
 func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
@@ -166,7 +163,6 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	c.Assert(replica.Count, Equals, uint64(1))
 	c.Assert(replica.LocationLabels, DeepEquals, []string{})
 }
-
 
 // When set TiFlash replica, tidb shall add one Pd Rule for this table.
 // When drop/truncate table, Pd Rule shall be removed in limited time.
@@ -211,10 +207,10 @@ func (m *mockTiFlashTableInfo) String() string {
 }
 
 type mockTiFlash struct {
-	Addr string
-	StatusAddr string
+	Addr         string
+	StatusAddr   string
 	StatusServer *httptest.Server
-	SyncStatus map[int]mockTiFlashTableInfo
+	SyncStatus   map[int]mockTiFlashTableInfo
 }
 
 var globalTiFlashPlacementRules = make(map[string]placement.Rule)
@@ -232,7 +228,7 @@ func (s *tiflashDDLTestSuite) setUpMockTiFlashHTTPServer() (*httptest.Server, st
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 			return
-		} else{
+		} else {
 			table, ok := s.tiflash.SyncStatus[tableId]
 			if !ok {
 				b := []byte("0\n\n")
@@ -270,9 +266,9 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 						GitHash:        "mock-tikv-githash",
 						StartTimestamp: s.startTime.Unix(),
 						Labels: []helper.StoreLabel{{
-							Key: "engine",
+							Key:   "engine",
 							Value: "tiflash",
-						},},
+						}},
 					},
 				},
 			},
@@ -298,7 +294,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		w.WriteHeader(http.StatusOK)
 		m, _ := json.Marshal(result)
 		w.Write(m)
-	})//.Methods(http.MethodGet)
+	}) //.Methods(http.MethodGet)
 	router.HandleFunc("/pd/api/v1/config/rule", func(w http.ResponseWriter, req *http.Request) {
 		fmt.Printf("!!!! url %v %v\n", req.URL.Path, req.Method)
 		buf := new(bytes.Buffer)
@@ -323,7 +319,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 			return
 		}
 		// TODO Shall mock "/pd/api/v1/stats/region", and set correct region here, according to actual pd rule
-		s.tiflash.SyncStatus[tid] = mockTiFlashTableInfo {
+		s.tiflash.SyncStatus[tid] = mockTiFlashTableInfo{
 			Regions: []int{1},
 		}
 	}).Methods(http.MethodPost)
@@ -370,4 +366,3 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 	}))
 	return server, mockAddr
 }
-
