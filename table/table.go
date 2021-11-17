@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // Type is used to distinguish between different tables that store data in different ways.
@@ -252,10 +253,11 @@ var MockTableFromMeta func(tableInfo *model.TableInfo) Table
 type CachedTable interface {
 	Table
 
+	Init(exec sqlexec.SQLExecutor) error
 	// TryReadFromCache checks if the cache table is readable.
 	TryReadFromCache(ts uint64) kv.MemBuffer
 
 	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
 	// you need to update the lock information and read the data from the original table
-	UpdateLockForRead(store kv.Storage, ts uint64) error
+	UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64) error
 }

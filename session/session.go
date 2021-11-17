@@ -2444,6 +2444,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		runInBootstrapSession(store, upgrade)
 	}
 
+	_, err := domap.Get(store)
+	if err != nil {
+		return nil, err
+	}
+
 	se, err := createSession(store)
 	if err != nil {
 		return nil, err

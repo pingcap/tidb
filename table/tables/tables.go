@@ -146,7 +146,7 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 			return nil, err
 		}
 		if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-			return NewCachedTable(&t)
+			return newCachedTable(&t)
 		}
 		return &t, nil
 	}

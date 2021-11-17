@@ -357,6 +357,14 @@ const (
 		last_analyzed_at TIMESTAMP,
 		PRIMARY KEY (table_id, column_id) CLUSTERED
 	);`
+
+	CreateTableCacheMetaTable = `CREATE TABLE IF NOT EXISTS mysql.table_cache_meta (
+		tid int(11) NOT NULL DEFAULT 0,
+		lock_type enum('NONE','READ', 'INTEND', 'WRITE') NOT NULL DEFAULT 'NONE',
+		lease bigint(20) NOT NULL DEFAULT 0,
+		oldReadLease bigint(20) NOT NULL DEFAULT 0,
+		PRIMARY KEY (tid)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -528,11 +536,13 @@ const (
 	version77 = 77
 	// version78 updates mysql.stats_buckets.lower_bound, mysql.stats_buckets.upper_bound and mysql.stats_histograms.last_analyze_pos from BLOB to LONGBLOB.
 	version78 = 78
+	// version79 adds the mysql.table_cache_meta table
+	version79 = 79
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version78
+var currentBootstrapVersion int64 = version79
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -614,6 +624,7 @@ var (
 		upgradeToVer76,
 		upgradeToVer77,
 		upgradeToVer78,
+		upgradeToVer79,
 	}
 )
 
@@ -1610,6 +1621,13 @@ func upgradeToVer78(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY upper_bound LONGBLOB NOT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets MODIFY lower_bound LONGBLOB")
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY last_analyze_pos LONGBLOB DEFAULT NULL")
+}
+
+func upgradeToVer79(s Session, ver int64) {
+	if ver >= version79 {
+		return
+	}
+	doReentrantDDL(s, CreateTableCacheMetaTable)
 }
 
 func writeOOMAction(s Session) {

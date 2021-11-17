@@ -467,6 +467,10 @@ func (alloc *allocator) GetType() AllocatorType {
 	return alloc.allocType
 }
 
+func (alloc *allocator) GetStore() kv.Storage {
+	return alloc.store
+}
+
 // NextStep return new auto id step according to previous step and consuming time.
 func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	failpoint.Inject("mockAutoIDCustomize", func(val failpoint.Value) {
