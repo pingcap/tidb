@@ -94,6 +94,9 @@ func TypeToStr(tp byte, cs string) (r string) {
 	return ts
 }
 
+// StrToType convert a string to type enum.
+// Args:
+// 	ts: type string
 func StrToType(ts string) (tp byte) {
 	if strings.Contains(ts, "blob") {
 		ts = strings.Replace(ts, "blob", "text", 1)
