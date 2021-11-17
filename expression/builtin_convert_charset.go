@@ -37,18 +37,16 @@ func (c *tidbConvertCharsetFunctionClass) getFunction(ctx sessionctx.Context, ar
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
-	argFieldTp := args[0].GetType()
-	argTp := argFieldTp.EvalType()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, argTp)
-	if err != nil {
-		return nil, err
-	}
+	argTp := args[0].GetType().EvalType()
 	var sig builtinFunc
 	switch argTp {
 	case types.ETString:
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+		if err != nil {
+			return nil, err
+		}
 		sig = &builtinInternalToBinarySig{bf}
-		// TODO(tangenta): set pbcode for to_binary() sig.
-		sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
+		sig.setPbCode(tipb.ScalarFuncSig_ToBinary)
 	default:
 		return nil, fmt.Errorf("unexpected argTp: %d", argTp)
 	}
