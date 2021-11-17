@@ -819,15 +819,16 @@ func (s *testSerialSuite) TestIssue29101(c *C) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use IndexJoin
-		`Projection_6 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
-		`└─IndexJoin_14 1.00 root  inner join, inner:TableReader_10, outer key:test.customer.c_w_id, inner key:test.warehouse.w_id, equal cond:eq(test.customer.c_w_id, test.warehouse.w_id)`,
-		`  ├─Selection_36(Build) 1.00 root  eq(test.customer.c_d_id, 7), eq(test.customer.c_id, 158), eq(test.customer.c_w_id, 936)`,
-		`  │ └─IndexLookUp_35 1.00 root  `,
-		`  │   ├─IndexRangeScan_33(Build) 1.00 cop[tikv] table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) range:[936 7 158,936 7 158], keep order:false, stats:pseudo`,
-		`  │   └─TableRowIDScan_34(Probe) 1.00 cop[tikv] table:customer keep order:false, stats:pseudo`,
-		`  └─TableReader_10(Probe) 0.00 root  data:Selection_9`,
-		`    └─Selection_9 0.00 cop[tikv]  eq(test.warehouse.w_id, 936)`,
-		`      └─TableRangeScan_8 1.00 cop[tikv] table:warehouse range: decided by [test.customer.c_w_id], keep order:false, stats:pseudo`))
+		`Projection_8 0.64 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
+		`└─IndexJoin_28 0.64 root  inner join, inner:Selection_27, outer key:test.warehouse.w_id, inner key:test.customer.c_w_id, equal cond:eq(test.warehouse.w_id, test.customer.c_w_id)`,
+		`  ├─Selection_43(Build) 0.80 root  eq(test.warehouse.w_id, 936)`,
+		`  │ └─TableReader_45 1.00 root  data:TableRangeScan_44`,
+		`  │   └─TableRangeScan_44 1.00 cop[tikv] table:warehouse range:[936,936], keep order:false, stats:pseudo`,
+		`  └─Selection_27(Probe) 0.00 root  eq(test.customer.c_w_id, 936)`,
+		`    └─IndexLookUp_26 0.80 root  `,
+		`      ├─Selection_25(Build) 0.80 cop[tikv]  eq(test.customer.c_w_id, 936)`,
+		`      │ └─IndexRangeScan_23 1.00 cop[tikv] table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) range: decided by [eq(test.customer.c_w_id, test.warehouse.w_id) eq(test.customer.c_d_id, 7) eq(test.customer.c_id, 158)], keep order:false, stats:pseudo`,
+		"      └─TableRowIDScan_24(Probe) 0.80 cop[tikv] table:customer keep order:false, stats:pseudo"))
 	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the plan-cache
 
@@ -1278,10 +1279,10 @@ func (s *testSerialSuite) TestIssue28064(c *C) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	rows.Check(testkit.Rows("Selection_8 0.00 root  eq(test.t28064.a, 123), eq(test.t28064.b, 234), eq(test.t28064.c, 345)",
-		"└─IndexLookUp_7 0.00 root  ",
-		"  ├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+	rows.Check(testkit.Rows("Selection_5 0.00 root  eq(test.t28064.a, 123), eq(test.t28064.b, 234), eq(test.t28064.c, 345)",
+		"└─IndexLookUp_8 0.00 root  ",
+		"  ├─IndexRangeScan_6(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_7(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
 
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
 	rows = tk.MustQuery("select @@last_plan_from_cache")
@@ -1289,8 +1290,8 @@ func (s *testSerialSuite) TestIssue28064(c *C) {
 
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-	rows.Check(testkit.Rows("Selection_8 0.00 root  eq(test.t28064.a, 123), eq(test.t28064.b, 234), eq(test.t28064.c, 345)",
-		"└─IndexLookUp_7 0.00 root  ",
-		"  ├─IndexRangeScan_5(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_6(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+	rows.Check(testkit.Rows("Selection_5 0.00 root  eq(test.t28064.a, 123), eq(test.t28064.b, 234), eq(test.t28064.c, 345)",
+		"└─IndexLookUp_8 0.00 root  ",
+		"  ├─IndexRangeScan_6(Build) 0.00 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_7(Probe) 0.00 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
 }
