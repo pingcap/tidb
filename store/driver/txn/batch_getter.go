@@ -48,7 +48,7 @@ type tikvBatchBufferGetter struct {
 func (b tikvBatchBufferGetter) Get(k []byte) ([]byte, error) {
 	// Get from buffer
 	val, err := b.tidbBuffer.Get(context.TODO(), k)
-	if err == nil || !kv.IsErrNotFound(err) {
+	if err == nil || !kv.IsErrNotFound(err) || b.tidbMiddleCache == nil {
 		return val, err
 	}
 	// Get from middle cache
