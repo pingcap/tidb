@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -89,6 +90,8 @@ type executorBuilder struct {
 	// isStaleness means whether this statement use stale read.
 	isStaleness      bool
 	readReplicaScope string
+	inUpdateStmt     bool
+	inDeleteStmt     bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -1264,7 +1267,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 
 	// consider collations
 	for i := range v.EqualConditions {
-		chs, coll := v.EqualConditions[i].CharsetAndCollation(e.ctx)
+		chs, coll := v.EqualConditions[i].CharsetAndCollation()
 		leftTypes[i].Charset, leftTypes[i].Collate = chs, coll
 		rightTypes[i].Charset, rightTypes[i].Collate = chs, coll
 	}
@@ -1962,6 +1965,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	if b.err != nil {
 		return nil
 	}
+	b.inUpdateStmt = true
 	updateExec := &UpdateExec{
 		baseExecutor:              base,
 		OrderedList:               v.OrderedList,
@@ -2006,6 +2010,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	if b.err != nil {
 		return nil
 	}
+	b.inDeleteStmt = true
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	deleteExec := &DeleteExec{
@@ -4362,7 +4367,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		partTblID:        plan.PartTblID,
 		columns:          plan.Columns,
 	}
-
+	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		e.cacheTable = b.getCacheTable(plan.TblInfo, startTS)
+	}
 	if plan.TblInfo.TempTableType != model.TempTableNone {
 		// Temporary table should not do any lock operations
 		e.lock = false
@@ -4659,5 +4666,34 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 		return errors.New("can not stale read temporary table")
 	}
 
+	return nil
+}
+
+func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64) kv.MemBuffer {
+	tbl, ok := b.is.TableByID(tblInfo.ID)
+	if !ok {
+		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
+		return nil
+	}
+	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS)
+	if cacheData != nil {
+		b.ctx.GetSessionVars().StmtCtx.ReadFromTableCache = true
+		return cacheData
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logutil.BgLogger().Error("panic in the recoverable goroutine",
+					zap.Reflect("r", r),
+					zap.Stack("stack trace"))
+			}
+		}()
+		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+			err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
+			if err != nil {
+				log.Warn("Update Lock Info Error")
+			}
+		}
+	}()
 	return nil
 }
