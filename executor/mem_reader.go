@@ -522,10 +522,8 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 
 type memIndexMergeReader struct {
 	ctx              sessionctx.Context
-	index            *model.IndexInfo
 	columns          []*model.ColumnInfo
 	table            table.Table
-	desc             bool
 	conditions       []expression.Expression
 	retFieldTypes    []*types.FieldType
 	indexMergeReader *IndexMergeReaderExecutor
