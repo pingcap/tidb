@@ -192,7 +192,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeCreatePlacementPolicy(x)
 		if x.OrReplace && errors.ErrorEqual(err, infoschema.ErrPlacementPolicyExists) {
 			alterStmt := &ast.AlterPlacementPolicyStmt{
-				PolicyName: x.PolicyName,
+				PolicyName:       x.PolicyName,
 				PlacementOptions: x.PlacementOptions,
 			}
 			err = e.executeAlterPlacementPolicy(alterStmt)
