@@ -138,7 +138,7 @@ func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	return txn.KVTxn.BatchGet(ctx, toTiKVKeys(keys))
+	return NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.GetSnapshot()).BatchGet(ctx, keys)
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {

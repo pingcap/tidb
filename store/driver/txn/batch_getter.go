@@ -32,10 +32,6 @@ func (b tikvBatchGetter) BatchGet(ctx context.Context, keys [][]byte) (map[strin
 	// toTiDBKeys
 	kvKeys := *(*[]kv.Key)(unsafe.Pointer(&keys))
 	vals, err := b.tidbBatchGetter.BatchGet(ctx, kvKeys)
-	// TiDB err NotExist to TiKV err NotExist
-	if kv.IsErrNotFound(err) {
-		err = tikverr.ErrNotExist
-	}
 	return vals, err
 }
 
@@ -49,6 +45,9 @@ func (b tikvBatchBufferGetter) Get(k []byte) ([]byte, error) {
 	// Get from buffer
 	val, err := b.tidbBuffer.Get(context.TODO(), k)
 	if err == nil || !kv.IsErrNotFound(err) || b.tidbMiddleCache == nil {
+		if kv.IsErrNotFound(err) {
+			err = tikverr.ErrNotExist
+		}
 		return val, err
 	}
 	// Get from middle cache
