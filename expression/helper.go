@@ -85,7 +85,7 @@ func getTimeCurrentTimeStamp(ctx sessionctx.Context, tp byte, fsp int8) (t types
 
 // GetTimeValue gets the time value with type tp.
 func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d types.Datum, err error) {
-	value := types.NewTime(types.ZeroCoreTime, tp, fsp)
+	var value types.Time
 
 	sc := ctx.GetSessionVars().StmtCtx
 	switch x := v.(type) {
