@@ -17,18 +17,18 @@ So in this Sprint, we want to propose an evaluation approach which can quantify 
 ## Proposal
 
 ### The Main Idea
-![CE-evaluation](./imgs/CE-evaluation.jpg)
+![CE-evaluation](./imgs/CE-evaluation.png)
 
 The main idea is displayed above, and the whole work can be divided into 2 parts:
 
 1. The Optimizer: the optimizer needs to support recording all intermediate results of CE, which mainly consist of related expressions and their estimated rows;
-2. The external tool: the tool then uses these intermediate results to get their true rows, and then generates a report;
+2. The External Tool: the tool then uses these intermediate results to get their true rows, and then generates a report;
 
 
 For example, if the query is `select * from t where c1=a and c2>2`:
 
 1. The optimizer records 3 expressions(`c1=1`, `c2>2`, `c1=1 and c2>2`) and their estimated rows;
-2. The external tool collects their true rows by processing some queries like select count(*) where ?, where ? can be replaced with related expressions;
+2. The external tool collects their true rows by processing some queries like `select count(*) where ?`, where `?` can be replaced with related expressions;
 3. After collecting all true rows, the external tool analyzes them and generates a report.
 
 Note: the reasons why we introduce a new approach instead of using `explain` directly are:
