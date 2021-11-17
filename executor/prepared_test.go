@@ -886,10 +886,7 @@ func (s *testSerialSuite) TestIssue29101(c *C) {
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use IndexJoin
 		`Projection_6 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
 		`└─IndexJoin_14 1.00 root  inner join, inner:TableReader_10, outer key:test.customer.c_w_id, inner key:test.warehouse.w_id, equal cond:eq(test.customer.c_w_id, test.warehouse.w_id)`,
-		`  ├─Selection_36(Build) 1.00 root  eq(test.customer.c_d_id, 7), eq(test.customer.c_id, 158), eq(test.customer.c_w_id, 936)`,
-		`  │ └─IndexLookUp_35 1.00 root  `,
-		`  │   ├─IndexRangeScan_33(Build) 1.00 cop[tikv] table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) range:[936 7 158,936 7 158], keep order:false, stats:pseudo`,
-		`  │   └─TableRowIDScan_34(Probe) 1.00 cop[tikv] table:customer keep order:false, stats:pseudo`,
+		`  ├─Point_Get_33(Build) 1.00 root table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) `,
 		`  └─TableReader_10(Probe) 0.00 root  data:Selection_9`,
 		`    └─Selection_9 0.00 cop[tikv]  eq(test.warehouse.w_id, 936)`,
 		`      └─TableRangeScan_8 1.00 cop[tikv] table:warehouse range: decided by [test.customer.c_w_id], keep order:false, stats:pseudo`))
