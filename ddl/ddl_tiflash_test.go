@@ -109,25 +109,8 @@ func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) (bool, err
 }
 
 // When set TiFlash replica, tidb shall add one Pd Rule for this table.
-func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(z int)")
-	tk.MustExec("alter table t set tiflash replica 1")
-
-	time.Sleep(time.Second * 2)
-
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
-	res, _ := s.CheckPlacementRule(*expectRule)
-	c.Assert(res, Equals, true)
-}
-
-
 // When drop/truncate table, Pd Rule shall be removed in limited time.
-func (s *tiflashDDLTestSuite) TestRemovePlacementRule(c *C) {
+func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
 	// TODO
 	gcworker.SetGcSafePointCacheInterval(time.Second * 1)
 	tk := testkit.NewTestKit(c, s.store)
@@ -138,9 +121,13 @@ func (s *tiflashDDLTestSuite) TestRemovePlacementRule(c *C) {
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
-	tk.MustExec("drop table t")
 	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
 	res, _ := s.CheckPlacementRule(*expectRule)
+	c.Assert(res, Equals, true)
+
+	tk.MustExec("drop table t")
+	expectRule = ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
+	res, _ = s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
 
 	time.Sleep(ddl.PollTiFlashInterval * 2)
