@@ -19,8 +19,8 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/kv"
-	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
 // tikvBatchGetter is the BatchGetter struct for tikv
@@ -42,7 +42,7 @@ func (b tikvBatchGetter) BatchGet(ctx context.Context, keys [][]byte) (map[strin
 // tikvBatchBufferGetter is the BatchBufferGetter struct for tikv
 type tikvBatchBufferGetter struct {
 	tidbMiddleCache Getter
-	tidbBuffer BatchBufferGetter
+	tidbBuffer      BatchBufferGetter
 }
 
 func (b tikvBatchBufferGetter) Get(k []byte) ([]byte, error) {
@@ -61,7 +61,7 @@ func (b tikvBatchBufferGetter) Get(k []byte) ([]byte, error) {
 	return val, err
 }
 
-func (b tikvBatchBufferGetter) Len() (int) {
+func (b tikvBatchBufferGetter) Len() int {
 	return b.tidbBuffer.Len()
 }
 
@@ -86,20 +86,20 @@ type Getter interface {
 
 // BufferBatchGetter is the type for BatchGet with MemBuffer.
 type BufferBatchGetter struct {
-	tikv_batch_getter transaction.BufferBatchGetter
+	tikvBufferBatchGetter transaction.BufferBatchGetter
 }
 
 // NewBufferBatchGetter creates a new BufferBatchGetter.
 func NewBufferBatchGetter(buffer BatchBufferGetter, middleCache Getter, snapshot BatchGetter) *BufferBatchGetter {
 	tikvBuffer := tikvBatchBufferGetter{tidbMiddleCache: middleCache, tidbBuffer: buffer}
 	tikvSnapshot := tikvBatchGetter{snapshot}
-	return &BufferBatchGetter{tikv_batch_getter: *transaction.NewBufferBatchGetter(tikvBuffer, tikvSnapshot)}
+	return &BufferBatchGetter{tikvBufferBatchGetter: *transaction.NewBufferBatchGetter(tikvBuffer, tikvSnapshot)}
 }
 
 // BatchGet implements the BatchGetter interface.
 func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	tikvKeys := toTiKVKeys(keys)
-	storageValues, err := b.tikv_batch_getter.BatchGet(ctx, tikvKeys)
+	storageValues, err := b.tikvBufferBatchGetter.BatchGet(ctx, tikvKeys)
 
 	return storageValues, err
 }
