@@ -3971,7 +3971,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	// Skip storage engine check for CreateView.
 	if b.capFlag&canExpandAST == 0 {
-		possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, dbName)
+		possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
 		if err != nil {
 			return nil, err
 		}
@@ -4150,19 +4150,24 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if err != nil {
 			return nil, err
 		}
-		// Use the txn of the transaction to determine whether the cache can be read.
-		// About read lock and read condition feature. will add in the next pr.
-		buffer, cond := cachedTable.TryGetMemcache(txn.StartTS())
-		if cond {
-			b.ctx.GetSessionVars().StmtCtx.StoreCacheTable(tbl.Meta().ID, buffer)
-			us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
+		// Use the TS of the transaction to determine whether the cache can be used.
+		cacheData := cachedTable.TryReadFromCache(txn.StartTS())
+		if cacheData != nil {
+			sessionVars.StmtCtx.ReadFromTableCache = true
+			us := LogicalUnionScan{handleCols: handleCols, cacheTable: cacheData}.Init(b.ctx, b.getSelectOffset())
 			us.SetChildren(ds)
 			result = us
 		} else {
 			go func() {
-				err := cachedTable.UpdateLockForRead(b.ctx, txn.StartTS())
-				if err != nil {
-					log.Warn("Update Lock Info Error")
+				defer func() {
+					if r := recover(); r != nil {
+					}
+				}()
+				if !b.inUpdateStmt && !b.inDeleteStmt && !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+					err := cachedTable.UpdateLockForRead(b.ctx.GetStore(), txn.StartTS())
+					if err != nil {
+						log.Warn("Update Lock Info Error")
+					}
 				}
 			}()
 		}
@@ -5941,7 +5946,9 @@ func unfoldSelectList(list *ast.SetOprSelectList, unfoldList *ast.SetOprSelectLi
 func extractTableList(node ast.Node, input []*ast.TableName, asName bool) []*ast.TableName {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
-		input = extractTableList(x.From.TableRefs, input, asName)
+		if x.From != nil {
+			input = extractTableList(x.From.TableRefs, input, asName)
+		}
 		if x.Where != nil {
 			input = extractTableList(x.Where, input, asName)
 		}

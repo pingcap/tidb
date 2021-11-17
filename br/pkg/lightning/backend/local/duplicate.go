@@ -494,6 +494,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 				defer iter.Close()
 
 				for iter.First(); iter.Valid(); iter.Next() {
+					hasDataConflict = true
 					rawKey, _, _, err := manager.keyAdapter.Decode(nil, iter.Key())
 					if err != nil {
 						return err
@@ -525,7 +526,6 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 					return err
 				}
 				dataConflictInfos = dataConflictInfos[:0]
-				hasDataConflict = true
 				return nil
 			}(); err != nil {
 				return false, errors.Trace(err)
@@ -569,6 +569,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 				defer iter.Close()
 
 				for iter.First(); iter.Valid(); iter.Next() {
+					hasDataConflict = true
 					rawKey, _, _, err := manager.keyAdapter.Decode(nil, iter.Key())
 					if err != nil {
 						indexLogger.Error(

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -54,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/cteutil"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
@@ -90,6 +90,8 @@ type executorBuilder struct {
 	// isStaleness means whether this statement use stale read.
 	isStaleness      bool
 	readReplicaScope string
+	inUpdateStmt     bool
+	inDeleteStmt     bool
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -1041,6 +1043,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		return x
 	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), reader)}
+	us.cacheTable = v.CacheTable
 	// Get the handle column index of the below Plan.
 	us.belowHandleCols = v.HandleCols
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
@@ -1205,15 +1208,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		}
 	}
 
-	// consider collations
-	leftTypes := make([]*types.FieldType, 0, len(retTypes(leftExec)))
-	for _, tp := range retTypes(leftExec) {
-		leftTypes = append(leftTypes, tp.Clone())
-	}
-	rightTypes := make([]*types.FieldType, 0, len(retTypes(rightExec)))
-	for _, tp := range retTypes(rightExec) {
-		rightTypes = append(rightTypes, tp.Clone())
-	}
 	leftIsBuildSide := true
 
 	e.isNullEQ = v.IsNullEQ
@@ -1256,23 +1250,31 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	executorCountHashJoinExec.Inc()
 
+	// We should use JoinKey to construct the type information using by hashing, instead of using the child's schema directly.
+	// When a hybrid type column is hashed multiple times, we need to distinguish what field types are used.
+	// For example, the condition `enum = int and enum = string`, we should use ETInt to hash the first column,
+	// and use ETString to hash the second column, although they may be the same column.
+	leftExecTypes, rightExecTypes := retTypes(leftExec), retTypes(rightExec)
+	leftTypes, rightTypes := make([]*types.FieldType, 0, len(v.LeftJoinKeys)), make([]*types.FieldType, 0, len(v.RightJoinKeys))
+	for i, col := range v.LeftJoinKeys {
+		leftTypes = append(leftTypes, leftExecTypes[col.Index].Clone())
+		leftTypes[i].Flag = col.RetType.Flag
+	}
+	for i, col := range v.RightJoinKeys {
+		rightTypes = append(rightTypes, rightExecTypes[col.Index].Clone())
+		rightTypes[i].Flag = col.RetType.Flag
+	}
+
+	// consider collations
 	for i := range v.EqualConditions {
-		chs, coll := v.EqualConditions[i].CharsetAndCollation(e.ctx)
-		bt := leftTypes[v.LeftJoinKeys[i].Index]
-		bt.Charset, bt.Collate = chs, coll
-		pt := rightTypes[v.RightJoinKeys[i].Index]
-		pt.Charset, pt.Collate = chs, coll
+		chs, coll := v.EqualConditions[i].CharsetAndCollation()
+		leftTypes[i].Charset, leftTypes[i].Collate = chs, coll
+		rightTypes[i].Charset, rightTypes[i].Collate = chs, coll
 	}
 	if leftIsBuildSide {
 		e.buildTypes, e.probeTypes = leftTypes, rightTypes
 	} else {
 		e.buildTypes, e.probeTypes = rightTypes, leftTypes
-	}
-	for _, key := range e.buildKeys {
-		e.buildTypes[key.Index].Flag = key.RetType.Flag
-	}
-	for _, key := range e.probeKeys {
-		e.probeTypes[key.Index].Flag = key.RetType.Flag
 	}
 	return e
 }
@@ -1963,6 +1965,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	if b.err != nil {
 		return nil
 	}
+	b.inUpdateStmt = true
 	updateExec := &UpdateExec{
 		baseExecutor:              base,
 		OrderedList:               v.OrderedList,
@@ -2007,6 +2010,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	if b.err != nil {
 		return nil
 	}
+	b.inDeleteStmt = true
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	deleteExec := &DeleteExec{
@@ -2701,6 +2705,21 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		outerTypes[col.Index].Flag = col.RetType.Flag
 	}
 
+	// We should use JoinKey to construct the type information using by hashing, instead of using the child's schema directly.
+	// When a hybrid type column is hashed multiple times, we need to distinguish what field types are used.
+	// For example, the condition `enum = int and enum = string`, we should use ETInt to hash the first column,
+	// and use ETString to hash the second column, although they may be the same column.
+	innerHashTypes := make([]*types.FieldType, len(v.InnerHashKeys))
+	outerHashTypes := make([]*types.FieldType, len(v.OuterHashKeys))
+	for i, col := range v.InnerHashKeys {
+		innerHashTypes[i] = innerTypes[col.Index].Clone()
+		innerHashTypes[i].Flag = col.RetType.Flag
+	}
+	for i, col := range v.OuterHashKeys {
+		outerHashTypes[i] = outerTypes[col.Index].Clone()
+		outerHashTypes[i].Flag = col.RetType.Flag
+	}
+
 	var (
 		outerFilter           []expression.Expression
 		leftTypes, rightTypes []*types.FieldType
@@ -2735,12 +2754,14 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), outerExec),
 		outerCtx: outerCtx{
-			rowTypes: outerTypes,
-			filter:   outerFilter,
+			rowTypes:  outerTypes,
+			hashTypes: outerHashTypes,
+			filter:    outerFilter,
 		},
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
 			rowTypes:      innerTypes,
+			hashTypes:     innerHashTypes,
 			colLens:       v.IdxColLens,
 			hasPrefixCol:  hasPrefixCol,
 		},
@@ -3119,8 +3140,7 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 		return nil, false, nil, nil
 	}
 	if lookUpContent[0].keyColIDs == nil {
-		return nil, false, nil,
-			dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("cannot get column IDs when dynamic pruning")
+		return nil, false, nil, plannercore.ErrInternal.GenWithStack("cannot get column IDs when dynamic pruning")
 	}
 	keyColOffsets := make([]int, len(lookUpContent[0].keyColIDs))
 	for i, colID := range lookUpContent[0].keyColIDs {
@@ -3132,8 +3152,7 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 			}
 		}
 		if offset == -1 {
-			return nil, false, nil,
-				dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("invalid column offset when dynamic pruning")
+			return nil, false, nil, plannercore.ErrInternal.GenWithStack("invalid column offset when dynamic pruning")
 		}
 		keyColOffsets[i] = offset
 	}
@@ -4348,7 +4367,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		partTblID:        plan.PartTblID,
 		columns:          plan.Columns,
 	}
-
+	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		e.cacheTable = b.getCacheTable(plan.TblInfo, startTS)
+	}
 	if plan.TblInfo.TempTableType != model.TempTableNone {
 		// Temporary table should not do any lock operations
 		e.lock = false
@@ -4645,5 +4666,34 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 		return errors.New("can not stale read temporary table")
 	}
 
+	return nil
+}
+
+func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64) kv.MemBuffer {
+	tbl, ok := b.is.TableByID(tblInfo.ID)
+	if !ok {
+		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
+		return nil
+	}
+	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS)
+	if cacheData != nil {
+		b.ctx.GetSessionVars().StmtCtx.ReadFromTableCache = true
+		return cacheData
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logutil.BgLogger().Error("panic in the recoverable goroutine",
+					zap.Reflect("r", r),
+					zap.Stack("stack trace"))
+			}
+		}()
+		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+			err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
+			if err != nil {
+				log.Warn("Update Lock Info Error")
+			}
+		}
+	}()
 	return nil
 }
