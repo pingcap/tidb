@@ -152,6 +152,8 @@ type memTableReader struct {
 	colIDs        map[int64]int
 	buffer        allocBuf
 	pkColIDs      []int64
+	// Used when extracting handles from row in memTableReader.getMemRowsHandle.
+	handleCols plannercore.HandleCols
 }
 
 type allocBuf struct {
@@ -307,6 +309,23 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 	}
 
 	return values, nil
+}
+
+// Used when memIndexMergeReader.partialPlans[i] is TableScan.
+func (m *memTableReader) getMemRowsHandle() ([]kv.Handle, error) {
+	rows, err := m.getMemRows()
+	if err != nil {
+		return nil, err
+	}
+	handles := make([]kv.Handle, 0, len(rows))
+	for _, row := range rows {
+		handle, err := m.handleCols.BuildHandleByDatums(row)
+		if err != nil {
+			return nil, err
+		}
+		handles = append(handles, handle)
+	}
+	return handles, nil
 }
 
 func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
@@ -499,4 +518,187 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 	}
 
 	return memTblReader.getMemRows()
+}
+
+type memIndexMergeReader struct {
+	ctx              sessionctx.Context
+	columns          []*model.ColumnInfo
+	table            table.Table
+	conditions       []expression.Expression
+	retFieldTypes    []*types.FieldType
+	indexMergeReader *IndexMergeReaderExecutor
+
+	memIndexReaders []*memIndexReader
+	memTableReaders []*memTableReader
+
+	// partition mode
+	partitionMode     bool                  // if it is accessing a partition table
+	partitionTables   []table.PhysicalTable // partition tables to access
+	partitionKVRanges [][][]kv.KeyRange     // kv ranges for these partition tables
+}
+
+func buildMemIndexMergeReader(us *UnionScanExec, indexMergeReader *IndexMergeReaderExecutor) *memIndexMergeReader {
+	indexCount := len(indexMergeReader.indexes)
+	indexReaders := make([]*memIndexReader, 0, indexCount)
+	tableReaders := make([]*memTableReader, 0, indexCount)
+	for i := 0; i < indexCount; i++ {
+		if indexMergeReader.indexes[i] == nil {
+			colIDs, pkColIDs, rd := getColIDAndPkColIDs(indexMergeReader.table, indexMergeReader.columns)
+			tableReaders = append(tableReaders, &memTableReader{
+				ctx:           us.ctx,
+				table:         indexMergeReader.table.Meta(),
+				columns:       indexMergeReader.columns,
+				kvRanges:      nil,
+				conditions:    us.conditions,
+				addedRows:     make([][]types.Datum, 0),
+				retFieldTypes: retTypes(us),
+				colIDs:        colIDs,
+				pkColIDs:      pkColIDs,
+				buffer: allocBuf{
+					handleBytes: make([]byte, 0, 16),
+					rd:          rd,
+				},
+				handleCols: indexMergeReader.handleCols,
+			})
+			indexReaders = append(indexReaders, nil)
+		} else {
+			outputOffset := []int{len(indexMergeReader.indexes[i].Columns)}
+			indexReaders = append(indexReaders, &memIndexReader{
+				ctx:             us.ctx,
+				index:           indexMergeReader.indexes[i],
+				table:           indexMergeReader.table.Meta(),
+				kvRanges:        nil,
+				desc:            indexMergeReader.descs[i],
+				retFieldTypes:   retTypes(us),
+				outputOffset:    outputOffset,
+				belowHandleCols: us.belowHandleCols,
+			})
+			tableReaders = append(tableReaders, nil)
+		}
+	}
+
+	return &memIndexMergeReader{
+		ctx:              us.ctx,
+		table:            indexMergeReader.table,
+		columns:          indexMergeReader.columns,
+		conditions:       us.conditions,
+		retFieldTypes:    retTypes(us),
+		indexMergeReader: indexMergeReader,
+		memIndexReaders:  indexReaders,
+		memTableReaders:  tableReaders,
+
+		partitionMode:     indexMergeReader.partitionTableMode,
+		partitionTables:   indexMergeReader.prunedPartitions,
+		partitionKVRanges: indexMergeReader.partitionKeyRanges,
+	}
+}
+
+func (m *memIndexMergeReader) getMemRows() ([][]types.Datum, error) {
+	tbls := []table.Table{m.table}
+	// [partNum][indexNum][rangeNum]
+	var kvRanges [][][]kv.KeyRange
+	if m.partitionMode {
+		tbls = tbls[:0]
+		for _, p := range m.partitionTables {
+			tbls = append(tbls, p)
+		}
+		kvRanges = m.partitionKVRanges
+	} else {
+		kvRanges = append(kvRanges, m.indexMergeReader.keyRanges)
+	}
+
+	tblKVRanges := make([]kv.KeyRange, 0, 16)
+	numHandles := 0
+	for i, tbl := range tbls {
+		handles, err := unionHandles(kvRanges[i], m.memIndexReaders, m.memTableReaders)
+		if err != nil {
+			return nil, err
+		}
+		if len(handles) == 0 {
+			continue
+		}
+		numHandles += len(handles)
+		tblKVRanges = append(tblKVRanges, distsql.TableHandlesToKVRanges(getPhysicalTableID(tbl), handles)...)
+	}
+
+	if numHandles == 0 {
+		return nil, nil
+	}
+	colIDs, pkColIDs, rd := getColIDAndPkColIDs(m.table, m.columns)
+
+	memTblReader := &memTableReader{
+		ctx:           m.ctx,
+		table:         m.table.Meta(),
+		columns:       m.columns,
+		kvRanges:      tblKVRanges,
+		conditions:    m.conditions,
+		addedRows:     make([][]types.Datum, 0, numHandles),
+		retFieldTypes: m.retFieldTypes,
+		colIDs:        colIDs,
+		pkColIDs:      pkColIDs,
+		buffer: allocBuf{
+			handleBytes: make([]byte, 0, 16),
+			rd:          rd,
+		},
+	}
+
+	return memTblReader.getMemRows()
+}
+
+func getColIDAndPkColIDs(table table.Table, columns []*model.ColumnInfo) (map[int64]int, []int64, *rowcodec.BytesDecoder) {
+	colIDs := make(map[int64]int, len(columns))
+	for i, col := range columns {
+		colIDs[col.ID] = i
+	}
+
+	tblInfo := table.Meta()
+	colInfos := make([]rowcodec.ColInfo, 0, len(columns))
+	for i := range columns {
+		col := columns[i]
+		colInfos = append(colInfos, rowcodec.ColInfo{
+			ID:         col.ID,
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
+		})
+	}
+	pkColIDs := tables.TryGetCommonPkColumnIds(tblInfo)
+	if len(pkColIDs) == 0 {
+		pkColIDs = []int64{-1}
+	}
+	rd := rowcodec.NewByteDecoder(colInfos, pkColIDs, nil, nil)
+	return colIDs, pkColIDs, rd
+}
+
+// Union all handles of different Indexes.
+func unionHandles(kvRanges [][]kv.KeyRange, memIndexReaders []*memIndexReader, memTableReaders []*memTableReader) (finalHandles []kv.Handle, err error) {
+	if len(memIndexReaders) != len(kvRanges) {
+		return nil, errors.Errorf("len(kvRanges) should be equal to len(memIndexReaders)")
+	}
+	if len(memTableReaders) != len(memIndexReaders) {
+		return nil, errors.Errorf("len(kvRanges) should be equal to len(memIndexReaders)")
+	}
+
+	hMap := kv.NewHandleMap()
+	var handles []kv.Handle
+	for i, reader := range memIndexReaders {
+		if reader == nil {
+			reader := memTableReaders[i]
+			reader.kvRanges = kvRanges[i]
+			handles, err = reader.getMemRowsHandle()
+		} else {
+			reader.kvRanges = kvRanges[i]
+			handles, err = reader.getMemRowsHandle()
+		}
+		if err != nil {
+			return nil, err
+		}
+		// Filter same row.
+		for _, h := range handles {
+			if _, ok := hMap.Get(h); !ok {
+				finalHandles = append(finalHandles, h)
+				hMap.Set(h, true)
+			}
+		}
+	}
+	return finalHandles, nil
 }
