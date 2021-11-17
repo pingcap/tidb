@@ -104,7 +104,7 @@ type CleanupIndex struct {
 	IndexName string
 }
 
-// CheckIndexRange is used for checking index data, output the index values disable the cache that handle within begin and end.
+// CheckIndexRange is used for checking index data, output the index values that handle within begin and end.
 type CheckIndexRange struct {
 	baseSchemaProducer
 
