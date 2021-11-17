@@ -338,47 +338,39 @@ func (h *stateRemoteHandle) Load(ctx context.Context, tid int64) (CachedTableLoc
 	return lockType, lease, err
 }
 
-func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, now, ts uint64) (bool, error) {
-	if err := h.beginTxn(ctx); err != nil {
-		return false, errors.Trace(err)
-	}
+func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, now, ts uint64) (/*succ*/ bool, error) {
+	succ := false
+	err := h.runInTxn(ctx, func(ctx context.Context) error {
+		lockType, lease, _, err := h.loadRow(ctx, tid)
+		if err != nil {
+			return errors.Trace(err)
+		}
 
-	lockType, lease, _, err := h.loadRow(ctx, tid)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	switch lockType {
-	case CachedTableLockNone:
-		if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
-			return false, errors.Trace(err)
-		}
-		if err := h.commitTxn(ctx); err != nil {
-			return false, errors.Trace(err)
-		}
-	case CachedTableLockRead:
-		// Update lease
-		if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
-			return false, errors.Trace(err)
-		}
-		if err := h.commitTxn(ctx); err != nil {
-			return false, errors.Trace(err)
-		}
-	case CachedTableLockWrite, CachedTableLockIntend:
-		if now > lease {
-			// Clear orphan lock
+		switch lockType {
+		case CachedTableLockNone:
 			if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
-				return false, errors.Trace(err)
+				return errors.Trace(err)
 			}
-			if err := h.commitTxn(ctx); err != nil {
-				return false, errors.Trace(err)
+		case CachedTableLockRead:
+			// Update lease
+			if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
+				return errors.Trace(err)
 			}
-		} else {
+		case CachedTableLockWrite, CachedTableLockIntend:
+			if now > lease {
+				// Clear orphan lock
+				if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
+					return errors.Trace(err)
+				}
+			}
 			// Fail to lock for read, others hold the write lock.
-			return false, nil
+			return nil
 		}
-	}
-	return true, nil
+
+		succ = true
+		return nil
+	})
+	return succ, err
 }
 
 func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64, now, ts uint64) error {
@@ -499,6 +491,21 @@ func (h *stateRemoteHandle) rollbackTxn(ctx context.Context) error {
 	_, err := h.execSQL(ctx, "rollback")
 	fmt.Println("rollback ... executed ... ", h.exec)
 	return err
+}
+
+func (h *stateRemoteHandle) runInTxn(ctx context.Context, fn func(ctx context.Context) error) error {
+	err := h.beginTxn(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = fn(ctx)
+	if err != nil {
+		h.rollbackTxn(ctx)
+		return errors.Trace(err)
+	}
+
+	return h.commitTxn(ctx)
 }
 
 func (h *stateRemoteHandle) loadRow(ctx context.Context, tid int64) (CachedTableLockType, uint64, uint64, error) {
