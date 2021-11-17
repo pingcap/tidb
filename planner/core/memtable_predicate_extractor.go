@@ -541,7 +541,7 @@ func (helper extractHelper) convertToTime(t int64) time.Time {
 	return time.Unix(0, t)
 }
 
-func (helper extractHelper) extractRoleBoolSliceFromUint64Slice(uint64Slice []uint64) []bool {
+func (helper extractHelper) convertToBoolSlice(uint64Slice []uint64) []bool {
 	if len(uint64Slice) == 0 {
 		return []bool{false, true}
 	}
@@ -785,8 +785,8 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 		return nil
 	}
 	// uint64 slice to unique bool slice
-	e.IsLearners = e.extractRoleBoolSliceFromUint64Slice(isLearnersUint64)
-	e.IsLeaders = e.extractRoleBoolSliceFromUint64Slice(isLeadersUint64)
+	e.IsLearners = e.convertToBoolSlice(isLearnersUint64)
+	e.IsLeaders = e.convertToBoolSlice(isLeadersUint64)
 
 	// Extract the `type` column
 	remained, typeSkipRequest, types := e.extractCol(schema, names, remained, "type", false)

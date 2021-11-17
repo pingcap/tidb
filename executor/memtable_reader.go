@@ -881,10 +881,10 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		e.heap = &hotRegionsResponseHeap{}
 		for _, ch := range results {
 			result := <-ch
-			if result.err != nil {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
-			}
 			if result.err != nil || len(result.messages.HistoryHotRegion) == 0 {
+				if result.err != nil {
+					sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+				}
 				continue
 			}
 			*e.heap = append(*e.heap, result)
