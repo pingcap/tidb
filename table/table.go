@@ -261,7 +261,5 @@ type CachedTable interface {
 	// MockGetDataLease only for test renew Lease
 	MockGetDataLease() (uint64, uint64)
 
-	RenewLease()
-
 	CloseRenewCh()
 }

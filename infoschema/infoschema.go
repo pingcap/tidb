@@ -59,7 +59,7 @@ type InfoSchema interface {
 	RuleBundles() []*placement.Bundle
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
-	RenewChs() []*chan struct{}
+	CloseRenewCh()
 }
 
 type sortedTables []table.Table
@@ -111,7 +111,19 @@ type infoSchema struct {
 	schemaMetaVersion int64
 
 	//
-	renewChMap map[int64] chan struct{}
+	//renewMutex sync.RWMutex
+	renewChs []int64
+}
+
+func (is *infoSchema) CloseRenewCh() {
+	//is.renewMutex.RLock()
+	//defer is.renewMutex.RUnlock()
+	for _, id := range is.renewChs {
+		tbl, ok := is.TableByID(id)
+		if ok {
+			tbl.(table.CachedTable).CloseRenewCh()
+		}
+	}
 }
 
 // MockInfoSchema only serves for test.
@@ -319,14 +331,6 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 		result = append(result, v.dbInfo.Clone())
 	}
 	return
-}
-
-func (is *infoSchema) RenewChs() []*chan struct{} {
-	var chs []*chan struct{}
-	for _, ch := range is.renewChMap {
-		chs = append(chs, &ch)
-	}
-	return chs
 }
 
 // GetSequenceByName gets the sequence by name.

@@ -680,15 +680,12 @@ func (do *Domain) Close() {
 	do.wg.Wait()
 	do.sysSessionPool.Close()
 	variable.UnregisterStatistics(do.bindHandle)
+	do.InfoSchema().CloseRenewCh()
 	if do.onClose != nil {
 		do.onClose()
 	}
 
-	if do.InfoSchema().RenewChs() != nil {
-		for _, ch := range do.InfoSchema().RenewChs() {
-			*ch <- struct{}{}
-		}
-	}
+
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -835,7 +832,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
 	go do.globalConfigSyncerKeeper()
-
 	if !skipRegisterToDashboard {
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()

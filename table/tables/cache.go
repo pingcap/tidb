@@ -56,6 +56,7 @@ type cachedTable struct {
 	cacheData atomic.Value
 	handle    StateRemote
 	renewCh   chan renewInfo
+	stopCh    chan struct{}
 }
 
 // cacheData pack the cache data and lease.
@@ -119,8 +120,9 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 		TableCommon: *tbl,
 		handle:      &mockStateRemoteHandle{mockStateRemote.Ch},
 		renewCh:     make(chan renewInfo, 10),
+		stopCh:      make(chan struct{}, 1),
 	}
-	go ret.RenewLease()
+	go ret.renewLease()
 	return ret, nil
 }
 
@@ -231,7 +233,13 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	return c.TableCommon.RemoveRecord(ctx, h, r)
 }
 
-func (c *cachedTable) RenewLease() {
+func (c *cachedTable) renewLease() {
+	select {
+	case <-c.stopCh:
+		close(c.renewCh)
+		return
+	default:
+	}
 	for renewInfo := range c.renewCh {
 		tid := c.Meta().ID
 		lease := leaseFromTS(renewInfo.ts)
@@ -258,6 +266,6 @@ func (c *cachedTable) MockGetDataLease() (uint64, uint64) {
 	return data.Start, data.Lease
 }
 
-func (c *cachedTable ) CloseRenewCh()  {
-	close(c.renewCh)
+func (c *cachedTable) CloseRenewCh() {
+	c.stopCh <- struct{}{}
 }
