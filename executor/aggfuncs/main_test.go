@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,17 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression
+package aggfuncs
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestUnfoldableFuncs(t *testing.T) {
-	t.Parallel()
-	_, ok := unFoldableFunctions[ast.Sysdate]
-	require.True(t, ok)
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	}
+	goleak.VerifyTestMain(m, opts...)
 }
