@@ -1310,7 +1310,7 @@ import (
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
 	AttributesOpt                          "Attributes options"
-	PredicateColumnsOpt                    "predicate columns option"
+	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
 
 %type	<ident>
@@ -2560,9 +2560,9 @@ SplitSyntaxOption:
 	}
 
 AnalyzeTableStmt:
-	"ANALYZE" "TABLE" TableNameList PredicateColumnsOpt AnalyzeOptionListOpt
+	"ANALYZE" "TABLE" TableNameList AllColumnsOrPredicateColumnsOpt AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), PredicateColumns: $4.(bool), AnalyzeOpts: $5.([]ast.AnalyzeOpt)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), ColumnChoice: $4.(model.ColumnChoice), AnalyzeOpts: $5.([]ast.AnalyzeOpt)}
 	}
 |	"ANALYZE" "TABLE" TableName "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
@@ -2572,9 +2572,9 @@ AnalyzeTableStmt:
 	{
 		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$4.(*ast.TableName)}, IndexNames: $6.([]model.CIStr), IndexFlag: true, Incremental: true, AnalyzeOpts: $7.([]ast.AnalyzeOpt)}
 	}
-|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList PredicateColumnsOpt AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList AllColumnsOrPredicateColumnsOpt AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, PartitionNames: $5.([]model.CIStr), PredicateColumns: $6.(bool), AnalyzeOpts: $7.([]ast.AnalyzeOpt)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, PartitionNames: $5.([]model.CIStr), ColumnChoice: $6.(model.ColumnChoice), AnalyzeOpts: $7.([]ast.AnalyzeOpt)}
 	}
 |	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
@@ -2597,47 +2597,53 @@ AnalyzeTableStmt:
 			AnalyzeOpts:    $9.([]ast.AnalyzeOpt),
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "UPDATE" "HISTOGRAM" "ON" ColumnNameList AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "UPDATE" "HISTOGRAM" "ON" IdentList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames:         []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames:        $7.([]*ast.ColumnName),
+			ColumnNames:        $7.([]model.CIStr),
 			AnalyzeOpts:        $8.([]ast.AnalyzeOpt),
 			HistogramOperation: ast.HistogramOperationUpdate,
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "DROP" "HISTOGRAM" "ON" ColumnNameList
+|	"ANALYZE" "TABLE" TableName "DROP" "HISTOGRAM" "ON" IdentList
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames:         []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames:        $7.([]*ast.ColumnName),
+			ColumnNames:        $7.([]model.CIStr),
 			HistogramOperation: ast.HistogramOperationDrop,
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "COLUMNS" ColumnNameList AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "COLUMNS" IdentList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
-			TableNames:  []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames: $5.([]*ast.ColumnName),
-			AnalyzeOpts: $6.([]ast.AnalyzeOpt)}
+			TableNames:   []*ast.TableName{$3.(*ast.TableName)},
+			ColumnNames:  $5.([]model.CIStr),
+			ColumnChoice: model.ColumnList,
+			AnalyzeOpts:  $6.([]ast.AnalyzeOpt)}
 	}
-|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "COLUMNS" ColumnNameList AnalyzeOptionListOpt
+|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "COLUMNS" IdentList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
 			TableNames:     []*ast.TableName{$3.(*ast.TableName)},
 			PartitionNames: $5.([]model.CIStr),
-			ColumnNames:    $7.([]*ast.ColumnName),
+			ColumnNames:    $7.([]model.CIStr),
+			ColumnChoice:   model.ColumnList,
 			AnalyzeOpts:    $8.([]ast.AnalyzeOpt)}
 	}
 
-PredicateColumnsOpt:
+AllColumnsOrPredicateColumnsOpt:
 	/* empty */
 	{
-		$$ = false
+		$$ = model.DefaultChoice
+	}
+|	"ALL" "COLUMNS"
+	{
+		$$ = model.AllColumns
 	}
 |	"PREDICATE" "COLUMNS"
 	{
-		$$ = true
+		$$ = model.PredicateColumns
 	}
 
 AnalyzeOptionListOpt:
