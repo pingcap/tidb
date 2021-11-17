@@ -230,9 +230,10 @@ func buildCMSketch(values []types.Datum) *CMSketch {
 	return cms
 }
 
-func SubTestColumnRange(s *testStatisticsSamples) func(*testing.T) {
+func SubTestColumnRange() func(*testing.T) {
 	return func(t *testing.T) {
 		t.Parallel()
+		s := createTestStatisticsSamples(t)
 		bucketCount := int64(256)
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx
@@ -308,9 +309,10 @@ func SubTestColumnRange(s *testStatisticsSamples) func(*testing.T) {
 	}
 }
 
-func SubTestIntColumnRanges(s *testStatisticsSamples) func(*testing.T) {
+func SubTestIntColumnRanges() func(*testing.T) {
 	return func(t *testing.T) {
 		t.Parallel()
+		s := createTestStatisticsSamples(t)
 		bucketCount := int64(256)
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx
@@ -402,9 +404,10 @@ func SubTestIntColumnRanges(s *testStatisticsSamples) func(*testing.T) {
 	}
 }
 
-func SubTestIndexRanges(s *testStatisticsSamples) func(*testing.T) {
+func SubTestIndexRanges() func(*testing.T) {
 	return func(t *testing.T) {
 		t.Parallel()
+		s := createTestStatisticsSamples(t)
 		bucketCount := int64(256)
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx
