@@ -8,8 +8,11 @@ import (
 type KeyKind int
 
 const (
+	// KeyKindUnknown indicates that this key is unknown type.
 	KeyKindUnknown KeyKind = iota
+	// KeyKindRow means that this key belongs to row.
 	KeyKindRow
+	// KeyKindIndex means that this key belongs to index.
 	KeyKindIndex
 )
 

@@ -24,12 +24,6 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
-// var (
-// 	tablePrefix = []byte{'t'}
-// 	rowPrefix   = []byte("_r")
-// 	indexPrefix = []byte("_i")
-// )
-
 // EncodeResourceGroupTag encodes sql digest and plan digest into resource group tag.
 func EncodeResourceGroupTag(sqlDigest, planDigest *parser.Digest, label tipb.ResourceGroupTagLabel) []byte {
 	if sqlDigest == nil && planDigest == nil {
