@@ -94,7 +94,7 @@ type Domain struct {
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
 
-	onClose func()
+	onClose    func()
 	sysFactory func(*Domain) (pools.Resource, error)
 }
 
@@ -801,9 +801,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		return err
 	}
 	// step 2: domain reload the infoSchema.
-	fmt.Println("before domain.Reload() ...")
 	err = do.Reload()
-	fmt.Println("after domain.Reload() ...")
 	if err != nil {
 		return err
 	}

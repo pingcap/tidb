@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -316,58 +316,38 @@ func NewStateRemote(exec sqlExec) *stateRemoteHandle {
 
 var _ StateRemote = &stateRemoteHandle{}
 
-// CreateMetaLockForCachedTable initializes the cached table meta lock information.
-// func CreateMetaLockForCachedTable(h sqlExec) error {
-// 	createTable := "CREATE TABLE IF NOT EXISTS `mysql`.`table_cache_meta` (" +
-// 		"`tid` int(11) NOT NULL DEFAULT 0," +
-// 		"`lock_type` enum('NONE','READ', 'INTEND', 'WRITE') NOT NULL DEFAULT 'NONE'," +
-// 		"`lease` bigint(20) NOT NULL DEFAULT 0," +
-// 		"PRIMARY KEY (`tid`))"
-// 	_, err := h.ExecuteInternal(context.Background(), createTable)
-// 	return err
-// }
-
-// // InitRow add a new record into the cached table meta lock table.
-// func InitRow(ctx context.Context, exec sqlExec, tid int) error {
-// 	_, err := exec.ExecuteInternal(ctx, "insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0)", tid)
-// 	return err
-// }
-
 func (h *stateRemoteHandle) Load(ctx context.Context, tid int64) (CachedTableLockType, uint64, error) {
 	lockType, lease, _, err := h.loadRow(ctx, tid)
 	return lockType, lease, err
 }
 
-func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, now, ts uint64) (/*succ*/ bool, error) {
+func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, now, ts uint64) ( /*succ*/ bool, error) {
 	succ := false
 	err := h.runInTxn(ctx, func(ctx context.Context) error {
 		lockType, lease, _, err := h.loadRow(ctx, tid)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		switch lockType {
-		case CachedTableLockNone:
+		// The old lock is outdated, clear orphan lock.
+		if now > lease {
+			succ = true
 			if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
 				return errors.Trace(err)
 			}
-		case CachedTableLockRead:
-			// Update lease
-			if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
-				return errors.Trace(err)
-			}
-		case CachedTableLockWrite, CachedTableLockIntend:
-			if now > lease {
-				// Clear orphan lock
-				if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
-					return errors.Trace(err)
-				}
-			}
-			// Fail to lock for read, others hold the write lock.
 			return nil
 		}
 
+		switch lockType {
+		case CachedTableLockNone:
+		case CachedTableLockRead:
+		case CachedTableLockWrite, CachedTableLockIntend:
+			return nil
+		}
 		succ = true
+		if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
+			return errors.Trace(err)
+		}
+
 		return nil
 	})
 	return succ, err
@@ -394,8 +374,8 @@ func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64, now, ts
 	return nil
 }
 
-func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, now, ts uint64) (/*retry*/ bool, error) {
-	err := h.beginTxn(ctx);
+func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, now, ts uint64) ( /*retry*/ bool, error) {
+	err := h.beginTxn(ctx)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -461,7 +441,6 @@ func waitForLeaseExpire(oldReadLease, now uint64) {
 		t1 := oracle.GetTimeFromTS(oldReadLease)
 		t2 := oracle.GetTimeFromTS(now)
 		waitDuration := t1.Sub(t2)
-		fmt.Println("sleep ... for old read lease to expire", waitDuration)
 		time.Sleep(waitDuration)
 	}
 }
@@ -477,19 +456,16 @@ func (h *stateRemoteHandle) RenewLease(ctx context.Context, tid int64, ts uint64
 
 func (h *stateRemoteHandle) beginTxn(ctx context.Context) error {
 	_, err := h.execSQL(ctx, "begin")
-	fmt.Println("begin ... executed ... ", h.exec)
 	return err
 }
 
 func (h *stateRemoteHandle) commitTxn(ctx context.Context) error {
 	_, err := h.execSQL(ctx, "commit")
-	fmt.Println("commit ... executed ... ", h.exec)
 	return err
 }
 
 func (h *stateRemoteHandle) rollbackTxn(ctx context.Context) error {
 	_, err := h.execSQL(ctx, "rollback")
-	fmt.Println("rollback ... executed ... ", h.exec)
 	return err
 }
 

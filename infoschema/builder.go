@@ -42,7 +42,7 @@ type Builder struct {
 	is *infoSchema
 	// TODO: store is only used by autoid allocators
 	// detach allocators from storage, use passed transaction in the feature
-	store       kv.Storage
+	store   kv.Storage
 	factory func() (pools.Resource, error)
 }
 
@@ -636,9 +636,7 @@ func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInf
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		fmt.Println("wrap table from meta to handle .... cached table!!!")
 		err = t.Init(tmp.(sqlexec.SQLExecutor))
-		fmt.Println("wrap table from meta to handle .... finish!!!")
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -685,7 +683,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 func NewBuilder(store kv.Storage, factory func() (pools.Resource, error)) *Builder {
 	return &Builder{
 		factory: factory,
-		store:       store,
+		store:   store,
 		is: &infoSchema{
 			schemaMap:           map[string]*schemaTables{},
 			policyMap:           map[string]*model.PolicyInfo{},

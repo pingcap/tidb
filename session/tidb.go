@@ -19,7 +19,6 @@
 package session
 
 import (
-	"fmt"
 	"context"
 	"sync"
 	"sync/atomic"
@@ -81,9 +80,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			dm.Delete(store)
 		}
 		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory, onClose)
-		fmt.Println("finish new domain>>>>>>>>")
 		err1 = d.Init(ddlLease, sysFactory)
-		fmt.Println("init domain>>>>>>>>")
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()

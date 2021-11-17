@@ -18,10 +18,29 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+// CreateMetaLockForCachedTable initializes the cached table meta lock information.
+func createMetaLockForCachedTable(h session.Session) error {
+	createTable := "CREATE TABLE IF NOT EXISTS `mysql`.`table_cache_meta` (" +
+		"`tid` int(11) NOT NULL DEFAULT 0," +
+		"`lock_type` enum('NONE','READ', 'INTEND', 'WRITE') NOT NULL DEFAULT 'NONE'," +
+		"`lease` bigint(20) NOT NULL DEFAULT 0," +
+		"`oldReadLease` bigint(20) NOT NULL DEFAULT 0," +
+		"PRIMARY KEY (`tid`))"
+	_, err := h.ExecuteInternal(context.Background(), createTable)
+	return err
+}
+
+// InitRow add a new record into the cached table meta lock table.
+func initRow(ctx context.Context, exec session.Session, tid int) error {
+	_, err := exec.ExecuteInternal(ctx, "insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", tid)
+	return err
+}
 
 func TestStateRemote(t *testing.T) {
 	t.Parallel()
@@ -33,12 +52,12 @@ func TestStateRemote(t *testing.T) {
 
 	ctx := context.Background()
 	h := tables.NewStateRemote(se)
-	err := tables.CreateMetaLockForCachedTable(se)
+	err := createMetaLockForCachedTable(se)
 	require.NoError(t, err)
 	require.Equal(t, tables.CachedTableLockNone, tables.CachedTableLockType(0))
 
 	// Check the initial value.
-	require.NoError(t, tables.InitRow(ctx, se, 5))
+	require.NoError(t, initRow(ctx, se, 5))
 	lockType, lease, err := h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockNone)
