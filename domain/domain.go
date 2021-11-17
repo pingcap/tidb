@@ -287,6 +287,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			actions = append(actions, uint64(1<<diff.Type))
 		}
 	}
+
 	is := builder.Build()
 	relatedChange := transaction.RelatedSchemaChange{}
 	relatedChange.PhyTblIDS = phyTblIDs
@@ -681,6 +682,12 @@ func (do *Domain) Close() {
 	variable.UnregisterStatistics(do.bindHandle)
 	if do.onClose != nil {
 		do.onClose()
+	}
+
+	if do.InfoSchema().RenewChs() != nil {
+		for _, ch := range do.InfoSchema().RenewChs() {
+			*ch <- struct{}{}
+		}
 	}
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }

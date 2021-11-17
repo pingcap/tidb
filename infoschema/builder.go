@@ -442,6 +442,19 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		cacheTable := tbl.(table.CachedTable)
+		b.is.renewChMap[tblInfo.ID] = make(chan struct{}, 1)
+		go func() {
+			for {
+				select {
+				case <-b.is.renewChMap[tblInfo.ID]:
+					cacheTable.CloseRenewCh()
+				default:
+				}
+			}
+		}()
+	}
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
 	bucketIdx := tableBucketIdx(tableID)
@@ -666,6 +679,7 @@ func NewBuilder(store kv.Storage) *Builder {
 			policyMap:           map[string]*model.PolicyInfo{},
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
+			renewChMap:          make(map[int64]chan struct{}),
 		},
 	}
 }

@@ -114,12 +114,13 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 		mockStateRemote.Ch = make(chan remoteTask, 100)
 		go mockRemoteService(mockStateRemote.Data, mockStateRemote.Ch)
 	}
+
 	ret := &cachedTable{
 		TableCommon: *tbl,
 		handle:      &mockStateRemoteHandle{mockStateRemote.Ch},
 		renewCh:     make(chan renewInfo, 10),
 	}
-	go ret.renewLease()
+	go ret.RenewLease()
 	return ret, nil
 }
 
@@ -230,7 +231,7 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	return c.TableCommon.RemoveRecord(ctx, h, r)
 }
 
-func (c *cachedTable) renewLease() {
+func (c *cachedTable) RenewLease() {
 	for renewInfo := range c.renewCh {
 		tid := c.Meta().ID
 		lease := leaseFromTS(renewInfo.ts)
@@ -255,4 +256,8 @@ func (c *cachedTable) MockGetDataLease() (uint64, uint64) {
 	}
 	data := tmp.(*cacheData)
 	return data.Start, data.Lease
+}
+
+func (c *cachedTable ) CloseRenewCh()  {
+	close(c.renewCh)
 }

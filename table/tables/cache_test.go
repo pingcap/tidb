@@ -413,6 +413,7 @@ func TestRenewLease(t *testing.T) {
 	ctx := context.Background()
 	tbl := tables.MockTableFromMeta(table)
 	cacheTable := tbl.(table2.CachedTable)
+	defer cacheTable.CloseRenewCh()
 	err := se.NewTxn(ctx)
 	require.NoError(t, err)
 	txn, err := se.Txn(true)

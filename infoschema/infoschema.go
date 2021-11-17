@@ -59,6 +59,7 @@ type InfoSchema interface {
 	RuleBundles() []*placement.Bundle
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
+	RenewChs() []*chan struct{}
 }
 
 type sortedTables []table.Table
@@ -108,6 +109,9 @@ type infoSchema struct {
 
 	// schemaMetaVersion is the version of schema, and we should check version when change schema.
 	schemaMetaVersion int64
+
+	//
+	renewChMap map[int64] chan struct{}
 }
 
 // MockInfoSchema only serves for test.
@@ -315,6 +319,14 @@ func (is *infoSchema) Clone() (result []*model.DBInfo) {
 		result = append(result, v.dbInfo.Clone())
 	}
 	return
+}
+
+func (is *infoSchema) RenewChs() []*chan struct{} {
+	var chs []*chan struct{}
+	for _, ch := range is.renewChMap {
+		chs = append(chs, &ch)
+	}
+	return chs
 }
 
 // GetSequenceByName gets the sequence by name.
