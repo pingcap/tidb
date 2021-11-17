@@ -1460,6 +1460,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 						continue
 					}
 				} else if er.sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
+					// We should remove the mutable constant for correctness, because it's value maybe changed.
 					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
