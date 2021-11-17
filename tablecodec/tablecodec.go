@@ -1159,7 +1159,8 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 
 // GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
 func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
-	idxVal := make([]byte, 1)
+	idxVal := make([]byte, 0)
+	idxVal = append(idxVal, 0)
 	tailLen := 0
 	// Version info.
 	idxVal = append(idxVal, IndexVersionFlag)
@@ -1216,7 +1217,8 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 
 // genIndexValueVersion0 create index value for both local and global index.
 func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
-	idxVal := make([]byte, 1)
+	idxVal := make([]byte, 0)
+	idxVal = append(idxVal, 0)
 	newEncode := false
 	tailLen := 0
 	if !h.IsInt() && distinct {
