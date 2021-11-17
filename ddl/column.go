@@ -1674,9 +1674,8 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 		if oldCol.Tp != mysql.TypeTimestamp && newCol.Tp == mysql.TypeTimestamp {
 			// special case for convert null value of non-timestamp type to timestamp type, null value will be substituted with current timestamp.
 			continue
-		} else {
-			needCheckNullValue = true
 		}
+		needCheckNullValue = true
 	}
 	if !needCheckNullValue {
 		return nil
