@@ -498,14 +498,10 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				appendTableForColumnStatsUsage(db.Name.O, tbl, pi != nil, nil)
-				if pi != nil {
-					for _, def := range pi.Definitions {
-						appendTableForColumnStatsUsage(db.Name.O, tbl, false, &def)
-					}
-				}
-			} else {
-				for _, def := range pi.Definitions {
-					appendTableForColumnStatsUsage(db.Name.O, tbl, false, &def)
+			}
+			if pi != nil {
+				for i := range pi.Definitions {
+					appendTableForColumnStatsUsage(db.Name.O, tbl, false, &pi.Definitions[i])
 				}
 			}
 		}
