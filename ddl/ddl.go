@@ -390,6 +390,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	go func() {
 		sctx, err := d.sessPool.get()
+		fmt.Printf("!!!! New gor %p\n", &sctx)
 		if err != nil {
 			fmt.Printf("!!!! Error %v\n", err)
 		} else {

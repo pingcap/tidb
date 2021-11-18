@@ -2,9 +2,11 @@ package ddl_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
+	"github.com/ngaut/pools"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/fn"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -218,6 +220,53 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	res, _ := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
 	c.Assert(tb.Meta().TiFlashReplica, IsNil)
+}
+
+func sysMockFactory(*domain.Domain) (pools.Resource, error) {
+	return nil, nil
+}
+
+func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.Resource, error) {
+	return func(dom *domain.Domain) (pools.Resource, error) {
+		se, err := session.CreateSessionWithDomain(store, dom)
+		if err != nil {
+			return nil, err
+		}
+		return se, nil
+	}
+}
+
+func (s *tiflashDDLTestSuite) TestTiFlashMultipleDDL(c *C) {
+	gcworker.SetGcSafePointCacheInterval(time.Second * 1)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(z int)")
+	tk.MustExec("alter table t set tiflash replica 1")
+
+	goCtx := context.Background()
+	ddlLease := 80 * time.Millisecond
+
+	newDDL := ddl.NewDDL(
+		goCtx,
+		ddl.WithEtcdClient(s.dom.GetEtcdClient()),
+		ddl.WithStore(s.store),
+		ddl.WithInfoCache(ddl.GetInfoCache(s.dom.DDL())),
+		ddl.WithLease(ddlLease),
+	)
+
+	sysFactory := createSessionWithDomainFunc(s.store)
+	sysFac := func() (pools.Resource, error) {
+		return sysFactory(s.dom)
+	}
+	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, 3 * time.Minute)
+	newDDL.Start(sysCtxPool)
+
+	for i := 0; i < 20; i++ {
+		fmt.Printf("!!!! O1 %v, o2 %v\n", newDDL.OwnerManager().IsOwner(), s.dom.DDL().OwnerManager().IsOwner())
+		//c.Assert(newDDL.OwnerManager().IsOwner() && s.dom.DDL().OwnerManager().IsOwner(), Equals, false)
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 type mockTiFlashTableInfo struct {
