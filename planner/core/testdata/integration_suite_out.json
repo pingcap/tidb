@@ -675,19 +675,19 @@
       {
         "SQL": "select /*+ USE_INDEX() */ * from t1, t2 where t1.a=t2.a",
         "Warnings": [
-          "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8064]Optimizer hint syntax error at line 1 column 22 near \") */\" "
+          "[parser:1064]Optimizer hint syntax error at line 1 column 22 near \") */\" "
         ]
       },
       {
         "SQL": "select /*+ IGNORE_INDEX() */ * from t1, t2 where t1.a=t2.a",
         "Warnings": [
-          "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8064]Optimizer hint syntax error at line 1 column 25 near \") */\" "
+          "[parser:1064]Optimizer hint syntax error at line 1 column 25 near \") */\" "
         ]
       },
       {
         "SQL": "select /*+ USE_INDEX_MERGE() */ * from t1, t2 where t1.a=t2.a",
         "Warnings": [
-          "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8064]Optimizer hint syntax error at line 1 column 28 near \") */\" "
+          "[parser:1064]Optimizer hint syntax error at line 1 column 28 near \") */\" "
         ]
       }
     ]
