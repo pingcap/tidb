@@ -233,6 +233,7 @@ func TestCommitWhenSchemaChanged(t *testing.T) {
 
 	// When this transaction commit, it will find schema already changed.
 	_, err = s1.Execute(ctx, "insert into test_commit values (4, 4)")
+	require.Error(t, err)
 	require.NoError(t, err)
 	_, err = s1.Execute(ctx, "commit")
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), "err: %v", err)
