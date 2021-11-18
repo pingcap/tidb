@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"math"
 	"time"
 
@@ -623,7 +622,7 @@ type regionMeta struct {
 	approximateKeys int64
 }
 
-func getPhysicalTableRegions(sc *stmtctx.StatementContext, physicalTableID int64, tableInfo *model.TableInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
 	if uniqueRegionMap == nil {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
@@ -652,7 +651,7 @@ func getPhysicalTableRegions(sc *stmtctx.StatementContext, physicalTableID int64
 		if index.State != model.StatePublic {
 			continue
 		}
-		startKey, endKey := tablecodec.GetTableIndexKeyRange(sc, physicalTableID, index.ID)
+		startKey, endKey := tablecodec.GetTableIndexKeyRange(physicalTableID, index.ID)
 		regionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
 		if err != nil {
 			return nil, err
@@ -671,12 +670,12 @@ func getPhysicalTableRegions(sc *stmtctx.StatementContext, physicalTableID int64
 	return regions, nil
 }
 
-func getPhysicalIndexRegions(sc *stmtctx.StatementContext, physicalTableID int64, indexInfo *model.IndexInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
 	if uniqueRegionMap == nil {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
 
-	startKey, endKey := tablecodec.GetTableIndexKeyRange(sc, physicalTableID, indexInfo.ID)
+	startKey, endKey := tablecodec.GetTableIndexKeyRange(physicalTableID, indexInfo.ID)
 	regionCache := tikvStore.GetRegionCache()
 	regions, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
 	if err != nil {

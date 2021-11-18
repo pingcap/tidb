@@ -151,7 +151,7 @@ func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (rang
 			}
 			continue
 		}
-		keyRange, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(tbl), e.indexes[i].ID, e.ranges[i], e.feedbacks[i])
+		keyRange, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(tbl), e.indexes[i].ID, e.ranges[i], e.feedbacks[i], nil)
 		if err != nil {
 			return nil, err
 		}

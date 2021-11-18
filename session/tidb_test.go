@@ -16,11 +16,8 @@ package session
 
 import (
 	"context"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/memory"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -77,9 +74,8 @@ func TestParseErrorWarn(t *testing.T) {
 func TestKeysNeedLock(t *testing.T) {
 	t.Parallel()
 
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC, MemTracker: memory.NewTracker(0, 1<<30)}
 	rowKey := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
-	indexKey := tablecodec.EncodeIndexSeekKey(sc, 1, 1, []byte{1})
+	indexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
 	uniqueValue := make([]byte, 8)
 	uniqueUntouched := append(uniqueValue, '1')
 	nonUniqueVal := []byte{'0'}

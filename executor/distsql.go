@@ -226,7 +226,7 @@ func (e *IndexReaderExecutor) buildKeyRanges(sc *stmtctx.StatementContext, range
 	if e.index.ID == -1 {
 		return distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, ranges)
 	}
-	return distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback)
+	return distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback, nil)
 }
 
 // Open implements the Executor Open interface.
@@ -437,7 +437,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 			if e.index.ID == -1 {
 				kvRange, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, ranges)
 			} else {
-				kvRange, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback)
+				kvRange, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, ranges, e.feedback, nil)
 			}
 			if err != nil {
 				return err
@@ -449,7 +449,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 		if e.index.ID == -1 {
 			e.kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, e.ranges)
 		} else {
-			e.kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
+			e.kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback, nil)
 		}
 	}
 	return err

@@ -84,6 +84,7 @@ type IndexLookUpJoin struct {
 
 	stats           *indexLookUpJoinRuntimeStats
 	ctxCancelReason atomic.Value
+	finished        *atomic.Value
 }
 
 type outerCtx struct {
@@ -163,6 +164,7 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
+	e.finished.Store(false)
 	if e.runtimeStats != nil {
 		e.stats = &indexLookUpJoinRuntimeStats{}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
@@ -342,6 +344,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer trace.StartRegion(ctx, "IndexLookupJoinOuterWorker").End()
 	defer func() {
 		if r := recover(); r != nil {
+			ow.lookup.finished.Store(true)
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
@@ -461,6 +464,7 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	var task *lookUpJoinTask
 	defer func() {
 		if r := recover(); r != nil {
+			iw.lookup.finished.Store(true)
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
@@ -666,7 +670,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			atomic.AddInt64(&iw.stats.fetch, int64(time.Since(start)))
 		}()
 	}
-	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true)
+	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true, iw.lookup.finished)
 	if innerExec != nil {
 		defer terror.Call(innerExec.Close)
 	}
@@ -751,6 +755,7 @@ func (e *IndexLookUpJoin) Close() error {
 	e.workerWg.Wait()
 	e.memTracker = nil
 	e.task = nil
+	e.finished.Store(false)
 	return e.baseExecutor.Close()
 }
 

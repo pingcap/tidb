@@ -236,7 +236,7 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 			continue
 		}
 		ranges = ranger.FullRange()
-		idxRanges, err := distsql.IndexRangesToKVRanges(nil, tblID, index.ID, ranges, nil)
+		idxRanges, err := distsql.IndexRangesToKVRanges(nil, tblID, index.ID, ranges, nil, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

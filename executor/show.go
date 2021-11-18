@@ -1759,15 +1759,14 @@ func (e *ShowExec) fetchShowTableRegions() error {
 
 	// Get table regions from from pd, not from regionCache, because the region cache maybe outdated.
 	var regions []regionMeta
-	sc := e.ctx.GetSessionVars().StmtCtx
 	if len(e.IndexName.L) != 0 {
 		indexInfo := tb.Meta().FindIndexByName(e.IndexName.L)
 		if indexInfo == nil {
 			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
-		regions, err = getTableIndexRegions(sc, indexInfo, physicalIDs, tikvStore, splitStore)
+		regions, err = getTableIndexRegions(indexInfo, physicalIDs, tikvStore, splitStore)
 	} else {
-		regions, err = getTableRegions(sc, tb, physicalIDs, tikvStore, splitStore)
+		regions, err = getTableRegions(tb, physicalIDs, tikvStore, splitStore)
 	}
 
 	if err != nil {
@@ -1777,11 +1776,11 @@ func (e *ShowExec) fetchShowTableRegions() error {
 	return nil
 }
 
-func getTableRegions(sc *stmtctx.StatementContext, tb table.Table, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, id := range physicalIDs {
-		rs, err := getPhysicalTableRegions(sc, id, tb.Meta(), tikvStore, splitStore, uniqueRegionMap)
+		rs, err := getPhysicalTableRegions(id, tb.Meta(), tikvStore, splitStore, uniqueRegionMap)
 		if err != nil {
 			return nil, err
 		}
@@ -1790,11 +1789,11 @@ func getTableRegions(sc *stmtctx.StatementContext, tb table.Table, physicalIDs [
 	return regions, nil
 }
 
-func getTableIndexRegions(sc *stmtctx.StatementContext, indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, id := range physicalIDs {
-		rs, err := getPhysicalIndexRegions(sc, id, indexInfo, tikvStore, splitStore, uniqueRegionMap)
+		rs, err := getPhysicalIndexRegions(id, indexInfo, tikvStore, splitStore, uniqueRegionMap)
 		if err != nil {
 			return nil, err
 		}

@@ -152,6 +152,7 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 		e.stats = &indexLookUpJoinRuntimeStats{}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
+	e.finished.Store(false)
 	e.startWorkers(ctx)
 	return nil
 }
@@ -319,6 +320,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		close(e.joinChkResourceCh[i])
 	}
 	e.joinChkResourceCh = nil
+	e.finished.Store(false)
 	return e.baseExecutor.Close()
 }
 

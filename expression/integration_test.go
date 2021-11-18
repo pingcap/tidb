@@ -19,8 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/memory"
 	"math"
 	"math/rand"
 	"sort"
@@ -5100,11 +5098,10 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC, MemTracker: memory.NewTracker(0, 1<<30)}
 	buildIndexKeyFromData := func(tableID, indexID int64, data []types.Datum) string {
 		k, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, data...)
 		c.Assert(err, IsNil)
-		k = tablecodec.EncodeIndexSeekKey(sc, tableID, indexID, k)
+		k = tablecodec.EncodeIndexSeekKey(tableID, indexID, k)
 		hexKey := hex.EncodeToString(codec.EncodeBytes(nil, k))
 		return hexKey
 	}

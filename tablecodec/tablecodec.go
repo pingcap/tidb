@@ -628,14 +628,11 @@ func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 }
 
 // EncodeIndexSeekKey encodes an index value to kv.Key.
-func EncodeIndexSeekKey(sc *stmtctx.StatementContext, tableID int64, idxID int64, encodedValue []byte) kv.Key {
+func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key {
 	key := make([]byte, 0, RecordRowKeyLen+len(encodedValue))
 	key = appendTableIndexPrefix(key, tableID)
 	key = codec.EncodeInt(key, idxID)
 	key = append(key, encodedValue...)
-	if sc != nil && sc.MemTracker != nil {
-		sc.MemTracker.Consume(int64(cap(key)))
-	}
 	return key
 }
 
@@ -1032,9 +1029,9 @@ func GetTableHandleKeyRange(tableID int64) (startKey, endKey []byte) {
 }
 
 // GetTableIndexKeyRange returns table index's key range with tableID and indexID.
-func GetTableIndexKeyRange(sc *stmtctx.StatementContext, tableID, indexID int64) (startKey, endKey []byte) {
-	startKey = EncodeIndexSeekKey(sc, tableID, indexID, nil)
-	endKey = EncodeIndexSeekKey(sc, tableID, indexID, []byte{255})
+func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
+	startKey = EncodeIndexSeekKey(tableID, indexID, nil)
+	endKey = EncodeIndexSeekKey(tableID, indexID, []byte{255})
 	return
 }
 

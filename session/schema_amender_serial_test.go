@@ -17,18 +17,15 @@ package session
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/util/memory"
 	"sort"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
@@ -434,11 +431,9 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 
 			schemaAmender := NewSchemaAmenderForTikvTxn(se)
 			// Some noisy index key values.
-
-			se.sessionVars.StmtCtx = &stmtctx.StatementContext{TimeZone: time.UTC, MemTracker: memory.NewTracker(0, 1<<30)}
 			for i := 0; i < 4; i++ {
 				idxValue := []byte("idxValue")
-				idxKey := tablecodec.EncodeIndexSeekKey(se.sessionVars.StmtCtx, oldTbInfo.Meta().ID, oldTbInfo.Indices()[i].Meta().ID, idxValue)
+				idxKey := tablecodec.EncodeIndexSeekKey(oldTbInfo.Meta().ID, oldTbInfo.Indices()[i].Meta().ID, idxValue)
 				err = txn.Set(idxKey, idxValue)
 				require.NoError(t, err)
 				mutations.Push(kvrpcpb.Op_Put, idxKey, idxValue, false)
