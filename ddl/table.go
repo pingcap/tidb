@@ -1264,10 +1264,13 @@ func onAlterTablePartitionOptions(d *ddlCtx, t *meta.Meta, job *model.Job) (ver 
 	ptInfo := tblInfo.GetPartitionInfo()
 	var partitionDef *model.PartitionDefinition
 	definitions := ptInfo.Definitions
+	oldPartitionEnablesPlacement := false
 	for i := range definitions {
 		if partitionID == definitions[i].ID {
-			definitions[i].DirectPlacementOpts = placementSettings
-			definitions[i].PlacementPolicyRef = policyRefInfo
+			def := &definitions[i]
+			oldPartitionEnablesPlacement = def.PlacementPolicyRef != nil || def.DirectPlacementOpts != nil
+			def.DirectPlacementOpts = placementSettings
+			def.PlacementPolicyRef = policyRefInfo
 			partitionDef = &definitions[i]
 			break
 		}
@@ -1293,11 +1296,13 @@ func onAlterTablePartitionOptions(d *ddlCtx, t *meta.Meta, job *model.Job) (ver 
 		return ver, errors.Trace(err)
 	}
 
+	if bundle == nil && oldPartitionEnablesPlacement {
+		bundle = placement.NewBundle(partitionDef.ID)
+	}
+
 	// Send the placement bundle to PD.
 	if bundle != nil {
 		err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
-	} else {
-		err = dropRuleBundles(d, []int64{partitionDef.ID})
 	}
 
 	if err != nil {
@@ -1323,29 +1328,32 @@ func onAlterTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		return 0, err
 	}
 
-	tblInfo.PlacementPolicyRef = policyRefInfo
-	tblInfo.DirectPlacementOpts = placementSettings
-
 	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, policyRefInfo); err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	bundle, err := placement.NewTableBundle(t, tblInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return 0, errors.Trace(err)
-	}
+	oldTableEnablesPlacement := tblInfo.PlacementPolicyRef != nil || tblInfo.DirectPlacementOpts != nil
+	tblInfo.PlacementPolicyRef = policyRefInfo
+	tblInfo.DirectPlacementOpts = placementSettings
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
+	bundle, err := placement.NewTableBundle(t, tblInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	if bundle == nil && oldTableEnablesPlacement {
+		bundle = placement.NewBundle(tblInfo.ID)
+	}
+
 	// Send the placement bundle to PD.
 	if bundle != nil {
 		err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
-	} else {
-		err = dropRuleBundles(d, []int64{tblInfo.ID})
 	}
 
 	if err != nil {
