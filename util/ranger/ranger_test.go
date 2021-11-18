@@ -17,7 +17,6 @@ package ranger_test
 import (
 	"context"
 	"fmt"
-
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -309,7 +308,6 @@ func TestTableRange(t *testing.T) {
 }
 
 func TestIndexRange(t *testing.T) {
-	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
