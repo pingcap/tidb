@@ -1968,6 +1968,11 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 			}
 		}
 	}
+	err = rc.checkCSVHeader(ctx, rc.dbMetas)
+	if err != nil {
+		return err
+	}
+
 	if len(checkPointCriticalMsgs) != 0 {
 		rc.checkTemplate.Collect(Critical, false, strings.Join(checkPointCriticalMsgs, "\n"))
 	} else {
