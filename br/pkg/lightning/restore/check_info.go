@@ -741,7 +741,11 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	return msgs, nil
 }
 
-// checkCSVHeader try to check whether the csv header config is consistent with the source csv files
+// checkCSVHeader try to check whether the csv header config is consistent with the source csv files by:
+// 1. pick one table with two CSV files and a unique/primary key
+// 2. read the first row of those two CSV files
+// 3. checks if the content of those first rows are compatible with the table schema, and whether the
+//    two rows are identical, to determine if the first rows are a header rows.
 func (rc *Controller) checkCSVHeader(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta) error {
 	// if cfg set header = ture but source files actually contain not header, former SchemaCheck should
 	// return error in this situation, so we need do it again.
@@ -764,16 +768,16 @@ outer:
 				continue
 			}
 			tableHasUniqueIdx := false
-			csvCnt := 0
+			tableCSVCount := 0
 			for _, f := range tblMeta.DataFiles {
 				if f.FileMeta.Type == mydump.SourceTypeCSV {
-					csvCnt++
-					if csvCnt >= 2 {
+					tableCSVCount++
+					if tableCSVCount >= 2 {
 						break
 					}
 				}
 			}
-			if csvCnt == 0 {
+			if tableCSVCount == 0 {
 				continue
 			}
 
@@ -784,16 +788,16 @@ outer:
 				}
 			}
 
-			if csvCnt >= 2 && hasUniqueIdx {
+			if tableCSVCount >= 2 && hasUniqueIdx {
 				tableMeta = tblMeta
-				csvCount = csvCnt
+				csvCount = tableCSVCount
 				hasUniqueIdx = tableHasUniqueIdx
 				// if a perfect table source is found, we can stop check more tables
 				break outer
 			}
-			if csvCnt > csvCount || (csvCnt == csvCount && !hasUniqueIdx && tableHasUniqueIdx) {
+			if tableCSVCount > csvCount || (tableCSVCount == csvCount && !hasUniqueIdx && tableHasUniqueIdx) {
 				tableMeta = tblMeta
-				csvCount = csvCnt
+				csvCount = tableCSVCount
 				hasUniqueIdx = tableHasUniqueIdx
 			}
 		}
