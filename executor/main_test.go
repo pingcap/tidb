@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package executor
 
 import (
 	"os"
@@ -28,13 +28,16 @@ import (
 )
 
 var testDataMap = make(testdata.BookKeeper)
-var prepareMergeSuiteData testdata.TestData
+var PrepareMergeSuiteData testdata.TestData
+var AggMergeSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
 
 	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
-	prepareMergeSuiteData = testDataMap["prepare_suite"]
+	testDataMap.LoadTestSuiteData("testdata", "agg_suite")
+	PrepareMergeSuiteData = testDataMap["prepare_suite"]
+	AggMergeSuiteData = testDataMap["agg_suite"]
 
 	autoid.SetStep(5000)
 	config.UpdateGlobal(func(conf *config.Config) {

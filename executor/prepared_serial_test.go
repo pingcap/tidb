@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -335,7 +336,7 @@ func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
 			Result           []string
 		}
 	}
-	prepareMergeSuiteData.GetTestCases(t, &input, &output)
+	executor.PrepareMergeSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
 		tk.MustExec(tt.PrepareStmt)
 		testdata.OnRecord(func() {
@@ -905,7 +906,7 @@ func TestParameterPushDown(t *testing.T) {
 		Plan      []string
 		FromCache string
 	}
-	prepareMergeSuiteData.GetTestCases(t, &input, &output)
+	executor.PrepareMergeSuiteData.GetTestCases(t, &input, &output)
 
 	for i, tt := range input {
 		if strings.HasPrefix(tt.SQL, "execute") {
