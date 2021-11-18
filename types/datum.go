@@ -1513,6 +1513,8 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		uintDatum, err = d.convertToUint(sc, target)
 		if err == nil {
 			e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
+		} else {
+			err = errors.Wrap(ErrTruncated, "convert to MySQL enum failed: " + err.Error())
 		}
 	}
 	ret.SetMysqlEnum(e, target.Collate)
