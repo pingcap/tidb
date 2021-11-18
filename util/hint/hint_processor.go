@@ -32,6 +32,7 @@ import (
 )
 
 var supportedHintNameForInsertStmt = map[string]struct{}{}
+var errWarnConflictingHint = dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint)
 
 func init() {
 	supportedHintNameForInsertStmt["memory_quota"] = struct{}{}
@@ -118,8 +119,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 				}
 				if duplicatedHint != nil {
 					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
-					err := dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint).FastGenByArgs(hint)
-					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					sctx.GetSessionVars().StmtCtx.AppendWarning(errWarnConflictingHint.FastGenByArgs(hint))
 				}
 			}
 		}

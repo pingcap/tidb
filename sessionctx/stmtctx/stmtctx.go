@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -87,12 +88,10 @@ type StatementContext struct {
 	IgnoreNoPartition            bool
 	MaybeOverOptimized4PlanCache bool
 	IgnoreExplainIDSuffix        bool
-
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
 	IsStaleness bool
-
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -178,6 +177,9 @@ type StatementContext struct {
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
 
+	// If the statement read from table cache, this flag is set.
+	ReadFromTableCache bool
+
 	// cache is used to reduce object allocation.
 	cache struct {
 		execdetails.RuntimeStatsColl
@@ -190,6 +192,11 @@ type StatementContext struct {
 	OptimInfo map[int]string
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
+
+	// EnableOptimizeTrace indicates whether the statement is enable optimize trace
+	EnableOptimizeTrace bool
+	// LogicalOptimizeTrace indicates the trace for optimize
+	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
 }
 
 // StmtHints are SessionVars related sql hints.
