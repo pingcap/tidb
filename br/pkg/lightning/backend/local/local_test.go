@@ -336,7 +336,7 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
-	f := &File{
+	f := &Engine{
 		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
@@ -565,7 +565,7 @@ func (s *localSuite) TestLocalIngestLoop(c *C) {
 	c.Assert(err, IsNil)
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
-	f := File{
+	f := Engine{
 		db:           db,
 		UUID:         engineUUID,
 		sstDir:       "",
@@ -782,7 +782,7 @@ func (s *localSuite) testMergeSSTs(c *C, kvs [][]common.KvPair, meta *sstMeta) {
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
 
-	f := &File{
+	f := &Engine{
 		db:           db,
 		UUID:         engineUUID,
 		sstDir:       tmpPath,

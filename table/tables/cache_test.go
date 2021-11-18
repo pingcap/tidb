@@ -155,15 +155,37 @@ func TestCacheCondition(t *testing.T) {
 
 	// Explain should not trigger cache.
 	tk.MustQuery("explain select * from t2")
-	require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	}
 
 	// Insert should not trigger cache.
 	tk.MustExec("insert into t2 values (1,1)")
-	require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	}
 
 	// Update should not trigger cache.
 	tk.MustExec("update t2 set v = v + 1 where id > 0")
-	require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	}
+	// Contains PointGet Update should not trigger cache.
+	tk.MustExec("update t2 set v = v + 1 where id = 2")
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	}
+
+	// Contains PointGet Delete should not trigger cache.
+	tk.MustExec("delete from t2  where id = 2")
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	}
 
 	// Normal query should trigger cache.
 	tk.MustQuery("select * from t2")
