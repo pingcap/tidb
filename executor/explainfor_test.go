@@ -514,13 +514,14 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─IndexJoin_17 1.00 root  inner join, inner:TableReader_13, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
-		`  ├─Selection_44(Build) 0.80 root  not(isnull(test.t2.a))`,
-		`  │ └─Point_Get_43 1.00 root table:t2, index:idx_a(a) `,
-		`  └─TableReader_13(Probe) 0.00 root  data:Selection_12`,
-		`    └─Selection_12 0.00 cop[tikv]  eq(test.t1.a, 1)`,
-		`      └─TableRangeScan_11 1.00 cop[tikv] table:t1 range: decided by [test.t2.a], keep order:false, stats:pseudo`))
+		`Projection_11 0.80 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─IndexJoin_21 0.80 root  inner join, inner:Selection_16, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
+		`  ├─Selection_50(Build) 0.64 root  eq(test.t2.a, 1), not(isnull(test.t2.a))`,
+		`  │ └─Point_Get_51 1.00 root table:t2, index:idx_a(a) `,
+		`  └─Selection_16(Probe) 0.00 root  eq(test.t1.a, 1)`,
+		`    └─TableReader_15 0.00 root  data:Selection_14`,
+		`      └─Selection_14 0.00 cop[tikv]  eq(test.t1.a, 1)`,
+		"        └─TableRangeScan_13 1.00 cop[tikv] table:t1 range: decided by [test.t2.a], keep order:false, stats:pseudo"))
 
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
@@ -530,13 +531,14 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─IndexJoin_17 1.00 root  inner join, inner:TableReader_13, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
-		`  ├─Selection_44(Build) 0.80 root  not(isnull(test.t2.a))`,
-		`  │ └─Point_Get_43 1.00 root table:t2, index:idx_a(a) `,
-		`  └─TableReader_13(Probe) 0.00 root  data:Selection_12`,
-		`    └─Selection_12 0.00 cop[tikv]  eq(test.t1.a, 2)`,
-		`      └─TableRangeScan_11 1.00 cop[tikv] table:t1 range: decided by [test.t2.a], keep order:false, stats:pseudo`))
+		`Projection_11 0.80 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─IndexJoin_21 0.80 root  inner join, inner:Selection_16, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
+		`  ├─Selection_50(Build) 0.64 root  eq(test.t2.a, 2), not(isnull(test.t2.a))`,
+		`  │ └─Point_Get_51 1.00 root table:t2, index:idx_a(a) `,
+		`  └─Selection_16(Probe) 0.00 root  eq(test.t1.a, 2)`,
+		`    └─TableReader_15 0.00 root  data:Selection_14`,
+		`      └─Selection_14 0.00 cop[tikv]  eq(test.t1.a, 2)`,
+		"        └─TableRangeScan_13 1.00 cop[tikv] table:t1 range: decided by [test.t2.a], keep order:false, stats:pseudo"))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
