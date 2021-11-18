@@ -301,6 +301,7 @@ func (s *testInferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"rpad(c_char,   c_int_d, c_binary)", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"rpad(c_char,   c_int_d, c_char  )", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
 
+<<<<<<< HEAD
 		{"from_base64(c_int_d      )", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"from_base64(c_bigint_d   )", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"from_base64(c_float_d    )", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
@@ -317,6 +318,24 @@ func (s *testInferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"from_base64(c_blob_d     )", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"from_base64(c_set        )", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"from_base64(c_enum       )", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
+=======
+		{"from_base64(c_int_d      )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 60, types.UnspecifiedLength},
+		{"from_base64(c_bigint_d   )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 60, types.UnspecifiedLength},
+		{"from_base64(c_float_d    )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"from_base64(c_double_d   )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"from_base64(c_decimal    )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 27, types.UnspecifiedLength},
+		{"from_base64(c_datetime   )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 66, types.UnspecifiedLength},
+		{"from_base64(c_time_d     )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 30, types.UnspecifiedLength},
+		{"from_base64(c_timestamp_d)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 57, types.UnspecifiedLength},
+		{"from_base64(c_char       )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 60, types.UnspecifiedLength},
+		{"from_base64(c_varchar    )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 60, types.UnspecifiedLength},
+		{"from_base64(c_text_d     )", mysql.TypeMediumBlob, charset.CharsetBin, mysql.BinaryFlag, 196605, types.UnspecifiedLength},
+		{"from_base64(c_binary     )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 60, types.UnspecifiedLength},
+		{"from_base64(c_varbinary  )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 60, types.UnspecifiedLength},
+		{"from_base64(c_blob_d     )", mysql.TypeMediumBlob, charset.CharsetBin, mysql.BinaryFlag, 196605, types.UnspecifiedLength},
+		{"from_base64(c_set        )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 15, types.UnspecifiedLength},
+		{"from_base64(c_enum       )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 3, types.UnspecifiedLength},
+>>>>>>> fef05d77d... expression: fix wrong flen when cast decimal to string (#29687)
 
 		{"bin(c_int_d      )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
 		{"bin(c_bigint_d   )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
@@ -408,7 +427,7 @@ func (s *testInferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"reverse(c_bigint_d   )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 20, types.UnspecifiedLength},
 		{"reverse(c_float_d    )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, -1, types.UnspecifiedLength},
 		{"reverse(c_double_d   )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, -1, types.UnspecifiedLength},
-		{"reverse(c_decimal    )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 8, types.UnspecifiedLength},
+		{"reverse(c_decimal    )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 9, types.UnspecifiedLength},
 		{"reverse(c_char       )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 20, types.UnspecifiedLength},
 		{"reverse(c_varchar    )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 20, types.UnspecifiedLength},
 		{"reverse(c_text_d     )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 65535, types.UnspecifiedLength},
