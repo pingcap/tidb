@@ -742,15 +742,18 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 		rFullNames = rightPlan.OutputNames()
 	}
 	if joinNode.Tp == ast.RightJoin {
+		// Make sure lFullSchema means outer full schema and rFullSchema means inner full schema.
 		lFullSchema, rFullSchema = rFullSchema, lFullSchema
 		lFullNames, rFullNames = rFullNames, lFullNames
 	}
 	joinPlan.fullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
-	if joinNode.Tp == ast.LeftJoin {
+
+	// Clear NotNull flag for the inner side schema if it's an outer join.
+	if joinNode.Tp == ast.LeftJoin || joinNode.Tp == ast.RightJoin {
 		resetNotNullFlag(joinPlan.fullSchema, lFullSchema.Len(), joinPlan.fullSchema.Len())
-	} else if joinNode.Tp == ast.RightJoin {
-		resetNotNullFlag(joinPlan.fullSchema, 0, lFullSchema.Len())
 	}
+
+	// Merge sub-plan's fullNames into this join plan, similar to the fullSchema logic above.
 	joinPlan.fullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
 	for _, lName := range lFullNames {
 		name := *lName
