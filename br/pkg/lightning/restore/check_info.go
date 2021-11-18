@@ -757,7 +757,7 @@ func (rc *Controller) checkCSVHeader(ctx context.Context, dbMetas []*mydump.MDDa
 		csvCount     int
 		hasUniqueIdx bool
 	)
-	// only check one table source files for better performance. The checked table is choosed based on following two factor:
+	// only check one table source files for better performance. The checked table is chosen based on following two factor:
 	// 1. contains at least 1 csv source file, 2 is preferable
 	// 2. table schema contains primary key or unique key
 	// if the two factors can't be both satisfied, the first one has a higher priority
