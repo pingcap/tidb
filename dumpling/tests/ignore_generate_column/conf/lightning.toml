@@ -1,0 +1,20 @@
+### tidb-lightning config
+
+[lightning]
+server-mode = false
+level = "error"
+check-requirements = false
+
+[tikv-importer]
+backend="tidb"
+on-duplicate = "error"
+
+[mydumper]
+data-source-dir = "/tmp/dumpling_test_result/sql_res.ignore_generate_column"
+
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+password = ""
+status-port = 10080

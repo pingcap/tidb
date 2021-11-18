@@ -113,8 +113,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTag:
 		s.KVSnapshot.SetResourceGroupTag(val.([]byte))
-	case kv.TxnScope:
-		s.KVSnapshot.SetTxnScope(val.(string))
+	case kv.ReadReplicaScope:
+		s.KVSnapshot.SetReadReplicaScope(val.(string))
 	case kv.SnapInterceptor:
 		s.interceptor = val.(kv.SnapshotInterceptor)
 	}

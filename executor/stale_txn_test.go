@@ -72,7 +72,7 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 	tk.MustExec("use test")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope",
+		failpoint.Enable("tikvclient/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
 		tk.MustExec(testcase.preSQL)
 		tk.MustExec(testcase.sql)
@@ -87,7 +87,7 @@ func (s *testStaleTxnSerialSuite) TestExactStalenessTransaction(c *C) {
 		}
 		tk.MustExec("commit")
 	}
-	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Disable("tikvclient/injectTxnScope")
 }
 
 func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
@@ -275,19 +275,20 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		{
 			name:   "coprocessor read",
 			sql:    "select * from t",
-			assert: "github.com/pingcap/distsql/assertRequestBuilderStalenessOption",
+			assert: "github.com/pingcap/tidb/distsql/assertRequestBuilderReplicaOption",
 		},
 		{
 			name:   "point get read",
 			sql:    "select * from t where id = 1",
-			assert: "github.com/pingcap/tidb/executor/assertPointStalenessOption",
+			assert: "github.com/pingcap/tidb/executor/assertPointReplicaOption",
 		},
 		{
 			name:   "batch point get read",
 			sql:    "select * from t where id in (1,2,3)",
-			assert: "github.com/pingcap/tidb/executor/assertBatchPointStalenessOption",
+			assert: "github.com/pingcap/tidb/executor/assertBatchPointReplicaOption",
 		},
 	}
+	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
 	for _, testcase := range testcases {
 		failpoint.Enable(testcase.assert, `return("sh")`)
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
@@ -301,6 +302,12 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 		tk.MustExec(`begin;`)
 		tk.MustQuery(testcase.sql)
 		tk.MustExec(`commit`)
+		failpoint.Disable(testcase.assert)
+	}
+	// assert follower read closest read
+	for _, testcase := range testcases {
+		failpoint.Enable(testcase.assert, `return("sh")`)
+		tk.MustQuery(testcase.sql)
 		failpoint.Disable(testcase.assert)
 	}
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
@@ -569,10 +576,13 @@ func (s *testStaleTxnSerialSuite) TestSetTransactionReadOnlyAsOf(c *C) {
 }
 
 func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *C) {
+	errMsg1 := ".*only support read-only statement during read-only staleness transactions.*"
+	errMsg2 := ".*select lock hasn't been supported in stale read yet.*"
 	testcases := []struct {
 		name       string
 		sql        string
 		isValidate bool
+		errMsg     string
 	}{
 		{
 			name:       "select statement",
@@ -588,6 +598,7 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 			name:       "explain analyze insert statement",
 			sql:        `explain analyze insert into t (id) values (1);`,
 			isValidate: false,
+			errMsg:     errMsg1,
 		},
 		{
 			name:       "explain analyze select statement",
@@ -598,6 +609,7 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 			name:       "execute insert statement",
 			sql:        `EXECUTE stmt1;`,
 			isValidate: false,
+			errMsg:     errMsg1,
 		},
 		{
 			name:       "execute select statement",
@@ -618,16 +630,19 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 			name:       "insert",
 			sql:        `insert into t (id) values (1);`,
 			isValidate: false,
+			errMsg:     errMsg1,
 		},
 		{
 			name:       "delete",
 			sql:        `delete from t where id =1`,
 			isValidate: false,
+			errMsg:     errMsg1,
 		},
 		{
 			name:       "update",
 			sql:        "update t set id =2 where id =1",
 			isValidate: false,
+			errMsg:     errMsg1,
 		},
 		{
 			name:       "point get",
@@ -653,41 +668,49 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 			name:       "select for update",
 			sql:        "select * from t where id = 1 for update",
 			isValidate: false,
+			errMsg:     errMsg2,
 		},
 		{
 			name:       "select lock in share mode",
 			sql:        "select * from t where id = 1 lock in share mode",
-			isValidate: true,
+			isValidate: false,
+			errMsg:     errMsg2,
 		},
 		{
 			name:       "select for update union statement",
 			sql:        "select * from t for update union select * from t;",
 			isValidate: false,
+			errMsg:     errMsg1,
 		},
 		{
 			name:       "replace statement",
 			sql:        "replace into t(id) values (1)",
 			isValidate: false,
+			errMsg:     errMsg1,
 		},
 		{
 			name:       "load data statement",
 			sql:        "LOAD DATA LOCAL INFILE '/mn/asa.csv' INTO TABLE t FIELDS TERMINATED BY x'2c' ENCLOSED BY b'100010' LINES TERMINATED BY '\r\n' IGNORE 1 LINES (id);",
 			isValidate: false,
+			errMsg:     errMsg1,
 		},
 		{
 			name:       "update multi tables",
 			sql:        "update t,t1 set t.id = 1,t1.id = 2 where t.1 = 2 and t1.id = 3;",
 			isValidate: false,
+			errMsg:     errMsg1,
 		},
 		{
 			name:       "delete multi tables",
 			sql:        "delete t from t1 where t.id = t1.id",
 			isValidate: false,
+			errMsg:     errMsg1,
 		},
 		{
 			name:       "insert select",
 			sql:        "insert into t select * from t1;",
 			isValidate: false,
+			errMsg:     errMsg1,
 		},
 	}
 	tk := testkit.NewTestKit(c, s.store)
@@ -713,7 +736,7 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 		} else {
 			err := tk.ExecToErr(testcase.sql)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Matches, `.*only support read-only statement during read-only staleness transactions.*`)
+			c.Assert(err.Error(), Matches, testcase.errMsg)
 		}
 		tk.MustExec("commit")
 		tk.MustExec("set transaction read only as of timestamp NOW(3);")
@@ -722,8 +745,9 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 		} else {
 			err := tk.ExecToErr(testcase.sql)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Matches, `.*only support read-only statement during read-only staleness transactions.*`)
+			c.Assert(err.Error(), Matches, testcase.errMsg)
 		}
+		// clean the status
 		tk.MustExec("set transaction read only as of timestamp ''")
 	}
 }
@@ -1000,7 +1024,7 @@ func (s *testStaleTxnSerialSuite) TestStaleReadPrepare(c *C) {
 	c.Assert("execute p1", NotNil)
 }
 
-func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
+func (s *testStaleTxnSerialSuite) TestStmtCtxStaleFlag(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1091,4 +1115,133 @@ func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
 		// assert stale read flag should be false after each statement execution
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.IsStaleness, IsFalse)
 	}
+}
+
+func (s *testStaleTxnSerialSuite) TestStaleSessionQuery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	tk.MustExec("use test")
+	tk.MustExec("create table t10 (id int);")
+	tk.MustExec("insert into t10 (id) values (1)")
+	time.Sleep(2 * time.Second)
+	now := time.Now()
+	tk.MustExec(`set @@tidb_read_staleness="-1"`)
+	// query will use stale read
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, now.Unix()-1)), IsNil)
+	c.Assert(tk.MustQuery("select * from t10;").Rows(), HasLen, 1)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/injectNow"), IsNil)
+	// begin transaction won't be affected by read staleness
+	tk.MustExec("begin")
+	tk.MustExec("insert into t10(id) values (2);")
+	tk.MustExec("commit")
+	tk.MustExec("insert into t10(id) values (3);")
+	// query will still use staleness read
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, now.Unix()-1)), IsNil)
+	c.Assert(tk.MustQuery("select * from t10").Rows(), HasLen, 1)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/injectNow"), IsNil)
+	// assert stale read is not exist after empty the variable
+	tk.MustExec(`set @@tidb_read_staleness=""`)
+	c.Assert(tk.MustQuery("select * from t10").Rows(), HasLen, 3)
+}
+
+func (s *testStaleTxnSerialSuite) TestStaleReadCompatibility(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("insert into t(id) values (1)")
+	time.Sleep(2 * time.Second)
+	t1 := time.Now()
+	tk.MustExec("insert into t(id) values (2)")
+	time.Sleep(2 * time.Second)
+	t2 := time.Now()
+	tk.MustExec("insert into t(id) values (3)")
+	// assert select as of timestamp won't work after set transaction read only as of timestamp
+	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t1.Format("2006-1-2 15:04:05")))
+	err := tk.ExecToErr(fmt.Sprintf("select * from t as of timestamp '%s';", t1.Format("2006-1-2 15:04:05")))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*invalid as of timestamp: can't use select as of while already set transaction as of.*")
+	// assert set transaction read only as of timestamp is consumed
+	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 3)
+	// enable tidb_read_staleness
+	tk.MustExec("set @@tidb_read_staleness='-1'")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, t1.Unix())), IsNil)
+	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 1)
+	// assert select as of timestamp during tidb_read_staleness
+	c.Assert(tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s'", t2.Format("2006-1-2 15:04:05"))).Rows(), HasLen, 2)
+	// assert set transaction as of timestamp during tidb_read_staleness
+	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t2.Format("2006-1-2 15:04:05")))
+	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 2)
+
+	// assert begin stale transaction during tidb_read_staleness
+	tk.MustExec(fmt.Sprintf("start transaction read only as of timestamp '%v'", t2.Format("2006-1-2 15:04:05")))
+	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 2)
+	tk.MustExec("commit")
+
+	// assert session query still is affected by tidb_read_staleness
+	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 1)
+
+	// disable tidb_read_staleness
+	tk.MustExec("set @@tidb_read_staleness=''")
+	c.Assert(tk.MustQuery("select * from t;").Rows(), HasLen, 3)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/injectNow"), IsNil)
+}
+
+func (s *testStaleTxnSerialSuite) TestStaleReadNoExtraTSORequest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int);")
+	time.Sleep(3 * time.Second)
+	// statement stale read
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`), IsNil)
+	tk.MustQuery("select * from t as of timestamp NOW() - INTERVAL 2 SECOND")
+	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
+
+	// set and statement stale read
+	tk.MustExec("set transaction read only as of timestamp NOW() - INTERVAL 2 SECOND")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`), IsNil)
+	tk.MustQuery("select * from t")
+	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
+
+	// stale read transaction
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`), IsNil)
+	tk.MustExec("start transaction read only as of timestamp NOW() - INTERVAL 2 SECOND")
+	tk.MustQuery("select * from t")
+	tk.MustExec("commit")
+	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
+
+	// set and stale read transaction
+	tk.MustExec("set transaction read only as of timestamp NOW() - INTERVAL 2 SECOND")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`), IsNil)
+	tk.MustExec("begin")
+	tk.MustQuery("select * from t")
+	tk.MustExec("commit")
+	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
+
+	// use tidb_read_staleness
+	tk.MustExec(`set @@tidb_read_staleness='-1'`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/assertTSONotRequest", `return(true)`), IsNil)
+	tk.MustQuery("select * from t")
+	failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest")
 }

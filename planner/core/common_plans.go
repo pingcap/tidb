@@ -22,15 +22,15 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -183,16 +183,16 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name          string
-	UsingVars     []expression.Expression
-	PrepareParams []types.Datum
-	ExecID        uint32
-	SnapshotTS    uint64
-	IsStaleness   bool
-	TxnScope      string
-	Stmt          ast.StmtNode
-	StmtType      string
-	Plan          Plan
+	Name             string
+	UsingVars        []expression.Expression
+	PrepareParams    []types.Datum
+	ExecID           uint32
+	SnapshotTS       uint64
+	IsStaleness      bool
+	ReadReplicaScope string
+	Stmt             ast.StmtNode
+	StmtType         string
+	Plan             Plan
 }
 
 // Check if result of GetVar expr is BinaryLiteral
@@ -263,7 +263,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			vars.PreparedParams = append(vars.PreparedParams, val)
 		}
 	}
-	snapshotTS, txnScope, isStaleness, err := e.handleExecuteBuilderOption(sctx, preparedObj)
+	snapshotTS, readReplicaScope, isStaleness, err := e.handleExecuteBuilderOption(sctx, preparedObj)
 	if err != nil {
 		return err
 	}
@@ -299,16 +299,16 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		return err
 	}
 	e.SnapshotTS = snapshotTS
-	e.TxnScope = txnScope
+	e.ReadReplicaScope = readReplicaScope
 	e.IsStaleness = isStaleness
 	e.Stmt = prepared.Stmt
 	return nil
 }
 
 func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
-	preparedObj *CachedPrepareStmt) (snapshotTS uint64, txnScope string, isStaleness bool, err error) {
+	preparedObj *CachedPrepareStmt) (snapshotTS uint64, readReplicaScope string, isStaleness bool, err error) {
 	snapshotTS = 0
-	txnScope = oracle.GlobalTxnScope
+	readReplicaScope = oracle.GlobalTxnScope
 	isStaleness = false
 	err = nil
 	vars := sctx.GetSessionVars()
@@ -325,7 +325,7 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 		}
 		snapshotTS = vars.TxnReadTS.UseTxnReadTS()
 		isStaleness = true
-		txnScope = config.GetTxnScopeFromConfig()
+		readReplicaScope = config.GetTxnScopeFromConfig()
 		return
 	}
 	// It means we meet following case:
@@ -346,7 +346,7 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 			return
 		}
 		isStaleness = true
-		txnScope = config.GetTxnScopeFromConfig()
+		readReplicaScope = config.GetTxnScopeFromConfig()
 		return
 	}
 	// It means we meet following case:
@@ -356,7 +356,7 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 	if vars.InTxn() && vars.TxnCtx.IsStaleness {
 		isStaleness = true
 		snapshotTS = vars.TxnCtx.StartTS
-		txnScope = vars.TxnCtx.TxnScope
+		readReplicaScope = vars.TxnCtx.TxnScope
 		return
 	}
 	return
@@ -365,7 +365,8 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
 	preparedObj *CachedPrepareStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, preparedObj.VisitInfos); err != nil {
+		visitInfo := VisitInfo4PrivCheck(is, preparedObj.PreparedAst.Stmt, preparedObj.VisitInfos)
+		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
 			return err
 		}
 	}
@@ -480,7 +481,7 @@ REBUILD:
 	e.names = names
 	e.Plan = p
 	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache && !stmtCtx.OptimDependOnMutableConst {
+	if !isTableDual && prepared.UseCache && !stmtCtx.MaybeOverOptimized4PlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
@@ -515,7 +516,7 @@ REBUILD:
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
-	if sctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst {
+	if sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
 		return nil
 	}
 	var (
@@ -547,52 +548,42 @@ func (e *Execute) rebuildRange(p Plan) error {
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
 	switch x := p.(type) {
-	case *PhysicalTableReader:
-		ts := x.TablePlans[0].(*PhysicalTableScan)
-		if ts.Table.IsCommonHandle {
-			pk := tables.FindPrimaryIndex(ts.Table)
-			pkCols := make([]*expression.Column, 0, len(pk.Columns))
-			pkColsLen := make([]int, 0, len(pk.Columns))
-			for _, colInfo := range pk.Columns {
-				if pkCol := expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]); pkCol != nil {
-					pkCols = append(pkCols, pkCol)
-					pkColsLen = append(pkColsLen, colInfo.Length)
-				}
-			}
-			if len(pkCols) > 0 {
-				res, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), ts.AccessCondition, pkCols, pkColsLen)
-				if err != nil {
-					return err
-				}
-				ts.Ranges = res.Ranges
-			} else {
-				ts.Ranges = ranger.FullRange()
-			}
-		} else {
-			var pkCol *expression.Column
-			if ts.Table.PKIsHandle {
-				if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-					pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
-				}
-			}
-			if pkCol != nil {
-				ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
-				if err != nil {
-					return err
-				}
-			} else {
-				ts.Ranges = ranger.FullIntRange(false)
+	case *PhysicalIndexHashJoin:
+		return e.rebuildRange(&x.PhysicalIndexJoin)
+	case *PhysicalIndexMergeJoin:
+		return e.rebuildRange(&x.PhysicalIndexJoin)
+	case *PhysicalIndexJoin:
+		if err := x.Ranges.Rebuild(); err != nil {
+			return err
+		}
+		for _, child := range x.Children() {
+			err = e.rebuildRange(child)
+			if err != nil {
+				return err
 			}
 		}
+	case *PhysicalTableScan:
+		err = e.buildRangeForTableScan(sctx, x)
+		if err != nil {
+			return err
+		}
+	case *PhysicalIndexScan:
+		err = e.buildRangeForIndexScan(sctx, x)
+		if err != nil {
+			return err
+		}
+	case *PhysicalTableReader:
+		err = e.rebuildRange(x.TablePlans[0])
+		if err != nil {
+			return err
+		}
 	case *PhysicalIndexReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
+		err = e.rebuildRange(x.IndexPlans[0])
 		if err != nil {
 			return err
 		}
 	case *PhysicalIndexLookUpReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
+		err = e.rebuildRange(x.IndexPlans[0])
 		if err != nil {
 			return err
 		}
@@ -695,6 +686,16 @@ func (e *Execute) rebuildRange(p Plan) error {
 				}
 			}
 		}
+	case *PhysicalIndexMergeReader:
+		indexMerge := p.(*PhysicalIndexMergeReader)
+		for _, partialPlans := range indexMerge.PartialPlans {
+			err = e.rebuildRange(partialPlans[0])
+			if err != nil {
+				return err
+			}
+		}
+		// We don't need to handle the indexMerge.TablePlans, because the tablePlans
+		// only can be (Selection) + TableRowIDScan. There have no range need to rebuild.
 	case PhysicalPlan:
 		for _, child := range x.Children() {
 			err = e.rebuildRange(child)
@@ -718,15 +719,71 @@ func (e *Execute) rebuildRange(p Plan) error {
 	return nil
 }
 
-func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
+func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err error) {
+	if ts.Table.IsCommonHandle {
+		pk := tables.FindPrimaryIndex(ts.Table)
+		pkCols := make([]*expression.Column, 0, len(pk.Columns))
+		pkColsLen := make([]int, 0, len(pk.Columns))
+		for _, colInfo := range pk.Columns {
+			if pkCol := expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]); pkCol != nil {
+				pkCols = append(pkCols, pkCol)
+				// We need to consider the prefix index.
+				// For example: when we have 'a varchar(50), index idx(a(10))'
+				// So we will get 'colInfo.Length = 50' and 'pkCol.RetType.Flen = 10'.
+				// In 'hasPrefix' function from 'util/ranger/ranger.go' file,
+				// we use 'columnLength == types.UnspecifiedLength' to check whether we have prefix index.
+				if colInfo.Length != types.UnspecifiedLength && colInfo.Length == pkCol.RetType.Flen {
+					pkColsLen = append(pkColsLen, types.UnspecifiedLength)
+				} else {
+					pkColsLen = append(pkColsLen, colInfo.Length)
+				}
+			}
+		}
+		if len(pkCols) > 0 {
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, ts.AccessCondition, pkCols, pkColsLen)
+			if err != nil {
+				return err
+			}
+			if len(res.AccessConds) != len(ts.AccessCondition) {
+				return errors.New("rebuild range for cached plan failed")
+			}
+			ts.Ranges = res.Ranges
+		} else {
+			ts.Ranges = ranger.FullRange()
+		}
+	} else {
+		var pkCol *expression.Column
+		if ts.Table.PKIsHandle {
+			if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
+				pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
+			}
+		}
+		if pkCol != nil {
+			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sctx.GetSessionVars().StmtCtx, pkCol.RetType)
+			if err != nil {
+				return err
+			}
+		} else {
+			ts.Ranges = ranger.FullIntRange(false)
+		}
+	}
+	return
+}
+
+func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err error) {
 	if len(is.IdxCols) == 0 {
-		return ranger.FullRange(), nil
+		is.Ranges = ranger.FullRange()
+		return
 	}
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return res.Ranges, nil
+	if len(res.AccessConds) != len(is.AccessCondition) {
+		return errors.New("rebuild range for cached plan failed")
+	}
+	is.Ranges = res.Ranges
+	return
 }
 
 // Deallocate represents deallocate plan.
@@ -938,8 +995,8 @@ type LoadStats struct {
 	Path string
 }
 
-// PlanRecreatorSingle represents a plan recreator plan.
-type PlanRecreatorSingle struct {
+// PlanReplayer represents a plan replayer plan.
+type PlanReplayer struct {
 	baseSchemaProducer
 	ExecStmt ast.StmtNode
 	Analyze  bool
@@ -1429,8 +1486,16 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		// If the PointGetPlan needs to read data using unique index (double read), we
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
 		// and the data and index would be inconsistent!
-		isPointGet := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
-		return isPointGet, nil
+		// If the PointGetPlan needs to read data from Cache Table, we can't use max uint64,
+		// because math.MaxUint64 always make cacheData invalid.
+		noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
+		if !noSecondRead {
+			return false, nil
+		}
+		if v.TblInfo != nil && (v.TblInfo.TableCacheStatusType != model.TableCacheStatusDisable) {
+			return false, nil
+		}
+		return true, nil
 	default:
 		return false, nil
 	}
