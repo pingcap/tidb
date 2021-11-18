@@ -1100,6 +1100,8 @@ type SelectStmt struct {
 	// Lists is filled only when Kind == SelectStmtKindValues
 	Lists []*RowExpr
 	With  *WithClause
+	// AsViewSchema indicates if this stmt provides the schema for the view. It is only used when creating the view
+	AsViewSchema bool
 }
 
 func (*SelectStmt) resultSet() {}
