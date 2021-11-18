@@ -122,19 +122,27 @@ func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) (bool, err
 	return false, nil
 }
 
-func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTable(c *C) {
+
+func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
-	tk.MustExec("alter table t set tiflash replica 1")
-	tk.MustExec("ALTER TABLE t ADD PARTITION (PARTITION pn VALUES LESS THAN (40))")
-
-	time.Sleep(ddl.PollTiFlashInterval * 5)
-	// Should get schema right now
+	time.Sleep(ddl.PollTiFlashInterval * 1)
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	replica := tb.Meta().TiFlashReplica
+	c.Assert(replica, IsNil)
+
+	tk.MustExec("alter table t set tiflash replica 1")
+	lessThan := "40"
+	tk.MustExec(fmt.Sprintf("ALTER TABLE t ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
+
+	time.Sleep(ddl.PollTiFlashInterval * 5)
+	// Should get schema again
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	replica = tb.Meta().TiFlashReplica
 	c.Assert(replica, NotNil)
 	c.Assert(replica.Available, Equals, true)
 	c.Assert(replica.Count, Equals, uint64(1))
@@ -144,13 +152,51 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTable(c *C) {
 	c.Assert(pi, NotNil)
 	for _, p := range pi.Definitions {
 		c.Assert(tb.Meta().TiFlashReplica.IsPartitionAvailable(p.ID), Equals, true)
-		if len(p.LessThan) == 1 && p.LessThan[0] == "40" {
+		if len(p.LessThan) == 1 && p.LessThan[0] == lessThan {
 			table, ok := s.tiflash.SyncStatus[int(p.ID)]
 			c.Assert(ok, Equals, true)
 			c.Assert(table.Accel, Equals, true)
 		}
 	}
 	c.Assert(len(pi.AddingDefinitions), Equals, 0)
+}
+
+// When block add partition, new partition shall be available even we break `UpdateTableReplicaInfo`
+func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	// Make sure is available
+	time.Sleep(ddl.PollTiFlashInterval * 4)
+	// Should get schema right now
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	replica := tb.Meta().TiFlashReplica
+	c.Assert(replica, NotNil)
+	c.Assert(replica.Available, Equals, true)
+	c.Assert(replica.Count, Equals, uint64(1))
+	c.Assert(replica.LocationLabels, DeepEquals, []string{})
+
+	lessThan := "40"
+	tk.MustExec(fmt.Sprintf("ALTER TABLE t ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
+
+	time.Sleep(ddl.PollTiFlashInterval * 4)
+
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	pi := tb.Meta().GetPartitionInfo()
+	c.Assert(pi, NotNil)
+	for _, p := range pi.Definitions {
+		c.Assert(tb.Meta().TiFlashReplica.IsPartitionAvailable(p.ID), Equals, true)
+		if len(p.LessThan) == 1 && p.LessThan[0] == lessThan {
+			table, ok := s.tiflash.SyncStatus[int(p.ID)]
+			c.Assert(ok, Equals, true)
+			c.Assert(table.Accel, Equals, true)
+		}
+	}
+	c.Assert(len(pi.AddingDefinitions), Equals, 0)
+	tk.MustExec("drop table if exists t")
 }
 
 // TiFlash Table shall be eventually available.
@@ -247,6 +293,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashMultipleDDL(c *C) {
 	goCtx := context.Background()
 	ddlLease := 80 * time.Millisecond
 
+	fmt.Printf("!!!! get etcd client %p \n", s.dom.GetEtcdClient())
 	newDDL := ddl.NewDDL(
 		goCtx,
 		ddl.WithEtcdClient(s.dom.GetEtcdClient()),
@@ -263,7 +310,11 @@ func (s *tiflashDDLTestSuite) TestTiFlashMultipleDDL(c *C) {
 	newDDL.Start(sysCtxPool)
 
 	for i := 0; i < 20; i++ {
-		fmt.Printf("!!!! O1 %v, o2 %v\n", newDDL.OwnerManager().IsOwner(), s.dom.DDL().OwnerManager().IsOwner())
+		a1, _ := newDDL.OwnerManager().GetOwnerID(goCtx)
+		a2, _ := s.dom.DDL().OwnerManager().GetOwnerID(goCtx)
+		fmt.Printf("!!!! O1 %v id %v oid %v, O2 %v id %v oid %v\n",
+			newDDL.OwnerManager().IsOwner(), newDDL.OwnerManager().ID(), a1,
+			s.dom.DDL().OwnerManager().IsOwner(), s.dom.DDL().OwnerManager().ID(), a2)
 		//c.Assert(newDDL.OwnerManager().IsOwner() && s.dom.DDL().OwnerManager().IsOwner(), Equals, false)
 		time.Sleep(20 * time.Millisecond)
 	}

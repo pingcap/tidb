@@ -4761,6 +4761,9 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 		}
 	}
 	tbInfo := tb.Meta()
+	//if physicalID > 61 {
+	//	return nil
+	//}
 	if tbInfo.TiFlashReplica == nil || (tbInfo.ID == physicalID && tbInfo.TiFlashReplica.Available == available) ||
 		(tbInfo.ID != physicalID && available == tbInfo.TiFlashReplica.IsPartitionAvailable(physicalID)) {
 		return nil
