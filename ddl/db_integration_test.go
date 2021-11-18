@@ -3635,6 +3635,8 @@ func (s *testIntegrationSuite3) TestIssue29326(c *C) {
 	defer tk.MustExec("drop table t2")
 
 	tk.MustExec("drop view if exists v1")
+	defer tk.MustExec("drop view if exists v1")
+
 	tk.MustExec("create view v1 as select 1,1")
 	rs, err := tk.Exec("select * from v1")
 	c.Assert(err, IsNil)
