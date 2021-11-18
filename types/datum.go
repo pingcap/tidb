@@ -549,12 +549,12 @@ func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
 	}
 }
 
-// CompareDatumNew compares datum to another datum.
+// Compare compares datum to another datum.
 // Notes: don't rely on datum.collation to get the collator, it's tend to buggy.
 // TODO: use this function to replace CompareDatum. After we remove all of usage of CompareDatum, we can rename this function back to CompareDatum.
-func (d *Datum) CompareDatumNew(sc *stmtctx.StatementContext, ad *Datum, comparer collate.Collator) (int, error) {
+func (d *Datum) Compare(sc *stmtctx.StatementContext, ad *Datum, comparer collate.Collator) (int, error) {
 	if d.k == KindMysqlJSON && ad.k != KindMysqlJSON {
-		cmp, err := ad.CompareDatumNew(sc, d, comparer)
+		cmp, err := ad.Compare(sc, d, comparer)
 		return cmp * -1, errors.Trace(err)
 	}
 	switch ad.k {
@@ -605,7 +605,7 @@ func (d *Datum) CompareDatumNew(sc *stmtctx.StatementContext, ad *Datum, compare
 }
 
 // CompareDatum compares datum to another datum.
-// Deprecated: will be replaced with CompareDatumNew.
+// Deprecated: will be replaced with Compare.
 // TODO: return error properly.
 func (d *Datum) CompareDatum(sc *stmtctx.StatementContext, ad *Datum) (int, error) {
 	if d.k == KindMysqlJSON && ad.k != KindMysqlJSON {
