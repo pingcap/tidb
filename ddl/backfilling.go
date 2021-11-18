@@ -425,6 +425,12 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 }
 
 func tryDecodeToHandleString(key kv.Key) string {
+	defer func() {
+		r := recover()
+		logutil.BgLogger().Warn("tryDecodeToHandleString panic",
+			zap.Any("recover()", r),
+			zap.Binary("key", key))
+	}()
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		recordPrefixIdx := bytes.Index(key, []byte("_r"))
