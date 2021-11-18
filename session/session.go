@@ -1115,6 +1115,10 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 			return sv.Value, nil
 		}
 	}
+	// It might have been written from an earlier TiDB version, so we should run the validation function
+	// To normalize the value to be safe for this version of TiDB. This also happens for session scoped
+	// variables in loadCommonGlobalVariablesIfNeeded -> SetSystemVarWithRelaxedValidation
+	sysVar = sv.ValidateWithRelaxedValidation(s.GetSessionVars(), sysVar, variable.ScopeGlobal)
 	return sysVar, nil
 }
 
