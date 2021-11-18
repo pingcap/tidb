@@ -116,6 +116,25 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+
+		// modify placement settings
+		for _, def := range addingDefinitions {
+			if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, def.PlacementPolicyRef); err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+
+		bundles, err := alterTablePartitionBundles(t, tblInfo, addingDefinitions)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		if err = infosync.PutRuleBundles(context.TODO(), bundles); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
@@ -153,28 +172,6 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			return ver, errors.Trace(err)
 		}
 
-		var bundles []*placement.Bundle
-		// bundle for table should be recomputed because it includes some default configs for partitions
-		tblBundle, err := newBundleFromTblInfo(t, job, tblInfo)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		if tblBundle != nil {
-			bundles = append(bundles, tblBundle)
-		}
-
-		partitionBundles, err := newBundlesFromPartitionDefs(t, job, addingDefinitions)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		bundles = append(bundles, partitionBundles...)
-
-		if err = infosync.PutRuleBundles(context.TODO(), bundles); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
-
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddTablePartition, TableInfo: tblInfo, PartInfo: partInfo})
@@ -183,6 +180,28 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
+	var bundles []*placement.Bundle
+
+	// bundle for table should be recomputed because it includes some default configs for partitions
+	tblBundle, err := placement.NewTableBundle(t, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if tblBundle != nil {
+		bundles = append(bundles, tblBundle)
+	}
+
+	partitionBundles, err := placement.NewPartitionListBundles(t, addingDefinitions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bundles = append(bundles, partitionBundles...)
+	return bundles, nil
 }
 
 // updatePartitionInfo merge `addingDefinitions` into `Definitions` in the tableInfo.
@@ -204,15 +223,19 @@ func updateAddingPartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *mode
 }
 
 // rollbackAddingPartitionInfo remove the `addingDefinitions` in the tableInfo.
-func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) ([]int64, []string) {
+func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) ([]int64, []string, []*placement.Bundle) {
 	physicalTableIDs := make([]int64, 0, len(tblInfo.Partition.AddingDefinitions))
 	partNames := make([]string, 0, len(tblInfo.Partition.AddingDefinitions))
+	rollbackBundles := make([]*placement.Bundle, 0, len(tblInfo.Partition.AddingDefinitions))
 	for _, one := range tblInfo.Partition.AddingDefinitions {
 		physicalTableIDs = append(physicalTableIDs, one.ID)
 		partNames = append(partNames, one.Name.L)
+		if one.PlacementPolicyRef != nil || one.DirectPlacementOpts != nil {
+			rollbackBundles = append(rollbackBundles, placement.NewBundle(one.ID))
+		}
 	}
 	tblInfo.Partition.AddingDefinitions = nil
-	return physicalTableIDs, partNames
+	return physicalTableIDs, partNames, rollbackBundles
 }
 
 // checkAddPartitionValue values less than value must be strictly increasing for each partition.
@@ -990,18 +1013,6 @@ func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 	return nt
 }
 
-func dropRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
-	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
-	for _, ID := range physicalTableIDs {
-		oldBundle, ok := d.infoCache.GetLatest().BundleByName(placement.GroupID(ID))
-		if ok && !oldBundle.IsEmpty() {
-			bundles = append(bundles, placement.NewBundle(ID))
-		}
-	}
-	err := infosync.PutRuleBundles(context.TODO(), bundles)
-	return err
-}
-
 func dropLabelRules(d *ddlCtx, schemaName, tableName string, partNames []string) error {
 	deleteRules := make([]string, 0, len(partNames))
 	for _, partName := range partNames {
@@ -1023,12 +1034,10 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	var physicalTableIDs []int64
 	if job.Type == model.ActionAddTablePartition {
-		var pNames []string
 		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
-		physicalTableIDs, pNames = rollbackAddingPartitionInfo(tblInfo)
-		err = dropRuleBundles(d, physicalTableIDs)
+		physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
+		err = infosync.PutRuleBundles(context.TODO(), rollbackBundles)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
@@ -1047,6 +1056,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		return ver, nil
 	}
 
+	var physicalTableIDs []int64
 	if job.State == model.JobStateRunning && job.SchemaState == model.StateNone {
 		// Manually set first state.
 		job.SchemaState = model.StatePublic
@@ -1063,11 +1073,6 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			return ver, errors.Trace(err)
 		}
 		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
-		err = dropRuleBundles(d, physicalTableIDs)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
 		err = dropLabelRules(d, job.SchemaName, tblInfo.Name.L, partNames)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -1194,7 +1199,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
-	bundles, err := newBundlesFromPartitionDefs(t, job, newPartitions)
+	bundles, err := placement.NewPartitionListBundles(t, newPartitions)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1457,7 +1462,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
 	bundles := make([]*placement.Bundle, 0, 3)
 
-	ptBundle, err := newBundleFromTblInfo(t, job, pt)
+	ptBundle, err := placement.NewTableBundle(t, pt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1465,7 +1470,7 @@ func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.Ta
 		bundles = append(bundles, ptBundle)
 	}
 
-	parBundle, err := newBundleFromPartitionDef(t, job, *newPar)
+	parBundle, err := placement.NewPartitionBundle(t, *newPar)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1473,7 +1478,7 @@ func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.Ta
 		bundles = append(bundles, parBundle)
 	}
 
-	ntBundle, err := newBundleFromTblInfo(t, job, nt)
+	ntBundle, err := placement.NewTableBundle(t, nt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
