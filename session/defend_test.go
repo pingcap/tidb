@@ -55,3 +55,32 @@ func TestCheckInTxn(t *testing.T) {
 	tk.MustExec("commit")
 	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/table/tables/printMutation"))
 }
+
+func TestOncall4058(t *testing.T) {
+	store, close := testkit.CreateMockStore(t)
+	defer close()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec("set global tidb_enable_mutation_checker = 1")
+	tk.MustExec("set tidb_enable_mutation_checker = 1")
+	tk.MustExec("set tidb_txn_mode='optimistic';")
+	tk.MustExec("set tidb_disable_txn_auto_retry=false;")
+
+	tk.MustExec("create table t(a double key auto_increment, b int);")
+	tk.MustExec("insert into t values (146576794, 1);")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t(b) select 1; ")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("begin")
+	tk2.MustExec("insert into t values (146576795, 1)")
+	tk2.MustExec("insert into t values (146576796, 1)")
+	tk2.MustExec("commit")
+
+	// prevent commit
+	err := tk.ExecToErr("commit")
+	require.NotNil(t, err)
+	tk.MustExec("select * from t")
+}
