@@ -181,7 +181,7 @@ func TestIndexRangesToKVRanges(t *testing.T) {
 		},
 	}
 
-	actual, err := IndexRangesToKVRanges(new(stmtctx.StatementContext), 12, 15, ranges, nil, nil)
+	actual, err := IndexRangesToKVRanges(new(stmtctx.StatementContext), 12, 15, ranges, nil)
 	require.NoError(t, err)
 	for i := range actual {
 		require.Equal(t, expect[i], actual[i])
@@ -612,7 +612,7 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 		},
 	}
 	fb := newTestFb()
-	actual, err := IndexRangesToKVRanges(new(stmtctx.StatementContext), 0, 0, ranges, fb, nil)
+	actual, err := IndexRangesToKVRanges(new(stmtctx.StatementContext), 0, 0, ranges, fb)
 	require.NoError(t, err)
 	expect := []kv.KeyRange{
 		{

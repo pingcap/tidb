@@ -93,7 +93,7 @@ func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.R
 // "ranges" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = IndexRangesToKVRanges(sc, tid, idxID, ranges, nil, nil)
+		builder.Request.KeyRanges, builder.err = IndexRangesToKVRanges(sc, tid, idxID, ranges, nil)
 	}
 	return builder
 }
@@ -102,7 +102,7 @@ func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid,
 // "ranges" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetIndexRangesForTables(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = IndexRangesToKVRangesForTables(sc, tids, idxID, ranges, nil, nil)
+		builder.Request.KeyRanges, builder.err = IndexRangesToKVRangesForTables(sc, tids, idxID, ranges, nil)
 	}
 	return builder
 }
@@ -551,12 +551,24 @@ func PartitionHandlesToKVRanges(handles []kv.Handle) []kv.KeyRange {
 }
 
 // IndexRangesToKVRanges converts index ranges to "KeyRange".
-func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback, interruptSignal *atomic.Value) ([]kv.KeyRange, error) {
-	return IndexRangesToKVRangesForTables(sc, []int64{tid}, idxID, ranges, fb, interruptSignal)
+func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
+	return IndexRangesToKVRangesWithInterruptSignal(sc, tid, idxID, ranges, fb, nil)
+}
+
+// IndexRangesToKVRangesWithInterruptSignal converts index ranges to "KeyRange".
+// The process can be interrupted by set `interruptSignal` to true.
+func IndexRangesToKVRangesWithInterruptSignal(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback, interruptSignal *atomic.Value) ([]kv.KeyRange, error) {
+	return indexRangesToKVRangesForTablesWithInterruptSignal(sc, []int64{tid}, idxID, ranges, fb, interruptSignal)
 }
 
 // IndexRangesToKVRangesForTables converts indexes ranges to "KeyRange".
-func IndexRangesToKVRangesForTables(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback, interruptSignal *atomic.Value) ([]kv.KeyRange, error) {
+func IndexRangesToKVRangesForTables(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
+	return indexRangesToKVRangesForTablesWithInterruptSignal(sc, tids, idxID, ranges, fb, nil)
+}
+
+// IndexRangesToKVRangesForTablesWithInterruptSignal converts indexes ranges to "KeyRange".
+// The process can be interrupted by set `interruptSignal` to true.
+func indexRangesToKVRangesForTablesWithInterruptSignal(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback, interruptSignal *atomic.Value) ([]kv.KeyRange, error) {
 	if fb == nil || fb.Hist == nil {
 		return indexRangesToKVWithoutSplit(sc, tids, idxID, ranges, interruptSignal)
 	}

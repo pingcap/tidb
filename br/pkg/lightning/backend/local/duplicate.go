@@ -541,7 +541,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 		ranges := ranger.FullRange()
 		var keysRanges []tidbkv.KeyRange
 		for _, id := range tableIDs {
-			partitionKeysRanges, err := distsql.IndexRangesToKVRanges(nil, id, indexInfo.ID, ranges, nil, nil)
+			partitionKeysRanges, err := distsql.IndexRangesToKVRanges(nil, id, indexInfo.ID, ranges, nil)
 			if err != nil {
 				return false, err
 			}
@@ -806,7 +806,7 @@ func buildTableRequests(tableID int64, isCommonHandle bool) ([]*DuplicateRequest
 
 func buildIndexRequests(tableID int64, indexInfo *model.IndexInfo) ([]*DuplicateRequest, error) {
 	ranges := ranger.FullRange()
-	keysRanges, err := distsql.IndexRangesToKVRanges(nil, tableID, indexInfo.ID, ranges, nil, nil)
+	keysRanges, err := distsql.IndexRangesToKVRanges(nil, tableID, indexInfo.ID, ranges, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
