@@ -780,6 +780,83 @@ func (s *testSerialSuite) TestIssue28782(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
+func (s *testSerialSuite) TestIssue29850(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+
+	tk.MustExec(`set tidb_enable_clustered_index=on`)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE customer (
+	  c_id int(11) NOT NULL,
+	  c_d_id int(11) NOT NULL,
+	  c_first varchar(16) DEFAULT NULL,
+	  c_w_id int(11) NOT NULL,
+	  c_last varchar(16) DEFAULT NULL,
+	  c_credit char(2) DEFAULT NULL,
+	  c_discount decimal(4,4) DEFAULT NULL,
+	  PRIMARY KEY (c_w_id,c_d_id,c_id),
+	  KEY idx_customer (c_w_id,c_d_id,c_last,c_first))`)
+	tk.MustExec(`CREATE TABLE warehouse (
+	  w_id int(11) NOT NULL,
+	  w_tax decimal(4,4) DEFAULT NULL,
+	  PRIMARY KEY (w_id))`)
+	tk.MustExec(`prepare stmt from 'SELECT c_discount, c_last, c_credit, w_tax
+		FROM customer, warehouse
+		WHERE w_id = ? AND c_w_id = w_id AND c_d_id = ? AND c_id = ?'`)
+	tk.MustExec(`set @w_id=1262`)
+	tk.MustExec(`set @c_d_id=7`)
+	tk.MustExec(`set @c_id=1549`)
+	tk.MustQuery(`execute stmt using @w_id, @c_d_id, @c_id`).Check(testkit.Rows())
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use PointGet
+		`Projection_7 0.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
+		`└─MergeJoin_8 0.00 root  inner join, left key:test.customer.c_w_id, right key:test.warehouse.w_id`,
+		`  ├─Point_Get_34(Build) 1.00 root table:warehouse handle:1262`,
+		`  └─Point_Get_33(Probe) 1.00 root table:customer, clustered index:PRIMARY(c_w_id, c_d_id, c_id) `))
+	tk.MustQuery(`execute stmt using @w_id, @c_d_id, @c_id`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the cached plan
+
+	tk.MustExec(`create table t (a int primary key)`)
+	tk.MustExec(`insert into t values (1), (2)`)
+	tk.MustExec(`prepare stmt from 'select * from t where a>=? and a<=?'`)
+	tk.MustExec(`set @a1=1, @a2=2`)
+	tk.MustQuery(`execute stmt using @a1, @a1`).Check(testkit.Rows("1"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a range condition
+		`Selection_7 1.00 root  ge(test.t.a, 1), le(test.t.a, 1)`,
+		`└─TableReader_6 1.00 root  data:TableRangeScan_5`,
+		`  └─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`prepare stmt from 'select * from t where a=? or a=?'`)
+	tk.MustQuery(`execute stmt using @a1, @a1`).Check(testkit.Rows("1"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // cannot use PointGet since it contains a or condition
+		`Selection_7 1.00 root  or(eq(test.t.a, 1), eq(test.t.a, 1))`,
+		`└─TableReader_6 1.00 root  data:TableRangeScan_5`,
+		`  └─TableRangeScan_5 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`))
+	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
+
+}
+
 func (s *testSerialSuite) TestIssue29101(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -821,10 +898,7 @@ func (s *testSerialSuite) TestIssue29101(c *C) {
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use IndexJoin
 		`Projection_6 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
 		`└─IndexJoin_14 1.00 root  inner join, inner:TableReader_10, outer key:test.customer.c_w_id, inner key:test.warehouse.w_id, equal cond:eq(test.customer.c_w_id, test.warehouse.w_id)`,
-		`  ├─Selection_36(Build) 1.00 root  eq(test.customer.c_d_id, 7), eq(test.customer.c_id, 158), eq(test.customer.c_w_id, 936)`,
-		`  │ └─IndexLookUp_35 1.00 root  `,
-		`  │   ├─IndexRangeScan_33(Build) 1.00 cop[tikv] table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) range:[936 7 158,936 7 158], keep order:false, stats:pseudo`,
-		`  │   └─TableRowIDScan_34(Probe) 1.00 cop[tikv] table:customer keep order:false, stats:pseudo`,
+		`  ├─Point_Get_33(Build) 1.00 root table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) `,
 		`  └─TableReader_10(Probe) 0.00 root  data:Selection_9`,
 		`    └─Selection_9 0.00 cop[tikv]  eq(test.warehouse.w_id, 936)`,
 		`      └─TableRangeScan_8 1.00 cop[tikv] table:warehouse range: decided by [test.customer.c_w_id], keep order:false, stats:pseudo`))

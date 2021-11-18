@@ -34,15 +34,16 @@ var unRecoverableTable = map[string]struct{}{
 	"global_variables": {},
 
 	// all user related tables cannot be recovered for now.
-	"columns_priv":  {},
-	"db":            {},
-	"default_roles": {},
-	"global_grants": {},
-	"global_priv":   {},
-	"role_edges":    {},
-	"tables_priv":   {},
-	"user":          {},
-
+	"column_stats_usage":               {},
+	"columns_priv":                     {},
+	"db":                               {},
+	"default_roles":                    {},
+	"global_grants":                    {},
+	"global_priv":                      {},
+	"role_edges":                       {},
+	"tables_priv":                      {},
+	"user":                             {},
+	"capture_plan_baselines_blacklist": {},
 	// gc info don't need to recover.
 	"gc_delete_range":      {},
 	"gc_delete_range_done": {},
