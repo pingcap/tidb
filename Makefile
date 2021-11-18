@@ -136,10 +136,13 @@ gotest_in_verify_ci: failpoint-enable tools/bin/gotestsum tools/bin/gocov tools/
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
 	CGO_ENABLED=1 tools/bin/gotestsum --junitfile tidb-junit-report.xml -- -v -p $(P) --race \
-	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -check.p true
-	-coverprofile="cov.tidb_unit_test.out" $(PACKAGES_TIDB_TESTS) > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -coverprofile="cov.tidb_unit_test.out" \
+	$(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
 	tools/bin/gocov convert "cov.tidb_unit_test.out" | tools/bin/gocov-xml > tidb-coverage.xml
 	@$(FAILPOINT_DISABLE)
+
+echo:
+	echo $(PACKAGES_TIDB_TESTS)
 
 race: failpoint-enable
 	@export log_level=debug; \
