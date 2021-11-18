@@ -172,7 +172,7 @@ func (e *Encoding) validUTF8String(src string) (string, error) {
 
 // Decode convert bytes from a specific charset to utf-8 charset.
 func (e *Encoding) Decode(dest, src []byte) ([]byte, error) {
-	if e.name == "utf-8" {
+	if e.name == encodings[CharsetUTF8].name {
 		return e.validUTF8(src)
 	}
 	if !e.enabled() {
@@ -183,7 +183,7 @@ func (e *Encoding) Decode(dest, src []byte) ([]byte, error) {
 
 // DecodeString convert a string from a specific charset to utf-8 charset.
 func (e *Encoding) DecodeString(src string) (string, error) {
-	if e.name == "utf-8" {
+	if e.name == encodings[CharsetUTF8].name {
 		return e.validUTF8String(src)
 	}
 	if !e.enabled() {
