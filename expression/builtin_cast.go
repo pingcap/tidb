@@ -1931,7 +1931,7 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
 	if expr.Coercibility() == CoercibilityExplicit {
-		tp.Charset, tp.Collate = expr.CharsetAndCollation(ctx)
+		tp.Charset, tp.Collate = expr.CharsetAndCollation()
 	} else {
 		tp.Charset, tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	}

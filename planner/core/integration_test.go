@@ -363,7 +363,7 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 
 	_, err := tk.Exec("select * from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tikv'.")
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tikv'. Please check tiflash replica or ensure the query is readonly.")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
 	tk.MustExec("select * from t")
@@ -2238,17 +2238,17 @@ func (s *testIntegrationSerialSuite) TestNotReadOnlySQLOnTiFlash(c *C) {
 	}
 	err := tk.ExecToErr("select * from t for update")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tiflash, tikv'. Please check tiflash replica or ensure the query is readonly.`)
 
 	err = tk.ExecToErr("insert into t select * from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tiflash, tikv'. Please check tiflash replica or ensure the query is readonly.`)
 
 	tk.MustExec("prepare stmt_insert from 'insert into t select * from t where t.a = ?'")
 	tk.MustExec("set @a=1")
 	err = tk.ExecToErr("execute stmt_insert using @a")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash', valid values can be 'tiflash, tikv'. Please check tiflash replica or ensure the query is readonly.`)
 }
 
 func (s *testIntegrationSuite) TestSelectLimit(c *C) {
@@ -3289,7 +3289,7 @@ func (s *testIntegrationSuite) TestCreateViewIsolationRead(c *C) {
 	tk.MustExec("set session tidb_isolation_read_engines='tiflash,tidb';")
 	// No error for CreateView.
 	tk.MustExec("create view v0 (a, avg_b) as select a, avg(b) from t group by a;")
-	tk.MustGetErrMsg("select * from v0;", "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash,tidb'). Available values are 'tikv'.")
+	tk.MustGetErrMsg("select * from v0;", "[planner:1815]Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash,tidb', valid values can be 'tikv'.")
 	tk.MustExec("set session tidb_isolation_read_engines='tikv,tiflash,tidb';")
 	tk.MustQuery("select * from v0;").Check(testkit.Rows())
 }
@@ -4642,8 +4642,9 @@ func (s *testIntegrationSerialSuite) TestPushDownGroupConcatToTiFlash(c *C) {
 
 	var input []string
 	var output []struct {
-		SQL  string
-		Plan []string
+		SQL     string
+		Plan    []string
+		Warning []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
@@ -4653,6 +4654,26 @@ func (s *testIntegrationSerialSuite) TestPushDownGroupConcatToTiFlash(c *C) {
 		})
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
+
+		comment := Commentf("case:%v sql:%s", i, tt)
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		s.testData.OnRecord(func() {
+			if len(warnings) > 0 {
+				output[i].Warning = make([]string, len(warnings))
+				for j, warning := range warnings {
+					output[i].Warning[j] = warning.Err.Error()
+				}
+			}
+		})
+		if len(output[i].Warning) == 0 {
+			c.Assert(len(warnings), Equals, 0, comment)
+		} else {
+			c.Assert(len(warnings), Equals, len(output[i].Warning), comment)
+			for j, warning := range warnings {
+				c.Assert(warning.Level, Equals, stmtctx.WarnLevelWarning, comment)
+				c.Assert(warning.Err.Error(), Equals, output[i].Warning[j], comment)
+			}
+		}
 	}
 }
 
@@ -4749,4 +4770,40 @@ func (s *testIntegrationSerialSuite) TestRejectSortForMPP(c *C) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSuite) TestIssues29711(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists tbl_29711")
+	tk.MustExec("CREATE TABLE `tbl_29711` (" +
+		"`col_250` text COLLATE utf8_unicode_ci NOT NULL," +
+		"`col_251` enum('Alice','Bob','Charlie','David') COLLATE utf8_unicode_ci NOT NULL DEFAULT 'Charlie'," +
+		"PRIMARY KEY (`col_251`,`col_250`(1)) NONCLUSTERED);")
+	tk.MustQuery("explain format=brief " +
+		"select col_250,col_251 from tbl_29711 where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;").
+		Check(testkit.Rows(
+			"TopN 6.00 root  test.tbl_29711.col_250, test.tbl_29711.col_251, offset:0, count:6",
+			"└─IndexLookUp 6.00 root  ",
+			"  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:tbl_29711, index:PRIMARY(col_251, col_250) range:[\"Bob\",\"Bob\"], [\"Charlie\",\"Charlie\"], [\"David\",\"David\"], keep order:false, stats:pseudo",
+			"  └─TopN(Probe) 6.00 cop[tikv]  test.tbl_29711.col_250, test.tbl_29711.col_251, offset:0, count:6",
+			"    └─TableRowIDScan 30.00 cop[tikv] table:tbl_29711 keep order:false, stats:pseudo",
+		))
+
+	tk.MustExec("drop table if exists t29711")
+	tk.MustExec("CREATE TABLE `t29711` (" +
+		"`a` varchar(10) DEFAULT NULL," +
+		"`b` int(11) DEFAULT NULL," +
+		"`c` int(11) DEFAULT NULL," +
+		"KEY `ia` (`a`(2)))")
+	tk.MustQuery("explain format=brief select * from t29711 use index (ia) order by a limit 10;").
+		Check(testkit.Rows(
+			"TopN 10.00 root  test.t29711.a, offset:0, count:10",
+			"└─IndexLookUp 10.00 root  ",
+			"  ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t29711, index:ia(a) keep order:false, stats:pseudo",
+			"  └─TopN(Probe) 10.00 cop[tikv]  test.t29711.a, offset:0, count:10",
+			"    └─TableRowIDScan 10000.00 cop[tikv] table:t29711 keep order:false, stats:pseudo",
+		))
+
 }

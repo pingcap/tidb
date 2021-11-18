@@ -232,9 +232,14 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 	if !config.TableLockEnabled() {
 		return nil
 	}
+
 	checker := lock.NewChecker(ctx, is)
 	for i := range vs {
 		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege, vs[i].alterWritable)
+		// if table with lock-write table dropped, we can access other table, such as `rename` operation
+		if err == lock.ErrLockedTableDropped {
+			break
+		}
 		if err != nil {
 			return err
 		}

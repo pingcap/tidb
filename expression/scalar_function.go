@@ -280,7 +280,7 @@ func (sf *ScalarFunction) Clone() Expression {
 		Function: sf.Function.Clone(),
 		hashcode: sf.hashcode,
 	}
-	c.SetCharsetAndCollation(sf.CharsetAndCollation(sf.GetCtx()))
+	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
 	return c
 }
@@ -552,12 +552,12 @@ func (sf *ScalarFunction) SetCoercibility(val Coercibility) {
 	sf.Function.SetCoercibility(val)
 }
 
-// CharsetAndCollation ...
-func (sf *ScalarFunction) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
-	return sf.Function.CharsetAndCollation(ctx)
+// CharsetAndCollation gets charset and collation.
+func (sf *ScalarFunction) CharsetAndCollation() (string, string) {
+	return sf.Function.CharsetAndCollation()
 }
 
-// SetCharsetAndCollation ...
+// SetCharsetAndCollation sets charset and collation.
 func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string) {
 	sf.Function.SetCharsetAndCollation(chs, coll)
 }
