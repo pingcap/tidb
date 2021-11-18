@@ -4420,6 +4420,5 @@ func findStmtAsViewSchema(stmt ast.Node) *ast.SelectStmt {
 	case *ast.SelectStmt:
 		return x
 	}
-
 	return nil
 }

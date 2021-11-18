@@ -3718,6 +3718,10 @@ func (s *testIntegrationSuite3) TestIssue29326(c *C) {
 	c.Assert(infoschema.ErrColumnExists.Equal(err), IsTrue)
 
 	tk.MustExec("drop view if exists v1")
+	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select 1 as id, id from t1")
+	c.Assert(infoschema.ErrColumnExists.Equal(err), IsTrue)
+
+	tk.MustExec("drop view if exists v1")
 	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select * from t1 left join t2 on t1.id=t2.id")
 	c.Assert(infoschema.ErrColumnExists.Equal(err), IsTrue)
 
