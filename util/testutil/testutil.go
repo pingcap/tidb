@@ -29,6 +29,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"testing"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -331,6 +333,33 @@ func (t *TestData) GetTestCases(c *check.C, in interface{}, out interface{}) {
 	if !testdata.Record() {
 		err = json.Unmarshal(*t.output[casesIdx].Cases, out)
 		c.Assert(err, check.IsNil)
+	} else {
+		// Init for generate output file.
+		inputLen := reflect.ValueOf(in).Elem().Len()
+		v := reflect.ValueOf(out).Elem()
+		if v.Kind() == reflect.Slice {
+			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
+		}
+	}
+	t.output[casesIdx].decodedOut = out
+}
+
+// GetTestCasesT gets the test cases for a test function.
+func (t *TestData) GetTestCasesT(tt *testing.T, in interface{}, out interface{}) {
+	// Extract caller's name.
+	pc, _, _, ok := runtime.Caller(1)
+	require.True(tt, ok)
+	details := runtime.FuncForPC(pc)
+	funcNameIdx := strings.LastIndex(details.Name(), ".")
+	funcName := details.Name()[funcNameIdx+1:]
+
+	casesIdx, ok := t.funcMap[funcName]
+	require.True(tt, ok, "Must get test %s", funcName)
+	err := json.Unmarshal(*t.input[casesIdx].Cases, in)
+	require.NoError(tt, err)
+	if !testdata.Record() {
+		err = json.Unmarshal(*t.output[casesIdx].Cases, out)
+		require.NoError(tt, err)
 	} else {
 		// Init for generate output file.
 		inputLen := reflect.ValueOf(in).Elem().Len()
