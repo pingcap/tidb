@@ -3215,7 +3215,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
-	if meta.TiFlashReplica != nil{
+	if meta.TiFlashReplica != nil {
 		tikvStore, ok := ctx.GetStore().(helper.Storage)
 		if !ok {
 			return errors.New("Can not get Helper")
@@ -3224,7 +3224,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 			Store:       tikvStore,
 			RegionCache: tikvStore.GetRegionCache(),
 		}
-		for _, p := range partInfo.Definitions{
+		for _, p := range partInfo.Definitions {
 			ruleNew := MakeNewRule(p.ID, meta.TiFlashReplica.Count, meta.TiFlashReplica.LocationLabels)
 			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 				return errors.Trace(err)

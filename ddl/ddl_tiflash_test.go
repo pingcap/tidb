@@ -121,7 +121,6 @@ func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) (bool, err
 	return false, nil
 }
 
-
 func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -283,10 +282,9 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 	}
 }
 
-
 type mockTiFlashTableInfo struct {
 	Regions []int
-	Accel bool
+	Accel   bool
 }
 
 func (m *mockTiFlashTableInfo) String() string {
@@ -423,10 +421,10 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		if z, ok := s.tiflash.SyncStatus[tid]; ok {
 			z.Regions = []int{1}
 			s.tiflash.SyncStatus[tid] = z
-		}else{
-			s.tiflash.SyncStatus[tid] = mockTiFlashTableInfo {
+		} else {
+			s.tiflash.SyncStatus[tid] = mockTiFlashTableInfo{
 				Regions: []int{1},
-				Accel: false,
+				Accel:   false,
 			}
 		}
 	}).Methods(http.MethodPost)
@@ -504,10 +502,10 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		if ok {
 			table.Accel = true
 			s.tiflash.SyncStatus[int(tableId)] = table
-		} else{
+		} else {
 			s.tiflash.SyncStatus[int(tableId)] = mockTiFlashTableInfo{
 				Regions: []int{},
-				Accel: true,
+				Accel:   true,
 			}
 		}
 

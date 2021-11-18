@@ -146,7 +146,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		}
 
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
-			for _, d := range partInfo.Definitions{
+			for _, d := range partInfo.Definitions {
 				tblInfo.TiFlashReplica.AvailablePartitionIDs = append(tblInfo.TiFlashReplica.AvailablePartitionIDs, d.ID)
 			}
 		}
