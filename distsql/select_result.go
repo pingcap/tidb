@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -154,8 +153,6 @@ type selectResult struct {
 	memTracker       *memory.Tracker
 
 	stats *selectResultRuntimeStats
-	mu    sync.Mutex
-	exit  bool
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
@@ -238,22 +235,15 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		}
 		r.partialCount++
 
-		r.mu.Lock()
-		if r.exit {
-			r.mu.Unlock()
-			break
-		} else {
-			hasStats, ok := resultSubset.(CopRuntimeStats)
-			if ok {
-				copStats := hasStats.GetCopRuntimeStats()
-				if copStats != nil {
-					r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime())
-					copStats.CopTime = duration
-					sc.MergeExecDetails(&copStats.ExecDetails, nil)
-				}
+		hasStats, ok := resultSubset.(CopRuntimeStats)
+		if ok {
+			copStats := hasStats.GetCopRuntimeStats()
+			if copStats != nil {
+				r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime())
+				copStats.CopTime = duration
+				sc.MergeExecDetails(&copStats.ExecDetails, nil)
 			}
 		}
-		r.mu.Unlock()
 		if len(r.selectResp.Chunks) != 0 {
 			break
 		}
@@ -457,9 +447,6 @@ func (r *selectResult) memConsume(bytes int64) {
 
 // Close closes selectResult.
 func (r *selectResult) Close() error {
-	r.mu.Lock()
-	r.exit = true
-	r.mu.Unlock()
 	if r.feedback.Actual() >= 0 {
 		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}

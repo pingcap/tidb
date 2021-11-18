@@ -692,18 +692,16 @@ func (e *IndexLookUpExecutor) Close() error {
 		e.cancelFunc = nil
 	}
 	close(e.finished)
-	e.finished = nil
-	e.workerStarted = false
 	// Drain the resultCh and discard the result, in case that Next() doesn't fully
 	// consume the data, background worker still writing to resultCh and block forever.
-	go func() {
-		for range e.resultCh {
-		}
-		e.idxWorkerWg.Wait()
-		e.tblWorkerWg.Wait()
-		e.memTracker = nil
-		e.resultCurr = nil
-	}()
+	for range e.resultCh {
+	}
+	e.idxWorkerWg.Wait()
+	e.tblWorkerWg.Wait()
+	e.finished = nil
+	e.workerStarted = false
+	e.memTracker = nil
+	e.resultCurr = nil
 	return nil
 }
 
@@ -978,13 +976,11 @@ func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *
 
 // tableWorker is used by IndexLookUpExecutor to maintain table lookup background goroutines.
 type tableWorker struct {
-	mu          sync.Mutex
-	idxLookup   *IndexLookUpExecutor
-	tableReader Executor
-	workCh      <-chan *lookupTableTask
-	finished    <-chan struct{}
-	keepOrder   bool
-	handleIdx   []int
+	idxLookup *IndexLookUpExecutor
+	workCh    <-chan *lookupTableTask
+	finished  <-chan struct{}
+	keepOrder bool
+	handleIdx []int
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
@@ -1205,17 +1201,11 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 // Then we hold the returning rows and finish this task.
 func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) error {
 	tableReader, err := w.idxLookup.buildTableReader(ctx, task)
-	w.mu.Lock()
-	w.tableReader = tableReader
-	w.mu.Unlock()
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
 		return err
 	}
-	defer terror.Call(func() error {
-		w.tableReader = nil
-		return tableReader.Close()
-	})
+	defer terror.Call(tableReader.Close)
 
 	if w.checkIndexValue != nil {
 		return w.compareData(ctx, task, tableReader)
