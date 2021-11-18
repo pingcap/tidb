@@ -130,7 +130,7 @@ func (s *iteratorSuite) TestDuplicateIterator(c *C) {
 
 	duplicateDB, err := pebble.Open(filepath.Join(storeDir, "duplicates"), &pebble.Options{})
 	c.Assert(err, IsNil)
-	engineFile := &File{
+	engine := &Engine{
 		ctx:         context.Background(),
 		db:          db,
 		keyAdapter:  keyAdapter,
@@ -140,7 +140,7 @@ func (s *iteratorSuite) TestDuplicateIterator(c *C) {
 			Name: "name",
 		},
 	}
-	iter := newDuplicateIter(context.Background(), engineFile, &pebble.IterOptions{})
+	iter := newDuplicateIter(context.Background(), engine, &pebble.IterOptions{})
 	sort.Slice(pairs, func(i, j int) bool {
 		key1 := keyAdapter.Encode(nil, pairs[i].Key, pairs[i].RowID, pairs[i].Offset)
 		key2 := keyAdapter.Encode(nil, pairs[j].Key, pairs[j].RowID, pairs[j].Offset)
@@ -167,7 +167,7 @@ func (s *iteratorSuite) TestDuplicateIterator(c *C) {
 	c.Assert(iter.Error(), IsNil)
 	c.Assert(len(uniqueKeys), Equals, 0)
 	c.Assert(iter.Close(), IsNil)
-	c.Assert(engineFile.Close(), IsNil)
+	c.Assert(engine.Close(), IsNil)
 
 	// Check duplicates detected by duplicate iterator.
 	iter = pebbleIter{Iterator: duplicateDB.NewIter(&pebble.IterOptions{})}
@@ -241,7 +241,7 @@ func (s *iteratorSuite) TestDuplicateIterSeek(c *C) {
 
 	duplicateDB, err := pebble.Open(filepath.Join(storeDir, "duplicates"), &pebble.Options{})
 	c.Assert(err, IsNil)
-	engineFile := &File{
+	engine := &Engine{
 		ctx:         context.Background(),
 		db:          db,
 		keyAdapter:  keyAdapter,
@@ -251,13 +251,13 @@ func (s *iteratorSuite) TestDuplicateIterSeek(c *C) {
 			Name: "name",
 		},
 	}
-	iter := newDuplicateIter(context.Background(), engineFile, &pebble.IterOptions{})
+	iter := newDuplicateIter(context.Background(), engine, &pebble.IterOptions{})
 
 	c.Assert(iter.Seek([]byte{1, 2, 3, 1}), IsTrue)
 	c.Assert(iter.Value(), BytesEquals, pairs[1].Val)
 	c.Assert(iter.Next(), IsTrue)
 	c.Assert(iter.Value(), BytesEquals, pairs[3].Val)
 	c.Assert(iter.Close(), IsNil)
-	c.Assert(engineFile.Close(), IsNil)
+	c.Assert(engine.Close(), IsNil)
 	c.Assert(duplicateDB.Close(), IsNil)
 }
