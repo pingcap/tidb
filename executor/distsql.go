@@ -375,7 +375,7 @@ type IndexLookUpExecutor struct {
 	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column, default -1
 	extraPIDColumnIndex offsetOptional
 
-	// cancel is called when close the executor
+	// cancelFunc is called when close the executor
 	cancelFunc context.CancelFunc
 }
 
