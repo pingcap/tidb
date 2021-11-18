@@ -10501,6 +10501,7 @@ func (s *testIntegrationSuite) TestIssue29434(c *C) {
 	tk.MustQuery("select least(c1, '99999999999999') from t1;").Check(testkit.Rows("2021-12-12 10:10:10"))
 }
 
+<<<<<<< HEAD
 func (s *testIntegrationSuite) TestIssue28643(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -10512,6 +10513,15 @@ func (s *testIntegrationSuite) TestIssue28643(c *C) {
 	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
 	tk.MustExec("set tidb_enable_vectorized_expression = off;")
 	tk.MustQuery("select hour(a) from t;").Check(testkit.Rows("838", "838"))
+=======
+func (s *testIntegrationSuite) TestIssue29417(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (f1 decimal(5,5));")
+	tk.MustExec("insert into t1 values (-0.12345);")
+	tk.MustQuery("select concat(f1) from t1;").Check(testkit.Rows("-0.12345"))
+>>>>>>> fef05d77d... expression: fix wrong flen when cast decimal to string (#29687)
 }
 
 func (s *testIntegrationSuite) TestIssue29244(c *C) {
