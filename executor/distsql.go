@@ -341,12 +341,9 @@ type IndexLookUpExecutor struct {
 	tblWorkerWg sync.WaitGroup
 	finished    chan struct{}
 
-	mu                  sync.Mutex
-	pendingIndexResults distsql.SelectResult
-	tableWorkers        []*tableWorker
-	resultCh            chan *lookupTableTask
-	resultCurr          *lookupTableTask
-	feedback            *statistics.QueryFeedback
+	resultCh   chan *lookupTableTask
+	resultCurr *lookupTableTask
+	feedback   *statistics.QueryFeedback
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
@@ -594,15 +591,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 				worker.syncErr(err)
 				break
 			}
-			e.mu.Lock()
-			if e.finished == nil {
-				result.Close()
-				e.mu.Unlock()
-				break
-			} else {
-				e.pendingIndexResults = result
-			}
-			e.mu.Unlock()
 			worker.batchSize = initBatchSize
 			if worker.batchSize > worker.maxBatchSize {
 				worker.batchSize = worker.maxBatchSize
@@ -637,7 +625,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency()
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
-	workers := make([]*tableWorker, lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		workerID := i
 		worker := &tableWorker{
@@ -649,7 +636,6 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			checkIndexValue: e.checkIndexValue,
 			memTracker:      memory.NewTracker(workerID, -1),
 		}
-		workers[i] = worker
 		worker.memTracker.AttachTo(e.memTracker)
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
@@ -659,7 +645,6 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			e.tblWorkerWg.Done()
 		}()
 	}
-	e.tableWorkers = workers
 }
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookupTableTask) (Executor, error) {
@@ -709,18 +694,6 @@ func (e *IndexLookUpExecutor) Close() error {
 	close(e.finished)
 	e.finished = nil
 	e.workerStarted = false
-	if e.pendingIndexResults != nil {
-		e.pendingIndexResults.Close()
-	}
-	for _, worker := range e.tableWorkers {
-		worker.mu.Lock()
-		if worker.tableReader != nil {
-			worker.tableReader.Close()
-			worker.tableReader = nil
-		}
-		worker.mu.Unlock()
-	}
-	e.mu.Unlock()
 	// Drain the resultCh and discard the result, in case that Next() doesn't fully
 	// consume the data, background worker still writing to resultCh and block forever.
 	go func() {
