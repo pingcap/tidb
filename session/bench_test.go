@@ -1808,7 +1808,7 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 // The format of the json output is described by the BenchOutput.
 // Used by this command in the Makefile
 // 	make bench-daily TO=xxx.json
-func BenchmarkDaily(b *testing.B) {
+func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkPreparedPointGet,
 		BenchmarkPointGet,

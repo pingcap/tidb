@@ -93,11 +93,17 @@ func (e *Encoding) UpdateEncoding(label EncodingLabel) {
 
 // Encode convert bytes from utf-8 charset to a specific charset.
 func (e *Encoding) Encode(dest, src []byte) ([]byte, error) {
+	if !e.Enabled() {
+		return src, nil
+	}
 	return e.transform(e.enc.NewEncoder(), dest, src, false)
 }
 
 // Decode convert bytes from a specific charset to utf-8 charset.
 func (e *Encoding) Decode(dest, src []byte) ([]byte, error) {
+	if !e.Enabled() {
+		return src, nil
+	}
 	return e.transform(e.enc.NewDecoder(), dest, src, true)
 }
 
@@ -130,10 +136,13 @@ func (e *Encoding) transform(transformer transform.Transformer, dest, src []byte
 }
 
 func (e *Encoding) nextCharLenInSrc(srcRest []byte, isDecoding bool) int {
-	if isDecoding && e.charLength != nil {
-		return e.charLength(srcRest)
+	if isDecoding {
+		if e.charLength != nil {
+			return e.charLength(srcRest)
+		}
+		return len(srcRest)
 	}
-	return len(srcRest)
+	return characterLengthUTF8(srcRest)
 }
 
 func enlargeCapacity(dest []byte) []byte {

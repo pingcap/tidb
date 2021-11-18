@@ -1018,6 +1018,41 @@ func (s *testPlanSerialSuite) TestIssue28867(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
+func (s *testPlanSerialSuite) TestIssue28920(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		c.Assert(store.Close(), IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists UK_GCOL_VIRTUAL_18928`)
+	tk.MustExec(`
+	CREATE TABLE UK_GCOL_VIRTUAL_18928 (
+	  COL102 bigint(20) DEFAULT NULL,
+	  COL103 bigint(20) DEFAULT NULL,
+	  COL1 bigint(20) GENERATED ALWAYS AS (COL102 & 10) VIRTUAL,
+	  COL2 varchar(20) DEFAULT NULL,
+	  COL4 datetime DEFAULT NULL,
+	  COL3 bigint(20) DEFAULT NULL,
+	  COL5 float DEFAULT NULL,
+	  UNIQUE KEY UK_COL1 (COL1))`)
+	tk.MustExec(`insert into UK_GCOL_VIRTUAL_18928(col102,col2) values("-5175976006730879891", "屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖")`)
+	tk.MustExec(`prepare stmt from 'SELECT * FROM UK_GCOL_VIRTUAL_18928 WHERE col1 < ? AND col2 != ?'`)
+	tk.MustExec(`set @a=10, @b="aa"`)
+	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("-5175976006730879891 <nil> 8 屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖 <nil> <nil> <nil>"))
+}
+
 func (s *testPlanSerialSuite) TestIssue18066(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()

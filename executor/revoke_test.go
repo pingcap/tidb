@@ -194,3 +194,25 @@ func (s *testSuite1) TestRevokeDynamicPrivs(c *C) {
 	tk.MustExec("REVOKE BACKUP_ADMIN, SELECT, GRANT OPTION ON *.* FROM dyn")
 	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % SYSTEM_VARIABLES_ADMIN Y"))
 }
+
+func (s *testSuite1) TestRevokeOnNonExistTable(c *C) {
+	// issue #28533
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("CREATE DATABASE d1;")
+	defer tk.MustExec("DROP DATABASE IF EXISTS d1;")
+	tk.MustExec("USE d1;")
+	tk.MustExec("CREATE TABLE t1 (a int)")
+	defer tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE USER issue28533")
+	defer tk.MustExec("DROP USER issue28533")
+
+	// GRANT ON existent table success
+	tk.MustExec("GRANT ALTER ON d1.t1 TO issue28533;")
+	// GRANT ON non-existent table success
+	tk.MustExec("GRANT INSERT, CREATE ON d1.t2 TO issue28533;")
+
+	// REVOKE ON non-existent table success
+	tk.MustExec("DROP TABLE t1;")
+	tk.MustExec("REVOKE ALTER ON d1.t1 FROM issue28533;")
+}
