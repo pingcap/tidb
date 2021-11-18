@@ -37,6 +37,7 @@ type tiflashDDLTestSuite struct {
 	dom          *domain.Domain
 	pdHttpServer *httptest.Server
 	pdMockAddr   string
+	pdEnabled    bool
 	startTime    time.Time
 	tiflash      mockTiFlash
 }
@@ -150,10 +151,6 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTable(c *C) {
 	c.Assert(len(pi.AddingDefinitions), Equals, 0)
 }
 
-func (s *tiflashDDLTestSuite) TestRemoveTiFlashReplica(c *C) {
-
-}
-
 // TiFlash Table shall be eventually available.
 func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -171,6 +168,13 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	c.Assert(replica.Available, Equals, true)
 	c.Assert(replica.Count, Equals, uint64(1))
 	c.Assert(replica.LocationLabels, DeepEquals, []string{})
+
+	tk.MustExec("alter table t set tiflash replica 0")
+	time.Sleep(ddl.PollTiFlashInterval * 2)
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	replica = tb.Meta().TiFlashReplica
+	c.Assert(replica, IsNil)
 }
 
 // When set TiFlash replica, tidb shall add one Pd Rule for this table.
@@ -197,7 +201,23 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
 	time.Sleep(ddl.PollTiFlashInterval * 5)
 	res, _ = s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
+}
 
+func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
+	gcworker.SetGcSafePointCacheInterval(time.Second * 1)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(z int)")
+	s.pdEnabled = false
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
+	res, _ := s.CheckPlacementRule(*expectRule)
+	c.Assert(res, Equals, false)
+	c.Assert(tb.Meta().TiFlashReplica, IsNil)
 }
 
 type mockTiFlashTableInfo struct {
@@ -261,6 +281,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 	server := httptest.NewServer(router)
 	// mock store stats stat
 	mockAddr := strings.TrimPrefix(server.URL, "http://")
+	s.pdEnabled = true
 	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
 		return &helper.StoresStat{
 			Count: 1,
@@ -306,7 +327,13 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		w.Write(m)
 	}) //.Methods(http.MethodGet)
 	router.HandleFunc("/pd/api/v1/config/rule", func(w http.ResponseWriter, req *http.Request) {
+		// Set placement rule
 		fmt.Printf("!!!! handle set url %v %v\n", req.URL.Path, req.Method)
+		if !s.pdEnabled {
+			fmt.Printf("and quit\n")
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		buf := new(bytes.Buffer)
 		_, err := buf.ReadFrom(req.Body)
 		if err != nil {
@@ -340,6 +367,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		}
 	}).Methods(http.MethodPost)
 	router.HandleFunc("/pd/api/v1/config/rule/tiflash/{ruleid:.+}", func(w http.ResponseWriter, req *http.Request) {
+		// Delete placement rule
 		fmt.Println("!!!! handle DELETE")
 		params := mux.Vars(req)
 		ruleId := params["ruleid"]
