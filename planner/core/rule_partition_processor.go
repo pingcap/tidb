@@ -1283,7 +1283,7 @@ func (s *partitionProcessor) resolveAccessPaths(ds *DataSource) error {
 	if err != nil {
 		return err
 	}
-	possiblePaths, err = filterPathByIsolationRead(ds.ctx, possiblePaths, ds.DBName)
+	possiblePaths, err = filterPathByIsolationRead(ds.ctx, possiblePaths, ds.tableInfo.Name, ds.DBName)
 	if err != nil {
 		return err
 	}
