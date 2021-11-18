@@ -24,6 +24,8 @@ import (
 )
 
 // tikvBatchGetter is the BatchGetter struct for tikv
+// In order to directly call NewBufferBatchGetter in client-go
+// We need to implement the interface (transaction.BatchGetter) in client-go for tikvBatchGetter
 type tikvBatchGetter struct {
 	tidbBatchGetter BatchGetter
 }
@@ -36,6 +38,8 @@ func (b tikvBatchGetter) BatchGet(ctx context.Context, keys [][]byte) (map[strin
 }
 
 // tikvBatchBufferGetter is the BatchBufferGetter struct for tikv
+// In order to directly call NewBufferBatchGetter in client-go
+// We need to implement the interface (transaction.BatchBufferGetter) in client-go for tikvBatchBufferGetter
 type tikvBatchBufferGetter struct {
 	tidbMiddleCache Getter
 	tidbBuffer      BatchBufferGetter
@@ -56,6 +60,8 @@ func (b tikvBatchBufferGetter) Get(k []byte) ([]byte, error) {
 		return val, err
 	}
 	// TiDB err NotExist to TiKV err NotExist
+	// The BatchGet method in client-go will call this method
+	// Therefore, the error needs to convert to TiKV's type, otherwise the error will not be handled properly in client-go
 	err = tikverr.ErrNotExist
 	return val, err
 }
