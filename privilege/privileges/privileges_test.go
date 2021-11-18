@@ -804,6 +804,17 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 	mustExec(c, se1, "drop user 'r3@example.com'@'localhost'")
 }
 
+func (s *testPrivilegeSuite) TestGlobalGrantInfoDB(c *C) {
+	se := newSession(c, s.store, "INFORMATION_SCHEMA")
+	//mustExec(c, se, "USE information_schema'")
+	mustExec(c, se, "CREATE USER 'global'")
+	// can be executed in information schema for *.*
+	_, e := se.Execute(context.Background(), "GRANT all privileges ON *.* TO 'global'")
+	c.Assert(e, IsNil)
+	_, e = se.Execute(context.Background(), "REVOKE all privileges on *.* FROM 'global'")
+	c.Assert(e, IsNil)
+}
+
 func (s *testPrivilegeSuite) TestUseDB(c *C) {
 
 	se := newSession(c, s.store, s.dbName)
