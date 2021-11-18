@@ -180,9 +180,11 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 	c.Assert(replica.LocationLabels, DeepEquals, []string{})
 
 	lessThan := "40"
+	originInterval := ddl.PollTiFlashInterval
+	// Stop loop
+	ddl.PollTiFlashInterval = 1000 * time.Second
 	tk.MustExec(fmt.Sprintf("ALTER TABLE t ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
-
-	time.Sleep(ddl.PollTiFlashInterval * 4)
+	time.Sleep(originInterval * 4)
 
 	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	pi := tb.Meta().GetPartitionInfo()
