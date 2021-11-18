@@ -17,6 +17,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/table"
 	"math/rand"
 	"strconv"
 	"sync"
@@ -93,7 +94,8 @@ type Domain struct {
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
-
+	cachedTableIDs		 *[]int64
+	closeCh         chan struct{}
 	onClose func()
 }
 
@@ -407,7 +409,7 @@ func (do *Domain) Reload() error {
 
 	// lease renew, so it must be executed despite it is cache or not
 	do.SchemaValidator.Update(ver.Ver, oldSchemaVersion, is.SchemaMetaVersion(), changes)
-
+	do.cachedTableIDs = is.CachedTableIDs()
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
@@ -670,6 +672,7 @@ func (do *Domain) Close() {
 		do.info.RemoveServerInfo()
 		do.info.RemoveMinStartTS()
 	}
+	do.closeCh <- struct {}{}
 	close(do.exit)
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
@@ -678,9 +681,9 @@ func (do *Domain) Close() {
 	do.slowQuery.Close()
 	do.cancel()
 	do.wg.Wait()
+	//close(do.closeCh)
 	do.sysSessionPool.Close()
 	variable.UnregisterStatistics(do.bindHandle)
-	do.InfoSchema().CloseRenewCh()
 	if do.onClose != nil {
 		do.onClose()
 	}
@@ -704,6 +707,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		indexUsageSyncLease: idxUsageSyncLease,
 		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
 		onClose:             onClose,
+		closeCh:        make(chan struct{}),
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -836,6 +840,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()
 	}
+
+	do.wg.Add(1)
+	go do.closeRenewCh()
 
 	return nil
 }
@@ -1730,6 +1737,34 @@ func (do *Domain) serverIDKeeper() {
 func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
 	do.infoCache = infoschema.NewCache(16)
 	do.infoCache.Insert(is, 0)
+}
+
+func (do *Domain) closeRenewCh() {
+	defer func() {
+		do.wg.Done()
+		logutil.BgLogger().Info("renew ch close")
+	}()
+	for {
+		select {
+		case <-do.closeCh:
+			logutil.BgLogger().Info("==delete mode  ==")
+			for _, id := range *do.cachedTableIDs {
+				tbl, ok := do.InfoSchema().TableByID(id)
+				if ok {
+					tbl.(table.CachedTable).CloseRenewCh()
+				}
+			}
+			return
+		default:
+			logutil.BgLogger().Info("==default mode ==")
+			for _, id := range *do.cachedTableIDs {
+				tbl, ok := do.InfoSchema().TableByID(id)
+				if ok {
+					tbl.(table.CachedTable).RenewLease()
+				}
+			}
+		}
+	}
 }
 
 func init() {

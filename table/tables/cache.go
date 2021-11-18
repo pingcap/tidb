@@ -119,10 +119,10 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 	ret := &cachedTable{
 		TableCommon: *tbl,
 		handle:      &mockStateRemoteHandle{mockStateRemote.Ch},
-		renewCh:     make(chan renewInfo, 10),
-		stopCh:      make(chan struct{}, 1),
+		renewCh:     make(chan renewInfo),
+		stopCh:      make(chan struct{}),
 	}
-	go ret.renewLease()
+	//go ret.renewLease()
 	return ret, nil
 }
 
@@ -233,30 +233,33 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	return c.TableCommon.RemoveRecord(ctx, h, r)
 }
 
-func (c *cachedTable) renewLease() {
-	select {
-	case <-c.stopCh:
-		close(c.renewCh)
-		return
-	default:
-	}
-	for renewInfo := range c.renewCh {
-		tid := c.Meta().ID
-		lease := leaseFromTS(renewInfo.ts)
-		succ, err := c.handle.RenewLease(tid, lease, renewInfo.op)
-		if err != nil {
-			log.Warn("Renew read lease error")
-		}
-		if succ {
-			c.cacheData.Store(&cacheData{
-				Start:     renewInfo.ts,
-				Lease:     lease,
-				MemBuffer: renewInfo.cacheData,
-			})
+func (c *cachedTable) RenewLease() {
+	for {
+		select {
+		case <-c.stopCh:
+			close(c.renewCh)
+			return
+		default:
+			for renewInfo := range c.renewCh {
+				tid := c.Meta().ID
+				lease := leaseFromTS(renewInfo.ts)
+				succ, err := c.handle.RenewLease(tid, lease, renewInfo.op)
+				if err != nil {
+					log.Warn("Renew read lease error")
+				}
+				if succ {
+					c.cacheData.Store(&cacheData{
+						Start:     renewInfo.ts,
+						Lease:     lease,
+						MemBuffer: renewInfo.cacheData,
+					})
+				}
+			}
 		}
 	}
 }
 
+// MockGetDataLease is only for test
 func (c *cachedTable) MockGetDataLease() (uint64, uint64) {
 	tmp := c.cacheData.Load()
 	if tmp == nil {
@@ -267,5 +270,9 @@ func (c *cachedTable) MockGetDataLease() (uint64, uint64) {
 }
 
 func (c *cachedTable) CloseRenewCh() {
-	c.stopCh <- struct{}{}
+	_, ok := <-c.renewCh
+	if ok {
+		close(c.renewCh)
+	}
+	//c.stopCh <- struct{}{}
 }

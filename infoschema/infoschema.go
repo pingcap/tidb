@@ -59,7 +59,7 @@ type InfoSchema interface {
 	RuleBundles() []*placement.Bundle
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
-	CloseRenewCh()
+	CachedTableIDs() *[]int64
 }
 
 type sortedTables []table.Table
@@ -111,19 +111,12 @@ type infoSchema struct {
 	schemaMetaVersion int64
 
 	//
-	//renewMutex sync.RWMutex
+	renewMutex sync.RWMutex
 	renewChs []int64
 }
 
-func (is *infoSchema) CloseRenewCh() {
-	//is.renewMutex.RLock()
-	//defer is.renewMutex.RUnlock()
-	for _, id := range is.renewChs {
-		tbl, ok := is.TableByID(id)
-		if ok {
-			tbl.(table.CachedTable).CloseRenewCh()
-		}
-	}
+func (is *infoSchema ) CachedTableIDs() *[]int64 {
+	return &is.renewChs
 }
 
 // MockInfoSchema only serves for test.

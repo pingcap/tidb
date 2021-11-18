@@ -443,7 +443,17 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		return nil, errors.Trace(err)
 	}
 	if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
-		b.is.renewChs = append(b.is.renewChs, tblInfo.ID)
+		b.is.renewMutex.Lock()
+		defer b.is.renewMutex.Unlock()
+		isExisted := false
+		for i := 0; i < len(b.is.renewChs); i++ {
+			if b.is.renewChs[i] == tableID {
+				isExisted = true
+			}
+		}
+		if !isExisted {
+			b.is.renewChs = append(b.is.renewChs, tblInfo.ID)
+		}
 	}
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl

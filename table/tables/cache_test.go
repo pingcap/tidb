@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/parser/model"
-	table2 "github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -265,6 +265,7 @@ func TestCacheTableComplexRead(t *testing.T) {
 		require.True(t, i < 10)
 		tk2.MustExec("commit")
 		doneCh <- struct{}{}
+		return
 	}()
 	<-doneCh
 	tk1.HasPlan("select *from complex_cache where id > 7", "UnionScan")
@@ -363,7 +364,7 @@ func TestCacheTableBatchPointGet(t *testing.T) {
 	tk.MustExec("insert into bp_cache_tmp1 values(2, 12, 102)")
 	tk.MustExec("insert into bp_cache_tmp1 values(3, 13, 103)")
 	tk.MustExec("insert into bp_cache_tmp1 values(4, 14, 104)")
-
+	tk.MustExec("alter table bp_cache_tmp1 cache")
 	// check point get out transaction
 	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 103"))
 	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 103"))
@@ -402,7 +403,7 @@ func TestRenewLease(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
-	table := &model.TableInfo{
+	tableInfo := &model.TableInfo{
 		ID:                   1,
 		Name:                 model.NewCIStr("t"),
 		Charset:              "utf8",
@@ -411,8 +412,8 @@ func TestRenewLease(t *testing.T) {
 		PKIsHandle:           true,
 	}
 	ctx := context.Background()
-	tbl := tables.MockTableFromMeta(table)
-	cacheTable := tbl.(table2.CachedTable)
+	tbl := tables.MockTableFromMeta(tableInfo)
+	cacheTable := tbl.(table.CachedTable)
 	err := se.NewTxn(ctx)
 	require.NoError(t, err)
 	txn, err := se.Txn(true)
