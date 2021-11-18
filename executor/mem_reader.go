@@ -154,10 +154,9 @@ type memTableReader struct {
 	colIDs        map[int64]int
 	buffer        allocBuf
 	pkColIDs      []int64
-
+	cacheTable    kv.MemBuffer
 	// Used when extracting handles from row in memTableReader.getMemRowsHandle.
 	handleCols plannercore.HandleCols
-	cacheTable kv.MemBuffer
 }
 
 type allocBuf struct {
@@ -316,7 +315,7 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 	return values, nil
 }
 
-// Used when memIndexMergeReader.partialPlans[i] is TableScan.
+// getMemRowsHandle is called when memIndexMergeReader.partialPlans[i] is TableScan.
 func (m *memTableReader) getMemRowsHandle() ([]kv.Handle, error) {
 	rows, err := m.getMemRows()
 	if err != nil {
@@ -701,7 +700,7 @@ func unionHandles(kvRanges [][]kv.KeyRange, memIndexReaders []*memIndexReader, m
 		return nil, errors.Errorf("len(kvRanges) should be equal to len(memIndexReaders)")
 	}
 	if len(memTableReaders) != len(memIndexReaders) {
-		return nil, errors.Errorf("len(kvRanges) should be equal to len(memIndexReaders)")
+		return nil, errors.Errorf("len(memTableReaders) should be equal to len(memIndexReaders)")
 	}
 
 	hMap := kv.NewHandleMap()
