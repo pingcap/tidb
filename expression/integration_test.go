@@ -6207,6 +6207,39 @@ func (s *testIntegrationSerialSuite) TestPreparePlanCache(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
+func (s *testIntegrationSerialSuite) TestPreparePlanCacheNotForCacheTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	plannercore.SetPreparedPlanCache(true)
+	c.Assert(plannercore.PreparedPlanCacheEnabled(), Equals, true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("alter table t cache")
+
+	tk.MustQuery("select * from t where a = 1")
+	// already read cache after reading first time
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
+		"Projection 10.00 root  test.t.a",
+		"└─UnionScan 10.00 root  eq(test.t.a, 1)",
+		"  └─TableReader 10.00 root  data:Selection",
+		"    └─Selection 10.00 cop[tikv]  eq(test.t.a, 1)",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+
+	tk.MustExec("prepare stmt from 'select * from t where a = ?';")
+	tk.MustExec("set @a = 1;")
+	tk.MustExec("execute stmt using @a;")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt using @a;")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue16205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
