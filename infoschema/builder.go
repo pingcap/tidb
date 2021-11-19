@@ -20,7 +20,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // Builder builds a new InfoSchema.
@@ -42,8 +40,7 @@ type Builder struct {
 	is *infoSchema
 	// TODO: store is only used by autoid allocators
 	// detach allocators from storage, use passed transaction in the feature
-	store   kv.Storage
-	factory func() (pools.Resource, error)
+	store kv.Storage
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -441,7 +438,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			}
 		}
 	}
-	tbl, err := b.tableFromMeta(allocs, tblInfo)
+	tbl, err := tables.TableFromMeta(allocs, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -604,7 +601,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.
 	}
 
 	for _, di := range dbInfos {
-		err := b.createSchemaTablesForDB(di, b.tableFromMeta)
+		err := b.createSchemaTablesForDB(di, tables.TableFromMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -623,25 +620,6 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.
 		sort.Sort(v)
 	}
 	return b, nil
-}
-
-func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
-	ret, err := tables.TableFromMeta(alloc, tblInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if t, ok := ret.(table.CachedTable); ok {
-		var tmp pools.Resource
-		tmp, err = b.factory()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		err = t.Init(tmp.(sqlexec.SQLExecutor))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return ret, nil
 }
 
 type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
@@ -680,10 +658,9 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(store kv.Storage, factory func() (pools.Resource, error)) *Builder {
+func NewBuilder(store kv.Storage) *Builder {
 	return &Builder{
-		factory: factory,
-		store:   store,
+		store: store,
 		is: &infoSchema{
 			schemaMap:           map[string]*schemaTables{},
 			policyMap:           map[string]*model.PolicyInfo{},

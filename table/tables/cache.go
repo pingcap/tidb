@@ -15,7 +15,6 @@
 package tables
 
 import (
-	"fmt"
 	"context"
 	"sync/atomic"
 	"time"
@@ -26,12 +25,12 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
 var (
+	_ table.Table       = &cachedTable{}
 	_ table.CachedTable = &cachedTable{}
 )
 
@@ -69,33 +68,33 @@ func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
 func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 	tmp := c.cacheData.Load()
 	if tmp == nil {
-		fmt.Println("TryReadFromCache return nil because ... data not loaded")
 		return nil
 	}
 	data := tmp.(*cacheData)
 	if ts >= data.Start && ts < data.Lease {
 		return data
 	}
-	fmt.Println("TryReadFromCache return nil because ... ts not correct...", ts, data.Start, data.Lease)
 	return nil
 }
 
+var mockStateRemote = struct {
+	Ch   chan remoteTask
+	Data *mockStateRemoteData
+}{}
+
 // NewCachedTable creates a new CachedTable Instance
-func newCachedTable(tbl *TableCommon) (table.Table, error) {
+func NewCachedTable(tbl *TableCommon) (table.Table, error) {
+	if mockStateRemote.Data == nil {
+		mockStateRemote.Data = newMockStateRemoteData()
+		mockStateRemote.Ch = make(chan remoteTask, 100)
+		go mockRemoteService(mockStateRemote.Data, mockStateRemote.Ch)
+	}
 	ret := &cachedTable{
 		TableCommon: *tbl,
+		handle:      &mockStateRemoteHandle{mockStateRemote.Ch},
 	}
 
 	return ret, nil
-}
-
-func (c *cachedTable) Init(exec sqlexec.SQLExecutor) error {
-	raw, ok := exec.(sqlExec)
-	if !ok {
-		return errors.New("Need sqlExec rather than sqlexec.SQLExecutor")
-	}
-	c.handle = NewStateRemote(raw)
-	return nil
 }
 
 func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) (kv.MemBuffer, uint64, error) {
@@ -139,11 +138,11 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) 
 	return buffer, startTS, nil
 }
 
-func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64) error {
+func (c *cachedTable) UpdateLockForRead(store kv.Storage, ts uint64) error {
 	// Load data from original table and the update lock information.
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts)
-	succ, err := c.handle.LockForRead(ctx, tid, ts, lease)
+	succ, err := c.handle.LockForRead(tid, ts, lease)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -170,7 +169,7 @@ func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		return nil, err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -184,7 +183,7 @@ func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(ctx, c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -198,7 +197,7 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -2635,6 +2634,22 @@ func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
 	return true
 }
 
+func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error {
+	if !sctx.GetSessionVars().EnableChangeMultiSchema {
+		if len(specs) > 1 {
+			return errRunMultiSchemaChanges
+		}
+		if len(specs) == 1 && len(specs[0].NewColumns) > 1 && specs[0].Tp == ast.AlterTableAddColumns {
+			return errRunMultiSchemaChanges
+		}
+	} else {
+		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) {
+			return errRunMultiSchemaChanges
+		}
+	}
+	return nil
+}
+
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
 	validSpecs, err := resolveAlterTableSpec(sctx, specs)
 	if err != nil {
@@ -2646,29 +2661,26 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
 
+	err = checkMultiSpecs(sctx, validSpecs)
+	if err != nil {
+		return err
+	}
+
 	if len(validSpecs) > 1 {
-		if !sctx.GetSessionVars().EnableChangeMultiSchema {
+		switch validSpecs[0].Tp {
+		case ast.AlterTableAddColumns:
+			err = d.AddColumns(sctx, ident, validSpecs)
+		case ast.AlterTableDropColumn:
+			err = d.DropColumns(sctx, ident, validSpecs)
+		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
+			err = d.DropIndexes(sctx, ident, validSpecs)
+		default:
 			return errRunMultiSchemaChanges
 		}
-
-		if isSameTypeMultiSpecs(validSpecs) {
-			switch validSpecs[0].Tp {
-			case ast.AlterTableAddColumns:
-				err = d.AddColumns(sctx, ident, validSpecs)
-			case ast.AlterTableDropColumn:
-				err = d.DropColumns(sctx, ident, validSpecs)
-			case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
-				err = d.DropIndexes(sctx, ident, validSpecs)
-			default:
-				return errRunMultiSchemaChanges
-			}
-			if err != nil {
-				return errors.Trace(err)
-			}
-			return nil
+		if err != nil {
+			return errors.Trace(err)
 		}
-
-		return errRunMultiSchemaChanges
+		return nil
 	}
 
 	for _, spec := range validSpecs {
@@ -6612,22 +6624,7 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
-
-	// exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	// stmt, err := exec.ParseWithParams(context.Background(), "insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
-	// if err != nil {
-	// 	return errors.Trace(err)
-	// }
-	// _, _, err = exec.ExecRestrictedStmt(context.Background(), stmt)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return err
+	return errors.Trace(err)
 }
 
 func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error) {

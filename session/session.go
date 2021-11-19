@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"net"
 	"runtime/pprof"
-	// "runtime/debug"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -567,8 +566,6 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	sessVars := s.sessionVars
 	txnTempTables := sessVars.TxnCtx.TemporaryTables
 	if len(txnTempTables) == 0 {
-		fmt.Printf("commitTxn ?????????????????????????????? %p\n", s)
-		// debug.PrintStack()
 		return txn.Commit(ctx)
 	}
 
@@ -1118,6 +1115,10 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 			return sv.Value, nil
 		}
 	}
+	// It might have been written from an earlier TiDB version, so we should run the validation function
+	// To normalize the value to be safe for this version of TiDB. This also happens for session scoped
+	// variables in loadCommonGlobalVariablesIfNeeded -> SetSystemVarWithRelaxedValidation
+	sysVar = sv.ValidateWithRelaxedValidation(s.GetSessionVars(), sysVar, variable.ScopeGlobal)
 	return sysVar, nil
 }
 
@@ -2115,7 +2116,6 @@ func (s *session) checkBeforeNewTxn(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf(".......session is....%p...\n", s)
 		logutil.Logger(ctx).Info("Try to create a new txn inside a transaction auto commit",
 			zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", txnStartTS),
@@ -2446,11 +2446,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		runInBootstrapSession(store, bootstrap)
 	} else if ver < currentBootstrapVersion {
 		runInBootstrapSession(store, upgrade)
-	}
-
-	_, err := domap.Get(store)
-	if err != nil {
-		return nil, err
 	}
 
 	se, err := createSession(store)
