@@ -53,7 +53,7 @@ const (
 			{{template "objectName" .}}.{{.Index}}
 		{{- end -}}
 		{{- define "placement-policy" -}}
-			placement-policy-create
+            {{fn .Policy}}-placement-policy-create
 		{{- end -}}
 	`
 

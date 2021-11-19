@@ -115,13 +115,13 @@ func (w *Writer) handleTask(task Task) error {
 }
 
 // WritePolicyMeta writes database meta to a file
-func (w *Writer) WritePolicyMeta(db, createSQL string) error {
+func (w *Writer) WritePolicyMeta(policy, createSQL string) error {
 	tctx, conf := w.tctx, w.conf
-	fileName, err := (&outputFileNamer{DB: db}).render(conf.OutputFileTemplate, outputFileTemplatePolicy)
+	fileName, err := (&outputFileNamer{Policy: policy}).render(conf.OutputFileTemplate, outputFileTemplatePolicy)
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(tctx, db, createSQL, w.extStorage, fileName+".sql", conf.CompressType)
+	return writeMetaToFile(tctx, "placement-policy", createSQL, w.extStorage, fileName+".sql", conf.CompressType)
 }
 
 // WriteDatabaseMeta writes database meta to a file
@@ -265,6 +265,7 @@ func writeMetaToFile(tctx *tcontext.Context, target, metaSQL string, s storage.E
 type outputFileNamer struct {
 	ChunkIndex int
 	FileIndex  int
+	Policy     string
 	DB         string
 	Table      string
 	format     string

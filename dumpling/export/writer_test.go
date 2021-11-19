@@ -49,10 +49,10 @@ func TestWritePolicyMeta(t *testing.T) {
 	writer, clean := createTestWriter(config, t)
 	defer clean()
 
-	err := writer.WritePolicyMeta("test", "create placement policy `y` followers=2")
+	err := writer.WritePolicyMeta("testpolicy", "create placement policy `y` followers=2")
 	require.NoError(t, err)
 
-	p := path.Join(dir, "placement-policy-create.sql")
+	p := path.Join(dir, "testpolicy-placement-policy-create.sql")
 	_, err = os.Stat(p)
 	require.NoError(t, err)
 
