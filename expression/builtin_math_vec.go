@@ -16,10 +16,11 @@ package expression
 
 import (
 	"fmt"
-	utilMath "github.com/pingcap/tidb/util/math"
 	"hash/crc32"
 	"math"
 	"strconv"
+
+	utilMath "github.com/pingcap/tidb/util/math"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/mysql"
