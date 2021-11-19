@@ -20,6 +20,7 @@ package table
 
 import (
 	"context"
+
 	"github.com/opentracing/opentracing-go"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -251,6 +252,7 @@ var MockTableFromMeta func(tableInfo *model.TableInfo) Table
 type CachedTable interface {
 	Table
 
+	Init(renewCh chan interface{}) error
 	// TryReadFromCache checks if the cache table is readable.
 	TryReadFromCache(ts uint64) kv.MemBuffer
 
@@ -260,8 +262,4 @@ type CachedTable interface {
 
 	// MockGetDataLease only for test renew Lease
 	MockGetDataLease() (uint64, uint64)
-
-	CloseRenewCh()
-
-	RenewLease()
 }

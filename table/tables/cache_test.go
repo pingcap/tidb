@@ -15,16 +15,14 @@
 package tables_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestCacheTableBasicScan(t *testing.T) {
@@ -403,47 +401,21 @@ func TestRenewLease(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
-	tableInfo := &model.TableInfo{
-		ID:                   1,
-		Name:                 model.NewCIStr("t"),
-		Charset:              "utf8",
-		Collate:              "utf8_bin",
-		TableCacheStatusType: model.TableCacheStatusEnable,
-		PKIsHandle:           true,
-	}
-	ctx := context.Background()
-	tbl := tables.MockTableFromMeta(tableInfo)
+	tk.MustExec("create table cache_renew_t (id int)")
+	tk.MustExec("alter table cache_renew_t cache")
+	tbl, err := se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("cache_renew_t"))
+	require.NoError(t, err)
 	cacheTable := tbl.(table.CachedTable)
-	err := se.NewTxn(ctx)
-	require.NoError(t, err)
-	txn, err := se.Txn(true)
-	require.NoError(t, err)
-	data := cacheTable.TryReadFromCache(txn.StartTS())
-	require.Equal(t, data, nil)
-	for {
-		err := se.NewTxn(ctx)
-		require.NoError(t, err)
-		txn, err := se.Txn(true)
-		err = cacheTable.UpdateLockForRead(se.GetStore(), txn.StartTS())
-		if err == nil {
-			break
-		}
-	}
-	startTs, _ := cacheTable.MockGetDataLease()
-	physicalTime := oracle.GetTimeFromTS(startTs)
-	lease := oracle.GoTimeToTS(physicalTime.Add(2*time.Second + 500*time.Millisecond))
-	data = cacheTable.TryReadFromCache(lease)
-	require.NotNil(t, data)
-	physicalTime = oracle.GetTimeFromTS(lease)
-	newLease := oracle.GoTimeToTS(physicalTime.Add(3 * time.Second))
 	var i int
-	for i = 0; i < 10; i++ {
-		time.Sleep(100 * time.Millisecond)
+	tk.MustExec("select * from cache_renew_t")
+	_, oldLease := cacheTable.MockGetDataLease()
+	for i = 0; i < 20; i++ {
+		time.Sleep(200 * time.Millisecond)
+		tk.MustExec("select * from cache_renew_t")
 		_, lease := cacheTable.MockGetDataLease()
-		if lease == newLease {
+		if lease != oldLease {
 			break
 		}
 	}
-	require.True(t, i < 10)
-	cacheTable.CloseRenewCh()
+	require.True(t, i < 20)
 }

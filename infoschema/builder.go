@@ -40,7 +40,8 @@ type Builder struct {
 	is *infoSchema
 	// TODO: store is only used by autoid allocators
 	// detach allocators from storage, use passed transaction in the feature
-	store kv.Storage
+	store   kv.Storage
+	renewCh chan interface{}
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -438,22 +439,9 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			}
 		}
 	}
-	tbl, err := tables.TableFromMeta(allocs, tblInfo)
+	tbl, err := b.tableFromMeta(allocs, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
-		b.is.renewMutex.Lock()
-		defer b.is.renewMutex.Unlock()
-		isExisted := false
-		for i := 0; i < len(b.is.renewChs); i++ {
-			if b.is.renewChs[i] == tableID {
-				isExisted = true
-			}
-		}
-		if !isExisted {
-			b.is.renewChs = append(b.is.renewChs, tblInfo.ID)
-		}
 	}
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
@@ -614,7 +602,8 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.
 	}
 
 	for _, di := range dbInfos {
-		err := b.createSchemaTablesForDB(di, tables.TableFromMeta)
+		//err := b.createSchemaTablesForDB(di, tables.TableFromMeta)
+		err := b.createSchemaTablesForDB(di, b.tableFromMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -633,6 +622,19 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.
 		sort.Sort(v)
 	}
 	return b, nil
+}
+func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+	ret, err := tables.TableFromMeta(alloc, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if t, ok := ret.(table.CachedTable); ok {
+		err = t.Init(b.renewCh)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return ret, nil
 }
 
 type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
@@ -671,7 +673,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(store kv.Storage) *Builder {
+func NewBuilder(store kv.Storage, renewCh chan interface{}) *Builder {
 	return &Builder{
 		store: store,
 		is: &infoSchema{
@@ -680,6 +682,7 @@ func NewBuilder(store kv.Storage) *Builder {
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
+		renewCh: renewCh,
 	}
 }
 

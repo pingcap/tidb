@@ -45,18 +45,18 @@ var (
 	_ table.CachedTable = &cachedTable{}
 )
 
-type renewInfo struct {
+type RenewInfo struct {
 	ts uint64
 	*cacheData
-	op RenewLeaseType
+	op         RenewLeaseType
+	CacheTable *cachedTable
 }
 
 type cachedTable struct {
 	TableCommon
 	cacheData atomic.Value
 	handle    StateRemote
-	renewCh   chan renewInfo
-	stopCh    chan struct{}
+	renewCh   chan interface{}
 }
 
 // cacheData pack the cache data and lease.
@@ -96,7 +96,7 @@ func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 		after := nowTime.Sub(startTime)
 		// TODO make this configurable in the following PRs
 		if after >= (2 * time.Second) {
-			c.renewCh <- renewInfo{ts: ts, cacheData: data, op: RenewReadLease}
+			c.renewCh <- RenewInfo{ts: ts, cacheData: data, op: RenewReadLease, CacheTable: c}
 		}
 		return data
 	}
@@ -119,11 +119,14 @@ func NewCachedTable(tbl *TableCommon) (table.Table, error) {
 	ret := &cachedTable{
 		TableCommon: *tbl,
 		handle:      &mockStateRemoteHandle{mockStateRemote.Ch},
-		renewCh:     make(chan renewInfo),
-		stopCh:      make(chan struct{}),
+		renewCh:     make(chan interface{}),
 	}
-	//go ret.renewLease()
 	return ret, nil
+}
+
+func (c *cachedTable) Init(renewCh chan interface{}) error {
+	c.renewCh = renewCh
+	return nil
 }
 
 func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) (kv.MemBuffer, uint64, error) {
@@ -233,29 +236,19 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	return c.TableCommon.RemoveRecord(ctx, h, r)
 }
 
-func (c *cachedTable) RenewLease() {
-	for {
-		select {
-		case <-c.stopCh:
-			close(c.renewCh)
-			return
-		default:
-			for renewInfo := range c.renewCh {
-				tid := c.Meta().ID
-				lease := leaseFromTS(renewInfo.ts)
-				succ, err := c.handle.RenewLease(tid, lease, renewInfo.op)
-				if err != nil {
-					log.Warn("Renew read lease error")
-				}
-				if succ {
-					c.cacheData.Store(&cacheData{
-						Start:     renewInfo.ts,
-						Lease:     lease,
-						MemBuffer: renewInfo.cacheData,
-					})
-				}
-			}
-		}
+func (c *cachedTable) RenewLease(renewInfo RenewInfo) {
+	tid := c.Meta().ID
+	lease := leaseFromTS(renewInfo.ts)
+	succ, err := c.handle.RenewLease(tid, lease, renewInfo.op)
+	if err != nil {
+		log.Warn("Renew read lease error")
+	}
+	if succ {
+		c.cacheData.Store(&cacheData{
+			Start:     renewInfo.ts,
+			Lease:     lease,
+			MemBuffer: renewInfo.cacheData,
+		})
 	}
 }
 
@@ -267,12 +260,4 @@ func (c *cachedTable) MockGetDataLease() (uint64, uint64) {
 	}
 	data := tmp.(*cacheData)
 	return data.Start, data.Lease
-}
-
-func (c *cachedTable) CloseRenewCh() {
-	_, ok := <-c.renewCh
-	if ok {
-		close(c.renewCh)
-	}
-	//c.stopCh <- struct{}{}
 }

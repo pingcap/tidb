@@ -17,7 +17,6 @@ package domain
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/table"
 	"math/rand"
 	"strconv"
 	"sync"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -94,9 +94,8 @@ type Domain struct {
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
-	cachedTableIDs		 *[]int64
-	closeCh         chan struct{}
-	onClose func()
+	renewCh              chan interface{}
+	onClose              func()
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -161,7 +160,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store()).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.renewCh).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -273,7 +272,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.Store()).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do.Store(), do.renewCh).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
@@ -409,7 +408,7 @@ func (do *Domain) Reload() error {
 
 	// lease renew, so it must be executed despite it is cache or not
 	do.SchemaValidator.Update(ver.Ver, oldSchemaVersion, is.SchemaMetaVersion(), changes)
-	do.cachedTableIDs = is.CachedTableIDs()
+	//do.cachedTableIDs = is.CachedTableIDs()
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
@@ -672,7 +671,7 @@ func (do *Domain) Close() {
 		do.info.RemoveServerInfo()
 		do.info.RemoveMinStartTS()
 	}
-	do.closeCh <- struct {}{}
+	//do.closeCh <- struct{}{}
 	close(do.exit)
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
@@ -687,7 +686,6 @@ func (do *Domain) Close() {
 	if do.onClose != nil {
 		do.onClose()
 	}
-
 
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
@@ -707,7 +705,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		indexUsageSyncLease: idxUsageSyncLease,
 		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
 		onClose:             onClose,
-		closeCh:        make(chan struct{}),
+		renewCh:             make(chan interface{}, 10),
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -842,7 +840,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	}
 
 	do.wg.Add(1)
-	go do.closeRenewCh()
+	go do.renewLease()
 
 	return nil
 }
@@ -1739,32 +1737,23 @@ func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
 	do.infoCache.Insert(is, 0)
 }
 
-func (do *Domain) closeRenewCh() {
+func (do *Domain) renewLease() {
 	defer func() {
 		do.wg.Done()
-		logutil.BgLogger().Info("renew ch close")
+		logutil.BgLogger().Info("renew lease exited.")
 	}()
 	for {
 		select {
-		case <-do.closeCh:
-			logutil.BgLogger().Info("==delete mode  ==")
-			for _, id := range *do.cachedTableIDs {
-				tbl, ok := do.InfoSchema().TableByID(id)
-				if ok {
-					tbl.(table.CachedTable).CloseRenewCh()
-				}
-			}
+		case <-do.exit:
 			return
+		case renewCh := <-do.renewCh:
+			renewInfo := renewCh.(tables.RenewInfo)
+			renewInfo.CacheTable.RenewLease(renewInfo)
+
 		default:
-			logutil.BgLogger().Info("==default mode ==")
-			for _, id := range *do.cachedTableIDs {
-				tbl, ok := do.InfoSchema().TableByID(id)
-				if ok {
-					tbl.(table.CachedTable).RenewLease()
-				}
-			}
 		}
 	}
+
 }
 
 func init() {
