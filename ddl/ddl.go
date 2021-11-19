@@ -394,6 +394,9 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
 
 	go func() {
+		if d.sessPool == nil {
+			log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")
+		}
 		sctx, err := d.sessPool.get()
 		if err != nil {
 			log.Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))

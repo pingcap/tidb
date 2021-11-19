@@ -418,32 +418,33 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(err)
 	}
 
+	fmt.Printf("!!!! tikvHelper %p\n", tikvHelper)
 	// TODO maybe we should move into `updateVersionAndTableInfo`, since it can fail, and we shall rollback
-	tblInfo := tb.Meta()
-	if pi := tblInfo.GetPartitionInfo(); pi != nil {
-		// TODO Can we make it as a batch request?
-		for _, p := range pi.Definitions {
-			ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
-			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
-				return errors.Trace(err)
-			}
-		}
-		// partitions that in adding mid-state
-		for _, p := range pi.AddingDefinitions {
-			ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
-			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
-				return errors.Trace(err)
-			}
-			if e := tikvHelper.PostAccelerateSchedule(p.ID); e != nil {
-				return errors.Trace(err)
-			}
-		}
-	} else {
-		ruleNew := MakeNewRule(tblInfo.ID, replicaInfo.Count, replicaInfo.Labels)
-		if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
-			return errors.Trace(err)
-		}
-	}
+	//tblInfo := tb.Meta()
+	//if pi := tblInfo.GetPartitionInfo(); pi != nil {
+	//	// TODO Can we make it as a batch request?
+	//	for _, p := range pi.Definitions {
+	//		ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
+	//		if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
+	//			return errors.Trace(err)
+	//		}
+	//	}
+	//	// partitions that in adding mid-state
+	//	for _, p := range pi.AddingDefinitions {
+	//		ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
+	//		if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
+	//			return errors.Trace(err)
+	//		}
+	//		if e := tikvHelper.PostAccelerateSchedule(p.ID); e != nil {
+	//			return errors.Trace(err)
+	//		}
+	//	}
+	//} else {
+	//	ruleNew := MakeNewRule(tblInfo.ID, replicaInfo.Count, replicaInfo.Labels)
+	//	if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
+	//		return errors.Trace(err)
+	//	}
+	//}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
