@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	utilMath "github.com/pingcap/tidb/util/math"
 	"hash/crc32"
 	"math"
 	"strconv"
@@ -709,15 +710,9 @@ func (b *builtinRandSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 	n := input.NumRows()
 	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
-	b.mu.Lock()
 	for i := range f64s {
 		f64s[i] = b.mysqlRng.Gen()
-		if b.mysqlRng.needUpdate {
-			b.ctx.GetSessionVars().RandSeed1 = int64(b.mysqlRng.seed1)
-			b.ctx.GetSessionVars().RandSeed2 = int64(b.mysqlRng.seed2)
-		}
 	}
-	b.mu.Unlock()
 	return nil
 }
 
@@ -742,9 +737,9 @@ func (b *builtinRandWithSeedFirstGenSig) vecEvalReal(input *chunk.Chunk, result 
 	for i := 0; i < n; i++ {
 		// When the seed is null we need to use 0 as the seed.
 		// The behavior same as MySQL.
-		rng := NewWithSeed(0)
+		rng := utilMath.NewWithSeed(0)
 		if !buf.IsNull(i) {
-			rng = NewWithSeed(i64s[i])
+			rng = utilMath.NewWithSeed(i64s[i])
 		}
 		f64s[i] = rng.Gen()
 	}

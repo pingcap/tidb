@@ -1861,14 +1861,14 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
 	{Scope: ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},
 	{Scope: ScopeNone, Name: TiDBAllowFunctionForExpressionIndex, ReadOnly: true, Value: collectAllowFuncName4ExpressionIndex()},
-	{Scope: ScopeSession, Name: "rand_seed1", Type: TypeInt, Value: strconv.Itoa(int(time.Now().UnixNano() % math.MaxInt32)), MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
-		s.RandSeed1 = int64(tidbOptPositiveInt32(val, 0))
+	{Scope: ScopeSession, Name: "rand_seed1", Type: TypeInt, Value: "0", skipInit: true, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+		s.Rng.SetSeed1(uint32(tidbOptPositiveInt32(val, 0)))
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return "0", nil
 	}},
-	{Scope: ScopeSession, Name: "rand_seed2", Type: TypeInt, Value: strconv.Itoa(int(time.Now().UnixNano() % math.MaxInt32)), MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
-		s.RandSeed2 = int64(tidbOptPositiveInt32(val, 0))
+	{Scope: ScopeSession, Name: "rand_seed2", Type: TypeInt, Value: "0", skipInit: true, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+		s.Rng.SetSeed2(uint32(tidbOptPositiveInt32(val, 0)))
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return "0", nil
