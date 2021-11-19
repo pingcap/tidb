@@ -309,13 +309,21 @@ func (b *builtinAesEncryptSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 func (b *builtinAesEncryptSig) evalString(row chunk.Row) (string, bool, error) {
 	// According to doc: If either function argument is NULL, the function returns NULL.
-	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	cryptStr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
+	}
+	cryptStr, err = charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(cryptStr)
+	if err != nil {
+		return "", false, err
 	}
 	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
+	}
+	keyStr, err = charset.NewEncoding(b.args[1].GetType().Charset).EncodeString(keyStr)
+	if err != nil {
+		return "", false, err
 	}
 	if !b.ivRequired && len(b.args) == 3 {
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
@@ -326,7 +334,7 @@ func (b *builtinAesEncryptSig) evalString(row chunk.Row) (string, bool, error) {
 	var cipherText []byte
 	switch b.modeName {
 	case "ecb":
-		cipherText, err = encrypt.AESEncryptWithECB([]byte(str), key)
+		cipherText, err = encrypt.AESEncryptWithECB([]byte(cryptStr), key)
 	default:
 		return "", true, errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
@@ -357,14 +365,27 @@ func (b *builtinAesEncryptIVSig) evalString(row chunk.Row) (string, bool, error)
 		return "", true, err
 	}
 
+	str, err = charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(str)
+	if err != nil {
+		return "", false, err
+	}
+
 	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
+	}
+	keyStr, err = charset.NewEncoding(b.args[1].GetType().Charset).EncodeString(keyStr)
+	if err != nil {
+		return "", false, err
 	}
 
 	iv, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
+	}
+	iv, err = charset.NewEncoding(b.args[2].GetType().Charset).EncodeString(iv)
+	if err != nil {
+		return "", false, err
 	}
 	if len(iv) < aes.BlockSize {
 		return "", true, errIncorrectArgs.GenWithStack("The initialization vector supplied to aes_encrypt is too short. Must be at least %d bytes long", aes.BlockSize)

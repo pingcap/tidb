@@ -83,14 +83,14 @@ hex(convert('ㅂ' using gbk))	convert('ㅂ' using gbk)
 3F	?
 select convert(a using binary), convert(convert(a using gbk) using binary) from t;
 convert(a using binary)	convert(convert(a using gbk) using binary)
-中文	����
-啊	��
+中文	����
+啊	��
 a	a
 1	1
 ㅂ	?
 select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
 convert(convert('中文' using gbk) using binary)	convert('中文' using binary)
-����	中文
+����	中文
 select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
 convert(convert('ㅂ' using gbk) using binary)	convert('ㅂ' using binary)
 ?	ㅂ
@@ -126,7 +126,7 @@ a
 ㅂ
 select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
 convert(convert('中文' using gbk) using binary)	convert('中文' using binary)
-����	中文
+����	中文
 select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
 convert(convert('ㅂ' using gbk) using binary)	convert('ㅂ' using binary)
 ?	ㅂ
@@ -232,8 +232,8 @@ insert into t values ('65'), ('123456'), ('123456789');
 select char(a using gbk), char(a using utf8), char(a) from t;
 char(a using gbk)	char(a using utf8)	char(a)
 A	A	A
-釦	�@	�@
-NULL	[�	[�
+釦	�@	�@
+NULL	[�	[�
 select char(12345678 using gbk);
 char(12345678 using gbk)
 糰N
@@ -241,8 +241,8 @@ set @@tidb_enable_vectorized_expression = true;
 select char(a using gbk), char(a using utf8), char(a) from t;
 char(a using gbk)	char(a using utf8)	char(a)
 A	A	A
-釦	�@	�@
-NULL	[�	[�
+釦	�@	�@
+NULL	[�	[�
 select char(12345678 using gbk);
 char(12345678 using gbk)
 糰N
@@ -285,4 +285,21 @@ set @@tidb_enable_vectorized_expression = true;
 select ord(a), ord(b), ord(c) from t;
 ord(a)	ord(b)	ord(c)
 14989485	54992	228
+set @@tidb_enable_vectorized_expression = false;
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_encrypt(123456789, '123')) as a, hex(aes_encrypt(987654321, '123')) as b;
+a	b
+3375C2B28622D121067C9D78CEF48B20	35BDCDDBA3C0E0B4427FA199FFF0566C
+set @@block_encryption_mode='aes-128-ofb';
+select hex(aes_encrypt(123456789, '1234567890123456', '1234567890123456')) as a, hex(aes_encrypt(987654321, '1234567890123456', '1234567890123456')) as b;
+a	b
+444EFE38E96AA7D2E2	4C44FA3AE968A3D8EA
+set @@tidb_enable_vectorized_expression = true;
+select hex(aes_encrypt(123456789, '1234567890123456', '1234567890123456')) as a, hex(aes_encrypt(987654321, '1234567890123456', '1234567890123456')) as b;
+a	b
+444EFE38E96AA7D2E2	4C44FA3AE968A3D8EA
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_encrypt(123456789, '123')) as a, hex(aes_encrypt(987654321, '123')) as b;
+a	b
+3375C2B28622D121067C9D78CEF48B20	35BDCDDBA3C0E0B4427FA199FFF0566C
 set @@tidb_enable_vectorized_expression = false;
