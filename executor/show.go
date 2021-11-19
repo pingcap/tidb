@@ -1260,7 +1260,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		// Notice that MySQL uses two spaces between LIST and COLUMNS...
 		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
 		for i, col := range partitionInfo.Columns {
-			buf.WriteString(col.O)
+			buf.WriteString(stringutil.Escape(col.O, sqlMode))
 			if i < len(partitionInfo.Columns)-1 {
 				buf.WriteString(",")
 			}
@@ -1274,7 +1274,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		if i > 0 {
 			fmt.Fprintf(buf, ",\n ")
 		}
-		fmt.Fprintf(buf, "PARTITION `%s`", def.Name)
+		fmt.Fprintf(buf, "PARTITION %s", stringutil.Escape(def.Name.O, sqlMode))
 		// PartitionTypeHash does not have any VALUES definition
 		if partitionInfo.Type == model.PartitionTypeRange {
 			lessThans := strings.Join(def.LessThan, ",")
