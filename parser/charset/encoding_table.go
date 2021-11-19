@@ -305,6 +305,10 @@ func characterLengthOne(_ []byte) int {
 	return 1
 }
 
+// TruncateStrategy indicates the way to handle the invalid strings in specific charset.
+//   - TruncateStrategyEmpty: returns an empty string.
+//   - TruncateStrategyTrim: returns the valid prefix part of string.
+//   - TruncateStrategyReplace: returns the whole string, but the invalid characters are replaced with '?'.
 type TruncateStrategy int8
 
 const (
@@ -334,34 +338,33 @@ func (s StringValidatorASCII) Validate(str string) int {
 
 // Truncate implement the interface StringValidator.
 func (s StringValidatorASCII) Truncate(str string, strategy TruncateStrategy) (string, int) {
-	var result []byte
-	if strategy == TruncateStrategyReplace {
-		result = make([]byte, 0, len(str))
-	}
 	invalidPos := -1
-	for i, w := 0, 0; i < len(str); i += w {
-		w = 1
+	for i := 0; i < len(str); i++ {
 		if str[i] > go_unicode.MaxASCII {
-			if invalidPos == -1 {
-				invalidPos = i
-			}
-			switch strategy {
-			case TruncateStrategyEmpty:
-				return "", invalidPos
-			case TruncateStrategyTrim:
-				return str[:i], invalidPos
-			case TruncateStrategyReplace:
+			invalidPos = i
+		}
+	}
+	if invalidPos == -1 {
+		// Quick check passed.
+		return str, -1
+	}
+	switch strategy {
+	case TruncateStrategyEmpty:
+		return "", invalidPos
+	case TruncateStrategyTrim:
+		return str[:invalidPos], invalidPos
+	case TruncateStrategyReplace:
+		result := make([]byte, 0, len(str))
+		for i, w := 0, 0; i < len(str); i += w {
+			w = 1
+			if str[i] > go_unicode.MaxASCII {
 				w = characterLengthUTF8(Slice(str)[i:])
 				w = mathutil.Min(w, len(str)-i)
 				result = append(result, '?')
 				continue
 			}
-		}
-		if strategy == TruncateStrategyReplace {
 			result = append(result, str[i:i+w]...)
 		}
-	}
-	if strategy == TruncateStrategyReplace {
 		return string(result), invalidPos
 	}
 	return str, -1
