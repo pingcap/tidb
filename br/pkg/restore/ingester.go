@@ -93,6 +93,7 @@ type Ingester struct {
 
 	batchWriteKVPairs int
 	regionSplitSize   int64
+	bufferPool        *membuf.Pool
 }
 
 // NewIngester creates Ingester.
@@ -111,6 +112,7 @@ func NewIngester(
 		batchWriteKVPairs: cfg.BatchWriteKVPairs,
 		regionSplitSize:   defaultSplitSize,
 		TS:                commitTS,
+		bufferPool:        membuf.NewPool(),
 	}
 }
 
@@ -380,7 +382,7 @@ func (i *Ingester) writeToTiKV(
 		requests = append(requests, req)
 	}
 
-	bytesBuf := membuf.NewBuffer()
+	bytesBuf := i.bufferPool.NewBuffer()
 	defer bytesBuf.Destroy()
 	pairs := make([]*sst.Pair, 0, i.batchWriteKVPairs)
 	count := 0
@@ -604,4 +606,10 @@ func (i *Ingester) isIngestRetryable(
 		return retryIngest, newRegion, errors.Annotate(berrors.ErrKVUnknown, errPb.GetMessage())
 	}
 	return retryNone, nil, errors.Annotatef(berrors.ErrKVUnknown, "non-retryable error: %s", resp.GetError().GetMessage())
+}
+
+func (i *Ingester) Close() error {
+	i.conns.Close()
+	i.bufferPool.Destroy()
+	return nil
 }

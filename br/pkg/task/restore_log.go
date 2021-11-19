@@ -138,6 +138,7 @@ func RunLogRestore(c context.Context, g glue.Glue, cfg *LogRestoreConfig) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer logClient.Close()
 
 	return logClient.RestoreLogData(ctx, mgr.GetDomain())
 }

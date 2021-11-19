@@ -759,3 +759,7 @@ func (l *LogClient) RestoreLogData(ctx context.Context, dom *domain.Domain) erro
 	// restore files
 	return l.restoreTables(ctx, dom)
 }
+
+func (l *LogClient) Close() error {
+	return l.ingester.Close()
+}
