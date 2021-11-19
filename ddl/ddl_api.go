@@ -21,13 +21,14 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/store/helper"
 	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
+
+	"github.com/pingcap/tidb/store/helper"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
