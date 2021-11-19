@@ -994,7 +994,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  `data` varchar(255) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
-			"/*!50100 PARTITION BY HASH (`id`) */\n",
+			"/*!50100 PARTITION BY HASH (`id`) */",
 	))
 }
 
