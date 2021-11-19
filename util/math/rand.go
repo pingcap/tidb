@@ -54,12 +54,14 @@ func (rng *MysqlRng) Gen() float64 {
 	return float64(rng.seed1) / float64(maxRandValue)
 }
 
+// SetSeed1 is a interface to set seed1
 func (rng *MysqlRng) SetSeed1(seed uint32) {
 	rng.mu.Lock()
 	defer rng.mu.Unlock()
 	rng.seed1 = seed
 }
 
+// SetSeed2 is a interface to set seed2
 func (rng *MysqlRng) SetSeed2(seed uint32) {
 	rng.mu.Lock()
 	defer rng.mu.Unlock()
