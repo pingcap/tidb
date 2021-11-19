@@ -53,7 +53,7 @@ import (
 type tiflashDDLTestSuite struct {
 	store        kv.Storage
 	dom          *domain.Domain
-	pdHttpServer *httptest.Server
+	pdHTTPServer *httptest.Server
 	pdMockAddr   string
 	pdEnabled    bool
 	startTime    time.Time
@@ -82,7 +82,7 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
 
-	s.pdHttpServer, s.pdMockAddr = s.setUpMockPDHTTPServer()
+	s.pdHTTPServer, s.pdMockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	server, addr := s.setUpMockTiFlashHTTPServer()
 	s.tiflash = mockTiFlash{
@@ -105,8 +105,8 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
-	if s.pdHttpServer != nil {
-		s.pdHttpServer.Close()
+	if s.pdHTTPServer != nil {
+		s.pdHTTPServer.Close()
 	}
 
 	s.dom.Close()
@@ -129,15 +129,16 @@ func isRuleMatch(rule placement.Rule, startKey string, endKey string, count int,
 			return false
 		}
 
-		if len(rule.LocationLabels) != len(labels) {
-			return false
-		} else {
+		if len(rule.LocationLabels) == len(labels) {
 			for i, lb := range labels {
 				if lb != rule.LocationLabels[i] {
 					return false
 				}
 			}
+		} else {
+			return false
 		}
+
 		if rule.Count != count {
 			return false
 		}
@@ -342,22 +343,21 @@ func (s *tiflashDDLTestSuite) setUpMockTiFlashHTTPServer() (*httptest.Server, st
 	statusPort, _ := strconv.Atoi(statusAddrVec[1])
 	router.HandleFunc("/tiflash/sync-status/{tableid:\\d+}", func(w http.ResponseWriter, req *http.Request) {
 		params := mux.Vars(req)
-		tableId, err := strconv.Atoi(params["tableid"])
+		tableID, err := strconv.Atoi(params["tableid"])
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 			return
-		} else {
-			table, ok := s.tiflash.SyncStatus[tableId]
-			if !ok {
-				b := []byte("0\n\n")
-				w.WriteHeader(http.StatusOK)
-				w.Write(b)
-				return
-			}
-			sync := table.String()
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(sync))
 		}
+		table, ok := s.tiflash.SyncStatus[tableID]
+		if !ok {
+			b := []byte("0\n\n")
+			w.WriteHeader(http.StatusOK)
+			w.Write(b)
+			return
+		}
+		sync := table.String()
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(sync))
 	})
 	router.HandleFunc("/config", func(w http.ResponseWriter, req *http.Request) {
 		s := fmt.Sprintf("{\n    \"engine-store\": {\n        \"http_port\": %v\n    }\n}", statusPort)
@@ -459,9 +459,9 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 	router.HandleFunc("/pd/api/v1/config/rule/tiflash/{ruleid:.+}", func(w http.ResponseWriter, req *http.Request) {
 		// Delete placement rule
 		params := mux.Vars(req)
-		ruleId := params["ruleid"]
-		ruleId = strings.Trim(ruleId, "/")
-		delete(globalTiFlashPlacementRules, ruleId)
+		ruleID := params["ruleid"]
+		ruleID = strings.Trim(ruleID, "/")
+		delete(globalTiFlashPlacementRules, ruleID)
 		w.WriteHeader(http.StatusOK)
 	}).Methods(http.MethodDelete)
 	var mockConfig = func() (map[string]interface{}, error) {

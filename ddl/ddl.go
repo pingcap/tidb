@@ -90,8 +90,10 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = uint32(0)
-	PollTiFlashInterval    = 2 * time.Second
-	PullTiFlashPdTick      = 60
+	// The interval PollTiFlashReplicaStatus is called every time.
+	PollTiFlashInterval = 2 * time.Second
+	// How many intervals before we pull all pd rules.
+	PullTiFlashPdTick = 60
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.

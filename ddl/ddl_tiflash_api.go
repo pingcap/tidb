@@ -47,6 +47,7 @@ import (
 	"strings"
 )
 
+// PollTiFlashReplicaStatusContext records status for each TiFlash replica.
 type PollTiFlashReplicaStatusContext struct {
 	ID             int64
 	Count          uint64
@@ -55,14 +56,7 @@ type PollTiFlashReplicaStatusContext struct {
 	HighPriority   bool
 }
 
-type TiFlashReplicaStatusResult struct {
-	ID               int64
-	RegionCount      int64
-	FlashRegionCount int64
-	ReplicaDetail    map[int64]int
-}
-
-func MakeBaseRule() placement.Rule {
+func makeBaseRule() placement.Rule {
 	return placement.Rule{
 		GroupID:  "tiflash",
 		ID:       "",
@@ -139,14 +133,14 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool) er
 }
 
 func MakeNewRule(ID int64, Count uint64, LocationLabels []string) *placement.Rule {
-	ruleId := fmt.Sprintf("table-%v-r", ID)
+	ruleID := fmt.Sprintf("table-%v-r", ID)
 	startKey := tablecodec.GenTableRecordPrefix(ID)
 	endKey := tablecodec.EncodeTablePrefix(ID + 1)
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	ruleNew := MakeBaseRule()
-	ruleNew.ID = ruleId
+	ruleNew := makeBaseRule()
+	ruleNew.ID = ruleID
 	ruleNew.StartKeyHex = startKey.String()
 	ruleNew.EndKeyHex = endKey.String()
 	ruleNew.Count = int(Count)
@@ -155,7 +149,7 @@ func MakeNewRule(ID int64, Count uint64, LocationLabels []string) *placement.Rul
 	return &ruleNew
 }
 
-func GetTiflashHttpAddr(host string, statusAddr string) (string, error) {
+func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
 	configURL := fmt.Sprintf("%s://%s/config",
 		util.InternalHTTPSchema(),
 		statusAddr,
@@ -195,6 +189,7 @@ func GetTiflashHttpAddr(host string, statusAddr string) (string, error) {
 	return addr, nil
 }
 
+// GetTiFlashReplicaInfo parses model.TableInfo into []PollTiFlashReplicaStatusContext.
 func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]PollTiFlashReplicaStatusContext) {
 	if tblInfo.TiFlashReplica == nil {
 		// reject tables that has no tiflash replica such like `INFORMATION_SCHEMA`
@@ -215,12 +210,12 @@ func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]PollTiFlashRep
 }
 
 // TODO test _update_http_port, since we have no etcdCli
-func (d *ddl) UpdateTiFlashHttpAddress(store *helper.StoreStat) error {
+func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	addrAndPort := strings.Split(store.Store.StatusAddress, ":")
 	if len(addrAndPort) < 2 {
 		return errors.New("Can't get TiFlash Address from PD")
 	}
-	httpAddr, err := GetTiflashHttpAddr(addrAndPort[0], store.Store.StatusAddress)
+	httpAddr, err := getTiflashHTTPAddr(addrAndPort[0], store.Store.StatusAddress)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -273,7 +268,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 	}
 
 	for _, store := range tiflashStores {
-		d.UpdateTiFlashHttpAddress(&store)
+		d.UpdateTiFlashHTTPAddress(&store)
 	}
 
 	// main body of table_update
@@ -450,7 +445,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
 // it will use the `start_ts` of DDL job as snapshot to get the dropped/truncated table information.
-func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, store *kv.Storage, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
+func getDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, store *kv.Storage, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	for _, job := range jobs {
 		// Check GC safe point for getting snapshot infoSchema.
 		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
@@ -512,7 +507,7 @@ func GetDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 		return false, nil
 	}
 	fn := func(jobs []*model.Job) (bool, error) {
-		return GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, &store, handleJobAndTableInfo)
+		return getDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, &store, handleJobAndTableInfo)
 	}
 
 	err = admin.IterAllDDLJobs(txn, fn)
@@ -527,6 +522,7 @@ func GetDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 	return nil
 }
 
+// HandlePlacementRuleRoutine fetch all rules from pd, and remove all obsolete rules.
 func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []PollTiFlashReplicaStatusContext) error {
 	// compute all_rules
 	// TODO Need async remove allRules
@@ -557,7 +553,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 		// for every region in each table, if it has one replica, we reckon it ready
 		// TODO Can we batch request table?
 		// implement _check_and_make_rule
-		ruleId := fmt.Sprintf("table-%v-r", tb.ID)
+		ruleID := fmt.Sprintf("table-%v-r", tb.ID)
 		//rule, ok := allRules[ruleId]
 		if ok {
 			//match, ruleNew := isRuleMatch(rule, tb)
@@ -565,7 +561,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 			//fmt.Printf("!!!! Set rule %v\n", ruleNew)
 			//tikvHelper.SetPlacementRule(*ruleNew)
 			//}
-			delete(allRules, ruleId)
+			delete(allRules, ruleID)
 		} else {
 			//ruleNew := MakeNewRule(tb.ID, tb.Count, tb.LocationLabels)
 			//fmt.Printf("!!!! Set new rule %v\n", ruleNew)
@@ -580,13 +576,4 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 	}
 
 	return nil
-}
-
-func GetInfoCache(d interface{}) *infoschema.InfoCache {
-	dd, ok := d.(*ddl)
-	if ok {
-		return dd.infoCache
-	} else {
-		return nil
-	}
 }

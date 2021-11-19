@@ -906,7 +906,8 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 	return dec.Decode(stats)
 }
 
-func (h *Helper) DeletePlacementRule(group string, ruleId string) error {
+// DeletePlacementRule is to delete placement rule for certain group.
+func (h *Helper) DeletePlacementRule(group string, ruleID string) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
 		return errors.Trace(err)
@@ -916,7 +917,7 @@ func (h *Helper) DeletePlacementRule(group string, ruleId string) error {
 		util.InternalHTTPSchema(),
 		pdAddrs[0],
 		group,
-		ruleId,
+		ruleID,
 	)
 
 	req, err := http.NewRequest("DELETE", deleteURL, nil)
@@ -939,6 +940,7 @@ func (h *Helper) DeletePlacementRule(group string, ruleId string) error {
 	return nil
 }
 
+// SetPlacementRule is a helper function to set placement rule.
 func (h *Helper) SetPlacementRule(rule placement.Rule) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
@@ -966,6 +968,7 @@ func (h *Helper) SetPlacementRule(rule placement.Rule) error {
 	return nil
 }
 
+// GetGroupRules to get all placement rule in a certain group.
 func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
@@ -1010,6 +1013,7 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 	return rules, nil
 }
 
+// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
 func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
@@ -1049,6 +1053,7 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	return nil
 }
 
+// GetPDRegionRecordStats is a helper function calling `/stats/region`.
 func (h *Helper) GetPDRegionRecordStats(tableID int64, stats *PDRegionStats) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
