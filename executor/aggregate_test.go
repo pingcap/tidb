@@ -24,14 +24,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dgryski/go-farm"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -1509,4 +1515,138 @@ func (s *testSerialSuite) TestAggInDisk(c *C) {
 	tk.MustExec("create table t(c int, c1 int);")
 	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t;").Check(testkit.Rows("0"))
 	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t group by c1;").Check(testkit.Rows())
+}
+
+func (s *testSerialSuite) TestPartitionSpillingAgg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_hashagg_final_concurrency = 1;")
+	tk.MustExec("set tidb_hashagg_partial_concurrency = 1;")
+	tk.MustExec("set tidb_mem_quota_query = 4194304")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	sql := "insert into t values (0)"
+	partition0 := generatePartN(0, 10000)
+	partition1 := generatePartN(1, 10000)
+	partition2 := generatePartN(2, 10000)
+	partition3 := generatePartN(3, 10000)
+	partitions := make([]string, 0, len(partition0)+len(partition1)+len(partition2)+len(partition3))
+	partitions = append(partitions, "0.0000")
+	m := make(map[int64]bool)
+	// Test only some partitions may be spilled.
+	for _, i := range partition1 {
+		if _, ok := m[i]; !ok {
+			sql += fmt.Sprintf(",(%v)", i)
+			partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
+			m[i] = true
+		}
+	}
+	for _, i := range partition3 {
+		if _, ok := m[i]; !ok {
+			sql += fmt.Sprintf(",(%v)", i)
+			partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
+			m[i] = true
+		}
+	}
+	sort.Strings(partitions)
+	sql += ";"
+	tk.MustExec(sql)
+	rows := tk.MustQuery("desc analyze select /*+ HASH_AGG() */ avg(t.a) from t group by t.a;").Rows()
+	for _, row := range rows {
+		length := len(row)
+		line := fmt.Sprintf("%v", row)
+		disk := fmt.Sprintf("%v", row[length-1])
+		if strings.Contains(line, "HashAgg") && !strings.Contains(line, "cop") {
+			c.Assert(strings.Contains(disk, "0 Bytes"), IsFalse)
+			c.Assert(strings.Contains(disk, "MB") ||
+				strings.Contains(disk, "KB") ||
+				strings.Contains(disk, "Bytes"), IsTrue)
+		}
+	}
+
+	// Add code cover
+	tk.MustQuery("select /*+ HASH_AGG() */ avg(t.a) from t group by t.a").Sort().Check(testkit.Rows(partitions...))
+	// Test no groupby and no data.
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(c int, c1 int);")
+	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t;").Check(testkit.Rows("0"))
+	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t group by c1;").Check(testkit.Rows())
+
+	// Test all partitions may be spilled
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	sql = "insert into t values (0)"
+	m = make(map[int64]bool)
+	for _, i := range partition1 {
+		if _, ok := m[i]; !ok {
+			sql += fmt.Sprintf(",(%v)", i)
+			m[i] = true
+		}
+	}
+	for _, i := range partition3 {
+		if _, ok := m[i]; !ok {
+			sql += fmt.Sprintf(",(%v)", i)
+			m[i] = true
+		}
+	}
+	for _, i := range partition0 {
+		if _, ok := m[i]; !ok {
+			sql += fmt.Sprintf(",(%v)", i)
+			partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
+			m[i] = true
+		}
+	}
+	for _, i := range partition2 {
+		if _, ok := m[i]; !ok {
+			sql += fmt.Sprintf(",(%v)", i)
+			partitions = append(partitions, strconv.FormatInt(i, 10)+".0000")
+			m[i] = true
+		}
+	}
+	sort.Strings(partitions)
+	sql += ";"
+	tk.MustExec(sql)
+	rows = tk.MustQuery("desc analyze select /*+ HASH_AGG() */ avg(t.a) from t group by t.a;").Rows()
+	for _, row := range rows {
+		length := len(row)
+		line := fmt.Sprintf("%v", row)
+		disk := fmt.Sprintf("%v", row[length-1])
+		if strings.Contains(line, "HashAgg") && !strings.Contains(line, "cop") {
+			c.Assert(strings.Contains(disk, "0 Bytes"), IsFalse)
+			c.Assert(strings.Contains(disk, "MB") ||
+				strings.Contains(disk, "KB") ||
+				strings.Contains(disk, "Bytes"), IsTrue)
+		}
+	}
+	//Add code cover
+	tk.MustQuery("select /*+ HASH_AGG() */ avg(t.a) from t group by t.a").Sort().Check(testkit.Rows(partitions...))
+	// Test no groupby and no data.
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(c int, c1 int);")
+	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t;").Check(testkit.Rows("0"))
+	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t group by c1;").Check(testkit.Rows())
+}
+
+func generatePartN(n int, num int) []int64 {
+	data := make([]int64, 0, num)
+	for i := 0; i < num; {
+		s := rand.Int31()
+		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		tp := types.NewFieldType(mysql.TypeLong)
+		tps := []*types.FieldType{tp}
+		chk1 := chunk.New(tps, 1, 1)
+		chk1.Reset()
+		chk1.Column(0).AppendInt64(int64(s))
+		buf1 := make([][]byte, 3)
+		key, err := codec.HashGroupKey(sc, 1, chk1.Column(0), buf1, tp)
+		if err != nil {
+			continue
+		}
+		hashVal := int(farm.Hash32(key[0])) % 4
+		if hashVal == n {
+			data = append(data, int64(s))
+			i++
+		}
+	}
+	return data
 }
