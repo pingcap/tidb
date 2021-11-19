@@ -2125,73 +2125,6 @@ func (s *testIntegrationSuite) TestIssue27797(c *C) {
 	result = tk.MustQuery("select col2 from IDT_HP24172 where col1 = 8388607 and col1 in (select col1 from IDT_HP24172);")
 	result.Check(testkit.Rows("<nil>"))
 }
-<<<<<<< HEAD
-=======
-
-func (s *testIntegrationSuite) TestIssue28154(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	defer func() {
-		tk.Exec("drop table if exists t")
-	}()
-	tk.MustExec("create table t(a TEXT)")
-	tk.MustExec("insert into t values('abc')")
-	result := tk.MustQuery("select * from t where from_base64('')")
-	result.Check(testkit.Rows())
-	_, err := tk.Exec("update t set a = 'def' where from_base64('')")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect DOUBLE value: ''")
-	result = tk.MustQuery("select * from t where from_base64('invalidbase64')")
-	result.Check(testkit.Rows())
-	tk.MustExec("update t set a = 'hig' where from_base64('invalidbase64')")
-	result = tk.MustQuery("select * from t where from_base64('test')")
-	result.Check(testkit.Rows())
-	_, err = tk.Exec("update t set a = 'xyz' where from_base64('test')")
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, "\\[types:1292\\]Truncated incorrect DOUBLE value.*")
-	result = tk.MustQuery("select * from t")
-	result.Check(testkit.Rows("abc"))
-}
-
-func (s *testIntegrationSerialSuite) TestRejectSortForMPP(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
-	tk.MustExec("analyze table t")
-
-	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Se)
-	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	c.Assert(exists, IsTrue)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
-	}
-
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_enforce_mpp=1;")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-	}
-}
 
 func (s *testIntegrationSuite) TestIssues29711(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -2228,4 +2161,3 @@ func (s *testIntegrationSuite) TestIssues29711(c *C) {
 		))
 
 }
->>>>>>> a0d3f4fe5... planner: fix topn wrongly pushed to index scan side when it's a prefix index (#29778)

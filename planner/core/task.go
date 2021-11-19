@@ -975,15 +975,15 @@ func (p *PhysicalTopN) canPushToIndexPlan(indexPlan PhysicalPlan, byItemCols []*
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
+	cols := make([]*expression.Column, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		cols = append(cols, expression.ExtractColumns(item.Expr)...)
+	}
 	if copTask, ok := t.(*copTask); ok && p.canPushDown(copTask) && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
-<<<<<<< HEAD
-		if !copTask.indexPlanFinished && p.allColsFromSchema(copTask.indexPlan.Schema()) {
-=======
 		if !copTask.indexPlanFinished && p.canPushToIndexPlan(copTask.indexPlan, cols) {
->>>>>>> a0d3f4fe5... planner: fix topn wrongly pushed to index scan side when it's a prefix index (#29778)
 			pushedDownTopN = p.getPushedDownTopN(copTask.indexPlan)
 			copTask.indexPlan = pushedDownTopN
 		} else {
