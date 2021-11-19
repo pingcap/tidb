@@ -44,6 +44,7 @@ var (
 	_ table.Table       = &cachedTable{}
 	_ table.CachedTable = &cachedTable{}
 )
+
 // RenewInfo is used for domain and cacheTable to convey renew information.
 type RenewInfo struct {
 	ts uint64
