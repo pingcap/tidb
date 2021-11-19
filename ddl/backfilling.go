@@ -426,13 +426,11 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 
 func tryDecodeToHandleString(key kv.Key) string {
 	defer func() {
-		var rs interface{} = "nil"
 		if r := recover(); r != nil {
-			rs = r
+			logutil.BgLogger().Warn("tryDecodeToHandleString panic",
+				zap.Any("recover()", r),
+				zap.Binary("key", key))
 		}
-		logutil.BgLogger().Warn("tryDecodeToHandleString panic",
-			zap.Any("recover()", rs),
-			zap.Binary("key", key))
 	}()
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
