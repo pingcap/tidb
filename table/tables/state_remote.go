@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
@@ -386,7 +387,7 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, now
 	}
 	defer func() {
 		if err != nil {
-			h.rollbackTxn(ctx)
+			terror.Log(h.rollbackTxn(ctx))
 		}
 	}()
 
@@ -433,7 +434,7 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, now
 		}
 
 		// Otherwise, the WRITE should wait for the READ lease expire.
-		h.rollbackTxn(ctx)
+		terror.Log(h.rollbackTxn(ctx))
 		waitForLeaseExpire(oldReadLease, now)
 		// And then retry change the lock to WRITE
 		return true, nil
@@ -484,7 +485,7 @@ func (h *stateRemoteHandle) runInTxn(ctx context.Context, fn func(ctx context.Co
 
 	err = fn(ctx)
 	if err != nil {
-		h.rollbackTxn(ctx)
+		terror.Log(h.rollbackTxn(ctx))
 		return errors.Trace(err)
 	}
 
