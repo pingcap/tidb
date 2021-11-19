@@ -490,6 +490,10 @@ func (c *ceilFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	setFlag4FloorAndCeil(bf.tp, args[0])
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if retTp == types.ETDecimal {
+		bf.tp.Flen, bf.tp.Decimal = args[0].GetType().Flen, 0
+	}
 
 	switch argTp {
 	case types.ETInt:
@@ -676,6 +680,11 @@ func (c *floorFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, err
 	}
 	setFlag4FloorAndCeil(bf.tp, args[0])
+
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if retTp == types.ETDecimal {
+		bf.tp.Flen, bf.tp.Decimal = args[0].GetType().Flen, 0
+	}
 	switch argTp {
 	case types.ETInt:
 		if retTp == types.ETInt {
