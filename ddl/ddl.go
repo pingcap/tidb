@@ -396,6 +396,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	go func() {
 		if d.sessPool == nil {
 			log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")
+			return
 		}
 		sctx, err := d.sessPool.get()
 		if err != nil {
