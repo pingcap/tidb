@@ -61,7 +61,7 @@ type tiflashDDLTestSuite struct {
 	tiflash      mockTiFlash
 }
 
-var _ = Suite(&tiflashDDLTestSuite{})
+var _ = SerialSuites(&tiflashDDLTestSuite{})
 
 func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	var err error
