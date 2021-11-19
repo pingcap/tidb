@@ -2070,10 +2070,14 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		return err
 	}
 
-	ord, err := chooseOrdFunc(b.args[0].GetType().Charset)
+	charSet := b.args[0].GetType().Charset
+	ord, err := chooseOrdFunc(charSet)
 	if err != nil {
 		return err
 	}
+
+	enc := charset.NewEncoding(charSet)
+	var encodedBuf []byte
 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
@@ -2082,8 +2086,12 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		if result.IsNull(i) {
 			continue
 		}
-		str := buf.GetString(i)
-		i64s[i] = ord(str)
+		str := buf.GetBytes(i)
+		encoded, err := enc.EncodeFirstChar(encodedBuf, str)
+		if err != nil {
+			return err
+		}
+		i64s[i] = ord(encoded)
 	}
 	return nil
 }
