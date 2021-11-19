@@ -28,6 +28,14 @@ import (
 	"golang.org/x/text/encoding/unicode"
 )
 
+var encodingMap = map[EncodingLabel]*Encoding{
+	CharsetUTF8MB4: UTF8Encoding,
+	CharsetUTF8:    UTF8Encoding,
+	CharsetGBK:     GBKEncoding,
+	CharsetLatin1:  LatinEncoding,
+	CharsetBin:     BinaryEncoding,
+}
+
 // Lookup returns the encoding with the specified label, and its canonical
 // name. It returns nil and the empty string if label is not one of the
 // standard encodings for HTML. Matching is case-insensitive and ignores
