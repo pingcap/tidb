@@ -120,6 +120,11 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 	predicates = DeleteTrueExprs(ds, predicates)
 	ds.allConds = predicates
 	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.ctx.GetSessionVars().StmtCtx, predicates, ds.ctx.GetClient(), kv.UnSpecified)
+	for _, predicate := range ds.pushedDownConds {
+		if expression.MaybeOverOptimized4PlanCache(ds.ctx, []expression.Expression{predicate}) {
+			predicates = append(predicates, predicate.Clone())
+		}
+	}
 	return predicates, ds
 }
 
