@@ -848,11 +848,10 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated(c *C) {
 			[]string{},
 			[]int{-1, -1, -1},
 		},
-		// all generated columns and none input columns
 		{
-			"CREATE TABLE `table` (a bigint, b text as (sha1(repeat('x', uint64))) stored)",
+			"CREATE TABLE `table` (a bigint as (1 + 2) stored, b text as (sha1(repeat('x', uint64))) stored)",
 			[]string{"a", "b"},
-			[]int{0, -1, -1},
+			[]int{-1, -1, -1},
 		},
 	}
 
