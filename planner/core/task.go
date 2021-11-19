@@ -1215,14 +1215,6 @@ func (p *PhysicalTopN) canPushDown(storeTp kv.StoreType) bool {
 	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeTp)
 }
 
-func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
-	cols := make([]*expression.Column, 0, len(p.ByItems))
-	for _, item := range p.ByItems {
-		cols = append(cols, expression.ExtractColumns(item.Expr)...)
-	}
-	return len(schema.ColumnsIndices(cols)) > 0
-}
-
 // GetCost computes the cost of in memory sort.
 func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64 {
 	if count < 2.0 {
