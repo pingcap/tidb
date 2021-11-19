@@ -198,11 +198,11 @@ type stateRecord struct {
 	lockType     CachedTableLockType
 }
 
-// func newMockStateRemoteData() *mockStateRemoteData {
-// 	return &mockStateRemoteData{
-// 		data: make(map[int64]*stateRecord),
-// 	}
-// }
+func newMockStateRemoteData() *mockStateRemoteData {
+	return &mockStateRemoteData{
+		data: make(map[int64]*stateRecord),
+	}
+}
 
 func (r *mockStateRemoteData) Load(tid int64) (CachedTableLockType, uint64, error) {
 	record, ok := r.data[tid]
@@ -386,7 +386,6 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, now
 	}
 	defer func() {
 		if err != nil {
-			fmt.Println("defer lockForWriteOnce, err ==", err)
 			h.rollbackTxn(ctx)
 		}
 	}()
@@ -434,7 +433,6 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, now
 		}
 
 		// Otherwise, the WRITE should wait for the READ lease expire.
-		fmt.Println("rollback txn wait for read lease...")
 		h.rollbackTxn(ctx)
 		waitForLeaseExpire(oldReadLease, now)
 		// And then retry change the lock to WRITE
@@ -448,7 +446,6 @@ func waitForLeaseExpire(oldReadLease, now uint64) {
 		t1 := oracle.GetTimeFromTS(oldReadLease)
 		t2 := oracle.GetTimeFromTS(now)
 		waitDuration := t1.Sub(t2)
-		fmt.Println("wait for lease expirte ===", waitDuration)
 		time.Sleep(waitDuration)
 	}
 }
@@ -466,19 +463,16 @@ func (h *stateRemoteHandle) RenewLease(ctx context.Context, tid int64, ts uint64
 
 func (h *stateRemoteHandle) beginTxn(ctx context.Context) error {
 	_, err := h.execSQL(ctx, "begin")
-	fmt.Printf("EEEEEEEEEEEEEEEE   begin ...%p...\n", h.exec)
 	return err
 }
 
 func (h *stateRemoteHandle) commitTxn(ctx context.Context) error {
 	_, err := h.execSQL(ctx, "commit")
-	fmt.Printf("EEEEEEEEEEEEEEEE   commit %v...%p ...\n", err, h.exec)
 	return err
 }
 
 func (h *stateRemoteHandle) rollbackTxn(ctx context.Context) error {
 	_, err := h.execSQL(ctx, "rollback")
-	fmt.Println("EEEEEEEEEEEEEEEE   rollback")
 	return err
 }
 
@@ -491,7 +485,6 @@ func (h *stateRemoteHandle) runInTxn(ctx context.Context, fn func(ctx context.Co
 	err = fn(ctx)
 	if err != nil {
 		h.rollbackTxn(ctx)
-		fmt.Println("==== rollback exec error ===", err)
 		return errors.Trace(err)
 	}
 

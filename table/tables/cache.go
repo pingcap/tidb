@@ -142,7 +142,7 @@ func (c *cachedTable) UpdateLockForRead(store kv.Storage, ts uint64) error {
 	// Load data from original table and the update lock information.
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts)
-	succ, err := c.handle.LockForRead(tid, ts, lease)
+	succ, err := c.handle.LockForRead(context.Background(), tid, ts, lease)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -169,7 +169,7 @@ func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		return nil, err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, now, leaseFromTS(now))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -183,7 +183,7 @@ func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(ctx, c.Meta().ID, now, leaseFromTS(now))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -197,7 +197,7 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, now, leaseFromTS(now))
 	if err != nil {
 		return errors.Trace(err)
 	}
