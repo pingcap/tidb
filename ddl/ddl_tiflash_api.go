@@ -214,7 +214,7 @@ func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]PollTiFlashRep
 	}
 }
 
-// TODO _update_http_port
+// TODO test _update_http_port, since we have no etcdCli
 func (d *ddl) UpdateTiFlashHttpAddress(store *helper.StoreStat) error {
 	addrAndPort := strings.Split(store.Store.StatusAddress, ":")
 	if len(addrAndPort) < 2 {

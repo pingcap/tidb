@@ -338,6 +338,8 @@ func (s *tiflashDDLTestSuite) setUpMockTiFlashHTTPServer() (*httptest.Server, st
 	server := httptest.NewServer(router)
 	// mock store stats stat
 	statusAddr := strings.TrimPrefix(server.URL, "http://")
+	statusAddrVec := strings.Split(statusAddr, ":")
+	statusPort, _ := strconv.Atoi(statusAddrVec[1])
 	router.HandleFunc("/tiflash/sync-status/{tableid:\\d+}", func(w http.ResponseWriter, req *http.Request) {
 		params := mux.Vars(req)
 		tableId, err := strconv.Atoi(params["tableid"])
@@ -356,6 +358,11 @@ func (s *tiflashDDLTestSuite) setUpMockTiFlashHTTPServer() (*httptest.Server, st
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(sync))
 		}
+	})
+	router.HandleFunc("/config", func(w http.ResponseWriter, req *http.Request) {
+		s := fmt.Sprintf("{\n    \"engine-store\": {\n        \"http_port\": %v\n    }\n}", statusPort)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(s))
 	})
 	return server, statusAddr
 }
