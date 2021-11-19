@@ -5,6 +5,7 @@ package version
 import (
 	"context"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,7 +34,11 @@ var (
 
 // NextMajorVersion returns the next major version.
 func NextMajorVersion() semver.Version {
-	nextMajorVersion := semver.New(removeVAndHash(build.ReleaseVersion))
+	nextMajorVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))
+	if err != nil {
+		// build.ReleaseVersion is unknown, assuming infinitely-new nightly version.
+		return semver.Version{Major: math.MaxInt64, PreRelease: "nightly"}
+	}
 	nextMajorVersion.BumpMajor()
 	return *nextMajorVersion
 }
