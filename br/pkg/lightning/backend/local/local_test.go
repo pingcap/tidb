@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -357,7 +358,10 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 	f.wg.Add(1)
 	go f.ingestSSTLoop()
 	sorted := needSort && !partitialSort
-	w, err := openLocalWriter(&backend.LocalWriterConfig{IsKVSorted: sorted}, f, 1024)
+	pool := membuf.NewPool()
+	defer pool.Destroy()
+	kvBuffer := pool.NewBuffer()
+	w, err := openLocalWriter(&backend.LocalWriterConfig{IsKVSorted: sorted}, f, 1024, kvBuffer)
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
