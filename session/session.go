@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"net"
 	"runtime/pprof"
+	// "runtime/debug"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -566,6 +567,8 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	sessVars := s.sessionVars
 	txnTempTables := sessVars.TxnCtx.TemporaryTables
 	if len(txnTempTables) == 0 {
+		fmt.Printf("commitTxn ?????????????????????????????? %p\n", s)
+		// debug.PrintStack()
 		return txn.Commit(ctx)
 	}
 
@@ -2112,6 +2115,7 @@ func (s *session) checkBeforeNewTxn(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		fmt.Printf(".......session is....%p...\n", s)
 		logutil.Logger(ctx).Info("Try to create a new txn inside a transaction auto commit",
 			zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
 			zap.Uint64("txnStartTS", txnStartTS),

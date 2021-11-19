@@ -15,6 +15,7 @@
 package tables
 
 import (
+	"fmt"
 	"context"
 	"sync/atomic"
 	"time"
@@ -68,12 +69,14 @@ func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
 func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 	tmp := c.cacheData.Load()
 	if tmp == nil {
+		fmt.Println("TryReadFromCache return nil because ... data not loaded")
 		return nil
 	}
 	data := tmp.(*cacheData)
 	if ts >= data.Start && ts < data.Lease {
 		return data
 	}
+	fmt.Println("TryReadFromCache return nil because ... ts not correct...", ts, data.Start, data.Lease)
 	return nil
 }
 

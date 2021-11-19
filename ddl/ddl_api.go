@@ -6615,7 +6615,18 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// _, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
+
+	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
+
+	// exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	// stmt, err := exec.ParseWithParams(context.Background(), "insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
+	// _, _, err = exec.ExecRestrictedStmt(context.Background(), stmt)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return err
 }
 

@@ -27,9 +27,11 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	"golang.org/x/sync/singleflight"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"go.uber.org/zap"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -4158,18 +4160,26 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			us.SetChildren(ds)
 			result = us
 		} else {
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-					}
-				}()
-				if !b.inUpdateStmt && !b.inDeleteStmt && !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
-					err := cachedTable.UpdateLockForRead(ctx, b.ctx.GetStore(), txn.StartTS())
-					if err != nil {
-						log.Warn("Update Lock Info Error")
-					}
-				}
-			}()
+			if !b.inUpdateStmt && !b.inDeleteStmt && !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+				fmt.Println("llllllllalalalalalllllllllllalal Update Lock For Read !!!!!!!!!!!!!")
+				go XXX(ctx, cachedTable, b.ctx.GetStore(), txn.StartTS())
+			}
+			// go func() {
+			// 	defer func() {
+			// 		if r := recover(); r != nil {
+			// 		}
+			// 	}()
+			// 	if !b.inUpdateStmt && !b.inDeleteStmt && !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			// 		_, err, _ := sf.Do(fmt.Sprintf("%d", tableInfo.ID), func() (interface{}, error) {
+			// 			fmt.Println("llllllllalalalalalllllllllllalal Update Lock For Read !!!!!!!!!!!!!")
+			// 			err := cachedTable.UpdateLockForRead(ctx, b.ctx.GetStore(), txn.StartTS())
+			// 			return nil, err
+			// 		})
+			// 		if err != nil {
+			// 			logutil.BgLogger().Warn("Update Lock Info Error", zap.Error(err))
+			// 		}
+			// 	}
+			// }()
 		}
 	}
 
@@ -4193,6 +4203,22 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	return result, nil
+}
+
+var sf singleflight.Group
+
+func XXX(ctx context.Context, tbl table.CachedTable, store kv.Storage, startTS uint64) {
+	defer func() {
+		if r := recover(); r != nil {
+		}
+	}()
+	_, err, _ := sf.Do(fmt.Sprintf("%d", tbl.Meta().ID), func() (interface{}, error) {
+		err := tbl.UpdateLockForRead(ctx, store, startTS)
+		return nil, err
+	})
+	if err != nil {
+		logutil.BgLogger().Warn("Update Lock Info Error", zap.Error(err))
+	}
 }
 
 func (b *PlanBuilder) timeRangeForSummaryTable() QueryTimeRange {

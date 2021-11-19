@@ -19,6 +19,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,7 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -1925,6 +1926,8 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 }
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
+	b.inUpdateStmt = true
+	fmt.Println("run here in build update === ", b.inUpdateStmt)
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
 	for _, info := range v.TblColPosInfos {
@@ -1965,7 +1968,6 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	if b.err != nil {
 		return nil
 	}
-	b.inUpdateStmt = true
 	updateExec := &UpdateExec{
 		baseExecutor:              base,
 		OrderedList:               v.OrderedList,
@@ -1998,6 +2000,8 @@ func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int)
 }
 
 func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
+	b.inDeleteStmt = true
+	fmt.Println("in delete stmt === true set!!")
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
@@ -2010,7 +2014,6 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	if b.err != nil {
 		return nil
 	}
-	b.inDeleteStmt = true
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	deleteExec := &DeleteExec{
@@ -4675,25 +4678,32 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		b.err = errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(b.ctx.GetSessionVars().CurrentDB, tblInfo.Name))
 		return nil
 	}
-	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS)
+	var ctbl table.CachedTable = tbl.(table.CachedTable)
+	cacheData := ctbl.TryReadFromCache(startTS)
 	if cacheData != nil {
 		b.ctx.GetSessionVars().StmtCtx.ReadFromTableCache = true
 		return cacheData
-	}
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logutil.BgLogger().Error("panic in the recoverable goroutine",
-					zap.Reflect("r", r),
-					zap.Stack("stack trace"))
-			}
-		}()
+	} else {
 		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-			err := tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS)
-			if err != nil {
-				log.Warn("Update Lock Info Error")
-			}
+			fmt.Println("what the fuc?? Update Lock For Read !!!!!!!!!!!!!", b.inDeleteStmt, b.inUpdateStmt)
+			go plannercore.XXX(context.Background(), ctbl, b.ctx.GetStore(), startTS)
 		}
-	}()
+
+		// go func() {
+		// 	defer func() {
+		// 		if r := recover(); r != nil {
+		// 			logutil.BgLogger().Error("panic in the recoverable goroutine",
+		// 				zap.Reflect("r", r),
+		// 				zap.Stack("stack trace"))
+		// 		}
+		// 	}()
+		// 	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+		// 		err := tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS)
+		// 		if err != nil {
+		// 			log.Warn("Update Lock Info Error")
+		// 		}
+		// 	}
+		// }()
+	}
 	return nil
 }

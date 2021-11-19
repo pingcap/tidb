@@ -15,6 +15,7 @@
 package tables_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -169,18 +170,21 @@ func TestCacheCondition(t *testing.T) {
 
 	// Update should not trigger cache.
 	tk.MustExec("update t2 set v = v + 1 where id > 0")
+	fmt.Println("======= update 1")
 	for i := 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
 	}
 	// Contains PointGet Update should not trigger cache.
 	tk.MustExec("update t2 set v = v + 1 where id = 2")
+	fmt.Println("======= update 2")
 	for i := 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
 	}
 
 	// Contains PointGet Delete should not trigger cache.
+	fmt.Println("======= delete ")
 	tk.MustExec("delete from t2  where id = 2")
 	for i := 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
@@ -209,28 +213,28 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 
 	tk.MustExec("alter table write_tmp1 cache")
 	// Read and add read lock
-	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001",
+	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001",
 		"3 113 1003"))
 	// read lock should valid
 	for i := 0; i < 10; i++ {
-		if tk.HasPlan("select *from write_tmp1", "UnionScan") {
+		if tk.HasPlan("select * from write_tmp1", "UnionScan") {
 			break
 		}
 	}
 	tk.MustExec("use test")
 	tk1.MustExec("insert into write_tmp1 values (2, 222, 222)")
 	// write lock exists
-	require.False(t, tk.HasPlan("select *from write_tmp1", "UnionScan"))
+	require.False(t, tk.HasPlan("select * from write_tmp1", "UnionScan"))
 	// wait write lock expire and check cache can be used again
-	for !tk.HasPlan("select *from write_tmp1", "UnionScan") {
-		tk.MustExec("select *from write_tmp1")
+	for !tk.HasPlan("select * from write_tmp1", "UnionScan") {
+		tk.MustExec("select * from write_tmp1")
 	}
-	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 222", "3 113 1003"))
+	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 222", "3 113 1003"))
 	tk1.MustExec("update write_tmp1 set v = 3333 where id = 2")
-	for !tk.HasPlan("select *from write_tmp1", "UnionScan") {
-		tk.MustExec("select *from write_tmp1")
+	for !tk.HasPlan("select * from write_tmp1", "UnionScan") {
+		tk.MustExec("select * from write_tmp1")
 	}
-	tk.MustQuery("select *from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
+	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001", "2 222 3333", "3 113 1003"))
 }
 
 func TestCacheTableComplexRead(t *testing.T) {
@@ -244,25 +248,40 @@ func TestCacheTableComplexRead(t *testing.T) {
 	tk1.MustExec("create table complex_cache (id int primary key auto_increment, u int unique, v int)")
 	tk1.MustExec("insert into complex_cache values" + "(5, 105, 1005), (7, 117, 1007), (9, 109, 1009)")
 	tk1.MustExec("alter table complex_cache cache")
-	tk1.MustExec("begin")
-	tk1.MustQuery("select *from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
-
-	go func() {
-		tk2.MustExec("begin")
-		tk2.MustQuery("select *from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
-		var i int
-		for i = 0; i < 10; i++ {
-			time.Sleep(100 * time.Millisecond)
-			if tk2.HasPlan("select *from complex_cache where id > 7", "UnionScan") {
-				break
-			}
+	tk1.MustQuery("select * from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
+	var i int
+	for i = 0; i < 100; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if tk1.HasPlan("select * from complex_cache where id > 7", "UnionScan") {
+			break
 		}
-		require.True(t, i < 10)
-		tk2.MustExec("commit")
-		doneCh <- struct{}{}
-	}()
-	<-doneCh
-	tk1.HasPlan("select *from complex_cache where id > 7", "UnionScan")
+	}
+	require.True(t, i < 10)
+
+	tk1.MustExec("begin")
+	// go func() {
+	// 	defer func() {
+	// 		if r := recover(); r != nil {
+	// 			fmt.Println("xxxx", r)
+	// 		}
+	// 	}()
+	tk2.MustExec("begin")
+	tk2.MustQuery("select * from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
+	fmt.Println("run here 1111111111111111111111")
+	for i = 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if tk2.HasPlan("select * from complex_cache where id > 7", "UnionScan") {
+			break
+		}
+		fmt.Println("run here 2222222222222222222222222")
+	}
+	require.True(t, i < 10)
+	tk2.MustExec("commit")
+	doneCh <- struct{}{}
+	// }()
+	// <-doneCh
+
+	tk1.HasPlan("select * from complex_cache where id > 7", "UnionScan")
 	tk1.MustExec("commit")
 }
 
@@ -282,10 +301,18 @@ func TestBeginSleepABA(t *testing.T) {
 	tk1.MustExec("insert into aba values (1, 1)")
 	tk1.MustExec("alter table aba cache")
 	tk1.MustQuery("select * from aba").Check(testkit.Rows("1 1"))
+	cacheUsed := false
+	for i := 0; i < 100; i++ {
+		if tk1.HasPlan("select * from aba", "UnionScan") {
+			cacheUsed = true
+			break
+		}
+	}
+	require.True(t, cacheUsed)
 
 	// Begin, read from cache.
 	tk1.MustExec("begin")
-	cacheUsed := false
+	cacheUsed = false
 	for i := 0; i < 100; i++ {
 		if tk1.HasPlan("select * from aba", "UnionScan") {
 			cacheUsed = true

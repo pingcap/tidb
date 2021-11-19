@@ -305,6 +305,7 @@ type sqlExec interface {
 
 type stateRemoteHandle struct {
 	exec sqlExec
+	sync.Mutex
 }
 
 // NewStateRemote creates a StateRemote object.
@@ -322,6 +323,8 @@ func (h *stateRemoteHandle) Load(ctx context.Context, tid int64) (CachedTableLoc
 }
 
 func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, now, ts uint64) ( /*succ*/ bool, error) {
+	h.Lock()
+	defer h.Unlock()
 	succ := false
 	err := h.runInTxn(ctx, func(ctx context.Context) error {
 		lockType, lease, _, err := h.loadRow(ctx, tid)
@@ -354,6 +357,8 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, now, ts 
 }
 
 func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64, now, ts uint64) error {
+	h.Lock()
+	defer h.Unlock()
 	for {
 		retry, err := h.lockForWriteOnce(ctx, tid, now, ts)
 		if err != nil {
@@ -381,6 +386,7 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, now
 	}
 	defer func() {
 		if err != nil {
+			fmt.Println("defer lockForWriteOnce, err ==", err)
 			h.rollbackTxn(ctx)
 		}
 	}()
@@ -428,6 +434,7 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, now
 		}
 
 		// Otherwise, the WRITE should wait for the READ lease expire.
+		fmt.Println("rollback txn wait for read lease...")
 		h.rollbackTxn(ctx)
 		waitForLeaseExpire(oldReadLease, now)
 		// And then retry change the lock to WRITE
@@ -441,11 +448,14 @@ func waitForLeaseExpire(oldReadLease, now uint64) {
 		t1 := oracle.GetTimeFromTS(oldReadLease)
 		t2 := oracle.GetTimeFromTS(now)
 		waitDuration := t1.Sub(t2)
+		fmt.Println("wait for lease expirte ===", waitDuration)
 		time.Sleep(waitDuration)
 	}
 }
 
 func (h *stateRemoteHandle) RenewLease(ctx context.Context, tid int64, ts uint64) (bool, error) {
+	h.Lock()
+	defer h.Unlock()
 	_, err := h.execSQL(ctx, "update mysql.table_cache_meta set lease = %? where tid = %? and lock_type ='READ'", ts, tid)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -456,16 +466,19 @@ func (h *stateRemoteHandle) RenewLease(ctx context.Context, tid int64, ts uint64
 
 func (h *stateRemoteHandle) beginTxn(ctx context.Context) error {
 	_, err := h.execSQL(ctx, "begin")
+	fmt.Printf("EEEEEEEEEEEEEEEE   begin ...%p...\n", h.exec)
 	return err
 }
 
 func (h *stateRemoteHandle) commitTxn(ctx context.Context) error {
 	_, err := h.execSQL(ctx, "commit")
+	fmt.Printf("EEEEEEEEEEEEEEEE   commit %v...%p ...\n", err, h.exec)
 	return err
 }
 
 func (h *stateRemoteHandle) rollbackTxn(ctx context.Context) error {
 	_, err := h.execSQL(ctx, "rollback")
+	fmt.Println("EEEEEEEEEEEEEEEE   rollback")
 	return err
 }
 
@@ -478,6 +491,7 @@ func (h *stateRemoteHandle) runInTxn(ctx context.Context, fn func(ctx context.Co
 	err = fn(ctx)
 	if err != nil {
 		h.rollbackTxn(ctx)
+		fmt.Println("==== rollback exec error ===", err)
 		return errors.Trace(err)
 	}
 

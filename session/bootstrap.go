@@ -357,7 +357,7 @@ const (
 		last_analyzed_at TIMESTAMP,
 		PRIMARY KEY (table_id, column_id) CLUSTERED
 	);`
-
+	// CreateTableCacheMetaTable stores the cached table meta lock information.
 	CreateTableCacheMetaTable = `CREATE TABLE IF NOT EXISTS mysql.table_cache_meta (
 		tid int(11) NOT NULL DEFAULT 0,
 		lock_type enum('NONE','READ', 'INTEND', 'WRITE') NOT NULL DEFAULT 'NONE',
@@ -1706,12 +1706,14 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateSchemaIndexUsageTable)
 	// Create stats_fm_sketch table.
 	mustExecute(s, CreateStatsFMSketchTable)
-	// Create global_grants
+	// Create global_grants.
 	mustExecute(s, CreateGlobalGrantsTable)
-	// Create capture_plan_baselines_blacklist
+	// Create capture_plan_baselines_blacklist.
 	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
-	// Create column_stats_usage table
+	// Create column_stats_usage table.
 	mustExecute(s, CreateColumnStatsUsageTable)
+	// Create table_cache_meta table.
+	mustExecute(s, CreateTableCacheMetaTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
