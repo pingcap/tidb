@@ -287,8 +287,11 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 	cols := enc.tbl.Cols()
 
 	if len(enc.columnIdx) == 0 {
-		columnMaxIdx := 0
+		columnMaxIdx := -1
 		columnIdx := make([]int, len(columnPermutation))
+		for i := 0; i < len(columnPermutation); i++ {
+			columnIdx[i] = -1
+		}
 		for i, idx := range columnPermutation {
 			if idx >= 0 {
 				columnIdx[idx] = i
@@ -579,7 +582,7 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 		serverInfo := version.ParseServerInfo(versionStr)
 
 		rows, e := tx.Query(`
-			SELECT table_name, column_name, column_type, extra
+			SELECT table_name, column_name, column_type, GENERATION_EXPRESSION, extra
 			FROM information_schema.columns
 			WHERE table_schema = ?
 			ORDER BY table_name, ordinal_position;
@@ -595,8 +598,8 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 			curTable     *model.TableInfo
 		)
 		for rows.Next() {
-			var tableName, columnName, columnType, columnExtra string
-			if e := rows.Scan(&tableName, &columnName, &columnType, &columnExtra); e != nil {
+			var tableName, columnName, columnType, generationExpr, columnExtra string
+			if e := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); e != nil {
 				return e
 			}
 			if tableName != curTableName {
@@ -625,6 +628,7 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 				FieldType: types.FieldType{
 					Flag: flag,
 				},
+				GeneratedExprString: generationExpr,
 			})
 			curColOffset++
 		}

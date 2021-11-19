@@ -832,11 +832,11 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated(c *C) {
 	tr, err := NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, nil, &checkpoints.TableCheckpoint{}, nil)
 	c.Assert(err, IsNil)
 
-	cases := []struct{
+	cases := []struct {
 		schema              string
 		columns             []string
 		expectedPermutation []int
-	} {
+	}{
 		{
 			"CREATE TABLE `table` (a INT, b INT, C INT, d INT AS (a * 2))",
 			[]string{"b", "c", "a"},
