@@ -67,19 +67,9 @@ func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	isWarning := !b.ivRequired && len(b.args) == 3
 	isConstKey := b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx)
 
-	cryptEnc := charset.NewEncoding(b.args[0].GetType().Charset)
-	keyEnc := charset.NewEncoding(b.args[1].GetType().Charset)
-
-	var (
-		key        []byte
-		encodedBuf []byte
-	)
+	var key []byte
 	if isConstKey {
-		keyBytes, err := keyEnc.Encode(encodedBuf, keyBuf.GetBytes(0))
-		if err != nil {
-			return err
-		}
-		key = encrypt.DeriveKeyMySQL(keyBytes, b.keySize)
+		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
 	}
 
 	result.ReserveString(n)
@@ -95,19 +85,12 @@ func (b *builtinAesDecryptSig) vecEvalString(input *chunk.Chunk, result *chunk.C
 			stmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
 		}
 		if !isConstKey {
-			keyBytes, err := keyEnc.Encode(encodedBuf, keyBuf.GetBytes(i))
-			if err != nil {
-				return err
-			}
-			key = encrypt.DeriveKeyMySQL(keyBytes, b.keySize)
+			key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
 		}
 		// ANNOTATION:
 		// we can't use GetBytes here because GetBytes return raw memory in strBuf,
 		// and the memory will be modified in AESEncryptWithECB & AESDecryptWithECB
-		str, err := cryptEnc.Encode(encodedBuf, []byte(strBuf.GetString(i)))
-		if err != nil {
-			return err
-		}
+		str := []byte(strBuf.GetString(i))
 		plainText, err := encrypt.AESDecryptWithECB(str, key)
 		if err != nil {
 			result.AppendNull()
@@ -374,10 +357,6 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 		return err
 	}
 
-	cryptEnc := charset.NewEncoding(b.args[0].GetType().Charset)
-	keyEnc := charset.NewEncoding(b.args[1].GetType().Charset)
-	ivEnc := charset.NewEncoding(b.args[2].GetType().Charset)
-
 	isCBC := false
 	isOFB := false
 	isCFB := false
@@ -393,19 +372,9 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 	}
 
 	isConst := b.args[1].ConstItem(b.ctx.GetSessionVars().StmtCtx)
-	var (
-		key []byte
-		// key and str can share the buf as DeriveKeyMySQL returns new byte slice
-		// iv needs a spare buf as it works on the buf directly
-		encodedBuf   []byte
-		ivEncodedBuf []byte
-	)
+	var key []byte
 	if isConst {
-		keyBytes, err := keyEnc.Encode(encodedBuf, keyBuf.GetBytes(0))
-		if err != nil {
-			return err
-		}
-		key = encrypt.DeriveKeyMySQL(keyBytes, b.keySize)
+		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
 	}
 
 	result.ReserveString(n)
@@ -416,39 +385,32 @@ func (b *builtinAesDecryptIVSig) vecEvalString(input *chunk.Chunk, result *chunk
 			continue
 		}
 
-		iv, err := ivEnc.Encode(ivEncodedBuf, ivBuf.GetBytes(i))
-		if err != nil {
-			return err
-		}
+		iv := ivBuf.GetBytes(i)
 		if len(iv) < aes.BlockSize {
 			return errIncorrectArgs.GenWithStack("The initialization vector supplied to aes_decrypt is too short. Must be at least %d bytes long", aes.BlockSize)
 		}
 		// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
 		iv = iv[0:aes.BlockSize]
 		if !isConst {
-			keyBytes, err := keyEnc.Encode(encodedBuf, keyBuf.GetBytes(i))
-			if err != nil {
-				return err
-			}
-			key = encrypt.DeriveKeyMySQL(keyBytes, b.keySize)
+			key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
 		}
 		var plainText []byte
 
 		// ANNOTATION:
 		// we can't use GetBytes here because GetBytes return raw memory in strBuf,
 		// and the memory will be modified in AESDecryptWithCBC & AESDecryptWithOFB & AESDecryptWithCFB
-		str, err := cryptEnc.Encode(encodedBuf, []byte(strBuf.GetString(i)))
-		if err != nil {
-			return err
-		}
 		if isCBC {
-			plainText, _ = encrypt.AESEncryptWithCBC(str, key, iv)
+			plainText, err = encrypt.AESDecryptWithCBC([]byte(strBuf.GetString(i)), key, iv)
 		}
 		if isOFB {
-			plainText, _ = encrypt.AESEncryptWithOFB(str, key, iv)
+			plainText, err = encrypt.AESDecryptWithOFB([]byte(strBuf.GetString(i)), key, iv)
 		}
 		if isCFB {
-			plainText, _ = encrypt.AESEncryptWithCFB(str, key, iv)
+			plainText, err = encrypt.AESDecryptWithCFB([]byte(strBuf.GetString(i)), key, iv)
+		}
+		if err != nil {
+			result.AppendNull()
+			continue
 		}
 		result.AppendBytes(plainText)
 	}
