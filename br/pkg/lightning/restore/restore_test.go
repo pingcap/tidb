@@ -1572,7 +1572,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 
 	kvsCh := make(chan []deliveredKVs, 2)
 	deliverCompleteCh := make(chan deliverResult)
-	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup).NewEncoder(
+	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig())).NewEncoder(
 		s.tr.encTable,
 		&kv.SessionOptions{
 			SQLMode:   s.cfg.TiDB.SQLMode,
