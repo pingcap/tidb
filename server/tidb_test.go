@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//go:build !race
 // +build !race
 
 package server
@@ -129,6 +130,7 @@ func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = ts.port
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -274,6 +276,7 @@ func (ts *tidbTestSuite) TestStatusPort(c *C) {
 	defer dom.Close()
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -300,6 +303,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = "/tmp/ca-cert-2.pem"
@@ -351,6 +355,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = caPath
@@ -866,6 +871,7 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, ts.store)
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -883,6 +889,7 @@ func (ts *tidbTestSerialSuite) TestTLSAuto(c *C) {
 	}
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
@@ -935,6 +942,7 @@ func (ts *tidbTestSerialSuite) TestTLSBasic(c *C) {
 	}
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -1001,6 +1009,7 @@ func (ts *tidbTestSerialSuite) TestTLSVerify(c *C) {
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -1066,6 +1075,7 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 	// try old cert used in startup configuration.
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -1166,6 +1176,7 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
@@ -1255,7 +1266,7 @@ func (ts *tidbTestSuite) TestCreateTableFlen(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := Execute(ctx, qctx, "show create table t1")
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	cols := rs.Columns()
@@ -1296,7 +1307,7 @@ func (ts *tidbTestSuite) TestShowTablesFlen(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := Execute(ctx, qctx, "show tables")
 	c.Assert(err, IsNil)
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	cols := rs.Columns()
@@ -1500,6 +1511,7 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cli := newTestServerClient()
 	cfg := newTestConfig()
+	cfg.Socket = ""
 	cfg.GracefulWaitBeforeShutdown = 2 // wait before shutdown
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0

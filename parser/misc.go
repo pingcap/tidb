@@ -13,11 +13,6 @@
 
 package parser
 
-import (
-	"reflect"
-	"unsafe"
-)
-
 func isLetter(ch rune) bool {
 	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
@@ -162,6 +157,10 @@ var tokenMap = map[string]int{
 	"ASC":                      asc,
 	"ASCII":                    ascii,
 	"ATTRIBUTES":               attributes,
+	"STATS_OPTIONS":            statsOptions,
+	"STATS_SAMPLE_RATE":        statsSampleRate,
+	"STATS_COL_CHOICE":         statsColChoice,
+	"STATS_COL_LIST":           statsColList,
 	"AUTO_ID_CACHE":            autoIdCache,
 	"AUTO_INCREMENT":           autoIncrement,
 	"AUTO_RANDOM":              autoRandom,
@@ -607,6 +606,7 @@ var tokenMap = map[string]int{
 	"RUNNING":                  running,
 	"S3":                       s3,
 	"SAMPLES":                  samples,
+	"SAMPLERATE":               sampleRate,
 	"SAN":                      san,
 	"SCHEDULE":                 schedule,
 	"SCHEMA":                   database,
@@ -990,15 +990,4 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 		tok = windowFuncTokenMap[string(data)]
 	}
 	return tok
-}
-
-// Slice converts string to slice without copy.
-// Use at your own risk.
-func Slice(s string) (b []byte) {
-	pBytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	pString := (*reflect.StringHeader)(unsafe.Pointer(&s))
-	pBytes.Data = pString.Data
-	pBytes.Len = pString.Len
-	pBytes.Cap = pString.Len
-	return
 }

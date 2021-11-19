@@ -98,7 +98,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, int64(DefTiDBShardAllocateStep), vars.ShardAllocateStep)
 	require.Equal(t, DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
-	require.Equal(t, int64(DefTMPTableSize), vars.TMPTableSize)
+	require.Equal(t, int64(DefTiDBTmpTableMaxSize), vars.TMPTableSize)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
@@ -494,24 +494,6 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err) // converts to max value
 	warn := v.StmtCtx.GetWarnings()[0]
 	require.Regexp(t, ".*Truncated incorrect tidb_analyze_version value", warn.Err.Error())
-}
-
-func TestSetOverflowBehave(t *testing.T) {
-	ddRegWorker := maxDDLReorgWorkerCount + 1
-	SetDDLReorgWorkerCounter(ddRegWorker)
-	require.Equal(t, GetDDLReorgWorkerCounter(), maxDDLReorgWorkerCount)
-
-	ddlReorgBatchSize := MaxDDLReorgBatchSize + 1
-	SetDDLReorgBatchSize(ddlReorgBatchSize)
-	require.Equal(t, GetDDLReorgBatchSize(), MaxDDLReorgBatchSize)
-	ddlReorgBatchSize = MinDDLReorgBatchSize - 1
-	SetDDLReorgBatchSize(ddlReorgBatchSize)
-	require.Equal(t, GetDDLReorgBatchSize(), MinDDLReorgBatchSize)
-
-	val := tidbOptInt64("a", 1)
-	require.Equal(t, int64(1), val)
-	val2 := tidbOptFloat64("b", 1.2)
-	require.Equal(t, 1.2, val2)
 }
 
 func TestValidate(t *testing.T) {

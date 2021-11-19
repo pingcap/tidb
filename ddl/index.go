@@ -304,6 +304,9 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		return ver, errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("Rename Index"))
+	}
 
 	idx := tblInfo.FindIndexByName(from.L)
 	idx.Name = to
@@ -401,6 +404,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		return ver, errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
 
 	var (
@@ -611,6 +617,9 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		return ver, errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("Drop Index"))
+	}
 
 	dependentHiddenCols := make([]*model.ColumnInfo, 0)
 	for _, indexColumn := range indexInfo.Columns {
@@ -731,6 +740,9 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, indexNames, ifExists, err := getSchemaInfos(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		return ver, errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("Drop Indexes"))
 	}
 
 	indexInfos, err := checkDropIndexes(tblInfo, job, indexNames, ifExists)
@@ -1284,7 +1296,6 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // BackfillDataInTxn will backfill table index in a transaction, lock corresponding rowKey, if the value of rowKey is changed,
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // BackfillDataInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
-// TODO: make w.batchCnt can be modified by system variable.
 func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		if val.(bool) {
