@@ -28,8 +28,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/store/helper"
-
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
