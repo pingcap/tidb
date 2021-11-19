@@ -78,7 +78,7 @@ func MakeBaseRule() placement.Rule {
 	}
 }
 
-func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
+func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool) error {
 	// TODO lastHandledSchemaVersionTso checking can be removed.
 	//ddlGlobalSchemaVersion := 0
 
@@ -120,7 +120,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context) error {
 	if true {
 		//|| ddlGlobalSchemaVersion != lastHandledSchemaVersion || int64(lastHandledSchemaTso+300) <= curTso {
 		// Need to update table
-		allUpdate, err := d.TiFlashReplicaTableUpdate(ctx)
+		allUpdate, err := d.TiFlashReplicaTableUpdate(ctx, handlePd)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -292,7 +292,7 @@ func (d *ddl) UpdateTiFlashHttpAddress(store *helper.StoreStat) error {
 	return nil
 }
 
-func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
+func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (bool, error) {
 	// Should we escape table update?
 	allReplicaReady := true
 	tikvStore, ok := ctx.GetStore().(helper.Storage)
@@ -340,7 +340,9 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context) (bool, error) {
 	}
 
 	// Removed pd rule handling to somewhere else
-	HandlePlacementRuleRoutine(ctx, d, tableList)
+	if handlePd {
+		HandlePlacementRuleRoutine(ctx, d, tableList)
+	}
 
 	for _, tb := range tableList {
 		// for every region in each table, if it has one replica, we reckon it ready

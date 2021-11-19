@@ -22,6 +22,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/pingcap/log"
 	"sync"
 	"time"
 
@@ -90,6 +91,7 @@ var (
 	// region.
 	EnableSplitTableRegion = uint32(0)
 	PollTiFlashInterval    = 2 * time.Second
+	PullTiFlashPdTick      = 60
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -390,14 +392,14 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	go func() {
 		sctx, err := d.sessPool.get()
-		fmt.Printf("!!!! New gor %p\n", &sctx)
 		if err != nil {
-			fmt.Printf("!!!! Error %v\n", err)
+			log.Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))
 		} else {
+			iterTimes := 0
 			for {
-				err = d.PollTiFlashReplicaStatus(sctx)
+				err = d.PollTiFlashReplicaStatus(sctx, iterTimes%PullTiFlashPdTick == 0)
 				if err != nil {
-					fmt.Printf("!!!! Poll Error %v\n", err)
+					log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
 				}
 				select {
 				case <-d.ctx.Done():
@@ -405,6 +407,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 					return
 				case <-time.After(PollTiFlashInterval):
 				}
+				iterTimes += 1
 			}
 		}
 		d.sessPool.put(sctx)
