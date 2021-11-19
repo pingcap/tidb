@@ -16,6 +16,8 @@ package statistics_test
 
 import (
 	"context"
+	"testing"
+
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
@@ -26,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestTraceCE(t *testing.T) {
