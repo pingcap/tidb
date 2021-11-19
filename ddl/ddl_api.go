@@ -21,6 +21,8 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/store/helper"
 	"math"
 	"strconv"
 	"strings"
@@ -3267,26 +3269,27 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
-	//if meta.TiFlashReplica != nil {
-	//	tikvStore, ok := ctx.GetStore().(helper.Storage)
-	//	if !ok {
-	//		return errors.New("Can not get Helper")
-	//	}
-	//	tikvHelper := &helper.Helper{
-	//		Store:       tikvStore,
-	//		RegionCache: tikvStore.GetRegionCache(),
-	//	}
-	//	for _, p := range partInfo.Definitions {
-	//		ruleNew := MakeNewRule(p.ID, meta.TiFlashReplica.Count, meta.TiFlashReplica.LocationLabels)
-	//		if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
-	//			return errors.Trace(err)
-	//		}
-	//		err := tikvHelper.PostAccelerateSchedule(p.ID)
-	//		if err != nil {
-	//			return errors.Trace(err)
-	//		}
-	//	}
-	//}
+	if meta.TiFlashReplica != nil {
+		tikvStore, ok := ctx.GetStore().(helper.Storage)
+		if !ok {
+			log.Error("can not get Helper")
+		} else {
+			tikvHelper := &helper.Helper{
+				Store:       tikvStore,
+				RegionCache: tikvStore.GetRegionCache(),
+			}
+			for _, p := range partInfo.Definitions {
+				ruleNew := MakeNewRule(p.ID, meta.TiFlashReplica.Count, meta.TiFlashReplica.LocationLabels)
+				if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
+					return errors.Trace(err)
+				}
+				err := tikvHelper.PostAccelerateSchedule(p.ID)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
