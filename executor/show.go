@@ -1234,7 +1234,8 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 	}
 	if partitionInfo.Type == model.PartitionTypeHash {
 		fmt.Fprintf(buf, "\n/*!50100 PARTITION BY HASH (%s)", partitionInfo.Expr)
-		if partitionInfo.Num == 0 {
+		if partitionInfo.Num <= 1 {
+			fmt.Fprintf(buf, " */")
 			return
 		}
 
