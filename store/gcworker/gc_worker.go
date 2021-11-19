@@ -198,7 +198,7 @@ const (
 	gcTimeout                 = 5 * time.Minute
 )
 
-// By SetGcSafePointCacheInterval, we can make gc more often.
+// SetGcSafePointCacheInterval can modify gc interval for test.
 func SetGcSafePointCacheInterval(interval time.Duration) {
 	gcSafePointCacheInterval = interval
 }

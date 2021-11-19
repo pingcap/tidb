@@ -132,6 +132,7 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool) er
 	return nil
 }
 
+// MakeNewRule creates a pd rule for TiFlash.
 func MakeNewRule(ID int64, Count uint64, LocationLabels []string) *placement.Rule {
 	ruleID := fmt.Sprintf("table-%v-r", ID)
 	startKey := tablecodec.GenTableRecordPrefix(ID)
@@ -481,7 +482,7 @@ func getDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint ui
 	return false, nil
 }
 
-func GetDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infoschema.InfoSchema, tikvHelper *helper.Helper, replicaInfos *[]PollTiFlashReplicaStatusContext) error {
+func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infoschema.InfoSchema, tikvHelper *helper.Helper, replicaInfos *[]PollTiFlashReplicaStatusContext) error {
 	//store := domain.GetDomain(s).Store()
 	store := tikvHelper.Store.(kv.Storage)
 
@@ -548,7 +549,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 	}
 
 	// Cover getDropOrTruncateTableTiflash
-	GetDropOrTruncateTableTiflash(ctx, currentSchema, tikvHelper, &tableList)
+	getDropOrTruncateTableTiflash(ctx, currentSchema, tikvHelper, &tableList)
 	for _, tb := range tableList {
 		// for every region in each table, if it has one replica, we reckon it ready
 		// TODO Can we batch request table?

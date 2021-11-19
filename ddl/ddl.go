@@ -90,9 +90,9 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = uint32(0)
-	// The interval PollTiFlashReplicaStatus is called every time.
+	// PollTiFlashInterval is the interval between every PollTiFlashReplicaStatus call.
 	PollTiFlashInterval = 2 * time.Second
-	// How many intervals before we pull all pd rules.
+	// PullTiFlashPdTick indicates the number of intervals before we pull all pd rules.
 	PullTiFlashPdTick = 60
 )
 

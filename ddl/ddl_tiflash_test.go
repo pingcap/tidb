@@ -398,7 +398,6 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		}, nil
 	}))
 	// mock PD API
-	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
 	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
 			GitHash        string `json:"git_hash"`
@@ -520,15 +519,15 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		}
 		endKey, _ = url.QueryUnescape(endKey)
 		_, decodedEndKey, _ := codec.DecodeBytes([]byte(endKey), []byte{})
-		tableId := tablecodec.DecodeTableID(decodedEndKey)
-		tableId -= 1
+		tableID := tablecodec.DecodeTableID(decodedEndKey)
+		tableID -= 1
 
-		table, ok := s.tiflash.SyncStatus[int(tableId)]
+		table, ok := s.tiflash.SyncStatus[int(tableID)]
 		if ok {
 			table.Accel = true
-			s.tiflash.SyncStatus[int(tableId)] = table
+			s.tiflash.SyncStatus[int(tableID)] = table
 		} else {
-			s.tiflash.SyncStatus[int(tableId)] = mockTiFlashTableInfo{
+			s.tiflash.SyncStatus[int(tableID)] = mockTiFlashTableInfo{
 				Regions: []int{},
 				Accel:   true,
 			}

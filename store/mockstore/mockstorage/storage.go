@@ -35,7 +35,7 @@ type mockStorage struct {
 	pdAddrs   []string
 }
 
-// Set address for an actual pd
+// ModifyPdAddrs set address for an actual pd.
 func ModifyPdAddrs(store interface{}, pdAddrs []string) bool {
 	if s, ok := store.(*mockStorage); ok {
 		s.pdAddrs = pdAddrs
