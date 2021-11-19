@@ -1162,7 +1162,6 @@ func (p *PhysicalTopN) canPushDown(storeTp kv.StoreType) bool {
 	}
 	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeTp)
 }
-}
 
 // GetCost computes the cost of in memory sort.
 func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64 {
