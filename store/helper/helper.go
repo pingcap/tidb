@@ -1051,7 +1051,7 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	return nil
 }
 
-func (h *Helper) GetPDRegionStats2(tableID int64, stats *PDRegionStats) error {
+func (h *Helper) GetPDRegionRecordStats(tableID int64, stats *PDRegionStats) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
 		return errors.Trace(err)

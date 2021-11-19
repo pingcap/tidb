@@ -24,7 +24,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl/placement"
+	"go.uber.org/zap"
+
 	//ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -50,7 +53,6 @@ type PollTiFlashReplicaStatusContext struct {
 	LocationLabels []string
 	Available      bool
 	HighPriority   bool
-	//TableInfo    *model.TableInfo
 }
 
 type TiFlashReplicaStatusResult struct {
@@ -134,54 +136,6 @@ func (d *ddl) PollTiFlashReplicaStatus(ctx sessionctx.Context, handlePd bool) er
 	}
 
 	return nil
-}
-
-// Compare supposed rule, and we actually get from TableInfo
-func isRuleMatch(rule placement.Rule, tb PollTiFlashReplicaStatusContext) (bool, *placement.Rule) {
-	// Compute startKey
-	startKey := tablecodec.GenTableRecordPrefix(tb.ID)
-	endKey := tablecodec.EncodeTablePrefix(tb.ID + 1)
-	startKey = codec.EncodeBytes([]byte{}, startKey)
-	endKey = codec.EncodeBytes([]byte{}, endKey)
-
-	isMatch := true
-
-	if rule.Override && rule.StartKeyHex == startKey.String() && rule.EndKeyHex == endKey.String() {
-		ok := false
-		for _, c := range rule.Constraints {
-			if c.Key == "engine" && len(c.Values) == 1 && c.Values[0] == "tiflash" && c.Op == placement.In {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			isMatch = false
-		}
-
-		if len(rule.LocationLabels) != len(tb.LocationLabels) {
-			isMatch = false
-		} else {
-			for i, lb := range tb.LocationLabels {
-				if lb != rule.LocationLabels[i] {
-					isMatch = false
-					break
-				}
-			}
-		}
-		if isMatch && uint64(rule.Count) != tb.Count {
-			isMatch = false
-		}
-		if isMatch && rule.Role != placement.Learner {
-			isMatch = false
-		}
-	} else {
-		isMatch = false
-	}
-	if isMatch {
-		return true, nil
-	} else {
-		return false, MakeNewRule(tb.ID, tb.Count, tb.LocationLabels)
-	}
 }
 
 func MakeNewRule(ID int64, Count uint64, LocationLabels []string) *placement.Rule {
@@ -273,7 +227,7 @@ func (d *ddl) UpdateTiFlashHttpAddress(store *helper.StoreStat) error {
 	// report to pd
 	key := fmt.Sprintf("/tiflash/cluster/http_port/%v", store.Store.Address)
 	if d.etcdCli == nil {
-		return errors.New("No etcdCli")
+		return errors.New("no etcdCli in ddl")
 	}
 	resp, err := d.etcdCli.Get(d.ctx, key)
 	origin := ""
@@ -313,7 +267,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 		for _, l := range store.Store.Labels {
 			if l.Key == "engine" && l.Value == "tiflash" {
 				tiflashStores[store.Store.ID] = store
-				fmt.Printf("!!!! tiflashStores has tiflash %v Addr %v Status %v\n", store.Store.ID, store.Store.Address, store.Store.StatusAddress)
+				log.Debug("find tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
 			}
 		}
 	}
@@ -365,7 +319,6 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 					store.Store.StatusAddress,
 					tb.ID,
 				)
-				fmt.Printf("!!!! tiflashStatUrl %v\n", statURL)
 				resp, err := util.InternalHTTPClient().Get(statURL)
 				if err != nil {
 					continue
@@ -381,7 +334,6 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 				if err != nil {
 					return allReplicaReady, errors.Trace(err)
 				}
-				fmt.Printf("!!!! find total n %v\n", n)
 				for i := int64(0); i < n; i++ {
 					rs, _, _ := reader.ReadLine()
 					// for (`table`, `store`), has region `r`
@@ -389,7 +341,6 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 					if err != nil {
 						return allReplicaReady, errors.Trace(err)
 					}
-					fmt.Printf("!!!! find replica %v\n", r)
 					if i, ok := regionReplica[r]; ok {
 						regionReplica[r] = i + 1
 					} else {
@@ -400,15 +351,15 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 
 			// TODO Is it necessary, or we can get from TiDB?
 			var stats helper.PDRegionStats
-			if err = tikvHelper.GetPDRegionStats2(tb.ID, &stats); err != nil {
-				fmt.Printf("!!!! err %v", err)
+			if err = tikvHelper.GetPDRegionRecordStats(tb.ID, &stats); err != nil {
+				return allReplicaReady, errors.Trace(err)
 			}
 
 			regionCount := stats.Count
 			flashRegionCount := len(regionReplica)
 			available := regionCount == flashRegionCount
-			fmt.Printf("GetPDRegionStats output table %v RegionCount %v FlashRegionCount %v %v\n", tb.ID, regionCount, flashRegionCount, stats)
 
+			log.Debug("update tiflash table sync process", zap.Int64("id", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
 			d.UpdateTableReplicaInfo(ctx, tb.ID, available)
 		}
 	}
@@ -479,7 +430,6 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		}
 	} else {
 		ruleNew := MakeNewRule(tblInfo.ID, replicaInfo.Count, replicaInfo.Labels)
-		fmt.Printf("Set new rule %v\n", ruleNew)
 		if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 			return errors.Trace(err)
 		}
@@ -608,13 +558,13 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 		// TODO Can we batch request table?
 		// implement _check_and_make_rule
 		ruleId := fmt.Sprintf("table-%v-r", tb.ID)
-		rule, ok := allRules[ruleId]
+		//rule, ok := allRules[ruleId]
 		if ok {
-			match, ruleNew := isRuleMatch(rule, tb)
-			if !match {
-				fmt.Printf("!!!! Set rule %v\n", ruleNew)
+			//match, ruleNew := isRuleMatch(rule, tb)
+			//if !match {
+				//fmt.Printf("!!!! Set rule %v\n", ruleNew)
 				//tikvHelper.SetPlacementRule(*ruleNew)
-			}
+			//}
 			delete(allRules, ruleId)
 		} else {
 			//ruleNew := MakeNewRule(tb.ID, tb.Count, tb.LocationLabels)
@@ -625,7 +575,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 
 	// remove rules of non-existing table
 	for _, v := range allRules {
-		fmt.Printf("!!!! Remove rule %v\n", v.ID)
+		log.Info("remove tiflash rule", zap.String("id", v.ID))
 		tikvHelper.DeletePlacementRule("tiflash", v.ID)
 	}
 

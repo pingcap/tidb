@@ -114,28 +114,49 @@ func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) (bool, error) {
-	matched := false
-	for _, r := range globalTiFlashPlacementRules {
-		if r.StartKeyHex == rule.StartKeyHex && r.EndKeyHex == rule.EndKeyHex && r.Count == rule.Count && len(r.LocationLabels) == len(rule.LocationLabels) {
-			matched = true
-			for i, l := range r.LocationLabels {
-				if l != rule.LocationLabels[i] {
-					matched = false
-					break
-				}
-			}
-			if matched {
-				fmt.Printf("!!!! Matched %v %v\n", r, rule)
+// Compare supposed rule, and we actually get from TableInfo
+func isRuleMatch(rule placement.Rule, startKey string, endKey string, count int, labels []string) bool {
+	// Compute startKey
+	if rule.StartKeyHex == startKey && rule.EndKeyHex == endKey {
+		ok := false
+		for _, c := range rule.Constraints {
+			if c.Key == "engine" && len(c.Values) == 1 && c.Values[0] == "tiflash" && c.Op == placement.In {
+				ok = true
 				break
 			}
 		}
-	}
+		if !ok {
+			return false
+		}
 
-	if matched {
-		return true, nil
+		if len(rule.LocationLabels) != len(labels) {
+			return false
+		} else {
+			for i, lb := range labels {
+				if lb != rule.LocationLabels[i] {
+					return false
+				}
+			}
+		}
+		if rule.Count != count {
+			return false
+		}
+		if rule.Role != placement.Learner {
+			return false
+		}
+	} else {
+		return false
 	}
-	return false, nil
+	return true
+}
+
+func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) bool {
+	for _, r := range globalTiFlashPlacementRules {
+		if isRuleMatch(rule, r.StartKeyHex, r.EndKeyHex, r.Count, r.LocationLabels) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
@@ -255,16 +276,17 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
 	c.Assert(err, IsNil)
 
 	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
-	res, _ := s.CheckPlacementRule(*expectRule)
+	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
 
 	tk.MustExec("drop table t")
 	expectRule = ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
-	res, _ = s.CheckPlacementRule(*expectRule)
+	res = s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
 
+	ddl.PullTiFlashPdTick = 1
 	time.Sleep(ddl.PollTiFlashInterval * 5)
-	res, _ = s.CheckPlacementRule(*expectRule)
+	res = s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
 }
 
@@ -280,7 +302,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	c.Assert(err, IsNil)
 
 	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
-	res, _ := s.CheckPlacementRule(*expectRule)
+	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
 	c.Assert(tb.Meta().TiFlashReplica, IsNil)
 }
@@ -318,7 +340,6 @@ func (s *tiflashDDLTestSuite) setUpMockTiFlashHTTPServer() (*httptest.Server, st
 	statusAddr := strings.TrimPrefix(server.URL, "http://")
 	router.HandleFunc("/tiflash/sync-status/{tableid:\\d+}", func(w http.ResponseWriter, req *http.Request) {
 		params := mux.Vars(req)
-		fmt.Printf("!!!! handle sync-status %v\n", params["tableid"])
 		tableId, err := strconv.Atoi(params["tableid"])
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
@@ -332,7 +353,6 @@ func (s *tiflashDDLTestSuite) setUpMockTiFlashHTTPServer() (*httptest.Server, st
 				return
 			}
 			sync := table.String()
-			fmt.Printf("!!!! table.String() %v \n", sync)
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(sync))
 		}
@@ -382,7 +402,6 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		}, nil
 	}))
 	router.HandleFunc("/pd/api/v1/config/rules/group/tiflash", func(w http.ResponseWriter, req *http.Request) {
-		fmt.Printf("!!!! handle rules %v %v %v\n", globalTiFlashPlacementRules, req.URL.Path, req.Method)
 		var result = make([]placement.Rule, 0)
 		for _, item := range globalTiFlashPlacementRules {
 			result = append(result, item)
@@ -393,7 +412,6 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 	}) //.Methods(http.MethodGet)
 	router.HandleFunc("/pd/api/v1/config/rule", func(w http.ResponseWriter, req *http.Request) {
 		// Set placement rule
-		fmt.Printf("!!!! handle set url %v %v\n", req.URL.Path, req.Method)
 		if !s.pdEnabled {
 			fmt.Printf("and quit\n")
 			w.WriteHeader(http.StatusNotFound)
@@ -433,7 +451,6 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 	}).Methods(http.MethodPost)
 	router.HandleFunc("/pd/api/v1/config/rule/tiflash/{ruleid:.+}", func(w http.ResponseWriter, req *http.Request) {
 		// Delete placement rule
-		fmt.Println("!!!! handle DELETE")
 		params := mux.Vars(req)
 		ruleId := params["ruleid"]
 		ruleId = strings.Trim(ruleId, "/")
@@ -475,8 +492,6 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 	}))
 
 	router.HandleFunc("/pd/api/v1/regions/accelerate-schedule", func(w http.ResponseWriter, req *http.Request) {
-		fmt.Println("!!!! handle accelerate")
-
 		buf := new(bytes.Buffer)
 		_, err := buf.ReadFrom(req.Body)
 		if err != nil {
