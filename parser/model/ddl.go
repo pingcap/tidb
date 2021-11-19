@@ -153,7 +153,6 @@ var actionMap = map[ActionType]string{
 	ActionAlterCacheTable:               "alter cache table",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 
-
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
 	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",
