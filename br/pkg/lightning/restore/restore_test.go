@@ -825,6 +825,53 @@ func (s *tableRestoreSuite) TestInitializeColumns(c *C) {
 	}
 }
 
+func (s *tableRestoreSuite) TestInitializeColumnsGenerated(c *C) {
+	p := parser.New()
+	p.SetSQLMode(mysql.ModeANSIQuotes)
+	se := tmock.NewContext()
+	tr, err := NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, nil, &checkpoints.TableCheckpoint{}, nil)
+	c.Assert(err, IsNil)
+
+	cases := []struct{
+		schema              string
+		columns             []string
+		expectedPermutation []int
+	} {
+		{
+			"CREATE TABLE `table` (a INT, b INT, C INT, d INT AS (a * 2))",
+			[]string{"b", "c", "a"},
+			[]int{2, 0, 1, -1},
+		},
+		// all generated columns and none input columns
+		{
+			"CREATE TABLE `table` (a bigint as (1 + 2) stored, b text as (sha1(repeat('x', uint64))) stored)",
+			[]string{},
+			[]int{-1, -1, -1},
+		},
+		// all generated columns and none input columns
+		{
+			"CREATE TABLE `table` (a bigint, b text as (sha1(repeat('x', uint64))) stored)",
+			[]string{"a", "b"},
+			[]int{0, -1, -1},
+		},
+	}
+
+	for _, testCase := range cases {
+		node, err := p.ParseOneStmt(testCase.schema, "", "")
+		c.Assert(err, IsNil)
+		core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
+		c.Assert(err, IsNil)
+		core.State = model.StatePublic
+		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
+		tr.tableInfo = tableInfo
+		ccp := &checkpoints.ChunkCheckpoint{}
+
+		err = s.tr.initializeColumns(testCase.columns, ccp)
+		c.Assert(err, IsNil)
+		c.Assert(ccp.ColumnPermutation, DeepEquals, testCase.expectedPermutation)
+	}
+}
+
 func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)

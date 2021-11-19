@@ -178,6 +178,8 @@ func createColumnPermutation(columns []string, ignoreColumns map[string]struct{}
 			idx := i
 			if _, ok := ignoreColumns[col.Name.L]; ok {
 				idx = -1
+			} else if col.IsGenerated() {
+				idx = -1
 			}
 			colPerm = append(colPerm, idx)
 		}
