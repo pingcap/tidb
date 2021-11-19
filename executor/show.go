@@ -1232,73 +1232,54 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 	if partitionInfo == nil {
 		return
 	}
+	// Since MySQL 5.1/5.5 is very old and TiDB aims for 5.7/8.0 compatibility, we will not
+	// include the /*!50100 or /*!50500 comments for TiDB.
+	// This also solves the issue with comments within comments that would happen for
+	// PLACEMENT POLICY options.
 	if partitionInfo.Type == model.PartitionTypeHash {
-		fmt.Fprintf(buf, "\n/*!50100 PARTITION BY HASH (%s)", partitionInfo.Expr)
-		if partitionInfo.Num <= 1 {
-			fmt.Fprintf(buf, " */")
-			return
-		}
-
-		fmt.Fprintf(buf, "\n(")
+		defaultPartitionDefinitions := true
 		for i, def := range partitionInfo.Definitions {
-			fmt.Fprintf(buf, "PARTITION %s COMMENT = '%s' ENGINE = InnoDB", def.Name.O, def.Comment)
-			if i < int(partitionInfo.Num)-1 {
-				fmt.Fprintf(buf, ",\n")
-			} else {
-				fmt.Fprintf(buf, ")")
+			if def.Name.O != fmt.Sprintf("p%d", i) {
+				defaultPartitionDefinitions = false
+				break
+			}
+			if len(def.Comment) > 0 || def.DirectPlacementOpts != nil || def.PlacementPolicyRef != nil {
+				defaultPartitionDefinitions = false
+				break
 			}
 		}
-		fmt.Fprintf(buf, " */")
 
-		return
+		if defaultPartitionDefinitions {
+			fmt.Fprintf(buf, "\nPARTITION BY HASH (%s) PARTITIONS %d", partitionInfo.Expr, partitionInfo.Num)
+			return
+		}
 	}
-	// this if statement takes care of range columns case
-	if partitionInfo.Columns != nil && partitionInfo.Type == model.PartitionTypeRange {
-		buf.WriteString("\nPARTITION BY RANGE COLUMNS(")
+	// this if statement takes care of lists/range columns case
+	if partitionInfo.Columns != nil {
+		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
+		// Notice that MySQL uses two spaces between LIST and COLUMNS...
+		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
 		for i, col := range partitionInfo.Columns {
-			buf.WriteString(col.L)
+			buf.WriteString(col.O)
 			if i < len(partitionInfo.Columns)-1 {
 				buf.WriteString(",")
 			}
 		}
-		buf.WriteString(") (\n")
-	} else if partitionInfo.Type == model.PartitionTypeList {
-		if len(partitionInfo.Columns) == 0 {
-			fmt.Fprintf(buf, "\nPARTITION BY %s (%s) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
-		} else {
-			colsName := ""
-			for _, col := range partitionInfo.Columns {
-				if len(colsName) > 0 {
-					colsName += ","
-				}
-				colsName += col.L
-			}
-			fmt.Fprintf(buf, "\nPARTITION BY LIST COLUMNS(%s) (\n", colsName)
-		}
+		buf.WriteString(")\n(")
 	} else {
-		fmt.Fprintf(buf, "\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
+		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)\n(", partitionInfo.Type.String(), partitionInfo.Expr)
 	}
-	if partitionInfo.Type == model.PartitionTypeRange {
-		for i, def := range partitionInfo.Definitions {
-			lessThans := strings.Join(def.LessThan, ",")
-			fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
-			if def.DirectPlacementOpts != nil {
-				// add direct placement info here
-				appendDirectPlacementInfo(def.DirectPlacementOpts, buf)
-			}
-			if def.PlacementPolicyRef != nil {
-				// add placement ref info here
-				fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
-			}
-			if i < len(partitionInfo.Definitions)-1 {
-				buf.WriteString(",\n")
-			} else {
-				buf.WriteString("\n")
-			}
+
+	for i, def := range partitionInfo.Definitions {
+		if i > 0 {
+			fmt.Fprintf(buf, ",\n ")
 		}
-		buf.WriteString(")")
-	} else if partitionInfo.Type == model.PartitionTypeList {
-		for i, def := range partitionInfo.Definitions {
+		fmt.Fprintf(buf, "PARTITION `%s`", def.Name)
+		// PartitionTypeHash does not have any VALUES definition
+		if partitionInfo.Type == model.PartitionTypeRange {
+			lessThans := strings.Join(def.LessThan, ",")
+			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", lessThans)
+		} else if partitionInfo.Type == model.PartitionTypeList {
 			values := bytes.NewBuffer(nil)
 			for j, inValues := range def.InValues {
 				if j > 0 {
@@ -1312,23 +1293,21 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 					values.WriteString(strings.Join(inValues, ","))
 				}
 			}
-			fmt.Fprintf(buf, "  PARTITION `%s` VALUES IN (%s)", def.Name, values.String())
-			if def.DirectPlacementOpts != nil {
-				// add direct placement info here
-				appendDirectPlacementInfo(def.DirectPlacementOpts, buf)
-			}
-			if def.PlacementPolicyRef != nil {
-				// add placement ref info here
-				fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
-			}
-			if i < len(partitionInfo.Definitions)-1 {
-				buf.WriteString(",\n")
-			} else {
-				buf.WriteString("\n")
-			}
+			fmt.Fprintf(buf, " VALUES IN (%s)", values.String())
 		}
-		buf.WriteString(")")
+		if len(def.Comment) > 0 {
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(def.Comment)))
+		}
+		if def.DirectPlacementOpts != nil {
+			// add direct placement info here
+			appendDirectPlacementInfo(def.DirectPlacementOpts, buf)
+		}
+		if def.PlacementPolicyRef != nil {
+			// add placement ref info here
+			fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
+		}
 	}
+	buf.WriteString(")")
 }
 
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.
