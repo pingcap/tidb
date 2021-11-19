@@ -8747,14 +8747,13 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 			tagLabels: []tipb.ResourceGroupTagLabel{
 				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
 				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
 			},
 		},
 		{
 			sql: "select * from t use index (idx) where a=1",
 			tagLabels: []tipb.ResourceGroupTagLabel{
 				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
 			},
 		},
 		{
@@ -8807,7 +8806,6 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 		{
 			sql: "replace into t values(6,6)",
 			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
 				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
 				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
 			},
