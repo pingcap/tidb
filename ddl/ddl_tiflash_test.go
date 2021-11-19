@@ -22,6 +22,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/fn"
@@ -42,12 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/tikv/client-go/v2/testutils"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
-	"strconv"
-	"strings"
-	"time"
 )
 
 type tiflashDDLTestSuite struct {

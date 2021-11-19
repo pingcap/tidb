@@ -23,12 +23,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl/placement"
 	"go.uber.org/zap"
 
 	//ddlutil "github.com/pingcap/tidb/ddl/util"
+	"strconv"
+	"strings"
+
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -43,8 +47,6 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/gcutil"
-	"strconv"
-	"strings"
 )
 
 // PollTiFlashReplicaStatusContext records status for each TiFlash replica.
