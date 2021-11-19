@@ -336,7 +336,7 @@ func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
 			Result           []string
 		}
 	}
-	executor.PrepareMergeSuiteData.GetTestCases(t, &input, &output)
+	prepareMergeSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
 		tk.MustExec(tt.PrepareStmt)
 		testdata.OnRecord(func() {
@@ -906,7 +906,7 @@ func TestParameterPushDown(t *testing.T) {
 		Plan      []string
 		FromCache string
 	}
-	executor.PrepareMergeSuiteData.GetTestCases(t, &input, &output)
+	prepareMergeSuiteData.GetTestCases(t, &input, &output)
 
 	for i, tt := range input {
 		if strings.HasPrefix(tt.SQL, "execute") {

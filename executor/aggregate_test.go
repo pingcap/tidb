@@ -1039,7 +1039,7 @@ func TestInjectProjBelowTopN(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	executor.AggMergeSuiteData.GetTestCases(t, &input, &output)
+	aggMergeSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
@@ -1179,7 +1179,7 @@ func TestIssue12759HashAggCalledByApply(t *testing.T) {
 		input  []string
 		output [][]string
 	)
-	executor.AggMergeSuiteData.GetTestCases(t, &input, &output)
+	aggMergeSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
