@@ -312,6 +312,24 @@ func KvPairsFromRows(rows Rows) []common.KvPair {
 	return rows.(*KvPairs).pairs
 }
 
+func evaluateGeneratedColumns(se *session, record []types.Datum, cols []*table.Column, genCols []genCol) (err error, errCol *model.ColumnInfo) {
+	mutRow := chunk.MutRowFromDatums(record)
+	for _, gc := range genCols {
+		col := cols[gc.index].ToInfo()
+		evaluated, err := gc.expr.Eval(mutRow.ToRow())
+		if err != nil {
+			return err, col
+		}
+		value, err := table.CastValue(se, evaluated, col, false, false)
+		if err != nil {
+			return err, col
+		}
+		mutRow.SetDatum(gc.index, value)
+		record[gc.index] = value
+	}
+	return nil, nil
+}
+
 // Encode a row of data into KV pairs.
 //
 // See comments in `(*TableRestore).initializeColumns` for the meaning of the
@@ -410,19 +428,8 @@ func (kvcodec *tableKVEncoder) Encode(
 	}
 
 	if len(kvcodec.genCols) > 0 {
-		mutRow := chunk.MutRowFromDatums(record)
-		for _, gc := range kvcodec.genCols {
-			col := cols[gc.index].ToInfo()
-			evaluated, err := gc.expr.Eval(mutRow.ToRow())
-			if err != nil {
-				return nil, logEvalGenExprFailed(logger, row, col, err)
-			}
-			value, err := table.CastValue(kvcodec.se, evaluated, col, false, false)
-			if err != nil {
-				return nil, logEvalGenExprFailed(logger, row, col, err)
-			}
-			mutRow.SetDatum(gc.index, value)
-			record[gc.index] = value
+		if err, errCol := evaluateGeneratedColumns(kvcodec.se, record, cols, kvcodec.genCols); err != nil {
+			return nil, logEvalGenExprFailed(logger, row, errCol, err)
 		}
 	}
 

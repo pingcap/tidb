@@ -431,7 +431,8 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			}
 		}
 	}
-	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn && ds.tableInfo.TempTableType != model.TempTableLocal {
+	readFromTableCache := ds.ctx.GetSessionVars().StmtCtx.ReadFromTableCache
+	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn && ds.tableInfo.TempTableType != model.TempTableLocal && !readFromTableCache {
 		err := ds.generateAndPruneIndexMergePath(ds.indexMergeHints != nil)
 		if err != nil {
 			return nil, err
@@ -639,7 +640,6 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 					results[0] = path
 					results = results[:1]
 				}
-				ds.ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 				break
 			}
 		} else {
@@ -665,7 +665,6 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 					results[0] = path
 					results = results[:1]
 				}
-				ds.ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache = true
 				break
 			}
 		}

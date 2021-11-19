@@ -1476,14 +1476,12 @@
         ],
         "Plan": [
           "Sort 12500.00 root  test.t1.c_int, test.t2.c_str",
-          "└─MergeJoin 12500.00 root  inner join, left key:test.t1.c_int, test.t1.c_int, right key:test.t2.c_int, test.t2.c_int",
-          "  ├─Sort(Build) 10000.00 root  test.t2.c_int, test.t2.c_int",
-          "  │ └─UnionScan 10000.00 root  ",
-          "  │   └─TableReader 10000.00 root  data:TableFullScan",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─Sort(Probe) 10000.00 root  test.t1.c_int, test.t1.c_int",
-          "    └─TableReader 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─MergeJoin 12500.00 root  inner join, left key:test.t1.c_int, right key:test.t2.c_int",
+          "  ├─UnionScan(Build) 10000.00 root  ",
+          "  │ └─TableReader 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]
       }
     ]
@@ -1580,7 +1578,7 @@
           "    └─IndexFullScan 1.00 cop[tikv] table:tn, index:a(a, b, c, d) keep order:true, stats:pseudo"
         ],
         "Warning": [
-          "Scalar function 'intdiv'(signature: IntDivideInt, return type: bigint(20)) can not be pushed to storage layer",
+          "Scalar function 'intdiv'(signature: IntDivideInt, return type: bigint(20)) is not supported to push down to storage layer now.",
           "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
         ]
       },
@@ -2663,6 +2661,19 @@
           "  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t2, index:idx_a(a) range:(1,+inf], keep order:false, stats:pseudo",
           "  └─Selection(Probe) 1111.11 cop[tikv]  gt(test.t2.c, 1)",
           "    └─TableRowIDScan 3333.33 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue28316",
+    "Cases": [
+      {
+        "SQL": "select * from t where t.a < 3 and t.a < 3",
+        "Plan": [
+          "TableReader 3323.33 root  data:Selection",
+          "└─Selection 3323.33 cop[tikv]  lt(test.t.a, 3)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
     ]

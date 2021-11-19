@@ -14,38 +14,37 @@
 package charset_test
 
 import (
-	. "github.com/pingcap/check"
+	"fmt"
+	"testing"
+
 	"github.com/pingcap/tidb/parser/charset"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/text/transform"
 )
 
-var _ = Suite(&testEncodingSuite{})
-
-type testEncodingSuite struct {
-}
-
-func (s *testEncodingSuite) TestEncoding(c *C) {
+func TestEncoding(t *testing.T) {
+	t.Parallel()
 	enc := charset.NewEncoding("gbk")
-	c.Assert(enc.Name(), Equals, "gbk")
+	require.Equal(t, "gbk", enc.Name())
 	enc.UpdateEncoding("utf-8")
-	c.Assert(enc.Name(), Equals, "utf-8")
+	require.Equal(t, "utf-8", enc.Name())
 	enc.UpdateEncoding("gbk")
-	c.Assert(enc.Name(), Equals, "gbk")
+	require.Equal(t, "gbk", enc.Name())
 
 	txt := []byte("一二三四")
 	e, _ := charset.Lookup("gbk")
 	gbkEncodedTxt, _, err := transform.Bytes(e.NewEncoder(), txt)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	result, err := enc.Decode(nil, gbkEncodedTxt)
-	c.Assert(err, IsNil)
-	c.Assert(result, DeepEquals, txt)
+	require.NoError(t, err)
+	require.Equal(t, txt, result)
 
 	gbkEncodedTxt2, err := enc.Encode(nil, txt)
-	c.Assert(err, IsNil)
-	c.Assert(gbkEncodedTxt, DeepEquals, gbkEncodedTxt2)
+	require.NoError(t, err)
+	require.Equal(t, gbkEncodedTxt2, gbkEncodedTxt)
 	result, err = enc.Decode(nil, gbkEncodedTxt2)
-	c.Assert(err, IsNil)
-	c.Assert(result, DeepEquals, txt)
+	require.NoError(t, err)
+	require.Equal(t, txt, result)
 
 	GBKCases := []struct {
 		utf8Str string
@@ -62,14 +61,14 @@ func (s *testEncodingSuite) TestEncoding(c *C) {
 		{"佝佗佇佶侈侏侘佻佩佰侑佯", "浣濅綏浣囦蕉渚堜緩渚樹交浣╀桨渚戜蒋", true},
 	}
 	for _, tc := range GBKCases {
-		cmt := Commentf("%v", tc)
+		cmt := fmt.Sprintf("%v", tc)
 		result, err = enc.Decode(nil, []byte(tc.utf8Str))
 		if tc.isValid {
-			c.Assert(err, IsNil, cmt)
+			require.NoError(t, err, cmt)
 		} else {
-			c.Assert(err, NotNil, cmt)
+			require.Error(t, err, cmt)
 		}
-		c.Assert(string(result), Equals, tc.result, cmt)
+		require.Equal(t, tc.result, string(result), cmt)
 	}
 
 	utf8Cases := []struct {
@@ -82,13 +81,13 @@ func (s *testEncodingSuite) TestEncoding(c *C) {
 		{"valid_string_🀁", "valid_string_?", false},
 	}
 	for _, tc := range utf8Cases {
-		cmt := Commentf("%v", tc)
+		cmt := fmt.Sprintf("%v", tc)
 		result, err = enc.Encode(nil, []byte(tc.utf8Str))
 		if tc.isValid {
-			c.Assert(err, IsNil, cmt)
+			require.NoError(t, err, cmt)
 		} else {
-			c.Assert(err, NotNil, cmt)
+			require.Error(t, err, cmt)
 		}
-		c.Assert(string(result), Equals, tc.result, cmt)
+		require.Equal(t, tc.result, string(result), cmt)
 	}
 }

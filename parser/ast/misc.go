@@ -1191,6 +1191,8 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 		switch opt.AuthPlugin {
 		case mysql.AuthCachingSha2Password:
 			return auth.NewSha2Password(opt.AuthString), true
+		case mysql.AuthSocket:
+			return "", true
 		default:
 			return auth.EncodePassword(opt.AuthString), true
 		}
