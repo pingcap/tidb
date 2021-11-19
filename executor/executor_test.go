@@ -8790,7 +8790,7 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 		{
 			sql: "insert into t values(4,4)",
 			tagLabels: []tipb.ResourceGroupTagLabel{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown,
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
 			},
 		},
 		{
