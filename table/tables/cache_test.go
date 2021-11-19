@@ -263,7 +263,6 @@ func TestCacheTableComplexRead(t *testing.T) {
 		require.True(t, i < 10)
 		tk2.MustExec("commit")
 		doneCh <- struct{}{}
-		return
 	}()
 	<-doneCh
 	tk1.HasPlan("select *from complex_cache where id > 7", "UnionScan")

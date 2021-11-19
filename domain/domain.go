@@ -1749,8 +1749,6 @@ func (do *Domain) renewLease() {
 		case renewCh := <-do.renewCh:
 			renewInfo := renewCh.(tables.RenewInfo)
 			renewInfo.CacheTable.RenewLease(renewInfo)
-
-		default:
 		}
 	}
 
