@@ -59,7 +59,6 @@ type InfoSchema interface {
 	RuleBundles() []*placement.Bundle
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
-	CachedTableIDs() *[]int64
 }
 
 type sortedTables []table.Table
@@ -109,14 +108,6 @@ type infoSchema struct {
 
 	// schemaMetaVersion is the version of schema, and we should check version when change schema.
 	schemaMetaVersion int64
-
-	//
-	renewMutex sync.RWMutex
-	renewChs []int64
-}
-
-func (is *infoSchema ) CachedTableIDs() *[]int64 {
-	return &is.renewChs
 }
 
 // MockInfoSchema only serves for test.
