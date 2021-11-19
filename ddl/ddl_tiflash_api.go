@@ -311,9 +311,9 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 			allReplicaReady = false
 
 			// set_accelerate_schedule
-			if tb.HighPriority {
-				tikvHelper.PostAccelerateSchedule(tb.ID)
-			}
+			//if tb.HighPriority {
+			//	err := tikvHelper.PostAccelerateSchedule(tb.ID)
+			//}
 
 			// compute_sync_data_process
 			regionReplica := make(map[int64]int)
@@ -364,7 +364,10 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 			available := regionCount == flashRegionCount
 
 			log.Debug("update tiflash table sync process", zap.Int64("id", tb.ID), zap.Int("region need", regionCount), zap.Int("region ready", flashRegionCount))
-			d.UpdateTableReplicaInfo(ctx, tb.ID, available)
+			err := d.UpdateTableReplicaInfo(ctx, tb.ID, available)
+			if err != nil {
+				log.Error("UpdateTableReplicaInfo error when updating TiFlash replica status", zap.Error(err))
+			}
 		}
 	}
 
@@ -558,7 +561,9 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 	}
 
 	// Cover getDropOrTruncateTableTiflash
-	getDropOrTruncateTableTiflash(ctx, currentSchema, tikvHelper, &tableList)
+	if err := getDropOrTruncateTableTiflash(ctx, currentSchema, tikvHelper, &tableList); err != nil {
+		return errors.Trace(err)
+	}
 	for _, tb := range tableList {
 		// for every region in each table, if it has one replica, we reckon it ready
 		// TODO Can we batch request table?

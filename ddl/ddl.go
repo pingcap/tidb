@@ -399,9 +399,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		} else {
 			iterTimes := 0
 			for {
-				err = d.PollTiFlashReplicaStatus(sctx, iterTimes%PullTiFlashPdTick == 0)
-				if err != nil {
-					log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
+				if d.ownerManager.IsOwner() {
+					err = d.PollTiFlashReplicaStatus(sctx, iterTimes%PullTiFlashPdTick == 0)
+					if err != nil {
+						log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
+					}
 				}
 				select {
 				case <-d.ctx.Done():
