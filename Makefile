@@ -132,17 +132,25 @@ gotest: failpoint-enable
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
 	@$(FAILPOINT_DISABLE)
 
-gotest_in_verify_ci: failpoint-enable tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
+gotest_in_verify_ci_part_1: failpoint-enable tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
 	@echo "Running in native mode."
+	@mkdir -p $(TEST_COVERAGE_DIR)
 	@export log_level=info; export TZ='Asia/Shanghai'; \
-	CGO_ENABLED=1 tools/bin/gotestsum --junitfile tidb-junit-report.xml -- -v -p $(P) --race \
-	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -coverprofile="cov.tidb_unit_test.out" \
-	$(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
-	tools/bin/gocov convert "cov.tidb_unit_test.out" | tools/bin/gocov-xml > tidb-coverage.xml
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" -- -v -p $(P) --race \
+	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" \
+	$(PACKAGES_TIDB_TESTS_EXPENSIVE) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+	tools/bin/gocov convert "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" | tools/bin/gocov-xml > "$(TEST_COVERAGE_DIR)/tidb-coverage.xml"
 	@$(FAILPOINT_DISABLE)
 
-echo:
-	echo $(PACKAGES_TIDB_TESTS)
+gotest_in_verify_ci_part_2: failpoint-enable tools/bin/gotestsum tools/bin/gocov tools/bin/gocov-xml
+	@echo "Running in native mode."
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export log_level=info; export TZ='Asia/Shanghai'; \
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" -- -v -p $(P) --race \
+	-ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" \
+	$(PACKAGES_TIDB_TESTS_OTHERS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+	tools/bin/gocov convert "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" | tools/bin/gocov-xml > "$(TEST_COVERAGE_DIR)/tidb-coverage.xml"
+	@$(FAILPOINT_DISABLE)
 
 race: failpoint-enable
 	@export log_level=debug; \
