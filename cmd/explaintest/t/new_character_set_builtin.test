@@ -169,4 +169,6 @@ set @@block_encryption_mode='aes-128-ofb';
 select hex(aes_encrypt(123456789, '1234567890123456', '1234567890123456')) as a, hex(aes_encrypt(987654321, '1234567890123456', '1234567890123456')) as b;
 set @@tidb_enable_vectorized_expression = true;
 select hex(aes_encrypt(123456789, '1234567890123456', '1234567890123456')) as a, hex(aes_encrypt(987654321, '1234567890123456', '1234567890123456')) as b;
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_encrypt(123456789, '123')) as a, hex(aes_encrypt(987654321, '123')) as b;
 set @@tidb_enable_vectorized_expression = false;
