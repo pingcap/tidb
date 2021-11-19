@@ -531,7 +531,7 @@ func TestShow(t *testing.T) {
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 			"/*!50100 PARTITION BY HASH (`a`)\n"+
-		    "(PARTITION p0 COMMENT = '' ENGINE = InnoDB,\n"+
+			"(PARTITION p0 COMMENT = '' ENGINE = InnoDB,\n"+
 			"PARTITION p1 COMMENT = '' ENGINE = InnoDB,\n"+
 			"PARTITION p2 COMMENT = '' ENGINE = InnoDB,\n"+
 			"PARTITION p3 COMMENT = '' ENGINE = InnoDB) */",
