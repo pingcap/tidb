@@ -1014,7 +1014,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 	bt := bf
 	if len(args) == 0 {
-		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithTime()}
+		sig = &builtinRandSig{bt, &sync.Mutex{}, NewWithSeeds(ctx.GetSessionVars().RandSeed1, ctx.GetSessionVars().RandSeed2)}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else if _, isConstant := args[0].(*Constant); isConstant {
 		// According to MySQL manual:
@@ -1056,6 +1056,10 @@ func (b *builtinRandSig) Clone() builtinFunc {
 func (b *builtinRandSig) evalReal(row chunk.Row) (float64, bool, error) {
 	b.mu.Lock()
 	res := b.mysqlRng.Gen()
+	if b.mysqlRng.needUpdate {
+		b.ctx.GetSessionVars().RandSeed1 = int64(b.mysqlRng.seed1)
+		b.ctx.GetSessionVars().RandSeed2 = int64(b.mysqlRng.seed2)
+	}
 	b.mu.Unlock()
 	return res, false, nil
 }

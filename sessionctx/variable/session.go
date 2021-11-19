@@ -955,6 +955,11 @@ type SessionVars struct {
 		curr int8
 		data [2]stmtctx.StatementContext
 	}
+
+	// RandSeed1 stores the value of rand_seed1
+	RandSeed1 int64
+	// RandSeed2 stores the value of rand_seed2
+	RandSeed2 int64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

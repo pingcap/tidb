@@ -21,15 +21,21 @@ const maxRandValue = 0x3FFFFFFF
 // MysqlRng is random number generator and this implementation is ported from MySQL.
 // See https://github.com/tikv/tikv/pull/6117#issuecomment-562489078.
 type MysqlRng struct {
-	seed1 uint32
-	seed2 uint32
+	seed1      uint32
+	seed2      uint32
+	needUpdate bool
 }
 
 // NewWithSeed create a rng with random seed.
 func NewWithSeed(seed int64) *MysqlRng {
 	seed1 := uint32(seed*0x10001+55555555) % maxRandValue
 	seed2 := uint32(seed*0x10000001) % maxRandValue
-	return &MysqlRng{seed1: seed1, seed2: seed2}
+	return &MysqlRng{seed1: seed1, seed2: seed2, needUpdate: false}
+}
+
+// NewWithSeeds create a rng with random seeds.
+func NewWithSeeds(seed1 int64, seed2 int64) *MysqlRng {
+	return &MysqlRng{uint32(seed1) % maxRandValue, uint32(seed2) % maxRandValue, true}
 }
 
 // NewWithTime create a rng with time stamp.

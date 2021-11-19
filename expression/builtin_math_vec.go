@@ -712,6 +712,10 @@ func (b *builtinRandSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 	b.mu.Lock()
 	for i := range f64s {
 		f64s[i] = b.mysqlRng.Gen()
+		if b.mysqlRng.needUpdate {
+			b.ctx.GetSessionVars().RandSeed1 = int64(b.mysqlRng.seed1)
+			b.ctx.GetSessionVars().RandSeed2 = int64(b.mysqlRng.seed2)
+		}
 	}
 	b.mu.Unlock()
 	return nil
