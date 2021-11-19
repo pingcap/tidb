@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -59,14 +60,14 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) kv.Response {
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars)
 	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
+	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req, eventCb)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -125,6 +126,8 @@ type copTask struct {
 	storeAddr string
 	cmdType   tikvrpc.CmdType
 	storeType kv.StoreType
+
+	eventCb trxevents.EventCallback
 }
 
 func (r *copTask) String() string {
@@ -245,7 +248,7 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*copTask, error) {
+func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
 	start := time.Now()
 	cmdType := tikvrpc.CmdCop
 	if req.Streaming {
@@ -272,6 +275,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 				respChan:  make(chan *copResponse, 2),
 				cmdType:   cmdType,
 				storeType: req.StoreType,
+				eventCb:   eventCb,
 			})
 			i = nextI
 		}
@@ -1101,11 +1105,18 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req)
+		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req, task.eventCb)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
-		logutil.BgLogger().Debug("coprocessor encounters",
-			zap.Stringer("lock", lockErr))
+		// Be care that we didn't redact the SQL statement because the log is DEBUG level.
+		if task.eventCb != nil {
+			task.eventCb(trxevents.WrapCopMeetLock(&trxevents.CopMeetLock{
+				LockInfo: lockErr,
+			}))
+		} else {
+			logutil.Logger(bo.ctx).Debug("coprocessor encounters lock",
+				zap.Stringer("lock", lockErr))
+		}
 		msBeforeExpired, err1 := worker.ResolveLocks(bo, worker.req.StartTs, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
 			return nil, errors.Trace(err1)
@@ -1119,7 +1130,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
-		logutil.BgLogger().Warn("other error",
+		logutil.Logger(bo.ctx).Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.id),
 			zap.String("storeAddr", task.storeAddr),
@@ -1248,7 +1259,7 @@ func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRang
 	if worker.req.Streaming && lastRange != nil {
 		remainedRanges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
 	}
-	return buildCopTasks(bo, worker.store.regionCache, remainedRanges, worker.req)
+	return buildCopTasks(bo, worker.store.regionCache, remainedRanges, worker.req, task.eventCb)
 }
 
 // calculateRemain splits the input ranges into two, and take one of them according to desc flag.
