@@ -184,9 +184,10 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode
 			usedEdges = append(usedEdges, edge)
 			joinType = s.joinTypes[idx]
 		} else if rightNode.Schema().Contains(lCol) && leftNode.Schema().Contains(rCol) {
-			newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+			newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), lCol, rCol).(*expression.ScalarFunction)
 			usedEdges = append(usedEdges, newSf)
 			joinType = s.joinTypes[idx]
+			rightNode, leftNode = leftNode, rightNode
 		}
 
 	}
