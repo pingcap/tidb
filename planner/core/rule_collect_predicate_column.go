@@ -15,24 +15,17 @@
 package core
 
 import (
-	"context"
 	"github.com/pingcap/tidb/expression"
-
 	"github.com/pingcap/tidb/parser/model"
 )
 
 // predicateColumnCollector collects predicate columns from logical plan. Predicate columns are the columns whose statistics
 // are utilized when making query plans, which usually occur in where conditions, join conditions and so on.
-type predicateColumnCollector struct{
+type predicateColumnCollector struct {
 	// colMap maps expression.Column.UniqueID to the table columns whose statistics are utilized to calculate statistics of the column.
 	colMap map[int64]map[model.TableColumnID]struct{}
 	// predicateCols records predicate columns.
 	predicateCols map[model.TableColumnID]struct{}
-}
-
-func (c *predicateColumnCollector) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	c.collectPredicateColumns(p)
-	return p, nil
 }
 
 func (c *predicateColumnCollector) addPredicateColumn(col *expression.Column) {
@@ -100,7 +93,7 @@ func (ds *DataSource) updateColMapAndAddPredicateColumns(c *predicateColumnColle
 func (p *LogicalJoin) updateColMapAndAddPredicateColumns(c *predicateColumnCollector) {
 	// The only schema change is merging two schemas so there is no new column.
 	// Assume statistics of all the columns in EqualConditions/LeftConditions/RightConditions/OtherConditions are needed.
-	exprs := make([]expression.Expression, 0, len(p.EqualConditions) + len(p.LeftConditions) + len(p.RightConditions) + len(p.OtherConditions))
+	exprs := make([]expression.Expression, 0, len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
 	for _, cond := range p.EqualConditions {
 		exprs = append(exprs, cond)
 	}
@@ -116,9 +109,25 @@ func (p *LogicalJoin) updateColMapAndAddPredicateColumns(c *predicateColumnColle
 	c.addPredicateColumnsFromExpressions(exprs)
 }
 
-func (c *predicateColumnCollector) collectPredicateColumns(lp LogicalPlan) {
+func (p *LogicalUnionAll) updateColMapAndAddPredicateColumns(c *predicateColumnCollector) {
+	// statistics of the ith column of UnionAll come from statistics of the ith column of each child.
+	schemas := make([]*expression.Schema, 0, len(p.Children()))
+	relatedCols := make([]*expression.Column, 0, len(p.Children()))
+	for _, child := range p.Children() {
+		schemas = append(schemas, child.Schema())
+	}
+	for i, col := range p.Schema().Columns {
+		relatedCols = relatedCols[:0]
+		for j := range p.Children() {
+			relatedCols = append(relatedCols, schemas[j].Columns[i])
+		}
+		c.updateColMap(col, relatedCols)
+	}
+}
+
+func (c *predicateColumnCollector) collectFromPlan(lp LogicalPlan) {
 	for _, child := range lp.Children() {
-		c.collectPredicateColumns(child)
+		c.collectFromPlan(child)
 	}
 	switch x := lp.(type) {
 	case *DataSource:
@@ -152,6 +161,17 @@ func (c *predicateColumnCollector) collectPredicateColumns(lp LogicalPlan) {
 		for i, aggFunc := range x.AggFuncs {
 			c.updateColMapFromExpressions(schema.Columns[i], aggFunc.Args)
 		}
+	case *LogicalWindow:
+		// Statistics of the columns in LogicalWindow.PartitionBy are used in optimizeByShuffle4Window.
+		// It seems that we don't use statistics of the columns in LogicalWindow.OrderBy currently?
+		for _, item := range x.PartitionBy {
+			c.addPredicateColumn(item.Col)
+		}
+		// Schema change from children to self.
+		windowColumns := x.GetWindowResultColumns()
+		for i, col := range windowColumns {
+			c.updateColMapFromExpressions(col, x.WindowFuncDescs[i].Args)
+		}
 	case *LogicalJoin:
 		x.updateColMapAndAddPredicateColumns(c)
 	case *LogicalApply:
@@ -173,28 +193,30 @@ func (c *predicateColumnCollector) collectPredicateColumns(lp LogicalPlan) {
 			c.addPredicateColumnsFromExpression(item.Expr)
 		}
 	case *LogicalUnionAll:
-		// nothing to do
+		x.updateColMapAndAddPredicateColumns(c)
 	case *LogicalPartitionUnionAll:
-		// nothing to do
-
-	case *LogicalLimit:
-		// nothing to do
-	case *LogicalMaxOneRow:
-		// nothing to do
-	case *LogicalTableDual:
-		// nothing to do
-	case *LogicalShow:
-		// nothing to do
-	case *LogicalShowDDLJobs:
-		// nothing to do
-	case *LogicalMemTable:
-		// nothing to do
-	case *LogicalLock:
-		// nothing to do
+		x.updateColMapAndAddPredicateColumns(c)
+	case *LogicalCTE:
+		// Schema change from seedPlan/recursivePlan to self.
+		columns := x.Schema().Columns
+		seedColumns := x.cte.seedPartLogicalPlan.Schema().Columns
+		recursiveColumns := x.cte.recursivePartLogicalPlan.Schema().Columns
+		relatedCols := make([]*expression.Column, 0, 2)
+		for i, col := range columns {
+			relatedCols = append(relatedCols[:0], seedColumns[i], recursiveColumns[i])
+			c.updateColMap(col, relatedCols)
+		}
+		// If IsDistinct is true, then we use getColsNDV to calculate row count(see (*LogicalCTE).DeriveStat). In this case
+		// statistics of all the columns are needed.
+		if x.cte.IsDistinct {
+			for _, col := range columns {
+				c.addPredicateColumn(col)
+			}
+		}
+	case *LogicalCTETable:
+		// Schema change from seedPlan to self.
+		for i, col := range x.Schema().Columns {
+			c.updateColMap(col, []*expression.Column{x.seedSchema.Columns[i]})
+		}
 	}
-
-}
-
-func (*predicateColumnCollector) name() string {
-	return "collect_predicate_columns"
 }
