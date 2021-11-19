@@ -1472,9 +1472,18 @@ func TestRenameTable(t *testing.T) {
 	tk.MustExec("drop database rename2")
 }
 
+func TestRenameTableNotExists(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database db")
+	tk.MustExec("use db")
+	tk.MustGetErrMsg("rename table tb1 to tb2", "[schema:1146]Table 'db.tb1' doesn't exist")
+}
+
 func TestAutoIncrementColumnErrorMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+
 	tk.MustExec("use test")
 	// Test create an exist database
 	tk.MustExecToErr("CREATE database test")
