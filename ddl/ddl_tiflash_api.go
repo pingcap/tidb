@@ -562,8 +562,8 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 		if ok {
 			//match, ruleNew := isRuleMatch(rule, tb)
 			//if !match {
-				//fmt.Printf("!!!! Set rule %v\n", ruleNew)
-				//tikvHelper.SetPlacementRule(*ruleNew)
+			//fmt.Printf("!!!! Set rule %v\n", ruleNew)
+			//tikvHelper.SetPlacementRule(*ruleNew)
 			//}
 			delete(allRules, ruleId)
 		} else {
