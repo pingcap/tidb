@@ -434,7 +434,6 @@ func (rc *Controller) Run(ctx context.Context) error {
 		rc.preCheckRequirements,
 		rc.restoreTables,
 		rc.fullCompact,
-		rc.switchToNormalMode,
 		rc.cleanCheckpoints,
 	}
 
@@ -871,7 +870,7 @@ func verifyLocalFile(ctx context.Context, cpdb checkpoints.DB, dir string) error
 	for tableName, engineIDs := range targetTables {
 		for _, engineID := range engineIDs {
 			_, eID := backend.MakeUUID(tableName, engineID)
-			file := local.File{UUID: eID}
+			file := local.Engine{UUID: eID}
 			err := file.Exist(dir)
 			if err != nil {
 				log.L().Error("can't find local file",
@@ -1113,10 +1112,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 		cancelFuncs = append(cancelFuncs, func(bool) { switchModeTicker.Stop() })
 		cancelFuncs = append(cancelFuncs, func(do bool) {
 			if do {
-				log.L().Info("switch to normal mode")
-				if err := rc.switchToNormalMode(ctx); err != nil {
-					log.L().Warn("switch tikv to normal mode failed", zap.Error(err))
-				}
+				rc.switchToNormalMode(ctx)
 			}
 		})
 		switchModeChan = switchModeTicker.C
@@ -1267,7 +1263,6 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer pdCli.Close()
 
 	serviceID := "lightning-duplicate-resolution-" + uuid.New().String()
 	ttl := int64(pauseGCTTLForDupeRes / time.Second)
@@ -1283,10 +1278,12 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		}
 		minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, 1)
 		if err != nil {
+			pdCli.Close()
 			return nil, errors.Trace(err)
 		}
 		newMinSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, minSafePoint)
 		if err != nil {
+			pdCli.Close()
 			return nil, errors.Trace(err)
 		}
 		if newMinSafePoint <= minSafePoint {
@@ -1302,11 +1299,13 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 		)
 	}
 	if !paused {
+		pdCli.Close()
 		return nil, errors.New("failed to pause GC for duplicate resolution after all retries")
 	}
 
 	exitCh := make(chan struct{})
 	go func(safePoint uint64) {
+		defer pdCli.Close()
 		defer close(exitCh)
 		ticker := time.NewTicker(pauseGCIntervalForDupeRes)
 		defer ticker.Stop()
@@ -1327,9 +1326,12 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 					safePoint = minSafePoint
 				}
 			case <-ctx.Done():
-				if _, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, 0, safePoint); err != nil {
+				stopCtx, cancelFunc := context.WithTimeout(context.Background(), time.Second*5)
+				if _, err := pdCli.UpdateServiceGCSafePoint(stopCtx, serviceID, 0, safePoint); err != nil {
 					log.L().Warn("Failed to reset safe point ttl to zero", zap.Error(err))
 				}
+				// just make compiler happy
+				cancelFunc()
 				return
 			}
 		}
@@ -1680,12 +1682,13 @@ func (rc *Controller) doCompact(ctx context.Context, level int32) error {
 }
 
 func (rc *Controller) switchToImportMode(ctx context.Context) {
+	log.L().Info("switch to import mode")
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Import)
 }
 
-func (rc *Controller) switchToNormalMode(ctx context.Context) error {
+func (rc *Controller) switchToNormalMode(ctx context.Context) {
+	log.L().Info("switch to normal mode")
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
-	return nil
 }
 
 func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
@@ -1965,6 +1968,11 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 			}
 		}
 	}
+	err = rc.checkCSVHeader(ctx, rc.dbMetas)
+	if err != nil {
+		return err
+	}
+
 	if len(checkPointCriticalMsgs) != 0 {
 		rc.checkTemplate.Collect(Critical, false, strings.Join(checkPointCriticalMsgs, "\n"))
 	} else {
@@ -2377,7 +2385,7 @@ func (cr *chunkRestore) encodeLoop(
 
 			hasIgnoredEncodeErr := false
 			if encodeErr != nil {
-				rowText := tidb.EncodeRowForRecord(t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row)
+				rowText := tidb.EncodeRowForRecord(t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
 				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
 				err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
 				hasIgnoredEncodeErr = true
