@@ -111,6 +111,7 @@ var actionMap = map[ActionType]string{
 	ActionModifyColumn:                  "modify column",
 	ActionRebaseAutoID:                  "rebase auto_increment ID",
 	ActionRenameTable:                   "rename table",
+	ActionRenameTables:                  "rename tables",
 	ActionSetDefaultValue:               "set default value",
 	ActionShardRowID:                    "shard row ID",
 	ActionModifyTableComment:            "modify table comment",
@@ -144,6 +145,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterCheckConstraint:          "alter check constraint",
 	ActionDropIndexes:                   "drop multi-indexes",
 	ActionAlterTableAttributes:          "alter table attributes",
+	ActionAlterTablePartitionPolicy:     "alter table partition policy",
 	ActionAlterTablePartitionAttributes: "alter table partition attributes",
 	ActionCreatePlacementPolicy:         "create placement policy",
 	ActionAlterPlacementPolicy:          "alter placement policy",
@@ -151,6 +153,7 @@ var actionMap = map[ActionType]string{
 	ActionModifySchemaDefaultPlacement:  "modify schema default placement",
 	ActionAlterTablePlacement:           "alter table placement",
 	ActionAlterCacheTable:               "alter cache table",
+	ActionAlterNoCacheTable:             "alter no cache table",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
