@@ -225,18 +225,23 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	if d.etcdCli == nil {
 		return errors.New("no etcdCli in ddl")
 	}
-	resp, err := d.etcdCli.Get(d.ctx, key)
 	origin := ""
-	for _, kv := range resp.Kvs {
-		if string(kv.Key) == key {
-			origin = string(kv.Value)
-			break
+	resp, err := d.etcdCli.Get(d.ctx, key)
+	if err != nil {
+		for _, kv := range resp.Kvs {
+			if string(kv.Key) == key {
+				origin = string(kv.Value)
+				break
+			}
 		}
 	}
 	fmt.Printf("!!!! httpAddr key %v origin %v \n", httpAddr, origin)
 	if origin != httpAddr {
 		// TODO add lease ttl
-		d.etcdCli.Put(d.ctx, key, httpAddr)
+		_, err := d.etcdCli.Put(d.ctx, key, httpAddr)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -269,7 +274,8 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 	}
 
 	for _, store := range tiflashStores {
-		d.UpdateTiFlashHTTPAddress(&store)
+		err := d.UpdateTiFlashHTTPAddress(&store)
+		log.Error("set TiFlash status address failed", zap.Error(err))
 	}
 
 	// main body of table_update
@@ -291,7 +297,9 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 
 	// Removed pd rule handling to somewhere else
 	if handlePd {
-		HandlePlacementRuleRoutine(ctx, d, tableList)
+		if err := HandlePlacementRuleRoutine(ctx, d, tableList); err != nil {
+			log.Error("handle placement rule routine error", zap.Error(err))
+		}
 	}
 
 	for _, tb := range tableList {
@@ -409,7 +417,6 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	tblInfo := tb.Meta()
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		// TODO Can we make it as a batch request?
-		fmt.Printf("!!!! Definitions %v AddingDefinitions %v\n", len(pi.Definitions), len(pi.AddingDefinitions))
 		for _, p := range pi.Definitions {
 			ruleNew := MakeNewRule(p.ID, replicaInfo.Count, replicaInfo.Labels)
 			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
@@ -422,7 +429,9 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 				return errors.Trace(err)
 			}
-			tikvHelper.PostAccelerateSchedule(p.ID)
+			if e := tikvHelper.PostAccelerateSchedule(p.ID); e != nil {
+				return errors.Trace(err)
+			}
 		}
 	} else {
 		ruleNew := MakeNewRule(tblInfo.ID, replicaInfo.Count, replicaInfo.Labels)
@@ -573,7 +582,9 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 	// remove rules of non-existing table
 	for _, v := range allRules {
 		log.Info("remove tiflash rule", zap.String("id", v.ID))
-		tikvHelper.DeletePlacementRule("tiflash", v.ID)
+		if err := tikvHelper.DeletePlacementRule("tiflash", v.ID); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	return nil

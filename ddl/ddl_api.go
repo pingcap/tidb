@@ -3282,7 +3282,10 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 			if e := tikvHelper.SetPlacementRule(*ruleNew); e != nil {
 				return errors.Trace(err)
 			}
-			tikvHelper.PostAccelerateSchedule(p.ID)
+			err := tikvHelper.PostAccelerateSchedule(p.ID)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 

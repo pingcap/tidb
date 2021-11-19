@@ -224,6 +224,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 	time.Sleep(originInterval * 4)
 
 	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
 	pi := tb.Meta().GetPartitionInfo()
 	c.Assert(pi, NotNil)
 	for _, p := range pi.Definitions {
