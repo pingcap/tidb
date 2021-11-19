@@ -354,6 +354,13 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 		if len(schema.Collate) > 0 {
 			collation = schema.Collate // Overwrite default
 		}
+		var policyName, directPlacement interface{}
+		if schema.PlacementPolicyRef != nil {
+			policyName = schema.PlacementPolicyRef.Name.O
+		}
+		if schema.DirectPlacementOpts != nil {
+			directPlacement = schema.DirectPlacementOpts.String()
+		}
 
 		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
 			continue
@@ -363,7 +370,9 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 			schema.Name.O,         // SCHEMA_NAME
 			charset,               // DEFAULT_CHARACTER_SET_NAME
 			collation,             // DEFAULT_COLLATION_NAME
-			nil,
+			nil,                   // SQL_PATH
+			policyName,            // TIDB_PLACEMENT_POLICY_NAME
+			directPlacement,       // TIDB_DIRECT_PLACEMENT
 		)
 		rows = append(rows, record)
 	}
