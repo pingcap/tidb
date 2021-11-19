@@ -1233,8 +1233,22 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		return
 	}
 	if partitionInfo.Type == model.PartitionTypeHash {
-		fmt.Fprintf(buf, "\nPARTITION BY HASH( %s )", partitionInfo.Expr)
-		fmt.Fprintf(buf, "\nPARTITIONS %d", partitionInfo.Num)
+		fmt.Fprintf(buf, "\n/*!50100 PARTITION BY HASH (%s)", partitionInfo.Expr)
+		if partitionInfo.Num == 0 {
+			return
+		}
+
+		fmt.Fprintf(buf, "\n(")
+		for i, def := range partitionInfo.Definitions {
+			fmt.Fprintf(buf, "PARTITION %s COMMENT = '%s' ENGINE = InnoDB", def.Name.O, def.Comment)
+			if i < int(partitionInfo.Num)-1 {
+				fmt.Fprintf(buf, ",\n")
+			} else {
+				fmt.Fprintf(buf, ")")
+			}
+		}
+		fmt.Fprintf(buf, " */")
+
 		return
 	}
 	// this if statement takes care of range columns case

@@ -970,6 +970,34 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  KEY `idx_v` (`v`) COMMENT 'foo''bar'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+
+	// For issue #29922
+	tk.MustExec("CREATE TABLE `thash` (\n  `id` bigint unsigned NOT NULL,\n  `data` varchar(255) DEFAULT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY HASH (`id`)\n(PARTITION pEven COMMENT = \"Even ids\",\n PARTITION pOdd COMMENT = \"Odd ids\");")
+	tk.MustQuery("show create table `thash`").Check(testutil.RowsWithSep("|",
+		""+
+			"thash CREATE TABLE `thash` (\n"+
+			"  `id` bigint(20) unsigned NOT NULL,\n" +
+			"  `data` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"/*!50100 PARTITION BY HASH (`id`)\n" +
+			"(PARTITION pEven COMMENT = 'Even ids' ENGINE = InnoDB,\n" +
+			"PARTITION pOdd COMMENT = 'Odd ids' ENGINE = InnoDB) */",
+	))
+	// empty edge case
+	tk.MustExec("drop table if exists `thash`")
+	tk.MustExec("CREATE TABLE `thash` (\n  `id` bigint unsigned NOT NULL,\n  `data` varchar(255) DEFAULT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY HASH (`id`);")
+	tk.MustQuery("show create table `thash`").Check(testutil.RowsWithSep("|",
+		""+
+			"thash CREATE TABLE `thash` (\n"+
+			"  `id` bigint(20) unsigned NOT NULL,\n" +
+			"  `data` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"/*!50100 PARTITION BY HASH (`id`)\n" +
+			"(PARTITION p0 COMMENT = '' ENGINE = InnoDB) */",
+	))
 }
 
 func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
