@@ -32,9 +32,8 @@ type mockStorage struct {
 	*copr.Store
 	memCache  kv.MemManager
 	LockWaits []*deadlockpb.WaitForEntry
-	pdAddrs []string
+	pdAddrs   []string
 }
-
 
 func ModifyPdAddrs(store interface{}, pdAddrs []string) bool {
 	if s, ok := store.(*mockStorage); ok {

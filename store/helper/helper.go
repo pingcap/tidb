@@ -906,7 +906,6 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 	return dec.Decode(stats)
 }
 
-
 func (h *Helper) DeletePlacementRule(group string, ruleId string) error {
 	pdAddrs, err := h.GetPDAddr()
 	if err != nil {

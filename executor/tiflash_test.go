@@ -152,7 +152,6 @@ func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a and ((t1.a < 9223372036854775800 and t1.a > 2) or (t1.a <= 1 and t1.a > -1))").Check(testkit.Rows("3"))
 }
 
-
 func (s *tiflashTestSuite) TestTiFlashInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	//tk.MustExec("use test")
@@ -163,7 +162,6 @@ func (s *tiflashTestSuite) TestTiFlashInfo(c *C) {
 	tk.MustExec("select * from INFORMATION_SCHEMA.TIFLASH_REPLICA")
 	//c.Assert(err, IsNil)
 }
-
 
 // to fix https://github.com/pingcap/tidb/issues/27952
 func (s *tiflashTestSuite) TestJoinRace(c *C) {

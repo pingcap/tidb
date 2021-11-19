@@ -46,14 +46,14 @@ const (
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
 	// InitialVersion is the initial schema version for every server.
 	// It's exported for testing.
-	InitialVersion       = "0"
+	InitialVersion                  = "0"
 	TiFlashLastHandledSchemaVersion = "/tiflash/cluster/last_handled_schema_version"
-	putKeyNoRetry        = 1
-	keyOpDefaultRetryCnt = 3
-	putKeyRetryUnlimited = math.MaxInt64
-	keyOpDefaultTimeout  = 2 * time.Second
-	keyOpRetryInterval   = 30 * time.Millisecond
-	checkVersInterval    = 20 * time.Millisecond
+	putKeyNoRetry                   = 1
+	keyOpDefaultRetryCnt            = 3
+	putKeyRetryUnlimited            = math.MaxInt64
+	keyOpDefaultTimeout             = 2 * time.Second
+	keyOpRetryInterval              = 30 * time.Millisecond
+	checkVersInterval               = 20 * time.Millisecond
 
 	ddlPrompt = "ddl-syncer"
 )
