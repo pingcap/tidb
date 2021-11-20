@@ -3106,6 +3106,17 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("0"))
 }
 
+func (s *testIntegrationSuite2) TestIssue11648(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int NOT NULL DEFAULT 8);")
+	tk.MustExec("SET sql_mode = '';")
+	tk.MustExec("insert into t values (1), (NULL), (2);")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'id' cannot be null"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "0", "2"))
+}
+
 func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
@@ -8300,6 +8311,12 @@ func (s *testIntegrationSuite) TestJiraSetInnoDBDefaultRowFormat(c *C) {
 	tk.MustQuery("SHOW VARIABLES LIKE 'innodb_large_prefix'").Check(testkit.Rows("innodb_large_prefix ON"))
 }
 
+func (s *testIntegrationSuite) TestIssue26977(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	result := tk.MustQuery("select a + 1 as f from (select cast(0xfffffffffffffff0 as unsigned) as a union select cast(1 as unsigned)) t having f != 2;")
+	result.Check(testkit.Rows("18446744073709551601"))
+}
+
 func (s *testIntegrationSuite) TestIssue27236(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -8358,4 +8375,17 @@ func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
 	tk.MustExec("create table t2 (i2 integer, c2 char, f2 float)")
 	tk.MustExec("insert into t2 values (0, 'c', null), (1, null, 0.1), (3, 'b', 0.01), (2, 'q', 0.12), (null, 'a', -0.1), (null, null, null)")
 	tk.MustQuery("select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2))").Check(testkit.Rows("1 <nil> 0.1"))
+}
+
+func (s *testIntegrationSuite) TestIssue29244(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(4));")
+	tk.MustExec("insert into t values(\"-700:10:10.123456111\");")
+	tk.MustExec("insert into t values(\"700:10:10.123456111\");")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
 }
