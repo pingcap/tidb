@@ -31,6 +31,8 @@ import (
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
 
+	runInGoTest = true // flag for NewServer to known it is running in test environment
+
 	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
 	// Set schema lease to avoid it from making CI slow.
 	session.SetSchemaLease(0)

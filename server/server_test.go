@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
@@ -48,11 +47,6 @@ import (
 var (
 	regression = true
 )
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
 
 type configOverrider func(*mysql.Config)
 
@@ -138,43 +132,6 @@ func (cli *testingServerClient) runTests(t *testing.T, overrider configOverrider
 }
 
 // runTestsOnNewDB runs tests using a specified database which will be created before the test and destroyed after the test.
-func (cli *testServerClient) runTestsOnNewDB(c *C, overrider configOverrider, dbName string, tests ...func(dbt *DBTest)) {
-	dsn := cli.getDSN(overrider, func(config *mysql.Config) {
-		config.DBName = ""
-	})
-	db, err := sql.Open("mysql", dsn)
-	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer func() {
-		err := db.Close()
-		c.Assert(err, IsNil)
-	}()
-
-	_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`;", dbName))
-	if err != nil {
-		fmt.Println(err)
-	}
-	c.Assert(err, IsNil, Commentf("Error drop database %s: %s", dbName, err))
-
-	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE `%s`;", dbName))
-	c.Assert(err, IsNil, Commentf("Error create database %s: %s", dbName, err))
-
-	defer func() {
-		_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS `%s`;", dbName))
-		c.Assert(err, IsNil, Commentf("Error drop database %s: %s", dbName, err))
-	}()
-
-	_, err = db.Exec(fmt.Sprintf("USE `%s`;", dbName))
-	c.Assert(err, IsNil, Commentf("Error use database %s: %s", dbName, err))
-
-	dbt := &DBTest{c, db}
-	for _, test := range tests {
-		test(dbt)
-		// to fix : no db selected
-		_, _ = dbt.db.Exec("DROP TABLE IF EXISTS test")
-	}
-}
-
-// runTestsOnNewDB runs tests using a specified database which will be created before the test and destroyed after the test.
 func (cli *testingServerClient) runTestsOnNewDB(t *testing.T, overrider configOverrider, dbName string, tests ...func(dbt *testkit.DBTestKit)) {
 	dsn := cli.getDSN(overrider, func(config *mysql.Config) {
 		config.DBName = ""
@@ -209,107 +166,6 @@ func (cli *testingServerClient) runTestsOnNewDB(t *testing.T, overrider configOv
 		// to fix : no db selected
 		_, _ = dbt.GetDB().Exec("DROP TABLE IF EXISTS test")
 	}
-}
-
-type DBTest struct {
-	*C
-	db *sql.DB
-}
-
-func (dbt *DBTest) mustExec(query string, args ...interface{}) (res sql.Result) {
-	res, err := dbt.db.Exec(query, args...)
-	dbt.Assert(err, IsNil, Commentf("Exec %s", query))
-	return res
-}
-
-func (dbt *DBTest) mustQuery(query string, args ...interface{}) (rows *sql.Rows) {
-	rows, err := dbt.db.Query(query, args...)
-	dbt.Assert(err, IsNil, Commentf("Query %s", query))
-	return rows
-}
-
-func (dbt *DBTest) mustQueryRows(query string, args ...interface{}) {
-	rows := dbt.mustQuery(query, args...)
-	dbt.Assert(rows.Next(), IsTrue)
-	rows.Close()
-}
-
-func (cli *testServerClient) runTestRegression(c *C, overrider configOverrider, dbName string) {
-	cli.runTestsOnNewDB(c, overrider, dbName, func(dbt *DBTest) {
-		// Show the user
-		dbt.mustExec("select user()")
-
-		// Create Table
-		dbt.mustExec("CREATE TABLE test (val TINYINT)")
-
-		// Test for unexpected data
-		var out bool
-		rows := dbt.mustQuery("SELECT * FROM test")
-		dbt.Assert(rows.Next(), IsFalse, Commentf("unexpected data in empty table"))
-
-		// Create Data
-		res := dbt.mustExec("INSERT INTO test VALUES (1)")
-		//		res := dbt.mustExec("INSERT INTO test VALUES (?)", 1)
-		count, err := res.RowsAffected()
-		dbt.Assert(err, IsNil)
-		dbt.Check(count, Equals, int64(1))
-		id, err := res.LastInsertId()
-		dbt.Assert(err, IsNil)
-		dbt.Check(id, Equals, int64(0))
-
-		// Read
-		rows = dbt.mustQuery("SELECT val FROM test")
-		if rows.Next() {
-			err = rows.Scan(&out)
-			c.Assert(err, IsNil)
-			dbt.Check(out, IsTrue)
-			dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
-		} else {
-			dbt.Error("no data")
-		}
-		rows.Close()
-
-		// Update
-		res = dbt.mustExec("UPDATE test SET val = 0 WHERE val = ?", 1)
-		count, err = res.RowsAffected()
-		dbt.Assert(err, IsNil)
-		dbt.Check(count, Equals, int64(1))
-
-		// Check Update
-		rows = dbt.mustQuery("SELECT val FROM test")
-		if rows.Next() {
-			err = rows.Scan(&out)
-			c.Assert(err, IsNil)
-			dbt.Check(out, IsFalse)
-			dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
-		} else {
-			dbt.Error("no data")
-		}
-		rows.Close()
-
-		// Delete
-		res = dbt.mustExec("DELETE FROM test WHERE val = 0")
-		//		res = dbt.mustExec("DELETE FROM test WHERE val = ?", 0)
-		count, err = res.RowsAffected()
-		dbt.Assert(err, IsNil)
-		dbt.Check(count, Equals, int64(1))
-
-		// Check for unexpected rows
-		res = dbt.mustExec("DELETE FROM test")
-		count, err = res.RowsAffected()
-		dbt.Assert(err, IsNil)
-		dbt.Check(count, Equals, int64(0))
-
-		dbt.mustQueryRows("SELECT 1")
-
-		var b = make([]byte, 0)
-		if err := dbt.db.QueryRow("SELECT ?", b).Scan(&b); err != nil {
-			dbt.Fatal(err)
-		}
-		if b == nil {
-			dbt.Error("nil echo from non-nil input")
-		}
-	})
 }
 
 func (cli *testingServerClient) runTestRegression(t *testing.T, overrider configOverrider, dbName string) {
