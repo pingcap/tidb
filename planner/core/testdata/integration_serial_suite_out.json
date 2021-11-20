@@ -801,7 +801,7 @@
           "└─TableReader 1.00 root  data:ExchangeSender",
           "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#22",
-          "      └─HashJoin 204.80 batchCop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "      └─HashJoin 204.80 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "        ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
           "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d1_t.d1_k, collate: N/A]",
           "        │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
