@@ -36,7 +36,6 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -145,90 +144,6 @@ func createTiDBTestTopSQL(t *testing.T) (*tidbTestTopSQL, func()) {
 	tracecpu.GlobalSQLCPUProfiler.Run()
 
 	return ts, cleanup
-}
-
-type tidbTestTopSQLSuite struct {
-	*tidbTestSuiteBase
-}
-
-type tidbTestSuiteBase struct {
-	*testServerClient
-	tidbdrv *TiDBDriver
-	server  *Server
-	domain  *domain.Domain
-	store   kv.Storage
-}
-
-func newTiDBTestSuiteBase() *tidbTestSuiteBase {
-	return &tidbTestSuiteBase{
-		testServerClient: newTestServerClient(),
-	}
-}
-
-var _ = SerialSuites(&tidbTestTopSQLSuite{newTiDBTestSuiteBase()})
-
-func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
-	ts.tidbTestSuiteBase.SetUpSuite(c)
-
-	// Initialize global variable for top-sql test.
-	db, err := sql.Open("mysql", ts.getDSN())
-	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer func() {
-		err := db.Close()
-		c.Assert(err, IsNil)
-	}()
-
-	dbt := &DBTest{c, db}
-	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
-	dbt.mustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
-	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
-
-	tracecpu.GlobalSQLCPUProfiler.Run()
-}
-
-func (ts *tidbTestTopSQLSuite) TearDownSuite(c *C) {
-	ts.tidbTestSuiteBase.TearDownSuite(c)
-}
-
-func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
-	var err error
-	ts.store, err = mockstore.NewMockStore()
-	session.DisableStats4Test()
-	c.Assert(err, IsNil)
-	ts.domain, err = session.BootstrapSession(ts.store)
-	c.Assert(err, IsNil)
-	ts.tidbdrv = NewTiDBDriver(ts.store)
-	cfg := newTestConfig()
-	cfg.Socket = ""
-	cfg.Port = ts.port
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = ts.statusPort
-	cfg.Performance.TCPKeepAlive = true
-	err = logutil.InitLogger(cfg.Log.ToLogConfig())
-	c.Assert(err, IsNil)
-
-	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
-	ts.port = getPortFromTCPAddr(server.listener.Addr())
-	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
-	ts.server = server
-	go func() {
-		err := ts.server.Run()
-		c.Assert(err, IsNil)
-	}()
-	ts.waitUntilServerOnline()
-}
-
-func (ts *tidbTestSuiteBase) TearDownSuite(c *C) {
-	if ts.store != nil {
-		ts.store.Close()
-	}
-	if ts.domain != nil {
-		ts.domain.Close()
-	}
-	if ts.server != nil {
-		ts.server.Close()
-	}
 }
 
 func TestRegression(t *testing.T) {
@@ -1748,25 +1663,6 @@ func TestTopSQLAgent(t *testing.T) {
 	agentServer.WaitCollectCnt(2, time.Second*8)
 	checkFn(5)
 	cancel5()
-}
-
-func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, c *C, fn func(db *sql.DB)) {
-	db, err := sql.Open("mysql", ts.getDSN())
-	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer func() {
-		err := db.Close()
-		c.Assert(err, IsNil)
-	}()
-	dbt := &DBTest{c, db}
-	dbt.mustExec("use topsql;")
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		fn(db)
-	}
 }
 
 func (ts *tidbTestTopSQL) loopExec(ctx context.Context, t *testing.T, fn func(db *sql.DB)) {
