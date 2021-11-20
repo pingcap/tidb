@@ -26,9 +26,9 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/israce"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -302,7 +302,6 @@ func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
 		dom.Close()
 		require.NoError(t, store.Close())
 	}()
-	testData, err := testutil.LoadTestSuiteData("testdata", "prepare_suite")
 	require.NoError(t, err)
 
 	tk.MustExec("use test")
@@ -336,10 +335,10 @@ func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
 			Result           []string
 		}
 	}
-	testData.GetTestCasesT(t, &input, &output)
+	prepareMergeSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
 		tk.MustExec(tt.PrepareStmt)
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].PrepareStmt = tt.PrepareStmt
 			output[i].Executes = make([]struct {
 				SQL  string
@@ -364,12 +363,12 @@ func TestPlanCacheWithDifferentVariableTypes(t *testing.T) {
 			ps := []*util.ProcessInfo{tkProcess}
 			tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 			plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
-			testData.OnRecord(func() {
+			testdata.OnRecord(func() {
 				output[i].Executes[j].SQL = exec.ExecuteSQL
-				output[i].Executes[j].Plan = testData.ConvertRowsToStrings(plan.Rows())
+				output[i].Executes[j].Plan = testdata.ConvertRowsToStrings(plan.Rows())
 				output[i].Executes[j].Vars = exec.Vars
 				output[i].Executes[j].LastPlanUseCache = lastPlanUseCache.(string)
-				output[i].Executes[j].Result = testData.ConvertRowsToStrings(res.Rows())
+				output[i].Executes[j].Result = testdata.ConvertRowsToStrings(res.Rows())
 			})
 
 			require.Equal(t, exec.ExecuteSQL, output[i].Executes[j].SQL)
@@ -890,7 +889,6 @@ func TestParameterPushDown(t *testing.T) {
 		dom.Close()
 		require.NoError(t, store.Close())
 	}()
-	testData, err := testutil.LoadTestSuiteData("testdata", "prepare_suite")
 	require.NoError(t, err)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -907,7 +905,7 @@ func TestParameterPushDown(t *testing.T) {
 		Plan      []string
 		FromCache string
 	}
-	testData.GetTestCasesT(t, &input, &output)
+	prepareMergeSuiteData.GetTestCases(t, &input, &output)
 
 	for i, tt := range input {
 		if strings.HasPrefix(tt.SQL, "execute") {
@@ -919,9 +917,9 @@ func TestParameterPushDown(t *testing.T) {
 			tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 			plan := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 
-			testData.OnRecord(func() {
-				output[i].Result = testData.ConvertRowsToStrings(res.Rows())
-				output[i].Plan = testData.ConvertRowsToStrings(plan.Rows())
+			testdata.OnRecord(func() {
+				output[i].Result = testdata.ConvertRowsToStrings(res.Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
 				output[i].FromCache = fromCache.Rows()[0][0].(string)
 			})
 
@@ -930,7 +928,7 @@ func TestParameterPushDown(t *testing.T) {
 			require.Equal(t, fromCache.Rows()[0][0].(string), output[i].FromCache)
 		} else {
 			tk.MustExec(tt.SQL)
-			testData.OnRecord(func() {
+			testdata.OnRecord(func() {
 				output[i].Result = nil
 			})
 		}
