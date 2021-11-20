@@ -1595,40 +1595,43 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	checkFn("commit", "")
 }
 
-func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210702")
+func TestTopSQLAgent(t *testing.T) {
+	t.Skip("unstable, skip it and fix it before 20210702")
+
+	ts, cleanup := createTiDBTestTopSQL(t)
+	defer cleanup()
 	db, err := sql.Open("mysql", ts.getDSN())
-	c.Assert(err, IsNil, Commentf("Error connecting"))
+	require.NoError(t, err, "Error connecting")
 	defer func() {
 		err := db.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	agentServer, err := mockTopSQLReporter.StartMockAgentServer()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		agentServer.Stop()
 	}()
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/topsql/reporter/resetTimeoutForTest", `return(true)`), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/topsql/reporter/resetTimeoutForTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL", `return(true)`))
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/util/topsql/reporter/resetTimeoutForTest")
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = failpoint.Disable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL")
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
-	dbt := &DBTest{c, db}
-	dbt.mustExec("drop database if exists topsql")
-	dbt.mustExec("create database topsql")
-	dbt.mustExec("use topsql;")
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("drop database if exists topsql")
+	dbt.MustExec("create database topsql")
+	dbt.MustExec("use topsql;")
 	for i := 0; i < 20; i++ {
-		dbt.mustExec(fmt.Sprintf("create table t%v (a int auto_increment, b int, unique index idx(a));", i))
+		dbt.MustExec(fmt.Sprintf("create table t%v (a int auto_increment, b int, unique index idx(a));", i))
 		for j := 0; j < 100; j++ {
-			dbt.mustExec(fmt.Sprintf("insert into t%v (b) values (%v);", i, j))
+			dbt.MustExec(fmt.Sprintf("insert into t%v (b) values (%v);", i, j))
 		}
 	}
 	setTopSQLReceiverAddress := func(addr string) {
@@ -1636,11 +1639,11 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 			conf.TopSQL.ReceiverAddress = addr
 		})
 	}
-	dbt.mustExec("set @@global.tidb_enable_top_sql='On';")
+	dbt.MustExec("set @@global.tidb_enable_top_sql='On';")
 	setTopSQLReceiverAddress("")
-	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
-	dbt.mustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
-	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
+	dbt.MustExec("set @@global.tidb_top_sql_precision_seconds=1;")
+	dbt.MustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
+	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 
 	r := reporter.NewRemoteTopSQLReporter(reporter.NewGRPCReportClient(plancodec.DecodeNormalizedPlan))
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{r})
@@ -1648,28 +1651,28 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// TODO: change to ensure that the right sql statements are reported, not just counts
 	checkFn := func(n int) {
 		records := agentServer.GetLatestRecords()
-		c.Assert(len(records), Equals, n)
+		require.Len(t, records, n)
 		for _, r := range records {
 			sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(r.SqlDigest, time.Second)
-			c.Assert(exist, IsTrue)
-			c.Check(sqlMeta.NormalizedSql, Matches, "select.*from.*join.*")
+			require.True(t, exist)
+			require.Regexp(t, "select.*from.*join.*", sqlMeta.NormalizedSql)
 			if len(r.PlanDigest) == 0 {
 				continue
 			}
 			plan, exist := agentServer.GetPlanMetaByDigestBlocking(r.PlanDigest, time.Second)
-			c.Assert(exist, IsTrue)
+			require.True(t, exist)
 			plan = strings.Replace(plan, "\n", " ", -1)
 			plan = strings.Replace(plan, "\t", " ", -1)
-			c.Assert(plan, Matches, ".*Join.*Select.*")
+			require.Regexp(t, ".*Join.*Select.*", plan)
 		}
 	}
 	runWorkload := func(start, end int) context.CancelFunc {
 		ctx, cancel := context.WithCancel(context.Background())
 		for i := start; i < end; i++ {
 			query := fmt.Sprintf("select /*+ HASH_JOIN(ta, tb) */ * from t%[1]v ta join t%[1]v tb on ta.a=tb.a where ta.b is not null;", i)
-			go ts.loopExec(ctx, c, func(db *sql.DB) {
-				dbt := &DBTest{c, db}
-				rows := dbt.mustQuery(query)
+			go ts.loopExec(ctx, t, func(db *sql.DB) {
+				dbt := testkit.NewDBTestKit(t, db)
+				rows := dbt.MustQuery(query)
 				for rows.Next() {
 				}
 			})
@@ -1684,12 +1687,12 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
 	// Test after set agent address and the evict take effect.
-	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
+	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 	setTopSQLReceiverAddress(agentServer.Address())
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(5)
 	// Test with wrong agent address, the agent server can't receive any record.
-	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=8;")
+	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=8;")
 	setTopSQLReceiverAddress("127.0.0.1:65530")
 
 	agentServer.WaitCollectCnt(1, time.Second*4)
@@ -1703,7 +1706,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// case 2: agent hangs for a while
 	cancel2 := runWorkload(0, 10)
 	// empty agent address, should not collect records
-	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
+	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 	setTopSQLReceiverAddress("")
 	agentServer.WaitCollectCnt(1, time.Second*4)
 	checkFn(0)
@@ -1739,7 +1742,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	agentServer.Stop()
 	// agent server restart
 	agentServer, err = mockTopSQLReporter.StartMockAgentServer()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	setTopSQLReceiverAddress(agentServer.Address())
 	// check result
 	agentServer.WaitCollectCnt(2, time.Second*8)
