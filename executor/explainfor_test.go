@@ -529,7 +529,7 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`└─IndexJoin_29 1.00 root  inner join, inner:TableReader_25, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
+		`IndexJoin_29 1.00 root  inner join, inner:TableReader_25, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
 		`  ├─Selection_45(Build) 0.80 root  not(isnull(test.t2.a))`,
 		`  │ └─Point_Get_44 1.00 root table:t2, index:idx_a(a) `,
 		`  └─TableReader_25(Probe) 0.00 root  data:Selection_24`,

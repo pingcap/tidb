@@ -294,7 +294,7 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─TableReader 8.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8.00 cop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin 8.00 cop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "    └─HashJoin 8.00 cop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "      ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
           "      │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: Broadcast",
           "      │   └─Selection 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
@@ -668,7 +668,7 @@
           "              │     └─TableFullScan 4.00 batchCop[tiflash] table:d2_t keep order:false",
           "              └─ExchangeReceiver(Probe) 32.00 batchCop[tiflash]  ",
           "                └─ExchangeSender 32.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.fact_t.d2_k, collate: N/A]",
-          "                  └─HashJoin 32.00 batchCop[tiflash]  inner join, equal:[eq(test.d1_t.d1_k, test.fact_t.d1_k)]",
+          "                  └─HashJoin 32.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
           "                    ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
           "                    │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d1_t.d1_k, collate: N/A]",
           "                    │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d1_t.d1_k))",
@@ -2069,8 +2069,8 @@
           "      │     └─Selection 9970.03 cop[tiflash]  not(isnull(test.t.c1)), not(isnull(test.t.c2)), not(isnull(test.t.c5))",
           "      │       └─TableFullScan 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
           "      └─ExchangeReceiver(Probe) 9980.01 cop[tiflash]  ",
-          "        └─ExchangeSender 9980.01 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.c1, collate: N/A], [name: Column#14, collate: N/A], [name: Column#16, collate: N/A], [name: test.t.c4, collate: N/A], [name: Column#17, collate: N/A]",
-          "          └─Projection 9980.01 cop[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, cast(test.t.c2, decimal(10,5))->Column#14, cast(test.t.c3, decimal(10,5))->Column#16, cast(test.t.c1, decimal(40,20))->Column#17",
+          "        └─ExchangeSender 9980.01 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.c1, collate: N/A], [name: Column#13, collate: N/A], [name: Column#15, collate: N/A], [name: test.t.c4, collate: N/A], [name: Column#17, collate: N/A]",
+          "          └─Projection 9980.01 cop[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, cast(test.t.c2, decimal(10,5))->Column#13, cast(test.t.c3, decimal(10,5))->Column#15, cast(test.t.c1, decimal(40,20))->Column#17",
           "            └─Selection 9980.01 cop[tiflash]  not(isnull(test.t.c1)), not(isnull(test.t.c2))",
           "              └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
