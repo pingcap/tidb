@@ -324,7 +324,7 @@ func TestInsert(t *testing.T) {
 	require.EqualError(t, err, "[kv:1062]Duplicate entry '测试' for key 'PRIMARY'")
 }
 
-func (s *testSuiteP2) TestMultiBatch(t *testing.T) {
+func TestMultiBatch(t *testing.T) {
 	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1101,7 +1101,7 @@ func TestReplace(t *testing.T) {
 	tk.MustExec("drop table t1, t2")
 }
 
-func (s *testSuite2) TestGeneratedColumnForInsert(t *testing.T) {
+func TestGeneratedColumnForInsert(t *testing.T) {
 	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
