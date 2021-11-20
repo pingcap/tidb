@@ -57,7 +57,7 @@ import (
 )
 
 type tidbTestSuite struct {
-	*testingServerClient
+	*testServerClient
 	tidbdrv *TiDBDriver
 	server  *Server
 	domain  *domain.Domain
@@ -65,7 +65,7 @@ type tidbTestSuite struct {
 }
 
 func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
-	ts := &tidbTestSuite{testingServerClient: newTestingServerClient()}
+	ts := &tidbTestSuite{testServerClient: newTestServerClient()}
 
 	// setup tidbTestSuite
 	var err error
@@ -400,7 +400,7 @@ func TestSocketForwarding(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	cli := newTestingServerClient()
+	cli := newTestServerClient()
 	cfg := newTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = cli.port
@@ -454,7 +454,7 @@ func TestSocket(t *testing.T) {
 	defer server.Close()
 
 	// a fake server client, config is override, just used to run tests
-	cli := newTestingServerClient()
+	cli := newTestServerClient()
 	cli.runTestRegression(t, func(config *mysql.Config) {
 		config.User = "root"
 		config.Net = "unix"
@@ -472,7 +472,7 @@ func TestSocketAndIp(t *testing.T) {
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 	defer os.RemoveAll(tempDir)
 
-	cli := newTestingServerClient()
+	cli := newTestServerClient()
 	cfg := newTestConfig()
 	cfg.Socket = socketFile
 	cfg.Port = cli.port
@@ -635,7 +635,7 @@ func TestOnlySocket(t *testing.T) {
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 	defer os.RemoveAll(tempDir)
 
-	cli := newTestingServerClient()
+	cli := newTestServerClient()
 	cfg := newTestConfig()
 	cfg.Socket = socketFile
 	cfg.Host = "" // No network interface listening for mysql traffic

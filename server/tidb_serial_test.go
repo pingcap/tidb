@@ -102,7 +102,7 @@ func TestTLSAuto(t *testing.T) {
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
 	}
-	cli := newTestingServerClient()
+	cli := newTestServerClient()
 	cfg := newTestConfig()
 	cfg.Socket = ""
 	cfg.Port = cli.port
@@ -158,7 +158,7 @@ func TestTLSBasic(t *testing.T) {
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
 	}
-	cli := newTestingServerClient()
+	cli := newTestServerClient()
 	cfg := newTestConfig()
 	cfg.Socket = ""
 	cfg.Port = cli.port
@@ -230,7 +230,7 @@ func TestTLSVerify(t *testing.T) {
 	}()
 
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
-	cli := newTestingServerClient()
+	cli := newTestServerClient()
 	cfg := newTestConfig()
 	cfg.Socket = ""
 	cfg.Port = cli.port
@@ -298,7 +298,7 @@ func TestErrorNoRollback(t *testing.T) {
 		os.Remove("/tmp/client-cert-rollback.pem")
 	}()
 
-	cli := newTestingServerClient()
+	cli := newTestServerClient()
 	cfg := newTestConfig()
 	cfg.Socket = ""
 	cfg.Port = cli.port
@@ -418,7 +418,7 @@ func TestReloadTLS(t *testing.T) {
 	}()
 
 	// try old cert used in startup configuration.
-	cli := newTestingServerClient()
+	cli := newTestServerClient()
 	cfg := newTestConfig()
 	cfg.Socket = ""
 	cfg.Port = cli.port
