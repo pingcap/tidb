@@ -2130,7 +2130,7 @@
           "        │     └─TableFullScan 10000.00 cop[tiflash] table:t3 keep order:false, stats:pseudo",
           "        └─ExchangeReceiver(Probe) 12475.01 cop[tiflash]  ",
           "          └─ExchangeSender 12475.01 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.c5, collate: N/A]",
-          "            └─HashJoin 12475.01 cop[tiflash]  inner join, equal:[eq(test.t.c2, test.t.c1)]",
+          "            └─HashJoin 12475.01 cop[tiflash]  inner join, equal:[eq(test.t.c1, test.t.c2)]",
           "              ├─ExchangeReceiver(Build) 9980.01 cop[tiflash]  ",
           "              │ └─ExchangeSender 9980.01 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.c2, collate: N/A]",
           "              │   └─Selection 9980.01 cop[tiflash]  not(isnull(test.t.c2)), not(isnull(test.t.c5))",
