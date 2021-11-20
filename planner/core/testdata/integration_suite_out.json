@@ -51,15 +51,14 @@
       {
         "SQL": "explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);",
         "Plan": [
-          "Projection 9990.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
-          "└─HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "  ├─Selection(Build) 7992.00 root  from_unixtime(cast(test.t.b, decimal(20,0) BINARY))",
-          "  │ └─TableReader 9990.00 root  data:Selection",
-          "  │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 9990.00 root  data:Selection",
-          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─Selection(Build) 7992.00 root  from_unixtime(cast(test.t.b, decimal(20,0) BINARY))",
+          "│ └─TableReader 9990.00 root  data:Selection",
+          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -425,7 +424,7 @@
         "Plan": [
           "TopN 1.00 root  Column#4, offset:0, count:1",
           "└─Projection 10000.00 root  Column#4, test.t.a, test.t.b",
-          "  └─HashJoin 10000.00 root  inner join, equal:[eq(test.t.b, Column#4)]",
+          "  └─HashJoin 10000.00 root  inner join, equal:[eq(Column#4, test.t.b)]",
           "    ├─Projection(Build) 8000.00 root  plus(test.t.b, test.t.b)->Column#4",
           "    │ └─TableReader 8000.00 root  data:Selection",
           "    │   └─Selection 8000.00 cop[tikv]  not(isnull(plus(test.t.b, test.t.b)))",
