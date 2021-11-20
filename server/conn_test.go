@@ -912,7 +912,9 @@ func TestHandleAuthPlugin(t *testing.T) {
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
-		server: srv,
+		collation: mysql.DefaultCollationID,
+		server:    srv,
+		user:      "root",
 	}
 	ctx := context.Background()
 	resp := handshakeResponse41{
