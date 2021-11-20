@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
@@ -112,10 +111,6 @@ func createTiDBTestBase(t *testing.T) (*tidbTestBase, func()) {
 	return ts, cleanup
 }
 
-type tidbTestSuite struct {
-	*tidbTestSuiteBase
-}
-
 type tidbTest struct {
 	*tidbTestBase
 }
@@ -145,17 +140,7 @@ func newTiDBTestSuiteBase() *tidbTestSuiteBase {
 	}
 }
 
-var _ = Suite(&tidbTestSuite{newTiDBTestSuiteBase()})
 var _ = SerialSuites(&tidbTestTopSQLSuite{newTiDBTestSuiteBase()})
-
-func (ts *tidbTestSuite) SetUpSuite(c *C) {
-	metrics.RegisterMetrics()
-	ts.tidbTestSuiteBase.SetUpSuite(c)
-}
-
-func (ts *tidbTestSuite) TearDownSuite(c *C) {
-	ts.tidbTestSuiteBase.TearDownSuite(c)
-}
 
 func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
 	ts.tidbTestSuiteBase.SetUpSuite(c)
@@ -504,7 +489,7 @@ func TestSocketForwarding(t *testing.T) {
 	}, "SocketRegression")
 }
 
-func (ts *tidbTestSuite) TestSocket(c *C) {
+func TestSocket(t *testing.T) {
 	cfg := newTestConfig()
 	cfg.Socket = "/tmp/tidbtest.sock"
 	cfg.Port = 0
@@ -512,25 +497,27 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 	cfg.Host = ""
 	cfg.Status.ReportStatus = false
 
+	ts, cleanup := createTiDBTest(t)
+	defer cleanup()
+
 	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	go func() {
 		err := server.Run()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
 
 	// a fake server client, config is override, just used to run tests
-	cli := newTestServerClient()
-	cli.runTestRegression(c, func(config *mysql.Config) {
+	cli := newTestingServerClient()
+	cli.runTestRegression(t, func(config *mysql.Config) {
 		config.User = "root"
 		config.Net = "unix"
 		config.Addr = "/tmp/tidbtest.sock"
 		config.DBName = "test"
 		config.Params = map[string]string{"sql_mode": "STRICT_ALL_TABLES"}
 	}, "SocketRegression")
-
 }
 
 func TestSocketAndIp(t *testing.T) {
