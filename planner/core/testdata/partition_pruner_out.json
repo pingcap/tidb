@@ -1591,7 +1591,7 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "HashJoin 1.25 root  inner join, equal:[eq(test_partition_1.t1.id), test_partition_1.t2.id]",
+          "HashJoin 1.25 root  inner join, equal:[eq(test_partition_1.t1.id, test_partition_1.t2.id)]",
           "├─IndexReader(Build) 1.00 root partition:p1 index:IndexRangeScan",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t2, index:a(a, b, id) range:[6 6 -inf,6 6 +inf], keep order:false, stats:pseudo",
           "└─IndexReader(Probe) 19.98 root partition:p0 index:Selection",
