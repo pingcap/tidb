@@ -460,12 +460,18 @@ func TestMultiStatements(t *testing.T) {
 
 func TestSocketForwarding(t *testing.T) {
 	t.Parallel()
+	osTempDir := os.TempDir()
+	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
+	require.NoError(t, err)
+	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
+	defer os.RemoveAll(tempDir)
+
 	ts, cleanup := createTiDBTest(t)
 	defer cleanup()
 
 	cli := newTestingServerClient()
 	cfg := newTestConfig()
-	cfg.Socket = "/tmp/tidbtest.sock"
+	cfg.Socket = socketFile
 	cfg.Port = cli.port
 	os.Remove(cfg.Socket)
 	cfg.Status.ReportStatus = false
@@ -483,15 +489,22 @@ func TestSocketForwarding(t *testing.T) {
 	cli.runTestRegression(t, func(config *mysql.Config) {
 		config.User = "root"
 		config.Net = "unix"
-		config.Addr = "/tmp/tidbtest.sock"
+		config.Addr = socketFile
 		config.DBName = "test"
 		config.Params = map[string]string{"sql_mode": "'STRICT_ALL_TABLES'"}
 	}, "SocketRegression")
 }
 
 func TestSocket(t *testing.T) {
+	t.Parallel()
+	osTempDir := os.TempDir()
+	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
+	require.NoError(t, err)
+	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
+	defer os.RemoveAll(tempDir)
+
 	cfg := newTestConfig()
-	cfg.Socket = "/tmp/tidbtest.sock"
+	cfg.Socket = socketFile
 	cfg.Port = 0
 	os.Remove(cfg.Socket)
 	cfg.Host = ""
@@ -514,13 +527,14 @@ func TestSocket(t *testing.T) {
 	cli.runTestRegression(t, func(config *mysql.Config) {
 		config.User = "root"
 		config.Net = "unix"
-		config.Addr = "/tmp/tidbtest.sock"
+		config.Addr = socketFile
 		config.DBName = "test"
 		config.Params = map[string]string{"sql_mode": "STRICT_ALL_TABLES"}
 	}, "SocketRegression")
 }
 
 func TestSocketAndIp(t *testing.T) {
+	t.Parallel()
 	osTempDir := os.TempDir()
 	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	require.NoError(t, err)
@@ -683,6 +697,7 @@ func TestSocketAndIp(t *testing.T) {
 
 // TestOnlySocket for server configuration without network interface for mysql clients
 func TestOnlySocket(t *testing.T) {
+	t.Parallel()
 	osTempDir := os.TempDir()
 	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	require.NoError(t, err)
