@@ -1847,8 +1847,8 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {
 		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
-			for _, def := range pi.Definitions {
-				def := def
+			for i := range pi.Definitions {
+				def := pi.Definitions[i]
 				if def.ID == ds.physicalTableID {
 					partitionInfo = &def
 					break
