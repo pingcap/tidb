@@ -342,6 +342,7 @@ func (s StringValidatorASCII) Truncate(str string, strategy TruncateStrategy) (s
 	for i := 0; i < len(str); i++ {
 		if str[i] > go_unicode.MaxASCII {
 			invalidPos = i
+			break
 		}
 	}
 	if invalidPos == -1 {
@@ -384,6 +385,9 @@ func (s StringValidatorUTF8) Validate(str string) int {
 
 // Truncate implement the interface StringValidator.
 func (s StringValidatorUTF8) Truncate(str string, strategy TruncateStrategy) (string, int) {
+	if str == "" {
+		return str, -1
+	}
 	if s.IsUTF8MB4 && utf8.ValidString(str) {
 		// Quick check passed.
 		return str, -1
@@ -397,8 +401,8 @@ func (s StringValidatorUTF8) Truncate(str string, strategy TruncateStrategy) (st
 	for i, w := 0, 0; i < len(str); i += w {
 		var rv rune
 		rv, w = utf8.DecodeRuneInString(str[i:])
-		if (rv == utf8.RuneError && !strings.HasPrefix(str[i:], string(utf8.RuneError))) ||
-			w > 3 && doMB4CharCheck {
+		if (rv == utf8.RuneError && !strings.HasPrefix(str[i:], replacementStr)) ||
+			(w > 3 && doMB4CharCheck) {
 			if invalidPos == -1 {
 				invalidPos = i
 			}
@@ -435,6 +439,9 @@ func (s StringValidatorOther) Validate(str string) int {
 
 // Truncate implement the interface StringValidator.
 func (s StringValidatorOther) Truncate(str string, strategy TruncateStrategy) (string, int) {
+	if str == "" {
+		return str, -1
+	}
 	enc := NewEncoding(s.Charset)
 	if !enc.enabled() {
 		return str, -1
@@ -449,7 +456,7 @@ func (s StringValidatorOther) Truncate(str string, strategy TruncateStrategy) (s
 	invalidPos := -1
 	for i, w := 0, 0; i < len(str); i += w {
 		w = characterLengthUTF8(strBytes[i:])
-		w := mathutil.Min(w, len(str)-i)
+		w = mathutil.Min(w, len(str)-i)
 		_, _, err := transformer.Transform(buf[:], strBytes[i:i+w], true)
 		if err != nil {
 			if invalidPos == -1 {
