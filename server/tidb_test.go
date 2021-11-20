@@ -117,9 +117,34 @@ type tidbTest struct {
 
 func createTiDBTest(t *testing.T) (*tidbTest, func()) {
 	base, cleanup := createTiDBTestBase(t)
-	// TODO: register metrics
-	// metrics.RegisterMetrics()
 	return &tidbTest{base}, cleanup
+}
+
+type tidbTestTopSQL struct {
+	*tidbTestBase
+}
+
+func createTiDBTestTopSQL(t *testing.T) (*tidbTestTopSQL, func()) {
+	base, cleanup := createTiDBTestBase(t)
+
+	ts := &tidbTestTopSQL{base}
+
+	// Initialize global variable for top-sql test.
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoErrorf(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("set @@global.tidb_top_sql_precision_seconds=1;")
+	dbt.MustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
+	dbt.MustExec("set @@global.tidb_top_sql_max_statement_count=5;")
+
+	tracecpu.GlobalSQLCPUProfiler.Run()
+
+	return ts, cleanup
 }
 
 type tidbTestTopSQLSuite struct {
@@ -1345,39 +1370,42 @@ type collectorWrapper struct {
 	reporter.TopSQLReporter
 }
 
-func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
+func TestTopSQLCPUProfile(t *testing.T) {
+	ts, cleanup := createTiDBTestTopSQL(t)
+	defer cleanup()
+
 	db, err := sql.Open("mysql", ts.getDSN())
-	c.Assert(err, IsNil, Commentf("Error connecting"))
+	require.NoErrorf(t, err, "Error connecting")
 	defer func() {
 		err := db.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL", `return(true)`))
 	defer func() {
 		err = failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = failpoint.Disable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL")
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	collector := mockTopSQLTraceCPU.NewTopSQLCollector()
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
 
-	dbt := &DBTest{c, db}
-	dbt.mustExec("drop database if exists topsql")
-	dbt.mustExec("create database topsql")
-	dbt.mustExec("use topsql;")
-	dbt.mustExec("create table t (a int auto_increment, b int, unique index idx(a));")
-	dbt.mustExec("create table t1 (a int auto_increment, b int, unique index idx(a));")
-	dbt.mustExec("create table t2 (a int auto_increment, b int, unique index idx(a));")
-	dbt.mustExec("set @@global.tidb_enable_top_sql='On';")
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("drop database if exists topsql")
+	dbt.MustExec("create database topsql")
+	dbt.MustExec("use topsql;")
+	dbt.MustExec("create table t (a int auto_increment, b int, unique index idx(a));")
+	dbt.MustExec("create table t1 (a int auto_increment, b int, unique index idx(a));")
+	dbt.MustExec("create table t2 (a int auto_increment, b int, unique index idx(a));")
+	dbt.MustExec("set @@global.tidb_enable_top_sql='On';")
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TopSQL.ReceiverAddress = "127.0.0.1:4001"
 	})
-	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
-	dbt.mustExec("set @@global.tidb_txn_mode = 'pessimistic'")
+	dbt.MustExec("set @@global.tidb_top_sql_precision_seconds=1;")
+	dbt.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
 
 	// Test case 1: DML query: insert/update/replace/delete/select
 	cases1 := []struct {
@@ -1401,10 +1429,10 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cases1[i].cancel = cancel
 		sqlStr := ca.sql
-		go ts.loopExec(ctx, c, func(db *sql.DB) {
-			dbt := &DBTest{c, db}
+		go ts.loopExec(ctx, t, func(db *sql.DB) {
+			dbt := testkit.NewDBTestKit(t, db)
 			if strings.HasPrefix(sqlStr, "select") {
-				rows := dbt.mustQuery(sqlStr)
+				rows := dbt.MustQuery(sqlStr)
 				for rows.Next() {
 				}
 			} else {
@@ -1417,25 +1445,24 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), time.Second*20)
 	defer cancel()
 	checkFn := func(sql, planRegexp string) {
-		c.Assert(timeoutCtx.Err(), IsNil)
-		commentf := Commentf("sql: %v", sql)
+		require.NoError(t, timeoutCtx.Err())
 		stats := collector.GetSQLStatsBySQLWithRetry(sql, len(planRegexp) > 0)
 		// since 1 sql may has many plan, check `len(stats) > 0` instead of `len(stats) == 1`.
-		c.Assert(len(stats) > 0, IsTrue, commentf)
+		require.Greaterf(t, len(stats), 0, "sql: %v", sql)
 
 		for _, s := range stats {
 			sqlStr := collector.GetSQL(s.SQLDigest)
 			encodedPlan := collector.GetPlan(s.PlanDigest)
 			// Normalize the user SQL before check.
 			normalizedSQL := parser.Normalize(sql)
-			c.Assert(sqlStr, Equals, normalizedSQL, commentf)
+			require.Equalf(t, normalizedSQL, sqlStr, "sql: %v", sql)
 			// decode plan before check.
 			normalizedPlan, err := plancodec.DecodeNormalizedPlan(encodedPlan)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			// remove '\n' '\t' before do regexp match.
 			normalizedPlan = strings.Replace(normalizedPlan, "\n", " ", -1)
 			normalizedPlan = strings.Replace(normalizedPlan, "\t", " ", -1)
-			c.Assert(normalizedPlan, Matches, planRegexp, commentf)
+			require.Regexpf(t, planRegexp, normalizedPlan, "sql: %v", sql)
 		}
 	}
 	// Wait the top sql collector to collect profile data.
@@ -1470,14 +1497,14 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		cases2[i].cancel = cancel
 		prepare, args := ca.prepare, ca.args
 		var stmt *sql.Stmt
-		go ts.loopExec(ctx, c, func(db *sql.DB) {
+		go ts.loopExec(ctx, t, func(db *sql.DB) {
 			if stmt == nil {
 				stmt, err = db.Prepare(prepare)
-				c.Assert(err, IsNil)
+				require.NoError(t, err)
 			}
 			if strings.HasPrefix(prepare, "select") {
 				rows, err := stmt.Query(args...)
-				c.Assert(err, IsNil)
+				require.NoError(t, err)
 				for rows.Next() {
 				}
 			} else {
@@ -1517,17 +1544,17 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		cases3[i].cancel = cancel
 		prepare, args := ca.prepare, ca.args
 		doPrepare := true
-		go ts.loopExec(ctx, c, func(db *sql.DB) {
+		go ts.loopExec(ctx, t, func(db *sql.DB) {
 			if doPrepare {
 				doPrepare = false
 				_, err := db.Exec(fmt.Sprintf("prepare stmt from '%v'", prepare))
-				c.Assert(err, IsNil)
+				require.NoError(t, err)
 			}
 			sqlBuf := bytes.NewBuffer(nil)
 			sqlBuf.WriteString("execute stmt ")
 			for i := range args {
 				_, err = db.Exec(fmt.Sprintf("set @%c=%v", 'a'+i, args[i]))
-				c.Assert(err, IsNil)
+				require.NoError(t, err)
 				if i == 0 {
 					sqlBuf.WriteString("using ")
 				} else {
@@ -1538,7 +1565,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 			}
 			if strings.HasPrefix(prepare, "select") {
 				rows, err := db.Query(sqlBuf.String())
-				c.Assert(err, IsNil, Commentf("%v", sqlBuf.String()))
+				require.NoErrorf(t, err, "%v", sqlBuf.String())
 				for rows.Next() {
 				}
 			} else {
@@ -1559,7 +1586,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	// Test case 4: transaction commit
 	ctx4, cancel4 := context.WithCancel(context.Background())
 	defer cancel4()
-	go ts.loopExec(ctx4, c, func(db *sql.DB) {
+	go ts.loopExec(ctx4, t, func(db *sql.DB) {
 		db.Exec("begin")
 		db.Exec("insert into t () values (),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),()")
 		db.Exec("commit")
@@ -1729,6 +1756,25 @@ func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, c *C, fn func(db *s
 	}()
 	dbt := &DBTest{c, db}
 	dbt.mustExec("use topsql;")
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		fn(db)
+	}
+}
+
+func (ts *tidbTestTopSQL) loopExec(ctx context.Context, t *testing.T, fn func(db *sql.DB)) {
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("use topsql;")
 	for {
 		select {
 		case <-ctx.Done():
