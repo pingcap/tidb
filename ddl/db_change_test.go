@@ -1819,6 +1819,8 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 	stateWriteOnlySQLs := []string{"insert into t values (8, 8)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 9", "update t set b = 7 where a = 2", "delete from t where b = 3"}
 	stateWriteReorganizationSQLs := []string{"insert into t values (10, 10)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 11", "update t set b = 7 where a = 5", "delete from t where b = 6"}
 
+	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
+	reorgTime := 0
 	var checkErr error
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
@@ -1848,6 +1850,11 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
+			if reorgTime < 2 {
+				reorgTime++
+			} else {
+				return
+			}
 			for _, sql := range stateWriteReorganizationSQLs {
 				_, checkErr = tk1.Exec(sql)
 				if checkErr != nil {
@@ -1880,6 +1887,8 @@ func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
 
 	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
 
+	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
+	reorgTime := 0
 	var checkErr error
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
@@ -1932,6 +1941,11 @@ func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
+			if reorgTime < 2 {
+				reorgTime++
+			} else {
+				return
+			}
 			_, checkErr = tk1.Exec("insert into t values (10, 10) on duplicate key update a = 11")
 			if checkErr != nil {
 				return

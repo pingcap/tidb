@@ -143,6 +143,8 @@ var (
 	ErrWrongTableName = dbterror.ClassDDL.NewStd(mysql.ErrWrongTableName)
 	// ErrWrongColumnName returns for wrong column name.
 	ErrWrongColumnName = dbterror.ClassDDL.NewStd(mysql.ErrWrongColumnName)
+	// ErrWrongUsage returns for wrong ddl syntax usage.
+	ErrWrongUsage = dbterror.ClassDDL.NewStd(mysql.ErrWrongUsage)
 	// ErrInvalidGroupFuncUse returns for using invalid group functions.
 	ErrInvalidGroupFuncUse = dbterror.ClassDDL.NewStd(mysql.ErrInvalidGroupFuncUse)
 	// ErrTableMustHaveColumns returns for missing column when creating a table.
@@ -254,9 +256,6 @@ var (
 	ErrTableOptionUnionUnsupported = dbterror.ClassDDL.NewStd(mysql.ErrTableOptionUnionUnsupported)
 	// ErrTableOptionInsertMethodUnsupported is returned when create/alter table with insert method option.
 	ErrTableOptionInsertMethodUnsupported = dbterror.ClassDDL.NewStd(mysql.ErrTableOptionInsertMethodUnsupported)
-
-	// ErrInvalidPlacementSpec is returned when add/alter an invalid placement rule
-	ErrInvalidPlacementSpec = dbterror.ClassDDL.NewStd(mysql.ErrInvalidPlacementSpec)
 
 	// ErrInvalidPlacementPolicyCheck is returned when txn_scope and commit data changing do not meet the placement policy
 	ErrInvalidPlacementPolicyCheck = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyCheck)

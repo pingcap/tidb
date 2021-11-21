@@ -140,6 +140,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
+			args[i] = WrapWithToBinary(ctx, args[i], funcName)
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:
@@ -879,6 +880,9 @@ var funcs = map[string]functionClass{
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
 	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
 	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
+
+	// TiDB implicit internal functions.
+	InternalFuncToBinary: &tidbConvertCharsetFunctionClass{baseFunctionClass{InternalFuncToBinary, 1, 1}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.
@@ -902,11 +906,17 @@ func GetDisplayName(name string) string {
 func GetBuiltinList() []string {
 	res := make([]string, 0, len(funcs))
 	notImplementedFunctions := []string{ast.RowFunc, ast.IsTruthWithNull}
+	implicitFunctions := []string{InternalFuncToBinary}
 	for funcName := range funcs {
 		skipFunc := false
 		// Skip not implemented functions
 		for _, notImplFunc := range notImplementedFunctions {
 			if funcName == notImplFunc {
+				skipFunc = true
+			}
+		}
+		for _, implicitFunc := range implicitFunctions {
+			if funcName == implicitFunc {
 				skipFunc = true
 			}
 		}

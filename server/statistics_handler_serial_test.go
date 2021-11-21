@@ -40,6 +40,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	cfg.Port = client.port
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true
+	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
 	server, err := NewServer(cfg, driver)
 	require.NoError(t, err)

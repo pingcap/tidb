@@ -608,7 +608,7 @@ func (m *MockExpr) SetCoercibility(Coercibility)                                
 func (m *MockExpr) Repertoire() Repertoire                                        { return UNICODE }
 func (m *MockExpr) SetRepertoire(Repertoire)                                      {}
 
-func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
+func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""
 }
 func (m *MockExpr) SetCharsetAndCollation(chs, coll string) {}
