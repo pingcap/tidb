@@ -269,12 +269,12 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					// init kvReq and worker for this partition
 					kvReq, err := builder.SetKeyRanges(keyRange).Build()
 					if err != nil {
-						worker.syncErr(ctx, e.resultCh, err)
+						worker.syncErr(ctx, fetchCh, err)
 						return
 					}
 					result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.handleCols.GetFieldsTypes(), e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getPartitalPlanID(workID))
 					if err != nil {
-						worker.syncErr(ctx, e.resultCh, err)
+						worker.syncErr(ctx, fetchCh, err)
 						return
 					}
 					worker.batchSize = e.maxChunkSize
@@ -358,7 +358,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					err := partialTableReader.Open(ctx)
 					if err != nil {
 						logutil.Logger(ctx).Error("open Select result failed:", zap.Error(err))
-						worker.syncErr(ctx, e.resultCh, err)
+						worker.syncErr(ctx, fetchCh, err)
 						break
 					}
 					worker.batchSize = e.maxChunkSize
@@ -426,12 +426,10 @@ type partialTableWorker struct {
 	partition    table.PhysicalTable // it indicates if this worker is accessing a particular partition table
 }
 
-func (w *partialTableWorker) syncErr(ctx context.Context, resultCh chan<- *lookupTableTask, err error) {
+func (w *partialTableWorker) syncErr(ctx context.Context, fetchCh chan<- *lookupTableTask, err error) {
 	logutil.Logger(ctx).Error("got error when read table handles", zap.Error(err))
-	doneCh := make(chan error, 1)
-	doneCh <- err
-	resultCh <- &lookupTableTask{
-		doneCh: doneCh,
+	fetchCh <- &lookupTableTask{
+		err: err,
 	}
 }
 
@@ -446,7 +444,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols)
 		if err != nil {
-			w.syncErr(ctx, resultCh, err)
+			w.syncErr(ctx, fetchCh, err)
 			return count, err
 		}
 		if len(handles) == 0 {
@@ -652,6 +650,15 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 
 	distinctHandles := make(map[int64]*kv.HandleMap)
 	for task := range fetchCh {
+		if task.err != nil {
+			// Tell main routine to finish.
+			task := &lookupTableTask{
+				doneCh: make(chan error, 1),
+			}
+			task.doneCh <- task.err
+			resultCh <- task
+			break
+		}
 		start := time.Now()
 		handles := task.handles
 		fhs := make([]kv.Handle, 0, 8)
@@ -722,12 +729,10 @@ type partialIndexWorker struct {
 	partition    table.PhysicalTable // it indicates if this worker is accessing a particular partition table
 }
 
-func (w *partialIndexWorker) syncErr(ctx context.Context, resultCh chan<- *lookupTableTask, err error) {
+func (w *partialIndexWorker) syncErr(ctx context.Context, fetchCh chan<- *lookupTableTask, err error) {
 	logutil.Logger(ctx).Error("got error when read index handles", zap.Error(err))
-	doneCh := make(chan error, 1)
-	doneCh <- err
-	resultCh <- &lookupTableTask{
-		doneCh: doneCh,
+	fetchCh <- &lookupTableTask{
+		err: err,
 	}
 }
 
@@ -751,7 +756,7 @@ func (w *partialIndexWorker) fetchHandles(
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result, handleCols)
 		if err != nil {
-			w.syncErr(ctx, resultCh, err)
+			w.syncErr(ctx, fetchCh, err)
 			return count, err
 		}
 		if len(handles) == 0 {
