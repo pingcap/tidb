@@ -652,9 +652,7 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 	for task := range fetchCh {
 		if task.err != nil {
 			// Tell main routine to finish.
-			task := &lookupTableTask{
-				doneCh: make(chan error, 1),
-			}
+			task.doneCh = make(chan error, 1)
 			task.doneCh <- task.err
 			resultCh <- task
 			break
