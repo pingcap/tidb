@@ -45,19 +45,11 @@ var (
 	_ table.CachedTable = &cachedTable{}
 )
 
-// RenewInfo is used for domain and cacheTable to convey renew information.
-type RenewInfo struct {
-	ts uint64
-	*cacheData
-	op         RenewLeaseType
-	CacheTable *cachedTable
-}
-
 type cachedTable struct {
 	TableCommon
 	cacheData atomic.Value
 	handle    StateRemote
-	renewCh   chan interface{}
+	renewCh   chan func()
 }
 
 // cacheData pack the cache data and lease.
@@ -92,40 +84,42 @@ func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 	}
 	data := tmp.(*cacheData)
 	if ts >= data.Start && ts < data.Lease {
-		startTime := oracle.GetTimeFromTS(data.Start)
+		leaseTime := oracle.GetTimeFromTS(data.Lease)
 		nowTime := oracle.GetTimeFromTS(ts)
-		after := nowTime.Sub(startTime)
+		distance := leaseTime.Sub(nowTime)
 		// TODO make this configurable in the following PRs
-		if after >= (2 * time.Second) {
-			c.renewCh <- RenewInfo{ts: ts, cacheData: data, op: RenewReadLease, CacheTable: c}
+		if distance <= (1 * time.Second) {
+			c.renewCh <- c.renewLease(ts, RenewReadLease, data)
 		}
 		return data
 	}
 	return nil
 }
 
-var mockStateRemote = struct {
+var MockStateRemote = struct {
 	Ch   chan remoteTask
 	Data *mockStateRemoteData
 }{}
 
 // NewCachedTable creates a new CachedTable Instance
 func NewCachedTable(tbl *TableCommon) (table.Table, error) {
-	if mockStateRemote.Data == nil {
-		mockStateRemote.Data = newMockStateRemoteData()
-		mockStateRemote.Ch = make(chan remoteTask, 100)
-		go mockRemoteService(mockStateRemote.Data, mockStateRemote.Ch)
+	if MockStateRemote.Data == nil {
+		MockStateRemote.Data = newMockStateRemoteData()
+		MockStateRemote.Ch = make(chan remoteTask, 100)
+		go mockRemoteService(MockStateRemote.Data, MockStateRemote.Ch)
 	}
 
 	ret := &cachedTable{
 		TableCommon: *tbl,
-		handle:      &mockStateRemoteHandle{mockStateRemote.Ch},
-		renewCh:     make(chan interface{}),
+		handle:      &mockStateRemoteHandle{MockStateRemote.Ch},
+		renewCh:     make(chan func()),
 	}
 	return ret, nil
 }
 
-func (c *cachedTable) Init(renewCh chan interface{}) error {
+// Init is an extra operation for cachedTable after TableFromMeta,
+// Because cachedTable need some additional parameter that can't be passed in TableFromMeta.
+func (c *cachedTable) Init(renewCh chan func()) error {
 	c.renewCh = renewCh
 	return nil
 }
@@ -237,28 +231,20 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	return c.TableCommon.RemoveRecord(ctx, h, r)
 }
 
-func (c *cachedTable) RenewLease(renewInfo RenewInfo) {
-	tid := c.Meta().ID
-	lease := leaseFromTS(renewInfo.ts)
-	succ, err := c.handle.RenewLease(tid, lease, renewInfo.op)
-	if err != nil {
-		log.Warn("Renew read lease error")
-	}
-	if succ {
-		c.cacheData.Store(&cacheData{
-			Start:     renewInfo.ts,
-			Lease:     lease,
-			MemBuffer: renewInfo.cacheData,
-		})
+func (c *cachedTable) renewLease(ts uint64, op RenewLeaseType, data *cacheData) func() {
+	return func() {
+		tid := c.Meta().ID
+		lease := leaseFromTS(ts)
+		succ, err := c.handle.RenewLease(tid, lease, op)
+		if err != nil {
+			log.Warn("Renew read lease error")
+		}
+		if succ {
+			c.cacheData.Store(&cacheData{
+				Lease:     lease,
+				MemBuffer: data,
+			})
+		}
 	}
 }
 
-// MockGetDataLease is only for test
-func (c *cachedTable) MockGetDataLease() (uint64, uint64) {
-	tmp := c.cacheData.Load()
-	if tmp == nil {
-		return 0, 0
-	}
-	data := tmp.(*cacheData)
-	return data.Start, data.Lease
-}

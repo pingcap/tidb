@@ -15,12 +15,12 @@
 package tables_test
 
 import (
+	"github.com/pingcap/tidb/table/tables"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -404,14 +404,13 @@ func TestRenewLease(t *testing.T) {
 	tk.MustExec("alter table cache_renew_t cache")
 	tbl, err := se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("cache_renew_t"))
 	require.NoError(t, err)
-	cacheTable := tbl.(table.CachedTable)
 	var i int
 	tk.MustExec("select * from cache_renew_t")
-	_, oldLease := cacheTable.MockGetDataLease()
+	_, oldLease, _ := tables.MockStateRemote.Data.Load(tbl.Meta().ID)
 	for i = 0; i < 20; i++ {
 		time.Sleep(200 * time.Millisecond)
 		tk.MustExec("select * from cache_renew_t")
-		_, lease := cacheTable.MockGetDataLease()
+		_, lease, _ := tables.MockStateRemote.Data.Load(tbl.Meta().ID)
 		if lease != oldLease {
 			break
 		}

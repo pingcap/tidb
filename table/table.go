@@ -252,14 +252,12 @@ var MockTableFromMeta func(tableInfo *model.TableInfo) Table
 type CachedTable interface {
 	Table
 
-	Init(renewCh chan interface{}) error
+	Init(renewCh chan func()) error
+
 	// TryReadFromCache checks if the cache table is readable.
 	TryReadFromCache(ts uint64) kv.MemBuffer
 
 	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
 	// you need to update the lock information and read the data from the original table
 	UpdateLockForRead(store kv.Storage, ts uint64) error
-
-	// MockGetDataLease only for test renew Lease
-	MockGetDataLease() (uint64, uint64)
 }

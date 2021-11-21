@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -85,7 +84,7 @@ type Domain struct {
 	sysVarCache          sysVarCache // replaces GlobalVariableCache
 	slowQuery            *topNSlowQueries
 	expensiveQueryHandle *expensivequery.Handle
-	wg                   sync.WaitGroup
+	wg                   util.WaitGroupWrapper
 	statsUpdating        sync2.AtomicInt32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
@@ -94,7 +93,7 @@ type Domain struct {
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
-	renewCh              chan interface{}
+	renewLeaseCh         chan func()       // It is used to call the renewLease function of the cache table.
 	onClose              func()
 }
 
@@ -160,7 +159,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.renewCh).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.renewLeaseCh).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -272,7 +271,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.Store(), do.renewCh).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do.Store(), do.renewLeaseCh).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
@@ -408,7 +407,6 @@ func (do *Domain) Reload() error {
 
 	// lease renew, so it must be executed despite it is cache or not
 	do.SchemaValidator.Update(ver.Ver, oldSchemaVersion, is.SchemaMetaVersion(), changes)
-	//do.cachedTableIDs = is.CachedTableIDs()
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
@@ -671,7 +669,6 @@ func (do *Domain) Close() {
 		do.info.RemoveServerInfo()
 		do.info.RemoveMinStartTS()
 	}
-	//do.closeCh <- struct{}{}
 	close(do.exit)
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
@@ -680,7 +677,6 @@ func (do *Domain) Close() {
 	do.slowQuery.Close()
 	do.cancel()
 	do.wg.Wait()
-	//close(do.closeCh)
 	do.sysSessionPool.Close()
 	variable.UnregisterStatistics(do.bindHandle)
 	if do.onClose != nil {
@@ -705,7 +701,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		indexUsageSyncLease: idxUsageSyncLease,
 		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
 		onClose:             onClose,
-		renewCh:             make(chan interface{}, 10),
+		renewLeaseCh:        make(chan func(), 10),
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -830,17 +826,15 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
-	do.wg.Add(3)
+	do.wg.Add(4)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
+	go do.renewLease()
 	go do.globalConfigSyncerKeeper()
 	if !skipRegisterToDashboard {
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()
 	}
-
-	do.wg.Add(1)
-	go do.renewLease()
 
 	return nil
 }
@@ -1740,18 +1734,16 @@ func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
 func (do *Domain) renewLease() {
 	defer func() {
 		do.wg.Done()
-		logutil.BgLogger().Info("renew lease exited.")
+		logutil.BgLogger().Info("renew lease goroutine exited.")
 	}()
 	for {
 		select {
 		case <-do.exit:
 			return
-		case renewCh := <-do.renewCh:
-			renewInfo := renewCh.(tables.RenewInfo)
-			renewInfo.CacheTable.RenewLease(renewInfo)
+		case op := <-do.renewLeaseCh:
+			op()
 		}
 	}
-
 }
 
 func init() {
