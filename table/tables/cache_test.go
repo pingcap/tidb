@@ -15,12 +15,12 @@
 package tables_test
 
 import (
-	"github.com/pingcap/tidb/table/tables"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
