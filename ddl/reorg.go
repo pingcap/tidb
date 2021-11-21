@@ -559,10 +559,10 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle)
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) < 0 {
-		//logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
-		//	zap.Int64("table/partition ID", tbl.GetPhysicalID()),
-		//	zap.String("endHandle", tryDecodeToHandleString(endHandleKey)),
-		//	zap.String("startHandle", tryDecodeToHandleString(startHandleKey)))
+		logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
+			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
+			zap.String("endHandle", tryDecodeToHandleString(endHandleKey)),
+			zap.String("startHandle", tryDecodeToHandleString(startHandleKey)))
 		fmt.Println("HI")
 		endHandleKey = startHandleKey
 	}
