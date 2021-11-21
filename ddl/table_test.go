@@ -437,17 +437,22 @@ func checkTableCacheTest(t *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *mo
 		require.NotNil(t, info.TableCacheStatusType)
 		require.Equal(t, info.TableCacheStatusType, model.TableCacheStatusEnable)
 		return nil
+	})
+	require.NoError(t, err)
 }
 
 func checkTableNoCacheTest(t *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
 	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		info, err := t.GetTable(dbInfo.ID, tblInfo.ID)
+		trans := meta.NewMeta(txn)
+		info, err := trans.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)
 		require.NotNil(t, info)
 		require.Equal(t, info.TableCacheStatusType, model.TableCacheStatusEnable)
 		return nil
 	})
+	require.NoError(t, err)
+}
+
 func testAlterCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSchemaID int64, tblInfo *model.TableInfo) *model.Job {
 
 	job := &model.Job{
