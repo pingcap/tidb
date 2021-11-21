@@ -38,9 +38,9 @@ func TestGlueGetVersion(t *testing.T) {
 	t.Parallel()
 	g := tidbGlueSession{}
 	version := g.GetVersion()
-	require.Regexp(t, `(.|\n)*Release Version(.|\n)*`, version)
-	require.Regexp(t, `(.|\n)*Git Commit Hash(.|\n)*`, version)
-	require.Regexp(t, `(.|\n)*GoVersion(.|\n)*`, version)
+	require.Contains(t, version, `Release Version`)
+	require.Contains(t, version, `Git Commit Hash`)
+	require.Contains(t, version, `GoVersion`)
 }
 
 func brieTaskInfoToResult(info *brieTaskInfo) string {
