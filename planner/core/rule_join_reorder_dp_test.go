@@ -176,21 +176,21 @@ func (s *testJoinReorderDPSuite) planToString(plan LogicalPlan) string {
 
 func (s *testJoinReorderDPSuite) TestDPReorderTPCHQ5(c *C) {
 	s.makeStatsMapForTPCHQ5()
-	joinGroups := make([]LogicalPlan, 0, 6)
-	joinGroups = append(joinGroups, s.newDataSource("lineitem", 59986052))
-	joinGroups = append(joinGroups, s.newDataSource("orders", 15000000))
-	joinGroups = append(joinGroups, s.newDataSource("customer", 1500000))
-	joinGroups = append(joinGroups, s.newDataSource("supplier", 100000))
-	joinGroups = append(joinGroups, s.newDataSource("nation", 25))
-	joinGroups = append(joinGroups, s.newDataSource("region", 5))
+	joinGroups := make([]*joinNode, 0, 6)
+	joinGroups = append(joinGroups, &joinNode{p: s.newDataSource("lineitem", 59986052)})
+	joinGroups = append(joinGroups, &joinNode{p: s.newDataSource("orders", 15000000)})
+	joinGroups = append(joinGroups, &joinNode{p: s.newDataSource("customer", 1500000)})
+	joinGroups = append(joinGroups, &joinNode{p: s.newDataSource("supplier", 100000)})
+	joinGroups = append(joinGroups, &joinNode{p: s.newDataSource("nation", 25)})
+	joinGroups = append(joinGroups, &joinNode{p: s.newDataSource("region", 5)})
 	var eqConds []expression.Expression
-	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[0].Schema().Columns[0], joinGroups[1].Schema().Columns[0]))
-	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[1].Schema().Columns[0], joinGroups[2].Schema().Columns[0]))
-	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[2].Schema().Columns[0], joinGroups[3].Schema().Columns[0]))
-	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[0].Schema().Columns[0], joinGroups[3].Schema().Columns[0]))
-	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[2].Schema().Columns[0], joinGroups[4].Schema().Columns[0]))
-	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[3].Schema().Columns[0], joinGroups[4].Schema().Columns[0]))
-	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[4].Schema().Columns[0], joinGroups[5].Schema().Columns[0]))
+	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[0].p.Schema().Columns[0], joinGroups[1].p.Schema().Columns[0]))
+	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[1].p.Schema().Columns[0], joinGroups[2].p.Schema().Columns[0]))
+	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[2].p.Schema().Columns[0], joinGroups[3].p.Schema().Columns[0]))
+	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[0].p.Schema().Columns[0], joinGroups[3].p.Schema().Columns[0]))
+	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[2].p.Schema().Columns[0], joinGroups[4].p.Schema().Columns[0]))
+	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[3].p.Schema().Columns[0], joinGroups[4].p.Schema().Columns[0]))
+	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[4].p.Schema().Columns[0], joinGroups[5].p.Schema().Columns[0]))
 	solver := &joinReorderDPSolver{
 		baseSingleGroupJoinOrderSolver: &baseSingleGroupJoinOrderSolver{
 			ctx: s.ctx,
@@ -203,11 +203,11 @@ func (s *testJoinReorderDPSuite) TestDPReorderTPCHQ5(c *C) {
 }
 
 func (s *testJoinReorderDPSuite) TestDPReorderAllCartesian(c *C) {
-	joinGroup := make([]LogicalPlan, 0, 4)
-	joinGroup = append(joinGroup, s.newDataSource("a", 100))
-	joinGroup = append(joinGroup, s.newDataSource("b", 100))
-	joinGroup = append(joinGroup, s.newDataSource("c", 100))
-	joinGroup = append(joinGroup, s.newDataSource("d", 100))
+	joinGroup := make([]*joinNode, 0, 4)
+	joinGroup = append(joinGroup, &joinNode{p: s.newDataSource("a", 100)})
+	joinGroup = append(joinGroup, &joinNode{p: s.newDataSource("b", 100)})
+	joinGroup = append(joinGroup, &joinNode{p: s.newDataSource("c", 100)})
+	joinGroup = append(joinGroup, &joinNode{p: s.newDataSource("d", 100)})
 	solver := &joinReorderDPSolver{
 		baseSingleGroupJoinOrderSolver: &baseSingleGroupJoinOrderSolver{
 			ctx: s.ctx,
