@@ -96,6 +96,8 @@ func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 	return nil
 }
 
+// MockStateRemote represents the information of stateRemote.
+// Exported it  only for testing.
 var MockStateRemote = struct {
 	Ch   chan remoteTask
 	Data *mockStateRemoteData
