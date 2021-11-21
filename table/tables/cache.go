@@ -247,4 +247,3 @@ func (c *cachedTable) renewLease(ts uint64, op RenewLeaseType, data *cacheData) 
 		}
 	}
 }
-
