@@ -43,16 +43,16 @@ type joinReorderGreedySolver struct {
 //
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
-func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPlan, error) {
+func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode) (LogicalPlan, error) {
 	s.directMap = make(map[LogicalPlan]map[LogicalPlan]struct{}, len(s.directedEdges))
 	for _, node := range joinNodePlans {
-		_, err := node.recursiveDeriveStats(nil)
+		_, err := node.p.recursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}
 		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
-			p:       node,
-			cumCost: s.baseNodeCumCost(node),
+			p:       node.p,
+			cumCost: s.baseNodeCumCost(node.p),
 		})
 	}
 
@@ -60,12 +60,12 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 		if !edge.isImplicit && edge.joinType == InnerJoin {
 			continue
 		}
-		nodeSet := s.directMap[edge.left]
+		nodeSet := s.directMap[edge.left.p]
 		if nodeSet == nil {
 			nodeSet = make(map[LogicalPlan]struct{})
-			s.directMap[edge.left] = nodeSet
+			s.directMap[edge.left.p] = nodeSet
 		}
-		nodeSet[edge.right] = struct{}{}
+		nodeSet[edge.right.p] = struct{}{}
 	}
 
 	for isPropagated := false; isPropagated; {

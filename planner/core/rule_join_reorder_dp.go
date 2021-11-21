@@ -37,15 +37,15 @@ type joinGroupNonEqEdge struct {
 	expr       expression.Expression
 }
 
-func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expression.Expression) (LogicalPlan, error) {
+func (s *joinReorderDPSolver) solve(joinGroup []*joinNode, eqConds []expression.Expression) (LogicalPlan, error) {
 	for _, node := range joinGroup {
-		_, err := node.recursiveDeriveStats(nil)
+		_, err := node.p.recursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}
 		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
-			p:       node,
-			cumCost: s.baseNodeCumCost(node),
+			p:       node.p,
+			cumCost: s.baseNodeCumCost(node.p),
 		})
 	}
 	adjacents := make([][]int, len(s.curJoinGroup))
@@ -158,7 +158,7 @@ func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents 
 // dpGraph is the core part of this algorithm.
 // It implements the traditional join reorder algorithm: DP by subset using the following formula:
 //   bestPlan[S:set of node] = the best one among Join(bestPlan[S1:subset of S], bestPlan[S2: S/S1])
-func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, joinGroup []LogicalPlan,
+func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, joinGroup []*joinNode,
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) (LogicalPlan, error) {
 	nodeCnt := uint(len(visitID2NodeID))
 	bestPlan := make([]*jrNode, 1<<nodeCnt)
@@ -274,9 +274,9 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan, ot
 	return cartesianJoinGroup[0]
 }
 
-func findNodeIndexInGroup(group []LogicalPlan, col *expression.Column) (int, error) {
-	for i, plan := range group {
-		if plan.Schema().Contains(col) {
+func findNodeIndexInGroup(group []*joinNode, col *expression.Column) (int, error) {
+	for i, jd := range group {
+		if jd.p.Schema().Contains(col) {
 			return i, nil
 		}
 	}

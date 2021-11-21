@@ -27,13 +27,16 @@ import (
 //
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, c, d}.
-func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression, directedEdges []directedEdge, joinTypes []JoinType) {
+func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression, directedEdges []directedEdge, joinTypes []JoinType) {
 	join, isJoin := p.(*LogicalJoin)
 	directedEdges = make([]directedEdge, 0)
+	jNode := &joinNode{
+		p: p,
+	}
 	if !isJoin || join.preferJoinType > uint(0) || join.StraightJoin ||
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
 		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
-		return []LogicalPlan{p}, nil, nil, directedEdges, nil
+		return []*joinNode{jNode}, nil, nil, directedEdges, nil
 	}
 
 	lhsGroup, lhsEqualConds, lhsOtherConds, lhsDirectedEdges, lhsJoinTypes := extractJoinGroup(join.children[0])
@@ -42,26 +45,26 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	// Collect the order for plans of the outerJoin
 	// For example: a left join b indicate a must join before b
 	//              a right join b indicate a must join after b
-	var leftPlan LogicalPlan
-	var rightPlan LogicalPlan
+	var leftNode *joinNode
+	var rightNode *joinNode
 	for _, eqCond := range join.EqualConditions {
 		arg0 := eqCond.GetArgs()[0].(*expression.Column)
 		arg1 := eqCond.GetArgs()[1].(*expression.Column)
-		for _, leftNode := range lhsGroup {
-			if leftNode.Schema().Contains(arg0) {
-				leftPlan = leftNode
+		for _, ld := range lhsGroup {
+			if ld.p.Schema().Contains(arg0) {
+				leftNode = ld
 				break
 			}
 		}
-		for _, rightNode := range rhsGroup {
-			if rightNode.Schema().Contains(arg1) {
-				rightPlan = rightNode
+		for _, ld := range rhsGroup {
+			if ld.p.Schema().Contains(arg1) {
+				rightNode = ld
 				break
 			}
 		}
 		edge := directedEdge{
-			left:     leftPlan,
-			right:    rightPlan,
+			left:     leftNode,
+			right:    rightNode,
 			joinType: join.JoinType,
 		}
 		directedEdges = append(directedEdges, edge)
@@ -150,10 +153,14 @@ type joinReOrderSolver struct {
 }
 
 type directedEdge struct {
-	left       LogicalPlan
-	right      LogicalPlan
+	left       *joinNode
+	right      *joinNode
 	joinType   JoinType
 	isImplicit bool
+}
+
+type joinNode struct {
+	p LogicalPlan
 }
 
 type jrNode struct {
@@ -171,7 +178,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 	curJoinGroup, eqEdges, otherConds, directedEdges, joinTypes := extractJoinGroup(p)
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
-			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i])
+			curJoinGroup[i].p, err = s.optimizeRecursive(ctx, curJoinGroup[i].p)
 			if err != nil {
 				return nil, err
 			}
