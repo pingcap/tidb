@@ -62,7 +62,7 @@ func brieTaskInfoToResult(info *brieTaskInfo) string {
 
 func fetchShowBRIEResult(t *testing.T, e *ShowExec, brieColTypes []*types.FieldType) string {
 	e.result = newFirstChunk(e)
-	require.Nil(t, e.fetchShowBRIE(ast.BRIEKindBackup))
+	require.NoError(t, e.fetchShowBRIE(ast.BRIEKindBackup))
 	return e.result.ToString(brieColTypes)
 }
 
