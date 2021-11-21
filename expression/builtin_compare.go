@@ -641,7 +641,7 @@ func (b *builtinGreatestCmpStringAsTimeSig) Clone() builtinFunc {
 
 // evalString evals a builtinGreatestCmpStringAsTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
+func (b *builtinGreatestCmpStringAsTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(b.ctx, row)
@@ -895,7 +895,7 @@ func (b *builtinLeastCmpStringAsTimeSig) Clone() builtinFunc {
 
 // evalString evals a builtinLeastCmpStringAsTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
-func (b *builtinLeastTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
+func (b *builtinLeastCmpStringAsTimeSig) evalString(row chunk.Row) (strRes string, isNull bool, err error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(b.ctx, row)
