@@ -25,12 +25,8 @@ import (
 
 func TestEncoding(t *testing.T) {
 	t.Parallel()
-	enc := charset.NewEncoding("gbk")
-	require.Equal(t, "gbk", enc.Name())
-	enc.UpdateEncoding("utf-8")
-	require.Equal(t, "utf-8", enc.Name())
-	enc.UpdateEncoding("gbk")
-	require.Equal(t, "gbk", enc.Name())
+	enc := charset.NewEncoding(charset.CharsetGBK)
+	require.Equal(t, charset.CharsetGBK, enc.Name())
 
 	txt := []byte("一二三四")
 	e, _ := charset.Lookup("gbk")
