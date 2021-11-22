@@ -859,7 +859,10 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	if retryInfo.Retrying {
 		autoRandomID, ok := retryInfo.GetCurrAutoRandomID()
 		if ok {
-			d.SetAutoID(autoRandomID, c.Flag)
+			err := setDatumAutoIDAndCast(e.ctx, &d, autoRandomID, c)
+			if err != nil {
+				return types.Datum{}, err
+			}
 			return d, nil
 		}
 	}
@@ -885,7 +888,10 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 			return types.Datum{}, err
 		}
 		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
-		d.SetAutoID(recordID, c.Flag)
+		err = setDatumAutoIDAndCast(e.ctx, &d, recordID, c)
+		if err != nil {
+			return types.Datum{}, err
+		}
 		retryInfo.AddAutoRandomID(recordID)
 		return d, nil
 	}
