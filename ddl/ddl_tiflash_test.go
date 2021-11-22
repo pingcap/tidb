@@ -107,6 +107,7 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
+	ddl.EnablePollLoop = false
 	if s.pdHTTPServer != nil {
 		s.pdHTTPServer.Close()
 	}
@@ -273,7 +274,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 // When set TiFlash replica, tidb shall add one Pd Rule for this table.
 // When drop/truncate table, Pd Rule shall be removed in limited time.
 func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
-// TODO: Seems we can use some sql to do this, like in server package.
+	// TODO: Seems we can use some sql to do this, like in `TestTiFlashReplica`.
 	oldInterval := gcworker.GetGcSafePointCacheInterval()
 	gcworker.SetGcSafePointCacheInterval(oldInterval)
 	tk := testkit.NewTestKit(c, s.store)
