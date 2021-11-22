@@ -38,11 +38,11 @@ func TestNoopKeyAdapter(t *testing.T) {
 	key := randBytes(32)
 	require.Equal(t, len(key), keyAdapter.EncodedLen(key))
 	encodedKey := keyAdapter.Encode(nil, key, 0)
-	require.EqualValues(t, key, encodedKey)
+	require.Equal(t, key, encodedKey)
 
 	decodedKey, err := keyAdapter.Decode(nil, encodedKey)
 	require.NoError(t, err)
-	require.EqualValues(t, key, decodedKey)
+	require.Equal(t, key, decodedKey)
 }
 
 func TestDupDetectKeyAdapter(t *testing.T) {
@@ -78,7 +78,7 @@ func TestDupDetectKeyAdapter(t *testing.T) {
 		// Decode the result.
 		key, err := keyAdapter.Decode(nil, result)
 		require.NoError(t, err)
-		require.EqualValues(t, input.key, key)
+		require.Equal(t, input.key, key)
 	}
 }
 
@@ -129,7 +129,7 @@ func TestEncodeKeyToPreAllocatedBuf(t *testing.T) {
 		// Verify the encoded result first.
 		key2, err := keyAdapter.Decode(nil, buf2[4:])
 		require.NoError(t, err)
-		require.EqualValues(t, key, key2)
+		require.Equal(t, key, key2)
 	}
 }
 
@@ -168,7 +168,7 @@ func TestDecodeKeyDstIsInsufficient(t *testing.T) {
 		buf2, err := keyAdapter.Decode(buf[:4], data)
 		require.NoError(t, err)
 		require.False(t, startWithSameMemory(buf, buf2))
-		require.EqualValues(t, buf[:4], buf2[:4])
+		require.Equal(t, buf[:4], buf2[:4])
 		require.Equal(t, key, buf2[4:])
 	}
 }

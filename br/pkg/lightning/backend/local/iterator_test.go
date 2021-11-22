@@ -146,18 +146,18 @@ func TestDupDetectIterator(t *testing.T) {
 	// Verify first pair.
 	require.True(t, iter.First())
 	require.True(t, iter.Valid())
-	require.EqualValues(t, pairs[0].Key, iter.Key())
-	require.EqualValues(t, pairs[0].Val, iter.Value())
+	require.Equal(t, pairs[0].Key, iter.Key())
+	require.Equal(t, pairs[0].Val, iter.Value())
 
 	// Verify last pair.
 	require.True(t, iter.Last())
 	require.True(t, iter.Valid())
-	require.EqualValues(t, pairs[len(pairs)-1].Key, iter.Key())
-	require.EqualValues(t, pairs[len(pairs)-1].Val, iter.Value())
+	require.Equal(t, pairs[len(pairs)-1].Key, iter.Key())
+	require.Equal(t, pairs[len(pairs)-1].Val, iter.Value())
 
 	// Iterate all keys and check the count of unique keys.
 	for iter.First(); iter.Valid(); iter.Next() {
-		require.EqualValues(t, uniqueKeys[0], iter.Key())
+		require.Equal(t, uniqueKeys[0], iter.Key())
 		uniqueKeys = uniqueKeys[1:]
 	}
 	require.NoError(t, iter.Error())
@@ -190,8 +190,8 @@ func TestDupDetectIterator(t *testing.T) {
 		return keyCmp < 0 || keyCmp == 0 && bytes.Compare(detectedPairs[i].Val, detectedPairs[j].Val) < 0
 	})
 	for i := 0; i < len(detectedPairs); i++ {
-		require.EqualValues(t, duplicatePairs[i].Key, detectedPairs[i].Key)
-		require.EqualValues(t, duplicatePairs[i].Val, detectedPairs[i].Val)
+		require.Equal(t, duplicatePairs[i].Key, detectedPairs[i].Key)
+		require.Equal(t, duplicatePairs[i].Val, detectedPairs[i].Val)
 	}
 }
 
@@ -250,9 +250,9 @@ func TestDupDetectIterSeek(t *testing.T) {
 	iter := newDupDetectIter(context.Background(), engine, &pebble.IterOptions{})
 
 	require.True(t, iter.Seek([]byte{1, 2, 3, 1}))
-	require.EqualValues(t, pairs[1].Val, iter.Value())
+	require.Equal(t, pairs[1].Val, iter.Value())
 	require.True(t, iter.Next())
-	require.EqualValues(t, pairs[3].Val, iter.Value())
+	require.Equal(t, pairs[3].Val, iter.Value())
 	require.NoError(t, iter.Close())
 	require.NoError(t, engine.Close())
 	require.NoError(t, duplicateDB.Close())
