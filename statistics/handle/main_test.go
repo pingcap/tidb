@@ -12,14 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle
+package handle_test
 
 import (
+	"os"
 	"testing"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
+	"go.uber.org/zap"
 )
+
+var registeredHook *logHook
 
 func TestMain(m *testing.M) {
 	opts := []goleak.Option{
@@ -27,5 +32,15 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	testbridge.WorkaroundGoCheckFlags()
+	registeredHook = registerHook()
 	goleak.VerifyTestMain(m, opts...)
+}
+
+func registerHook() *logHook {
+	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
+	_, r, _ := log.InitLogger(conf)
+	hook := &logHook{r.Core, ""}
+	lg := zap.New(hook)
+	log.ReplaceGlobals(lg, r)
+	return hook
 }

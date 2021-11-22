@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"math"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +26,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -46,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -90,7 +87,6 @@ func (s *testSerialStatsSuite) TearDownSuite(c *C) {
 func (s *testSuiteBase) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	// Add the hook here to avoid data race.
-	s.registerHook()
 	var err error
 	s.store, s.do, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -100,14 +96,6 @@ func (s *testSuiteBase) TearDownSuite(c *C) {
 	s.do.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
-}
-
-func (s *testSuiteBase) registerHook() {
-	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
-	_, r, _ := log.InitLogger(conf)
-	s.hook = &logHook{r.Core, ""}
-	lg := zap.New(s.hook)
-	log.ReplaceGlobals(lg, r)
 }
 
 type logHook struct {

@@ -1232,9 +1232,9 @@ func TestLogDetailedInfo(t *testing.T) {
 	}
 	log.SetLevel(zapcore.DebugLevel)
 	for _, tt := range tests {
-		//s.hook.results = ""
+		registeredHook.results = ""
 		testKit.MustQuery(tt.sql)
-		require.Equal(t, tt.result, "")
+		require.Equal(t, tt.result, registeredHook.results)
 	}
 }
 
