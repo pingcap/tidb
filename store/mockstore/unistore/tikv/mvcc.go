@@ -1417,8 +1417,8 @@ func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]b
 	if len(lockPairs) != 0 {
 		return getValueFromLock(lockPairs[0].lock), nil
 	}
-	reader := reqCtx.getDBReader()
-	return reader.Get(key, version)
+	val, err := reqCtx.getDBReader().Get(key, version)
+	return safeCopy(val), err
 }
 
 // BatchGet implements the MVCCStore interface.
