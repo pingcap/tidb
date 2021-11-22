@@ -169,6 +169,102 @@ func TestPreparePlanCache4Blacklist(t *testing.T) {
 	tk.MustExec("ADMIN reload expr_pushdown_blacklist;")
 }
 
+func TestIssue29993(t *testing.T) {
+	store, dom, err := newStoreWithBootstrap()
+	require.NoError(t, err)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
+	tk.MustExec("use test")
+
+	// test PointGet + cluster index
+	tk.MustExec("set tidb_enable_clustered_index=on;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (`COL1` enum('a', 'b') NOT NULL PRIMARY KEY, col2 int) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into t values('a', 1), ('b', 2);")
+	tk.MustExec("set @a='a', @b='b', @z='z';")
+	tk.MustExec(`prepare stmt from 'select col1 from t where col1 = ? and col2 in (1, 2);';`)
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("a"))
+	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("b"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
+	// The length of range have been changed, so the plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	// The plan should be tableDual.
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		"Projection_4 0.00 root  test.t.col1",
+		"└─TableDual_5 0.00 root  rows:0"))
+
+	// test batchPointGet + cluster index
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (`COL1` enum('a', 'b') NOT NULL, col2 int, PRIMARY KEY(col1, col2)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into t values('a', 1), ('b', 2);")
+	tk.MustExec("set @a='a', @b='b', @z='z';")
+	tk.MustExec(`prepare stmt from 'select col1 from t where (col1, col2) in ((?, 1));';`)
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("a"))
+	tk.MustQuery("execute stmt using @b").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		"Batch_Point_Get_1 1.00 root table:t, clustered index:PRIMARY(COL1, col2) keep order:false, desc:false"))
+
+	// test PointGet + non cluster index
+	tk.MustExec("set tidb_enable_clustered_index=off;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (`COL1` enum('a', 'b') NOT NULL PRIMARY KEY, col2 int) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into t values('a', 1), ('b', 2);")
+	tk.MustExec("set @a='a', @b='b', @z='z';")
+	tk.MustExec(`prepare stmt from 'select col1 from t where col1 = ? and col2 in (1, 2);';`)
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("a"))
+	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("b"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
+	// The length of range have been changed, so the plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	// The plan should be tableDual.
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		"Projection_4 0.00 root  test.t.col1",
+		"└─TableDual_5 0.00 root  rows:0"))
+
+	// test batchPointGet + non cluster index
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (`COL1` enum('a', 'b') NOT NULL, col2 int, PRIMARY KEY(col1, col2)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into t values('a', 1), ('b', 2);")
+	tk.MustExec("set @a='a', @b='b', @z='z';")
+	tk.MustExec(`prepare stmt from 'select col1 from t where (col1, col2) in ((?, 1));';`)
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("a"))
+	tk.MustQuery("execute stmt using @b").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		"Batch_Point_Get_1 1.00 root table:t, index:PRIMARY(COL1, col2) keep order:false, desc:false"))
+}
+
 func TestPlanCacheClusterIndex(t *testing.T) {
 	store, dom, err := newStoreWithBootstrap()
 	require.NoError(t, err)
