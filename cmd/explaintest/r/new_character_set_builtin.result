@@ -275,3 +275,14 @@ select hex(aes_decrypt(0xC54279F381B0710E145E94106F03C94C, '123')) as a, hex(aes
 a	b
 E4B880E4BA8CE4B889	D2BBB6FEC8FD
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('中文', '中文', '中文');
+select ord(a), ord(b), ord(c) from t;
+ord(a)	ord(b)	ord(c)
+14989485	54992	228
+set @@tidb_enable_vectorized_expression = true;
+select ord(a), ord(b), ord(c) from t;
+ord(a)	ord(b)	ord(c)
+14989485	54992	228
+set @@tidb_enable_vectorized_expression = false;
