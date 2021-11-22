@@ -3215,7 +3215,8 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	insertPlan.AllAssignmentsAreConstant = true
 	for i, assign := range insert.Setlist {
 		defaultExpr := extractDefaultExpr(assign.Expr)
-		if defaultExpr != nil {
+		if defaultExpr != nil && !defaultExpr.NameIsGiven {
+			// Set the name of the column in the assignment
 			defaultExpr.Name = assign.Column
 		}
 		// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.

@@ -606,12 +606,15 @@ type DefaultExpr struct {
 	exprNode
 	// Name is the column name.
 	Name *ColumnName
+	// True - DEFAULT(ColumnName), False - just DEFAULT, but name filled in afterwards
+	// like for: INSERT INTO t1 SET t = DEFAULT
+	NameIsGiven bool
 }
 
 // Restore implements Node interface.
 func (n *DefaultExpr) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DEFAULT")
-	if n.Name != nil {
+	if n.NameIsGiven && n.Name != nil {
 		ctx.WritePlain("(")
 		if err := n.Name.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore DefaultExpr.Name")

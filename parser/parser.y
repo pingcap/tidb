@@ -6207,7 +6207,6 @@ ProcedureCall:
  *
  *  Insert Statements
  *
- *  TODO: support PARTITION
  **********************************************************************************/
 InsertIntoStmt:
 	"INSERT" TableOptimizerHintsOpt PriorityOpt IgnoreOptional IntoOpt TableName PartitionNameListOpt InsertValues OnDuplicateKeyUpdate
@@ -6381,7 +6380,6 @@ OnDuplicateKeyUpdate:
  *  Replace Statements
  *  See https://dev.mysql.com/doc/refman/5.7/en/replace.html
  *
- *  TODO: support PARTITION
  **********************************************************************************/
 ReplaceIntoStmt:
 	"REPLACE" PriorityOpt IntoOpt TableName PartitionNameListOpt InsertValues
@@ -6848,7 +6846,7 @@ SimpleExpr:
 	}
 |	"DEFAULT" '(' SimpleIdent ')'
 	{
-		$$ = &ast.DefaultExpr{Name: $3.(*ast.ColumnNameExpr).Name}
+		$$ = &ast.DefaultExpr{Name: $3.(*ast.ColumnNameExpr).Name NameIsGiven: true}
 	}
 |	"VALUES" '(' SimpleIdent ')' %prec lowerThanInsertValues
 	{
