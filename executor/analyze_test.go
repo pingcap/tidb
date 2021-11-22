@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -309,7 +310,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	c.Assert(err, IsNil)
 	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
-	executor.RandSeed = 123
+	atomic.StoreInt64(&executor.RandSeed, 123)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -418,7 +419,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	dom.SetStatsUpdating(true)
 	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
-	executor.RandSeed = 123
+	atomic.StoreInt64(&executor.RandSeed, 123)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

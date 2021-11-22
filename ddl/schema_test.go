@@ -129,12 +129,12 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		err := store.Close()
 		c.Assert(err, IsNil)
 	}()
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -181,7 +181,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	err := d.doDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), IsTrue, Commentf("err %v", err))
 
 	// Drop a database without a table.
@@ -201,12 +201,12 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d1 := testNewDDLAndStart(
+	d1, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d1.Stop()
 		c.Assert(err, IsNil)
@@ -214,12 +214,12 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 
 	testCheckOwner(c, d1, true)
 
-	d2 := testNewDDLAndStart(
+	d2, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease*4),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d2.Stop()
 		c.Assert(err, IsNil)
