@@ -58,7 +58,10 @@ func (sg *sessionPool) get() (sessionctx.Context, error) {
 		return nil, errors.Trace(err)
 	}
 
-	ctx := resource.(sessionctx.Context)
+	ctx, ok := resource.(sessionctx.Context)
+	if !ok {
+		return nil, errors.New("sessionPool resource get nil")
+	}
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
 	return ctx, nil
