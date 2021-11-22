@@ -1520,6 +1520,16 @@ type AggInfo struct {
 	Schema       *expression.Schema
 }
 
+// ExpandRetTypeForAvg expands the Flen of decimal type to avoid overflow
+func ExpandRetTypeForAvg(oldTp *types.FieldType) *types.FieldType {
+	if oldTp.Tp == mysql.TypeNewDecimal {
+		newType := oldTp.Clone()
+		newType.Flen = mathutil.Max(mysql.MaxDecimalWidth-oldTp.Decimal, oldTp.Flen)
+		return newType
+	}
+	return oldTp
+}
+
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
 // returns the information of partial and final agg.
 // partialIsCop means whether partial agg is a cop task.
@@ -1709,7 +1719,7 @@ func BuildFinalModeAggregation(
 				// we must call deep clone in this case, to avoid sharing the arguments.
 				sumAgg := aggFunc.Clone()
 				sumAgg.Name = ast.AggFuncSum
-				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
+				sumAgg.RetTp = ExpandRetTypeForAvg(partial.Schema.Columns[partialCursor-1].GetType())
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
 				newAggFunc := *aggFunc
@@ -1746,7 +1756,7 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	newSchema.UniqueKeys = p.schema.UniqueKeys
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
 	ft := types.NewFieldType(mysql.TypeLonglong)
-	ft.Flen, ft.Decimal, ft.Charset, ft.Collate = 20, 0, charset.CharsetBin, charset.CollationBin
+	ft.Flen, ft.Decimal, ft.Charset, ft.Collate = mysql.MaxIntWidth, 0, charset.CharsetBin, charset.CollationBin
 	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
 	// add agg functions schema
 	for i, aggFunc := range p.AggFuncs {
@@ -1765,13 +1775,17 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			avgSum := aggFunc.Clone()
 			avgSum.Name = ast.AggFuncSum
 			newAggFuncs = append(newAggFuncs, avgSum)
-			newSchema.Append(p.schema.Columns[i])
-			avgSumCol := p.schema.Columns[i]
+			avgSum.RetTp = ExpandRetTypeForAvg(avgSum.RetTp)
+			avgSumCol := &expression.Column{
+				UniqueID: p.schema.Columns[i].UniqueID,
+				RetType:  avgSum.RetTp,
+			}
+			newSchema.Append(avgSumCol)
 			// avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end)
 			eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
 			caseWhen := expression.NewFunctionInternal(p.ctx, ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
 			divide := expression.NewFunctionInternal(p.ctx, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
-			divide.(*expression.ScalarFunction).RetType = avgSumCol.RetType
+			divide.(*expression.ScalarFunction).RetType = p.schema.Columns[i].RetType
 			exprs = append(exprs, divide)
 		} else {
 			newAggFuncs = append(newAggFuncs, aggFunc)
