@@ -860,7 +860,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if canConvertPointGet {
 			allRangeIsPoint := true
 			for _, ran := range path.Ranges {
-				if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
+				isPoint, hasNull := ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx)
+				if !isPoint || hasNull {
+					// unique indexes can have duplicated rows with NULL
 					allRangeIsPoint = false
 					break
 				}

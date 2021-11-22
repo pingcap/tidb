@@ -161,7 +161,7 @@ func appendPoints2Ranges(sc *stmtctx.StatementContext, origin []*Range, rangePoi
 	var newIndexRanges []*Range
 	for i := 0; i < len(origin); i++ {
 		oRange := origin[i]
-		if !oRange.IsPoint(sc) {
+		if isPoint, _ := oRange.IsPoint(sc); !isPoint {
 			newIndexRanges = append(newIndexRanges, oRange)
 		} else {
 			newRanges, err := appendPoints2IndexRange(sc, oRange, rangePoints, ft)

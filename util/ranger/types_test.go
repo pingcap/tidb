@@ -125,8 +125,10 @@ func TestRange(t *testing.T) {
 		},
 	}
 	sc := new(stmtctx.StatementContext)
+	sc.RegardNULLAsPoint = false
 	for _, v := range isPointTests {
-		require.Equal(t, v.isPoint, v.ran.IsPoint(sc))
+		isPoint, _ := v.ran.IsPoint(sc)
+		require.Equal(t, v.isPoint, isPoint)
 	}
 }
 
