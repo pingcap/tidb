@@ -611,7 +611,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 					return err
 				}
 				if len(ranges.Ranges) == 0 || len(ranges.AccessConds) != len(x.AccessConditions) {
-					return errors.New("failed to rebuild range: the length of range has changed")
+					return errors.New("failed to rebuild range: the length of the range has changed")
 				}
 				for i := range x.IndexValues {
 					x.IndexValues[i] = ranges.Ranges[0].LowVal[i]
@@ -629,7 +629,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 						return err
 					}
 					if len(ranges) == 0 {
-						return errors.New("failed to rebuild range: the length of range has changed")
+						return errors.New("failed to rebuild range: the length of the range has changed")
 					}
 					x.Handle = kv.IntHandle(ranges[0].LowVal[0].GetInt64())
 				}
@@ -665,7 +665,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 					return err
 				}
 				if len(ranges.Ranges) != len(x.IndexValues) || len(ranges.AccessConds) != len(x.AccessConditions) {
-					return errors.New("failed to rebuild range: the length of range has changed")
+					return errors.New("failed to rebuild range: the length of the range has changed")
 				}
 				for i := range x.IndexValues {
 					for j := range ranges.Ranges[i].LowVal {
@@ -685,7 +685,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 						return err
 					}
 					if len(ranges) != len(x.Handles) {
-						return errors.New("failed to rebuild range: the length of range has changed")
+						return errors.New("failed to rebuild range: the length of the range has changed")
 					}
 					for i := range ranges {
 						x.Handles[i] = kv.IntHandle(ranges[i].LowVal[0].GetInt64())
