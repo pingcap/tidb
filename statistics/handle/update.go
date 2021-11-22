@@ -252,7 +252,8 @@ func (m indexUsageMap) update(tableID int64, indexID int64, value *IndexUsageInf
 }
 
 func (m indexUsageMap) merge(destMap indexUsageMap) {
-	for id, item := range destMap {
+	for id := range destMap {
+		item := destMap[id]
 		m.updateByKey(id, &item)
 	}
 }
