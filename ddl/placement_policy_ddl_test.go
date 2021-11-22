@@ -60,7 +60,8 @@ func (s *testDDLSuite) TestPlacementPolicyInUse(c *C) {
 	}()
 
 	ctx := context.Background()
-	d := testNewDDLAndStart(ctx, c, WithStore(store))
+	d, err := testNewDDLAndStart(ctx, WithStore(store))
+	c.Assert(err, IsNil)
 	sctx := testNewContext(d)
 
 	db1 := testSchemaInfo(c, d, "db1")

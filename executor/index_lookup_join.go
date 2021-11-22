@@ -528,7 +528,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 				return nil, err
 			}
 			if dHashKey == nil {
-				// Append null to make looUpKeys the same length as outer Result.
+				// Append null to make lookUpKeys the same length as outer Result.
 				task.encodedLookUpKeys[chkIdx].AppendNull(0)
 				continue
 			}
