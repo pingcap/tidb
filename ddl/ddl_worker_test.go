@@ -22,13 +22,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -62,12 +62,12 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d1 := testNewDDLAndStart(
+	d1, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d1.Stop()
 		c.Assert(err, IsNil)
@@ -95,12 +95,12 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 		}
 	}
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -139,12 +139,12 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 
 	// Test the notification mechanism that the owner and the server receiving the DDL request are not on the same TiDB.
 	// And the etcd client is nil.
-	d1 := testNewDDLAndStart(
+	d1, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d1.Stop()
 		c.Assert(err, IsNil)
@@ -178,12 +178,12 @@ func (s *testDDLSerialSuite) testRunWorker(c *C) {
 	}()
 
 	RunWorker = false
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	testCheckOwner(c, d, false)
 	defer func() {
 		err := d.Stop()
@@ -195,12 +195,12 @@ func (s *testDDLSerialSuite) testRunWorker(c *C) {
 	c.Assert(worker, IsNil)
 	// Make sure the DDL job can be done and exit that goroutine.
 	RunWorker = true
-	d1 := testNewDDLAndStart(
+	d1, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	testCheckOwner(c, d1, true)
 	defer func() {
 		err := d1.Stop()
@@ -217,12 +217,12 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -239,12 +239,12 @@ func (s *testDDLSuite) TestTableError(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -261,7 +261,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	// Table ID or schema ID is wrong, so getting table is failed.
 	tblInfo := testTableInfo(c, d, "t", 3)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		job.SchemaID = -1
 		job.TableID = -1
 		t := meta.NewMeta(txn)
@@ -291,12 +291,12 @@ func (s *testDDLSuite) TestViewError(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -325,12 +325,12 @@ func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 		err := store.Close()
 		c.Assert(err, IsNil)
 	}()
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -344,7 +344,7 @@ func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{},
 	}
-	err := d.doDDLJob(ctx, job)
+	err = d.doDDLJob(ctx, job)
 	c.Assert(err.Error(), Equals, "[ddl:8204]invalid ddl job type: none")
 }
 
@@ -355,12 +355,12 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -384,12 +384,12 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -430,12 +430,12 @@ func (s *testDDLSuite) TestColumnError(c *C) {
 		err := store.Close()
 		c.Assert(err, IsNil)
 	}()
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -661,6 +661,10 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 72}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 72)}, cancelState: model.StateWriteOnly},
 		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 73}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 73)}, cancelState: model.StateDeleteOnly},
 		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 74}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 74)}, cancelState: model.StateWriteReorganization},
+
+		// for alter db placement
+		{act: model.ActionModifySchemaDefaultPlacement, jobIDs: []int64{firstID + 75}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionModifySchemaDefaultPlacement, jobIDs: []int64{firstID + 76}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 76)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -725,12 +729,12 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 		err := store.Close()
 		c.Assert(err, IsNil)
 	}()
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
@@ -744,7 +748,7 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	// create table t (c1 int, c2 int, c3 int, c4 int, c5 int);
 	tblInfo := testTableInfo(c, d, "t", 5)
 	ctx := testNewContext(d)
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	err = ctx.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "1")
 	c.Assert(err, IsNil)
@@ -836,19 +840,19 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	// When the job satisfies this test case, the option will be rollback, so the job's schema state is none.
 	cancelState := model.StateNone
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[1])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[2])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[3])
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "idx", "c2")
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Commit(context.Background()), IsNil)
@@ -868,22 +872,22 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 
 	addColumnArgs := []interface{}{col, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, false)
 
 	updateTest(&tests[5])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, false)
 
 	updateTest(&tests[6])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, false)
 
 	updateTest(&tests[7])
 	testAddColumn(c, ctx, d, dbInfo, tblInfo, addColumnArgs)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, []string{addingColName}, true)
 
 	// for create table
@@ -905,28 +909,28 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	dropColName := "c3"
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, false)
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, true)
 
 	updateTest(&tests[11])
 	dropColName = "c4"
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, false)
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, true)
 
 	updateTest(&tests[12])
 	dropColName = "c5"
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, false)
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, []string{dropColName}, true)
 
 	// cancel rebase auto id
 	updateTest(&tests[13])
 	rebaseIDArgs := []interface{}{int64(200)}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, rebaseIDArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	changedTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(changedTable.Meta().AutoIncID, Equals, tableAutoID)
 
@@ -1071,19 +1075,19 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 		}}, nil}
 	cancelState = model.StateNone
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddPrimaryKey, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[30])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddPrimaryKey, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[31])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddPrimaryKey, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[32])
 	testCreatePrimaryKey(c, ctx, d, dbInfo, tblInfo, "c1")
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Commit(context.Background()), IsNil)
@@ -1092,11 +1096,11 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	// for dropping primary key
 	updateTest(&tests[33])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropPrimaryKey, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkDropIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, false)
 	updateTest(&tests[34])
 	testDropIndex(c, ctx, d, dbInfo, tblInfo, idxOrigName)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkDropIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, true)
 
 	// for add columns
@@ -1122,22 +1126,22 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 
 	addColumnArgs = []interface{}{cols, positions, offsets, ifNotExists}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, false)
 
 	updateTest(&tests[36])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, false)
 
 	updateTest(&tests[37])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, false)
 
 	updateTest(&tests[38])
 	testAddColumns(c, ctx, d, dbInfo, tblInfo, addColumnArgs)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkAddColumns(c, d, dbInfo.ID, tblInfo.ID, addingColNames, true)
 
 	// for drop columns
@@ -1145,27 +1149,27 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	dropColNames := []string{"colA", "colB"}
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, false)
 	testDropColumns(c, ctx, d, dbInfo, tblInfo, dropColNames, false)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, true)
 
 	updateTest(&tests[40])
 	dropColNames = []string{"colC", "colD"}
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, false)
 	testDropColumns(c, ctx, d, dbInfo, tblInfo, dropColNames, false)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, true)
 
 	updateTest(&tests[41])
 	dropColNames = []string{"colE", "colF"}
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, false)
 	testDropColumns(c, ctx, d, dbInfo, tblInfo, dropColNames, false)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	s.checkCancelDropColumns(c, d, dbInfo.ID, tblInfo.ID, dropColNames, true)
 
 	// test alter index visibility failed caused by canceled.
 	indexName := "idx_c3"
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, indexName, "c3")
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(checkErr, IsNil)
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Commit(context.Background()), IsNil)
@@ -1434,18 +1438,18 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 		err := store.Close()
 		c.Assert(err, IsNil)
 	}()
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
 	ctx := testNewContext(d)
-	err := ctx.NewTxn(context.Background())
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	/*
 		build structure:
@@ -1639,12 +1643,12 @@ func (s *testDDLSuite) TestDDLPackageExecuteSQL(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	testCheckOwner(c, d, true)
 	defer func() {
 		err := d.Stop()

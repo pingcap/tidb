@@ -20,11 +20,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
@@ -76,19 +77,30 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		dbNameStr := model.NewCIStr(dbName)
 		schema := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
 		tbl, err := schema.TableByName(dbNameStr, model.NewCIStr(e.Level.TableName))
+		// Allow GRANT on non-existent table with at least create privilege, see issue #28533 #29268
 		if err != nil {
-			return err
+			allowed := false
+			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				for _, p := range e.Privs {
+					if p.Priv == mysql.AllPriv || p.Priv&mysql.CreatePriv > 0 {
+						allowed = true
+						break
+					}
+				}
+			}
+			if !allowed {
+				return err
+			}
 		}
-		err = infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 		// Note the table name compare is case sensitive here.
-		if tbl.Meta().Name.String() != e.Level.TableName {
-			return err
+		if tbl != nil && tbl.Meta().Name.String() != e.Level.TableName {
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 		}
 		if len(e.Level.DBName) > 0 {
 			// The database name should also match.
 			db, succ := schema.SchemaByName(dbNameStr)
 			if !succ || db.Name.L != dbNameStr.L {
-				return err
+				return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 			}
 		}
 	}
@@ -143,7 +155,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx,
 				`INSERT INTO %n.%n (Host, User, authentication_string, plugin) VALUES (%?, %?, %?, %?);`,
-				mysql.SystemDB, mysql.UserTable, user.User.Hostname, user.User.Username, pwd, authPlugin)
+				mysql.SystemDB, mysql.UserTable, strings.ToLower(user.User.Hostname), user.User.Username, pwd, authPlugin)
 			if err != nil {
 				return err
 			}
@@ -214,8 +226,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	isCommit = true
-	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
-	return nil
+	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
 func containsNonDynamicPriv(privList []*ast.PrivElem) bool {
@@ -465,7 +476,7 @@ func (e *GrantExec) grantGlobalLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 	if err != nil {
 		return err
 	}
-	sqlexec.MustFormatSQL(sql, ` WHERE User=%? AND Host=%?`, user.User.Username, user.User.Hostname)
+	sqlexec.MustFormatSQL(sql, ` WHERE User=%? AND Host=%?`, user.User.Username, strings.ToLower(user.User.Hostname))
 
 	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql.String())
 	return err
@@ -485,6 +496,13 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 	dbName := e.Level.DBName
 	if len(dbName) == 0 {
 		dbName = e.ctx.GetSessionVars().CurrentDB
+	}
+
+	// Some privilege can not be granted to performance_schema.* in MySQL.
+	// As TiDB ignores the privilege management part for this system database,
+	// check is performed here
+	if strings.EqualFold(dbName, "performance_schema") && e.checkPerformanceSchemaPriv(priv.Priv) {
+		return e.dbAccessDenied(dbName)
 	}
 
 	sql := new(strings.Builder)
@@ -549,6 +567,28 @@ func (e *GrantExec) grantColumnLevel(priv *ast.PrivElem, user *ast.UserSpec, int
 		}
 	}
 	return nil
+}
+
+func (e *GrantExec) dbAccessDenied(dbName string) error {
+	user := e.ctx.GetSessionVars().User
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	return ErrDBaccessDenied.GenWithStackByArgs(u, h, dbName)
+}
+
+// If the privilege can not be granted, return true
+func (e *GrantExec) checkPerformanceSchemaPriv(privType mysql.PrivilegeType) bool {
+	// Attempts to use GRANT ALL as shorthand for granting privileges
+	// at the database leval fail with an error
+	// See https://dev.mysql.com/doc/refman/8.0/en/performance-schema-table-characteristics.html for more detail
+	// Others are rejected in MySQL 8.0
+	return privType == mysql.AllPriv || privType == mysql.CreatePriv ||
+		privType == mysql.ReferencesPriv || privType == mysql.AlterPriv || privType == mysql.ExecutePriv ||
+		privType == mysql.IndexPriv || privType == mysql.CreateViewPriv || privType == mysql.ShowViewPriv
 }
 
 // composeGlobalPrivUpdate composes update stmt assignment list string for global scope privilege update.
@@ -741,6 +781,9 @@ func getTargetSchemaAndTable(ctx sessionctx.Context, dbName, tableName string, i
 	}
 	name := model.NewCIStr(tableName)
 	tbl, err := is.TableByName(model.NewCIStr(dbName), name)
+	if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+		return dbName, nil, err
+	}
 	if err != nil {
 		return "", nil, err
 	}
@@ -764,7 +807,7 @@ func getRowsAndFields(ctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row
 
 func getRowFromRecordSet(ctx context.Context, se sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {

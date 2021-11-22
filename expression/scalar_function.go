@@ -19,23 +19,18 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
-)
-
-// error definitions.
-var (
-	ErrNoDB = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
 )
 
 // ScalarFunction is the function that returns a value.
@@ -195,12 +190,17 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		if db == "" {
 			return nil, errors.Trace(ErrNoDB)
 		}
-
 		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
-	if !ctx.GetSessionVars().EnableNoopFuncs {
+	noopFuncsMode := ctx.GetSessionVars().NoopFuncsMode
+	if noopFuncsMode != variable.OnInt {
 		if _, ok := noopFuncs[funcName]; ok {
-			return nil, ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
+			err := ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
+			if noopFuncsMode == variable.OffInt {
+				return nil, err
+			}
+			// NoopFuncsMode is Warn, append an error
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}
 	funcArgs := make([]Expression, len(args))
@@ -280,7 +280,7 @@ func (sf *ScalarFunction) Clone() Expression {
 		Function: sf.Function.Clone(),
 		hashcode: sf.hashcode,
 	}
-	c.SetCharsetAndCollation(sf.CharsetAndCollation(sf.GetCtx()))
+	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
 	return c
 }
@@ -364,6 +364,14 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
 		if !isNull && err == nil && tp.Tp == mysql.TypeEnum {
 			res, err = types.ParseEnum(tp.Elems, str, tp.Collate)
+			if ctx := sf.GetCtx(); ctx != nil {
+				if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
+					if sc.TruncateAsWarning {
+						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						err = nil
+					}
+				}
+			}
 		} else {
 			res = str
 		}
@@ -552,12 +560,22 @@ func (sf *ScalarFunction) SetCoercibility(val Coercibility) {
 	sf.Function.SetCoercibility(val)
 }
 
-// CharsetAndCollation ...
-func (sf *ScalarFunction) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
-	return sf.Function.CharsetAndCollation(ctx)
+// CharsetAndCollation gets charset and collation.
+func (sf *ScalarFunction) CharsetAndCollation() (string, string) {
+	return sf.Function.CharsetAndCollation()
 }
 
-// SetCharsetAndCollation ...
+// SetCharsetAndCollation sets charset and collation.
 func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string) {
 	sf.Function.SetCharsetAndCollation(chs, coll)
+}
+
+// Repertoire returns the repertoire value which is used to check collations.
+func (sf *ScalarFunction) Repertoire() Repertoire {
+	return sf.Function.Repertoire()
+}
+
+// SetRepertoire sets a specified repertoire for this expression.
+func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
+	sf.Function.SetRepertoire(r)
 }

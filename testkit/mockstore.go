@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testkit
@@ -29,20 +30,20 @@ import (
 )
 
 // CreateMockStore return a new mock kv.Storage.
-func CreateMockStore(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (store kv.Storage, clean func()) {
+func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (store kv.Storage, clean func()) {
 	store, _, clean = CreateMockStoreAndDomain(t, opts...)
 	return
 }
 
 // CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
-func CreateMockStoreAndDomain(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
+func CreateMockStoreAndDomain(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
 	dom, clean := bootstrap(t, store)
 	return store, dom, clean
 }
 
-func bootstrap(t *testing.T, store kv.Storage) (*domain.Domain, func()) {
+func bootstrap(t testing.TB, store kv.Storage) (*domain.Domain, func()) {
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(store)
@@ -59,7 +60,7 @@ func bootstrap(t *testing.T, store kv.Storage) (*domain.Domain, func()) {
 }
 
 // CreateMockStoreWithOracle returns a new mock kv.Storage and *domain.Domain, providing the oracle for the store.
-func CreateMockStoreWithOracle(t *testing.T, oracle oracle.Oracle, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
+func CreateMockStoreWithOracle(t testing.TB, oracle oracle.Oracle, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
 	store.GetOracle().Close()

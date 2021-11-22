@@ -25,10 +25,10 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
@@ -1374,7 +1374,7 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 			if err != nil {
 				return nil, err
 			}
-			if !dec.IsZero() && frac > decimal && dec.Compare(&old) != 0 {
+			if !old.IsZero() && frac > decimal && dec.Compare(&old) != 0 {
 				sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", &old))
 				err = nil
 			}
@@ -1499,7 +1499,13 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 	case KindString, KindBytes, KindBinaryLiteral:
 		e, err = ParseEnum(target.Elems, d.GetString(), target.Collate)
 	case KindMysqlEnum:
-		e, err = ParseEnum(target.Elems, d.GetMysqlEnum().Name, target.Collate)
+		if d.i == 0 {
+			// MySQL enum zero value has an empty string name(Enum{Name: '', Value: 0}). It is
+			// different from the normal enum string value(Enum{Name: '', Value: n}, n > 0).
+			e = Enum{}
+		} else {
+			e, err = ParseEnum(target.Elems, d.GetMysqlEnum().Name, target.Collate)
+		}
 	case KindMysqlSet:
 		e, err = ParseEnum(target.Elems, d.GetMysqlSet().Name, target.Collate)
 	default:
@@ -1507,10 +1513,9 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		uintDatum, err = d.convertToUint(sc, target)
 		if err == nil {
 			e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
+		} else {
+			err = errors.Wrap(ErrTruncated, "convert to MySQL enum failed: "+err.Error())
 		}
-	}
-	if err != nil {
-		err = errors.Wrap(ErrTruncated, "convert to MySQL enum failed: "+err.Error())
 	}
 	ret.SetMysqlEnum(e, target.Collate)
 	return ret, err
@@ -1924,8 +1929,8 @@ func NewStringDatum(s string) (d Datum) {
 	return d
 }
 
-// NewCollationStringDatum creates a new Datum from a string with collation and length info.
-func NewCollationStringDatum(s string, collation string, length int) (d Datum) {
+// NewCollationStringDatum creates a new Datum from a string with collation.
+func NewCollationStringDatum(s string, collation string) (d Datum) {
 	d.SetString(s, collation)
 	return d
 }
@@ -2066,7 +2071,11 @@ func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		strs = append(strs, str)
+		if datum.Kind() == KindString {
+			strs = append(strs, fmt.Sprintf("%q", str))
+		} else {
+			strs = append(strs, str)
+		}
 	}
 	size := len(datums)
 	if size > 1 {
