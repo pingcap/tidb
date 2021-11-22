@@ -401,8 +401,7 @@ func (s StringValidatorUTF8) Truncate(str string, strategy TruncateStrategy) (st
 	for i, w := 0, 0; i < len(str); i += w {
 		var rv rune
 		rv, w = utf8.DecodeRuneInString(str[i:])
-		if (rv == utf8.RuneError && !strings.HasPrefix(str[i:], replacementStr)) ||
-			(w > 3 && doMB4CharCheck) {
+		if (rv == utf8.RuneError && w == 1) || (w > 3 && doMB4CharCheck) {
 			if invalidPos == -1 {
 				invalidPos = i
 			}

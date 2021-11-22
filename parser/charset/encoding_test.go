@@ -138,8 +138,8 @@ func TestStringValidatorUTF8(t *testing.T) {
 		{"😂", charset.TruncateStrategyEmpty, "😂", -1},
 		{oxfffefd, charset.TruncateStrategyEmpty, "", 0},
 		{oxfffefd, charset.TruncateStrategyReplace, "???", 0},
-		{"中文"+oxfffefd, charset.TruncateStrategyTrim, "中文", 6},
-		{"中文"+oxfffefd, charset.TruncateStrategyReplace, "中文???", 6},
+		{"中文" + oxfffefd, charset.TruncateStrategyTrim, "中文", 6},
+		{"中文" + oxfffefd, charset.TruncateStrategyReplace, "中文???", 6},
 		{string(utf8.RuneError), charset.TruncateStrategyEmpty, "�", -1},
 	}
 	for _, tc := range testCases {
@@ -165,8 +165,8 @@ func TestStringValidatorUTF8(t *testing.T) {
 		{"valid_str😂", charset.TruncateStrategyReplace, "valid_str?", 9},
 		{oxfffefd, charset.TruncateStrategyEmpty, "", 0},
 		{oxfffefd, charset.TruncateStrategyReplace, "???", 0},
-		{"中文"+oxfffefd, charset.TruncateStrategyTrim, "中文", 6},
-		{"中文"+oxfffefd, charset.TruncateStrategyReplace, "中文???", 6},
+		{"中文" + oxfffefd, charset.TruncateStrategyTrim, "中文", 6},
+		{"中文" + oxfffefd, charset.TruncateStrategyReplace, "中文???", 6},
 		{string(utf8.RuneError), charset.TruncateStrategyEmpty, "�", -1},
 	}
 	for _, tc := range testCases {

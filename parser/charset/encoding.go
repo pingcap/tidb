@@ -219,7 +219,6 @@ func (e *Encoding) generateErr(srcRest []byte, srcNextLen int) error {
 
 // replacementBytes are bytes for the replacement rune 0xfffd.
 var replacementBytes = []byte{0xEF, 0xBF, 0xBD}
-var replacementStr = string(replacementBytes)
 
 // beginWithReplacementChar check if dst has the prefix '0xEFBFBD'.
 func beginWithReplacementChar(dst []byte) bool {
