@@ -454,8 +454,7 @@ func (bc *Client) BackupRanges(
 			if err != nil {
 				// The error due to context cancel, stack trace is meaningless, the stack shall be suspended (also clear)
 				if errors.Cause(err) == context.Canceled {
-					errors.SuspendStack(err)
-					return err
+					return errors.SuspendStack(err)
 				} else {
 					return errors.Trace(err)
 				}
