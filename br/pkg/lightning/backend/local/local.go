@@ -557,7 +557,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 
 	keyAdapter := KeyAdapter(noopKeyAdapter{})
 	if local.duplicateDetection {
-		keyAdapter = duplicateKeyAdapter{}
+		keyAdapter = dupDetectKeyAdapter{}
 	}
 	e, _ := local.engines.LoadOrStore(engineUUID, &Engine{
 		UUID:               engineUUID,
@@ -622,7 +622,7 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 		engine.sstIngester = dbSSTIngester{e: engine}
 		keyAdapter := KeyAdapter(noopKeyAdapter{})
 		if local.duplicateDetection {
-			keyAdapter = duplicateKeyAdapter{}
+			keyAdapter = dupDetectKeyAdapter{}
 		}
 		engine.keyAdapter = keyAdapter
 		if err = engine.loadEngineMeta(); err != nil {
