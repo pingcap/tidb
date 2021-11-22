@@ -60,7 +60,7 @@ func (e *Encoding) Name() string {
 	return e.name
 }
 
-// CharLength returns the name of the current encoding.
+// CharLength returns the next character length in bytes.
 func (e *Encoding) CharLength(bs []byte) int {
 	return e.charLength(bs)
 }
