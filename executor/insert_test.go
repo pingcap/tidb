@@ -331,7 +331,7 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`create table t1(a char(10) charset utf8);`)
 	tk.MustExec(`insert into t1 values('我');`)
 	tk.MustExec(`alter table t1 add column b char(10) charset ascii as ((a));`)
-	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`我 `))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("我 ?"))
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a year);`)
