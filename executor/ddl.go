@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -184,7 +185,18 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.AlterSequenceStmt:
 		err = e.executeAlterSequence(x)
 	case *ast.CreatePlacementPolicyStmt:
+		if x.OrReplace && x.IfNotExists {
+			err = ddl.ErrWrongUsage.GenWithStackByArgs("OR REPLACE", "IF NOT EXISTS")
+			break
+		}
 		err = e.executeCreatePlacementPolicy(x)
+		if x.OrReplace && errors.ErrorEqual(err, infoschema.ErrPlacementPolicyExists) {
+			alterStmt := &ast.AlterPlacementPolicyStmt{
+				PolicyName:       x.PolicyName,
+				PlacementOptions: x.PlacementOptions,
+			}
+			err = e.executeAlterPlacementPolicy(alterStmt)
+		}
 	case *ast.DropPlacementPolicyStmt:
 		err = e.executeDropPlacementPolicy(x)
 	case *ast.AlterPlacementPolicyStmt:
@@ -247,17 +259,36 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
-	var charOpt *ast.CharsetOpt
+	var opt *ast.CharsetOpt
 	var directPlacementOpts *model.PlacementSettings
 	var placementPolicyRef *model.PolicyRefInfo
+	var err error
+	sessionVars := e.ctx.GetSessionVars()
+
+	// If no charset and/or collation is specified use collation_server and character_set_server
+	opt = &ast.CharsetOpt{}
+	if sessionVars.GlobalVarsAccessor != nil {
+		opt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
+		if err != nil {
+			return err
+		}
+		opt.Chs, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CharacterSetServer)
+		if err != nil {
+			return err
+		}
+	}
+
+	explicitCharset := false
+	explicitCollation := false
 	if len(s.Options) != 0 {
-		charOpt = &ast.CharsetOpt{}
 		for _, val := range s.Options {
 			switch val.Tp {
 			case ast.DatabaseOptionCharset:
-				charOpt.Chs = val.Value
+				opt.Chs = val.Value
+				explicitCharset = true
 			case ast.DatabaseOptionCollate:
-				charOpt.Col = val.Value
+				opt.Col = val.Value
+				explicitCollation = true
 			case ast.DatabaseOptionPlacementPrimaryRegion, ast.DatabaseOptionPlacementRegions,
 				ast.DatabaseOptionPlacementFollowerCount, ast.DatabaseOptionPlacementLeaderConstraints,
 				ast.DatabaseOptionPlacementLearnerCount, ast.DatabaseOptionPlacementVoterCount,
@@ -278,7 +309,29 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 			}
 		}
 	}
-	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), charOpt, directPlacementOpts, placementPolicyRef)
+
+	if opt.Col != "" {
+		coll, err := collate.GetCollationByName(opt.Col)
+		if err != nil {
+			return err
+		}
+
+		// The collation is not valid for the specified character set.
+		// Try to remove any of them, but not if they are explicitly defined.
+		if coll.CharsetName != opt.Chs {
+			if explicitCollation && !explicitCharset {
+				// Use the explicitly set collation, not the implicit charset.
+				opt.Chs = ""
+			}
+			if !explicitCollation && explicitCharset {
+				// Use the explicitly set charset, not the (session) collation.
+				opt.Col = ""
+			}
+		}
+
+	}
+
+	err = domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt, directPlacementOpts, placementPolicyRef)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
 			err = nil
@@ -319,7 +372,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return err
 	}
 
-	return e.tempTableDDL.CreateLocalTemporaryTable(dbInfo.Name, tbInfo)
+	return e.tempTableDDL.CreateLocalTemporaryTable(dbInfo, tbInfo)
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
@@ -749,20 +802,23 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 }
 
 func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
+	if !config.TableLockEnabled() {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrFuncNotEnabled.GenWithStackByArgs("LOCK TABLES", "enable-table-lock"))
+		return nil
+	}
+
 	for _, tb := range s.TableLocks {
 		if _, ok := e.getLocalTemporaryTable(tb.Table.Schema, tb.Table.Name); ok {
 			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("LOCK TABLES")
 		}
 	}
 
-	if !config.TableLockEnabled() {
-		return nil
-	}
 	return domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
 }
 
 func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 	if !config.TableLockEnabled() {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrFuncNotEnabled.GenWithStackByArgs("UNLOCK TABLES", "enable-table-lock"))
 		return nil
 	}
 	lockedTables := e.ctx.GetAllTableLocks()

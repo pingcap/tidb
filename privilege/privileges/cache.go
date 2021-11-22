@@ -560,7 +560,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	}
 	defer terror.Call(rs.Close)
 	fs := rs.Fields()
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	for {
 		err = rs.Next(context.TODO(), req)
 		if err != nil {
@@ -1257,7 +1257,8 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	// A map of "DB.Table" => Priv(col1, col2 ...)
 	sortFromIdx = len(gs)
 	columnPrivTable := make(map[string]privOnColumns)
-	for _, record := range p.ColumnsPriv {
+	for i := range p.ColumnsPriv {
+		record := p.ColumnsPriv[i]
 		if !collectColumnGrant(&record, user, host, columnPrivTable) {
 			for _, r := range allRoles {
 				collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable)
@@ -1357,7 +1358,7 @@ func privOnColumnsToString(p privOnColumns) string {
 		if idx > 0 {
 			buf.WriteString(", ")
 		}
-		privStr := privToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)
+		privStr := PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)
 		fmt.Fprintf(&buf, "%s(", privStr)
 		for i, col := range v {
 			if i > 0 {
@@ -1395,24 +1396,25 @@ func userPrivToString(privs mysql.PrivilegeType) string {
 	if (privs & ^mysql.GrantPriv) == userTablePrivilegeMask {
 		return mysql.AllPrivilegeLiteral
 	}
-	return privToString(privs, mysql.AllGlobalPrivs, mysql.Priv2Str)
+	return PrivToString(privs, mysql.AllGlobalPrivs, mysql.Priv2Str)
 }
 
 func dbPrivToString(privs mysql.PrivilegeType) string {
 	if (privs & ^mysql.GrantPriv) == dbTablePrivilegeMask {
 		return mysql.AllPrivilegeLiteral
 	}
-	return privToString(privs, mysql.AllDBPrivs, mysql.Priv2SetStr)
+	return PrivToString(privs, mysql.AllDBPrivs, mysql.Priv2SetStr)
 }
 
 func tablePrivToString(privs mysql.PrivilegeType) string {
 	if (privs & ^mysql.GrantPriv) == tablePrivMask {
 		return mysql.AllPrivilegeLiteral
 	}
-	return privToString(privs, mysql.AllTablePrivs, mysql.Priv2Str)
+	return PrivToString(privs, mysql.AllTablePrivs, mysql.Priv2Str)
 }
 
-func privToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allPrivNames map[mysql.PrivilegeType]string) string {
+// PrivToString converts the privileges to string.
+func PrivToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allPrivNames map[mysql.PrivilegeType]string) string {
 	pstrs := make([]string, 0, 20)
 	for _, p := range allPrivs {
 		if priv&p == 0 {

@@ -354,9 +354,6 @@ func (d *resultEncoder) encodeData(src []byte) []byte {
 }
 
 func (d *resultEncoder) encodeWith(src []byte, enc *charset.Encoding) []byte {
-	if !enc.Enabled() {
-		return src
-	}
 	result, err := enc.Encode(d.buffer, src)
 	if err != nil {
 		logutil.BgLogger().Debug("encode error", zap.Error(err))

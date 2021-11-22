@@ -66,7 +66,7 @@ func BenchmarkSelectResponseChunk_SmallResponse(b *testing.B) {
 	}
 }
 
-func BenchmarkDaily(b *testing.B) {
+func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkSelectResponseChunk_BigResponse,
 		BenchmarkSelectResponseChunk_SmallResponse,

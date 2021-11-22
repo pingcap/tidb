@@ -108,6 +108,7 @@ func (mock *Cluster) Start() error {
 	cfg.Store = "tikv"
 	cfg.Status.StatusPort = uint(statusPort)
 	cfg.Status.ReportStatus = true
+	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
 	svr, err := server.NewServer(cfg, mock.TiDBDriver)
 	if err != nil {

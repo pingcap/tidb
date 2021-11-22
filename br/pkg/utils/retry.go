@@ -58,11 +58,6 @@ func WithRetry(
 		err := retryableFunc()
 		if err != nil {
 			allErrors = multierr.Append(allErrors, err)
-			retry := IsRetryableError(err)
-			if !retry { // exited retry
-				return allErrors
-			}
-
 			select {
 			case <-ctx.Done():
 				return allErrors // nolint:wrapcheck

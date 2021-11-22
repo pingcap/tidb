@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	storekv "github.com/tikv/client-go/v2/kv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -49,7 +51,7 @@ func (do *Domain) rebuildSysVarCacheIfNeeded() (err error) {
 	do.sysVarCache.RUnlock()
 	if cacheNeedsRebuild {
 		logutil.BgLogger().Warn("sysvar cache is empty, triggering rebuild")
-		if err = do.rebuildSysVarCache(); err != nil {
+		if err = do.rebuildSysVarCache(nil); err != nil {
 			logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 		}
 	}
@@ -110,20 +112,23 @@ func (do *Domain) fetchTableValues(ctx sessionctx.Context) (map[string]string, e
 
 // rebuildSysVarCache rebuilds the sysvar cache both globally and for session vars.
 // It needs to be called when sysvars are added or removed.
-func (do *Domain) rebuildSysVarCache() error {
+func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
-	sysSessionPool := do.SysSessionPool()
-	ctx, err := sysSessionPool.Get()
-	if err != nil {
-		return err
+	if ctx == nil {
+		sysSessionPool := do.SysSessionPool()
+		res, err := sysSessionPool.Get()
+		if err != nil {
+			return err
+		}
+		defer sysSessionPool.Put(res)
+		ctx = res.(sessionctx.Context)
 	}
-	defer sysSessionPool.Put(ctx)
 	// Only one rebuild can be in progress at a time, this prevents a lost update race
 	// where an earlier fetchTableValues() finishes last.
 	do.sysVarCache.rebuildLock.Lock()
 	defer do.sysVarCache.rebuildLock.Unlock()
-	tableContents, err := do.fetchTableValues(ctx.(sessionctx.Context))
+	tableContents, err := do.fetchTableValues(ctx)
 	if err != nil {
 		return err
 	}
@@ -142,7 +147,7 @@ func (do *Domain) rebuildSysVarCache() error {
 			newGlobalCache[sv.Name] = sVal
 		}
 		// Propagate any changes to the server scoped variables
-		checkEnableServerGlobalVar(sv.Name, sVal)
+		do.checkEnableServerGlobalVar(sv.Name, sVal)
 	}
 
 	logutil.BgLogger().Debug("rebuilding sysvar cache")
@@ -159,9 +164,27 @@ func (do *Domain) rebuildSysVarCache() error {
 // the initiating tidb-server. There is no current method to say "run this function on all
 // tidb servers when the value of this variable changes". If you do not require changes to
 // be applied on all servers, use a getter/setter instead! You don't need to add to this list.
-func checkEnableServerGlobalVar(name, sVal string) {
+func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 	var err error
 	switch name {
+	case variable.TiDBTSOClientBatchMaxWaitTime:
+		var val float64
+		val, err = strconv.ParseFloat(sVal, 64)
+		if err != nil {
+			break
+		}
+		err = do.SetPDClientDynamicOption(pd.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
+		if err != nil {
+			break
+		}
+		variable.MaxTSOBatchWaitInterval.Store(val)
+	case variable.TiDBEnableTSOFollowerProxy:
+		val := variable.TiDBOptOn(sVal)
+		err = do.SetPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
+		if err != nil {
+			break
+		}
+		variable.EnableTSOFollowerProxy.Store(val)
 	case variable.TiDBEnableLocalTxn:
 		variable.EnableLocalTxn.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableStmtSummary:
@@ -221,4 +244,17 @@ func checkEnableServerGlobalVar(name, sVal string) {
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))
 	}
+}
+
+// SetPDClientDynamicOption is used to set the dynamic option into the PD client.
+func (do *Domain) SetPDClientDynamicOption(option pd.DynamicOption, val interface{}) error {
+	store, ok := do.store.(interface{ GetPDClient() pd.Client })
+	if !ok {
+		return nil
+	}
+	pdClient := store.GetPDClient()
+	if pdClient == nil {
+		return nil
+	}
+	return pdClient.UpdateOption(option, val)
 }

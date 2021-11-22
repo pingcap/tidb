@@ -22,6 +22,10 @@ func (e *Encoding) ToUpper(d string) string {
 	return strings.ToUpperSpecial(e.specialCase, d)
 }
 
+func (e *Encoding) ToLower(d string) string {
+	return strings.ToLowerSpecial(e.specialCase, d)
+}
+
 func LookupSpecialCase(label string) unicode.SpecialCase {
 	label = strings.ToLower(strings.Trim(label, "\t\n\r\f "))
 	return specailCases[label].c
