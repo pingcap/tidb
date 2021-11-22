@@ -61,8 +61,11 @@ type StateRemote interface {
 	// Load obtain the corresponding lock type and lease value according to the tableID
 	Load(ctx context.Context, tid int64) (CachedTableLockType, uint64, error)
 
-	// LockForRead try to add a read lock to the table with the specified tableID
-	LockForRead(ctx context.Context, tid int64, now, ts uint64) (bool, error)
+	// LockForRead try to add a read lock to the table with the specified tableID.
+	// If this operation succeed, according to the protocol, the TiKV data will not be
+	// modified until the lease expire. It's safe for the caller to load the table data,
+	// cache and use the data.
+	LockForRead(ctx context.Context, tid int64, now, lease uint64) (bool, error)
 
 	// LockForWrite try to add a write lock to the table with the specified tableID
 	LockForWrite(ctx context.Context, tid int64, now, ts uint64) error
@@ -323,6 +326,8 @@ func (h *stateRemoteHandle) Load(ctx context.Context, tid int64) (CachedTableLoc
 	return lockType, lease, err
 }
 
+// LockForRead try to lock the table, if this operation succeed, the remote data
+// is "read locked" and will not be modified according to the protocol, until the lease expire.
 func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, now, ts uint64) ( /*succ*/ bool, error) {
 	h.Lock()
 	defer h.Unlock()
