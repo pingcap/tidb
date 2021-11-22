@@ -179,8 +179,8 @@ func (p *LogicalJoin) Shallow() *LogicalJoin {
 // means whether there is a `NullEQ` of a join key.
 func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, isNullEQ []bool, hasNullEQ bool) {
 	for _, expr := range p.EqualConditions {
-		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
-		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
+		leftKeys = append(leftKeys, extractColumnFromJoinKey(expr.GetArgs()[0]))
+		rightKeys = append(rightKeys, extractColumnFromJoinKey(expr.GetArgs()[0]))
 		isNullEQ = append(isNullEQ, expr.FuncName.L == ast.NullEQ)
 		hasNullEQ = hasNullEQ || expr.FuncName.L == ast.NullEQ
 	}

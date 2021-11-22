@@ -194,8 +194,8 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		// But we don't consider this situation currently.
 		// Only key made by one column is considered now.
 		for _, expr := range p.EqualConditions {
-			ln := expr.GetArgs()[0].(*expression.Column)
-			rn := expr.GetArgs()[1].(*expression.Column)
+			ln := extractColumnFromJoinKey(expr.GetArgs()[0])
+			rn := extractColumnFromJoinKey(expr.GetArgs()[0])
 			for _, key := range childSchema[0].Keys {
 				if len(key) == 1 && key[0].Equal(p.ctx, ln) {
 					lOk = true
@@ -219,6 +219,22 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 			selfSchema.Keys = append(selfSchema.Keys, childSchema[0].Keys...)
 		}
 	}
+}
+
+// extractColumnFromJoinKey extracts column from join key expression's arg.
+// In most cases we can extract column by directly casting Expression into Column.
+// In some cases we should extract column from ScalarFunction If the join key is ScalarFunction with cast function.
+// https://github.com/pingcap/tidb/issues/29401 provides a detailed example for this case.
+func extractColumnFromJoinKey(expr expression.Expression) *expression.Column {
+	column, ok := expr.(*expression.Column)
+	if ok {
+		return column
+	}
+	scalarFunction, ok := expr.(*expression.ScalarFunction)
+	if ok && scalarFunction.FuncName.String() == "cast" {
+		return scalarFunction.GetArgs()[0].(*expression.Column)
+	}
+	panic("can't extract column from expression")
 }
 
 // checkIndexCanBeKey checks whether an Index can be a Key in schema.
