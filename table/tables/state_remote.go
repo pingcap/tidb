@@ -182,9 +182,9 @@ func (op *lockForWriteOP) Exec(data *mockStateRemoteData) {
 type renewLeaseForReadOP struct {
 	sync.WaitGroup
 	// Input
-	tid int64
+	tid   int64
 	oldTs uint64
-	newTs  uint64
+	newTs uint64
 
 	// Output
 	succ bool
