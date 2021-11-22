@@ -3973,7 +3973,89 @@ func (s *testIntegrationSerialSuite) TestCTESelfJoin(c *C) {
 			and inv2.t3a = 4+1`)
 }
 
+<<<<<<< HEAD
 func (s *testIntegrationSerialSuite) TestIssue26250(c *C) {
+=======
+// https://github.com/pingcap/tidb/issues/26214
+func (s *testIntegrationSerialSuite) TestIssue26214(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table `t` (`a` int(11) default null, `b` int(11) default null, `c` int(11) default null, key `expression_index` ((case when `a` < 0 then 1 else 2 end)))")
+	_, err := tk.Exec("select * from t  where case when a < 0 then 1 else 2 end <= 1 order by 4;")
+	c.Assert(core.ErrUnknownColumn.Equal(err), IsTrue)
+}
+
+func (s *testIntegrationSuite) TestCreateViewWithWindowFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t6;")
+	tk.MustExec("CREATE TABLE t6(t TIME, ts TIMESTAMP);")
+	tk.MustExec("INSERT INTO t6 VALUES ('12:30', '2016-07-05 08:30:42');")
+	tk.MustExec("drop view if exists v;")
+	tk.MustExec("CREATE definer='root'@'localhost' VIEW v AS SELECT COUNT(*) OVER w0, COUNT(*) OVER w from t6 WINDOW w0 AS (), w  AS (w0 ORDER BY t);")
+	rows := tk.MustQuery("select * from v;")
+	rows.Check(testkit.Rows("1 1"))
+}
+
+func (s *testIntegrationSuite) TestIssue29834(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists IDT_MC21814;")
+	tk.MustExec("CREATE TABLE `IDT_MC21814` (`COL1` year(4) DEFAULT NULL,`COL2` year(4) DEFAULT NULL,KEY `U_M_COL` (`COL1`,`COL2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into IDT_MC21814 values(1901, 2119), (2155, 2000);")
+	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(1) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
+	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(2) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
+	// Only can generate one index join plan. Because the index join inner child can not be tableDual.
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The parameter of nth_plan() is out of range."))
+}
+
+func (s *testIntegrationSuite) TestIssue29221(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_index_merge=on;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b));")
+	tk.MustExec("set @@session.sql_select_limit=3;")
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1;").Check(testkit.Rows(
+		"Limit 3.00 root  offset:0, count:3",
+		"└─IndexMerge 3.00 root  ",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;").Check(testkit.Rows(
+		"Limit 3.00 root  offset:0, count:3",
+		"└─IndexMerge 3.00 root  ",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustExec("set @@session.sql_select_limit=18446744073709551615;")
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1;").Check(testkit.Rows(
+		"IndexMerge 19.99 root  ",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 or b = 1 limit 3;").Check(testkit.Rows(
+		"Limit 3.00 root  offset:0, count:3",
+		"└─IndexMerge 3.00 root  ",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;").Check(testkit.Rows(
+		"IndexMerge 19.99 root  ",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1 limit 3;").Check(testkit.Rows(
+		"Limit 3.00 root  offset:0, count:3",
+		"└─IndexMerge 3.00 root  ",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 1.50 cop[tikv] table:t, index:idx_b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+}
+
+func (s *testIntegrationSerialSuite) TestLimitPushDown(c *C) {
+>>>>>>> 594e7ba87... planner: fix incorrect behavior of index join when one side is tableDual (#29844)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table tp (id int primary key) partition by range (id) (partition p0 values less than (100));")
