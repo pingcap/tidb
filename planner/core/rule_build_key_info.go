@@ -195,7 +195,7 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		// Only key made by one column is considered now.
 		for _, expr := range p.EqualConditions {
 			ln := extractColumnFromJoinKey(expr.GetArgs()[0])
-			rn := extractColumnFromJoinKey(expr.GetArgs()[0])
+			rn := extractColumnFromJoinKey(expr.GetArgs()[1])
 			for _, key := range childSchema[0].Keys {
 				if len(key) == 1 && key[0].Equal(p.ctx, ln) {
 					lOk = true

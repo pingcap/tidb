@@ -180,7 +180,7 @@ func (p *LogicalJoin) Shallow() *LogicalJoin {
 func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, isNullEQ []bool, hasNullEQ bool) {
 	for _, expr := range p.EqualConditions {
 		leftKeys = append(leftKeys, extractColumnFromJoinKey(expr.GetArgs()[0]))
-		rightKeys = append(rightKeys, extractColumnFromJoinKey(expr.GetArgs()[0]))
+		rightKeys = append(rightKeys, extractColumnFromJoinKey(expr.GetArgs()[1]))
 		isNullEQ = append(isNullEQ, expr.FuncName.L == ast.NullEQ)
 		hasNullEQ = hasNullEQ || expr.FuncName.L == ast.NullEQ
 	}
