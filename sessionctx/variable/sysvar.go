@@ -327,6 +327,10 @@ func (sv *SysVar) validateScope(scope ScopeFlag) error {
 // may be less sophisticated in normalizing values. But errors should be caught and handled,
 // because otherwise there will be upgrade issues.
 func (sv *SysVar) ValidateWithRelaxedValidation(vars *SessionVars, value string, scope ScopeFlag) string {
+	warns := vars.StmtCtx.GetWarnings()
+	defer func() {
+		vars.StmtCtx.SetWarnings(warns) // RelaxedVaidation = trim warnings too.
+	}()
 	normalizedValue, err := sv.validateFromType(vars, value, scope)
 	if err != nil {
 		return normalizedValue
@@ -807,12 +811,14 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 
 	/* TiDB specific variables */
-	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.Itoa(DefTiDBTSOClientBatchMaxWaitTime), Type: TypeInt, MinValue: 0, MaxValue: 10, GetGlobal: func(sv *SessionVars) (string, error) {
-		return strconv.Itoa(int(MaxTSOBatchWaitInterval.Load())), nil
-	}, SetGlobal: func(s *SessionVars, val string) error {
-		MaxTSOBatchWaitInterval.Store(tidbOptInt64(val, DefTiDBTSOClientBatchMaxWaitTime))
-		return nil
-	}},
+	{Scope: ScopeGlobal, Name: TiDBTSOClientBatchMaxWaitTime, Value: strconv.FormatFloat(DefTiDBTSOClientBatchMaxWaitTime, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 10,
+		GetGlobal: func(sv *SessionVars) (string, error) {
+			return strconv.FormatFloat(MaxTSOBatchWaitInterval.Load(), 'f', -1, 64), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			MaxTSOBatchWaitInterval.Store(tidbOptFloat64(val, DefTiDBTSOClientBatchMaxWaitTime))
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBEnableTSOFollowerProxy, Value: BoolToOnOff(DefTiDBEnableTSOFollowerProxy), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableTSOFollowerProxy.Load()), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {

@@ -2227,3 +2227,14 @@ func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c
 	errMsg := "[table:1366]Incorrect string value '\\xEC\\xBD' for column 'a'"
 	tk.MustGetErrMsg("alter table t modify column a varchar(31) collate utf8mb4_general_ci;", errMsg)
 }
+
+func (s *testColumnTypeChangeSuite) TestForIssue24621(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(250));")
+	tk.MustExec("insert into t values('0123456789abc');")
+	errMsg := "[types:1265]Data truncated for column 'a', value is '0123456789abc'"
+	tk.MustGetErrMsg("alter table t modify a char(12) null;", errMsg)
+}
