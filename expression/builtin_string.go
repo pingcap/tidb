@@ -2333,8 +2333,12 @@ func (b *builtinBitLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-
-	return int64(len(val) * 8), false, nil
+	argTp := b.args[0].GetType()
+	dBytes, err := charset.NewEncoding(argTp.Charset).Encode(nil, hack.Slice(val))
+	if err != nil {
+		return 0, isNull, err
+	}
+	return int64(len(dBytes) * 8), false, nil
 }
 
 type charFunctionClass struct {
