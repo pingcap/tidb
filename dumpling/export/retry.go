@@ -9,8 +9,9 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-tools/pkg/dbutil"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"go.uber.org/zap"
+
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 const (
@@ -83,7 +84,7 @@ func (b *lockTablesBackoffer) NextBackoff(err error) time.Duration {
 		b.attempt--
 		db, table, err := getTableFromMySQLError(mysqlErr.Message)
 		if err != nil {
-			b.tctx.L().Error("retry lock tables meet error", zap.Error(err))
+			b.tctx.L().Error("fail to retry lock tables", zap.Error(err))
 			b.attempt = 0
 			return 0
 		}

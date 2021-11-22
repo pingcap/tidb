@@ -1865,13 +1865,13 @@ func findFieldNameFromNaturalUsingJoin(p LogicalPlan, v *ast.ColumnName) (col *e
 	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
 	case *LogicalJoin:
-		if x.redundantSchema != nil {
-			idx, err := expression.FindFieldName(x.redundantNames, v)
+		if x.fullSchema != nil {
+			idx, err := expression.FindFieldName(x.fullNames, v)
 			if err != nil {
 				return nil, nil, err
 			}
 			if idx >= 0 {
-				return x.redundantSchema.Columns[idx], x.redundantNames[idx], nil
+				return x.fullSchema.Columns[idx], x.fullNames[idx], nil
 			}
 		}
 	}
@@ -2007,6 +2007,13 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 			return s
 		}
 		return ret
+	} else if tablecodec.IsTableKey(key) {
+		ret, err := decodeTableKey(key, tableID, tbl, loc)
+		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return s
+		}
+		return ret
 	}
 	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
 	return s
@@ -2052,7 +2059,8 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		ret := make(map[string]interface{})
 		ret["table_id"] = tableID
 		handleRet := make(map[string]interface{})
-		for colID, dt := range datumMap {
+		for colID := range datumMap {
+			dt := datumMap[colID]
 			dtStr, err := datumToJSONObject(&dt)
 			if err != nil {
 				return "", errors.Trace(err)
@@ -2143,6 +2151,15 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 	ret["table_id"] = tableID
 	ret["index_id"] = indexID
 	ret["index_vals"] = strings.Join(indexValues, ", ")
+	retStr, err := json.Marshal(ret)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return string(retStr), nil
+}
+
+func decodeTableKey(key []byte, tableID int64, tbl table.Table, loc *time.Location) (string, error) {
+	ret := map[string]int64{"table_id": tableID}
 	retStr, err := json.Marshal(ret)
 	if err != nil {
 		return "", errors.Trace(err)

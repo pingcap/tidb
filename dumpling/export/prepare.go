@@ -10,6 +10,7 @@ import (
 	"text/template"
 
 	"github.com/pingcap/errors"
+
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
@@ -18,6 +19,7 @@ const (
 	outputFileTemplateTable  = "table"
 	outputFileTemplateView   = "view"
 	outputFileTemplateData   = "data"
+	outputFileTemplatePolicy = "placement-policy"
 
 	defaultOutputFileTemplateBase = `
 		{{- define "objectName" -}}
@@ -49,6 +51,9 @@ const (
 		{{- end -}}
 		{{- define "data" -}}
 			{{template "objectName" .}}.{{.Index}}
+		{{- end -}}
+		{{- define "placement-policy" -}}
+            {{fn .Policy}}-placement-policy-create
 		{{- end -}}
 	`
 
