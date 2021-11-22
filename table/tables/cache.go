@@ -88,7 +88,7 @@ func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 		nowTime := oracle.GetTimeFromTS(ts)
 		distance := leaseTime.Sub(nowTime)
 		// TODO make this configurable in the following PRs
-		if distance <= (1 * time.Second) {
+		if distance >= 0 && distance <= (1*time.Second) {
 			c.renewCh <- c.renewLease(ts, RenewReadLease, data)
 		}
 		return data
@@ -97,7 +97,7 @@ func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 }
 
 // MockStateRemote represents the information of stateRemote.
-// Exported it  only for testing.
+// Exported it only for testing.
 var MockStateRemote = struct {
 	Ch   chan remoteTask
 	Data *mockStateRemoteData
@@ -237,12 +237,13 @@ func (c *cachedTable) renewLease(ts uint64, op RenewLeaseType, data *cacheData) 
 	return func() {
 		tid := c.Meta().ID
 		lease := leaseFromTS(ts)
-		succ, err := c.handle.RenewLease(tid, lease, op)
+		succ, err := c.handle.RenewLease(tid, ts, lease, op)
 		if err != nil {
 			log.Warn("Renew read lease error")
 		}
 		if succ {
 			c.cacheData.Store(&cacheData{
+				Start:     data.Start,
 				Lease:     lease,
 				MemBuffer: data,
 			})

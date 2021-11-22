@@ -49,7 +49,7 @@ type StateRemote interface {
 	LockForWrite(tid int64, now, ts uint64) error
 
 	// RenewLease attempt to renew the read / write lock on the table with the specified tableID
-	RenewLease(tid int64, ts uint64, op RenewLeaseType) (bool, error)
+	RenewLease(tid int64, oldTs uint64, newTs uint64, op RenewLeaseType) (bool, error)
 }
 
 // mockStateRemoteHandle implement the StateRemote interface.
@@ -101,10 +101,10 @@ func (r *mockStateRemoteHandle) LockForWrite(tid int64, now, ts uint64) error {
 	return op.err
 }
 
-func (r *mockStateRemoteHandle) RenewLease(tid int64, ts uint64, op RenewLeaseType) (bool, error) {
+func (r *mockStateRemoteHandle) RenewLease(tid int64, oldTs uint64, newTs uint64, op RenewLeaseType) (bool, error) {
 	switch op {
 	case RenewReadLease:
-		op := &renewLeaseForReadOP{tid: tid, ts: ts}
+		op := &renewLeaseForReadOP{tid: tid, oldTs: oldTs, newTs: newTs}
 		op.Add(1)
 		r.ch <- op
 		op.Wait()
@@ -183,7 +183,8 @@ type renewLeaseForReadOP struct {
 	sync.WaitGroup
 	// Input
 	tid int64
-	ts  uint64
+	oldTs uint64
+	newTs  uint64
 
 	// Output
 	succ bool
@@ -191,7 +192,7 @@ type renewLeaseForReadOP struct {
 }
 
 func (op *renewLeaseForReadOP) Exec(r *mockStateRemoteData) {
-	op.succ, op.err = r.renewLeaseForRead(op.tid, op.ts)
+	op.succ, op.err = r.renewLeaseForRead(op.tid, op.oldTs, op.newTs)
 	op.Done()
 }
 
@@ -304,23 +305,26 @@ func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, e
 	return 0, nil
 }
 
-func (r *mockStateRemoteData) renewLeaseForRead(tid int64, ts uint64) (bool, error) {
+func (r *mockStateRemoteData) renewLeaseForRead(tid int64, oldTs uint64, newTs uint64) (bool, error) {
 	record, ok := r.data[tid]
 	if !ok {
 		record = &stateRecord{
-			lockLease: ts,
+			lockLease: newTs,
 			lockType:  CachedTableLockRead,
 		}
 		r.data[tid] = record
 		return true, nil
 	}
 	if record.lockType != CachedTableLockRead {
-		return false, errors.New("The read lock can be renewed only in the read lock state")
+		return false, errors.New("The read lock can be renewed only in the read lock state.")
 	}
-	if record.lockLease <= ts {
-		record.lockLease = ts
+	if record.lockLease < oldTs {
+		return false, errors.New("The remote Lease is invalid.")
+	}
+	if record.lockLease <= newTs {
+		record.lockLease = newTs
 		return true, nil
 	}
-	return false, errors.New("The new lease is smaller than the old lease is an illegal contract renewal operation")
+	return false, errors.New("The new lease is smaller than the old lease is an illegal contract renewal operation.")
 
 }

@@ -1738,6 +1738,7 @@ func (do *Domain) renewLease() {
 	for {
 		select {
 		case <-do.exit:
+			close(do.renewLeaseCh)
 			return
 		case op := <-do.renewLeaseCh:
 			op()
