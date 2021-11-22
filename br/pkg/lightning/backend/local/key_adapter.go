@@ -25,11 +25,9 @@ import (
 type KeyAdapter interface {
 	// Encode encodes the key with its corresponding rowID. It appends the encoded key to dst and returns the
 	// resulting slice. The encoded key is guaranteed to be in ascending order for comparison.
-	// To reuse key's storage for the encoded output, use key[:0] as dst. Otherwise, dst must not overlap key.
 	Encode(dst []byte, key []byte, rowID int64) []byte
 
 	// Decode decodes the original key to dst. It appends the encoded key to dst and returns the resulting slice.
-	// To reuse key's storage for the encoded output, use data[:0] as dst. Otherwise, dst must not overlap data.
 	Decode(dst []byte, data []byte) ([]byte, error)
 
 	// EncodedLen returns the encoded key length.
@@ -81,8 +79,12 @@ func (dupDetectKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(dst) == 0 || len(dst)+len(key) <= cap(dst) {
+	if len(dst) == 0 {
 		return key, nil
+	}
+	if len(dst)+len(key) <= cap(dst) {
+		dst = dst[:len(dst)+len(key)]
+		return dst, nil
 	}
 	// New slice is allocated, append key to dst manually.
 	return append(dst, key...), nil
