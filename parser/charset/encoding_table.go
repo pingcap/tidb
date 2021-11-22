@@ -34,6 +34,7 @@ var encodingMap = map[EncodingLabel]*Encoding{
 	CharsetGBK:     GBKEncoding,
 	CharsetLatin1:  LatinEncoding,
 	CharsetBin:     BinaryEncoding,
+	CharsetASCII:   ASCIIEncoding,
 }
 
 // Lookup returns the encoding with the specified label, and its canonical

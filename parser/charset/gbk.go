@@ -17,7 +17,7 @@ import "golang.org/x/text/encoding/simplifiedchinese"
 
 var GBKEncoding = &Encoding{
 	enc:  simplifiedchinese.GBK,
-	name: "gbk",
+	name: CharsetGBK,
 	charLength: func(bs []byte) int {
 		if len(bs) == 0 || bs[0] < 0x80 {
 			// A byte in the range 00–7F is a single byte that means the same thing as it does in ASCII.

@@ -36,4 +36,13 @@ var (
 		},
 		specialCase: nil,
 	}
+
+	ASCIIEncoding = &Encoding{
+		enc:  encoding.Nop,
+		name: CharsetASCII,
+		charLength: func(bytes []byte) int {
+			return 1
+		},
+		specialCase: nil,
+	}
 )
