@@ -3314,6 +3314,16 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("", ""))
 	tk.MustExec("insert into t values (null)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("", "", "<nil>"))
+
+	// Test https://github.com/pingcap/tidb/issues/29525.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int auto_increment primary key, c1 enum('a', '', 'c'));")
+	tk.MustExec("insert into t(c1) values (0);")
+	tk.MustQuery("select id, c1+0, c1 from t;").Check(testkit.Rows("1 0 "))
+	tk.MustExec("alter table t change c1 c1 enum('a', '') not null;")
+	tk.MustQuery("select id, c1+0, c1 from t;").Check(testkit.Rows("1 0 "))
+	tk.MustExec("insert into t(c1) values (0);")
+	tk.MustQuery("select id, c1+0, c1 from t;").Check(testkit.Rows("1 0 ", "2 0 "))
 }
 
 // TestIssue4024 This tests https://github.com/pingcap/tidb/issues/4024

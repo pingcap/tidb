@@ -92,18 +92,17 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 	}
 	enc := charset.NewEncoding(b.args[0].GetType().Charset)
 	result.ReserveString(n)
+	var encodedBuf []byte
 	for i := 0; i < n; i++ {
-		var str string
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		str = buf.GetString(i)
-		str, err = enc.EncodeString(str)
+		strBytes, err := enc.Encode(encodedBuf, buf.GetBytes(i))
 		if err != nil {
 			return err
 		}
-		result.AppendString(str)
+		result.AppendBytes(strBytes)
 	}
 	return nil
 }
@@ -111,7 +110,9 @@ func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *c
 // toBinaryMap contains the builtin functions which arguments need to be converted to the correct charset.
 var toBinaryMap = map[string]struct{}{
 	ast.Hex: {}, ast.Length: {}, ast.OctetLength: {}, ast.ASCII: {},
-	ast.ToBase64: {},
+	ast.ToBase64: {}, ast.AesDecrypt: {}, ast.Decode: {}, ast.Encode: {},
+	ast.PasswordFunc: {}, ast.MD5: {}, ast.SHA: {}, ast.SHA1: {},
+	ast.SHA2: {}, ast.Compress: {},
 }
 
 // WrapWithToBinary wraps `expr` with to_binary sig.
