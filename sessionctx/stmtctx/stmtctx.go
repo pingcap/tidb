@@ -197,6 +197,9 @@ type StatementContext struct {
 	EnableOptimizeTrace bool
 	// LogicalOptimizeTrace indicates the trace for optimize
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
+
+	// RegardNULLAsPoint if regard NULL as Point
+	RegardNULLAsPoint bool
 }
 
 // StmtHints are SessionVars related sql hints.

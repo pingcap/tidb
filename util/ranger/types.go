@@ -99,7 +99,11 @@ func (ran *Range) IsPoint(sc *stmtctx.StatementContext) (isPoint bool, hasNull b
 		}
 
 		if a.IsNull() {
-			hasNull = true
+			if sc.RegardNULLAsPoint { // regard NULL as point and set hasNull=true
+				hasNull = true
+			} else { // regard NULL as range
+				return false, false
+			}
 		}
 	}
 	return !ran.LowExclude && !ran.HighExclude, hasNull

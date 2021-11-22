@@ -858,15 +858,15 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			}
 		}
 		if canConvertPointGet {
-			allRangeIsPointWithoutNull := true
+			allRangeIsPoint := true
 			for _, ran := range path.Ranges {
 				isPoint, hasNull := ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx)
 				if !isPoint || hasNull {
-					allRangeIsPointWithoutNull = false
+					allRangeIsPoint = false
 					break
 				}
 			}
-			if allRangeIsPointWithoutNull {
+			if allRangeIsPoint {
 				var pointGetTask task
 				if len(path.Ranges) == 1 {
 					pointGetTask = ds.convertToPointGet(prop, candidate)
