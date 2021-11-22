@@ -95,6 +95,8 @@ var (
 	PollTiFlashInterval = 2 * time.Second
 	// PullTiFlashPdTick indicates the number of intervals before we pull all pd rules.
 	PullTiFlashPdTick = 60
+	// EnablePollLoop indicates whether PollTiFlashReplicaStatus is queried everytime.
+	EnablePollLoop = false
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -393,34 +395,36 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
 
-	go func() {
-		if d.sessPool == nil {
-			log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")
-			return
-		}
-		sctx, err := d.sessPool.get()
-		if err != nil {
-			log.Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))
-		} else {
-			iterTimes := 0
-			for {
-				if d.ownerManager.IsOwner() {
-					err = d.PollTiFlashReplicaStatus(sctx, iterTimes%PullTiFlashPdTick == 0)
-					if err != nil {
-						log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
-					}
-				}
-				select {
-				case <-d.ctx.Done():
-					d.sessPool.put(sctx)
-					return
-				case <-time.After(PollTiFlashInterval):
-				}
-				iterTimes += 1
+	if EnablePollLoop {
+		go func() {
+			if d.sessPool == nil {
+				log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")
+				return
 			}
-		}
-		d.sessPool.put(sctx)
-	}()
+			sctx, err := d.sessPool.get()
+			if err != nil {
+				log.Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))
+			} else {
+				iterTimes := 0
+				for {
+					if d.ownerManager.IsOwner() {
+						err = d.PollTiFlashReplicaStatus(sctx, iterTimes%PullTiFlashPdTick == 0)
+						if err != nil {
+							log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
+						}
+					}
+					select {
+					case <-d.ctx.Done():
+						d.sessPool.put(sctx)
+						return
+					case <-time.After(PollTiFlashInterval):
+					}
+					iterTimes += 1
+				}
+			}
+			d.sessPool.put(sctx)
+		}()
+	}
 
 	return nil
 }

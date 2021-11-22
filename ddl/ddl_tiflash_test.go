@@ -66,6 +66,7 @@ var _ = SerialSuites(&tiflashDDLTestSuite{})
 func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	var err error
 
+	ddl.EnablePollLoop = true
 	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
