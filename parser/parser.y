@@ -4521,8 +4521,9 @@ TraceStmt:
 	"TRACE" TraceableStmt
 	{
 		$$ = &ast.TraceStmt{
-			Stmt:   $2,
-			Format: "row",
+			Stmt:      $2,
+			Format:    "row",
+			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
 		$2.SetText(string(parser.src[startOffset:]))
@@ -4530,11 +4531,21 @@ TraceStmt:
 |	"TRACE" "FORMAT" "=" stringLit TraceableStmt
 	{
 		$$ = &ast.TraceStmt{
-			Stmt:   $5,
-			Format: $4,
+			Stmt:      $5,
+			Format:    $4,
+			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
 		$5.SetText(string(parser.src[startOffset:]))
+	}
+|	"TRACE" "PLAN" TraceableStmt
+	{
+		$$ = &ast.TraceStmt{
+			Stmt:      $3,
+			TracePlan: true,
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		$3.SetText(string(parser.src[startOffset:]))
 	}
 
 ExplainSym:
@@ -13299,12 +13310,13 @@ DropPolicyStmt:
 	}
 
 CreatePolicyStmt:
-	"CREATE" "PLACEMENT" "POLICY" IfNotExists PolicyName PlacementOptionList
+	"CREATE" OrReplace "PLACEMENT" "POLICY" IfNotExists PolicyName PlacementOptionList
 	{
 		$$ = &ast.CreatePlacementPolicyStmt{
-			IfNotExists:      $4.(bool),
-			PolicyName:       model.NewCIStr($5),
-			PlacementOptions: $6.([]*ast.PlacementOption),
+			OrReplace:        $2.(bool),
+			IfNotExists:      $5.(bool),
+			PolicyName:       model.NewCIStr($6),
+			PlacementOptions: $7.([]*ast.PlacementOption),
 		}
 	}
 
