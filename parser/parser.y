@@ -13310,12 +13310,13 @@ DropPolicyStmt:
 	}
 
 CreatePolicyStmt:
-	"CREATE" "PLACEMENT" "POLICY" IfNotExists PolicyName PlacementOptionList
+	"CREATE" OrReplace "PLACEMENT" "POLICY" IfNotExists PolicyName PlacementOptionList
 	{
 		$$ = &ast.CreatePlacementPolicyStmt{
-			IfNotExists:      $4.(bool),
-			PolicyName:       model.NewCIStr($5),
-			PlacementOptions: $6.([]*ast.PlacementOption),
+			OrReplace:        $2.(bool),
+			IfNotExists:      $5.(bool),
+			PolicyName:       model.NewCIStr($6),
+			PlacementOptions: $7.([]*ast.PlacementOption),
 		}
 	}
 
