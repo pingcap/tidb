@@ -7,7 +7,6 @@ import (
 
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -24,15 +23,7 @@ type backendSuite struct {
 	ts          uint64
 }
 
-var _ = Suite(&backendSuite{})
-
-func Test(t *testing.T) {
-	TestingT(t)
-}
-
-// FIXME: Cannot use the real SetUpTest/TearDownTest to set up the mock
-// otherwise the mock error will be ignored.
-func setUpTest(c gomock.TestReporter) *backendSuite {
+func createBackendSuite(c gomock.TestReporter) *backendSuite {
 	controller := gomock.NewController(c)
 	mockBackend := mock.NewMockBackend(controller)
 	return &backendSuite{
@@ -49,7 +40,7 @@ func (s *backendSuite) tearDownTest() {
 
 func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 	ctx := context.Background()
 	engineUUID := uuid.MustParse("902efee3-a3f9-53d4-8c82-f12fb1900cd1")
@@ -82,7 +73,7 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 
 func TestUnsafeCloseEngine(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	ctx := context.Background()
@@ -104,7 +95,7 @@ func TestUnsafeCloseEngine(t *testing.T) {
 
 func TestUnsafeCloseEngineWithUUID(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	ctx := context.Background()
@@ -126,7 +117,7 @@ func TestUnsafeCloseEngineWithUUID(t *testing.T) {
 
 func TestWriteEngine(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	ctx := context.Background()
@@ -165,7 +156,7 @@ func TestWriteEngine(t *testing.T) {
 
 func TestWriteToEngineWithNothing(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	ctx := context.Background()
@@ -189,7 +180,7 @@ func TestWriteToEngineWithNothing(t *testing.T) {
 
 func TestOpenEngineFailed(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	ctx := context.Background()
@@ -203,7 +194,7 @@ func TestOpenEngineFailed(t *testing.T) {
 
 func TestWriteEngineFailed(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	ctx := context.Background()
@@ -231,7 +222,7 @@ func TestWriteEngineFailed(t *testing.T) {
 
 func TestWriteBatchSendFailedWithRetry(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	ctx := context.Background()
@@ -259,7 +250,7 @@ func TestWriteBatchSendFailedWithRetry(t *testing.T) {
 
 func TestImportFailedNoRetry(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	ctx := context.Background()
@@ -278,7 +269,7 @@ func TestImportFailedNoRetry(t *testing.T) {
 
 func TestImportFailedWithRetry(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	ctx := context.Background()
@@ -299,7 +290,7 @@ func TestImportFailedWithRetry(t *testing.T) {
 
 func TestImportFailedRecovered(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	ctx := context.Background()
@@ -322,7 +313,7 @@ func TestImportFailedRecovered(t *testing.T) {
 //nolint:interfacer // change test case signature causes check panicking.
 func TestClose(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	s.mockBackend.EXPECT().Close().Return()
@@ -332,7 +323,7 @@ func TestClose(t *testing.T) {
 
 func TestMakeEmptyRows(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	rows := mock.NewMockRows(s.controller)
@@ -342,7 +333,7 @@ func TestMakeEmptyRows(t *testing.T) {
 
 func TestNewEncoder(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	encoder := mock.NewMockEncoder(s.controller)
@@ -356,7 +347,7 @@ func TestNewEncoder(t *testing.T) {
 
 func TestCheckDiskQuota(t *testing.T) {
 	t.Parallel()
-	s := setUpTest(t)
+	s := createBackendSuite(t)
 	defer s.tearDownTest()
 
 	uuid1 := uuid.MustParse("11111111-1111-1111-1111-111111111111")
