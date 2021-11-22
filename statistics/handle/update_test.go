@@ -42,6 +42,7 @@ import (
 func TestSingleSessionInsert(t *testing.T) {
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
+	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
@@ -537,6 +538,7 @@ func TestUpdateErrorRate(t *testing.T) {
 	handle.MinLogScanCount.Store(0)
 	handle.MinLogErrorRate.Store(0)
 
+	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
@@ -716,6 +718,7 @@ func TestSplitRange(t *testing.T) {
 func TestQueryFeedback(t *testing.T) {
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
+	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
@@ -834,6 +837,7 @@ func TestQueryFeedback(t *testing.T) {
 func TestQueryFeedbackForPartition(t *testing.T) {
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
+	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
 	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec(`create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))
@@ -967,6 +971,7 @@ func TestOutOfOrderUpdate(t *testing.T) {
 func TestUpdateStatsByLocalFeedback(t *testing.T) {
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
+	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
 	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
@@ -1030,6 +1035,7 @@ func TestUpdatePartitionStatsByLocalFeedback(t *testing.T) {
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (6))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
@@ -1190,6 +1196,7 @@ func TestLogDetailedInfo(t *testing.T) {
 	handle.MinLogErrorRate.Store(0)
 	dom.StatsHandle().SetLease(1)
 
+	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), primary key(a), index idx(b), index idx_ba(b,a), index idx_bc(b,c))")
 	for i := 0; i < 20; i++ {
@@ -1465,6 +1472,7 @@ func TestIndexQueryFeedback4TopN(t *testing.T) {
 	handle.MinLogScanCount.Store(0)
 	handle.MinLogErrorRate.Store(0)
 
+	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), index idx(a))")
 	for i := 0; i < 20; i++ {
@@ -1667,6 +1675,7 @@ func TestUnsignedFeedbackRanges(t *testing.T) {
 	handle.MinLogScanCount.Store(0)
 	handle.MinLogErrorRate.Store(0)
 
+	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a tinyint unsigned, primary key(a))")
 	testKit.MustExec("create table t1 (a bigint unsigned, primary key(a))")
