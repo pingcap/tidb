@@ -217,7 +217,8 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 		return types.NewDatum(zeroV), true, nil
 	} else if tm.IsZero() || tm.InvalidZero() {
 		if tm.IsZero() {
-			if !mode.HasNoZeroDateMode() {
+			// Don't care NoZeroDate mode if time val is invalid.
+			if !tmIsInvalid && !mode.HasNoZeroDateMode() {
 				return types.NewDatum(zeroV), true, nil
 			}
 		} else if tm.InvalidZero() {
@@ -567,12 +568,12 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	}
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
-	if sc.BadNullAsWarning {
-		sc.AppendWarning(ErrColumnCantNull.FastGenByArgs(col.Name))
-		return GetZeroValue(col), nil
-	}
 	if !vars.StrictSQLMode {
 		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
+		return GetZeroValue(col), nil
+	}
+	if sc.BadNullAsWarning {
+		sc.AppendWarning(ErrColumnCantNull.FastGenByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
 	return types.Datum{}, ErrNoDefaultValue.FastGenByArgs(col.Name)
