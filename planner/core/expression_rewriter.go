@@ -2007,6 +2007,13 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 			return s
 		}
 		return ret
+	} else if tablecodec.IsTableKey(key) {
+		ret, err := decodeTableKey(key, tableID, tbl, loc)
+		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return s
+		}
+		return ret
 	}
 	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
 	return s
@@ -2052,7 +2059,8 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		ret := make(map[string]interface{})
 		ret["table_id"] = tableID
 		handleRet := make(map[string]interface{})
-		for colID, dt := range datumMap {
+		for colID := range datumMap {
+			dt := datumMap[colID]
 			dtStr, err := datumToJSONObject(&dt)
 			if err != nil {
 				return "", errors.Trace(err)
@@ -2143,6 +2151,15 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 	ret["table_id"] = tableID
 	ret["index_id"] = indexID
 	ret["index_vals"] = strings.Join(indexValues, ", ")
+	retStr, err := json.Marshal(ret)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return string(retStr), nil
+}
+
+func decodeTableKey(key []byte, tableID int64, tbl table.Table, loc *time.Location) (string, error) {
+	ret := map[string]int64{"table_id": tableID}
 	retStr, err := json.Marshal(ret)
 	if err != nil {
 		return "", errors.Trace(err)
