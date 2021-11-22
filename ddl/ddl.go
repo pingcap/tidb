@@ -398,7 +398,9 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
 
 	go func() {
-		if _, ok := d.store.(helper.Storage); !ok {
+		return
+		_, ok := d.store.(helper.Storage)
+		if !ok {
 			log.Error("failed to get store for PollTiFlashReplicaStatus")
 			return
 		}
