@@ -16,6 +16,7 @@ package ranger
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
 	"math"
 	"strings"
 
@@ -80,7 +81,7 @@ func (ran *Range) Clone() *Range {
 }
 
 // IsPoint returns if the range is a point.
-func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
+func (ran *Range) IsPoint(sctx sessionctx.Context) bool {
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
 	}
@@ -90,7 +91,7 @@ func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
 		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
 			return false
 		}
-		cmp, err := a.CompareDatum(sc, &b)
+		cmp, err := a.CompareDatum(sctx.GetSessionVars().StmtCtx, &b)
 		if err != nil {
 			return false
 		}
