@@ -968,31 +968,24 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
-	// Generate digest explicitly
-	_, _ = seVars.StmtCtx.SQLDigest()
-	if variable.TopSQLEnabled() {
-		_, _ = seVars.StmtCtx.GetPlanDigest()
-	}
 	lockCtx := tikvstore.NewLockCtx(seVars.TxnCtx.GetForUpdateTS(), lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.Killed
 	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
 	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
 	lockCtx.LockKeysCount = &seVars.StmtCtx.LockKeysCount
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
-	if variable.TopSQLEnabled() {
-		lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {
-			if req == nil {
-				return nil
-			}
-			if len(req.Mutations) == 0 {
-				return nil
-			}
-			if mutation := req.Mutations[0]; mutation != nil {
-				label := resourcegrouptag.GetResourceGroupLabelByKey(mutation.Key)
-				return seVars.StmtCtx.GetResourceGroupTagByLabel(label)
-			}
+	lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {
+		if req == nil {
 			return nil
 		}
+		if len(req.Mutations) == 0 {
+			return nil
+		}
+		if mutation := req.Mutations[0]; mutation != nil {
+			label := resourcegrouptag.GetResourceGroupLabelByKey(mutation.Key)
+			return seVars.StmtCtx.GetResourceGroupTagByLabel(label)
+		}
+		return nil
 	}
 	lockCtx.OnDeadlock = func(deadlock *tikverr.ErrDeadlock) {
 		cfg := config.GetGlobalConfig()
