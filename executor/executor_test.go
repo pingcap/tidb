@@ -590,6 +590,7 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_admin_show_ddl_jobs")
+	defer tk.MustExec("drop database if exists test_admin_show_ddl_jobs")
 	tk.MustExec("use test_admin_show_ddl_jobs")
 	tk.MustExec("drop table if exists t, t1;")
 	tk.MustExec("create table t (a int);")
