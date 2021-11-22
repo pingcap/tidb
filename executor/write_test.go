@@ -864,15 +864,15 @@ func (s *testSuite4) TestInsertSetWithDefault(c *C) {
 	tk.MustExec("set @@timestamp = 1637541082")
 	tk.MustExec("insert into t1 VALUES (default,default)")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("" +
-		"1 2021-11-22 01:31:04]\n" +
-		"[2 2021-11-22 01:31:22",
+		"1 2021-11-22 08:31:04]\n" +
+		"[2 2021-11-22 08:31:22",
 	))
 	tk.MustExec("set @@timestamp = 1637541332")
 	tk.MustExec("insert into t1 set a=1,t='2001-02-03 04:05:06' ON DUPLICATE KEY UPDATE t = default")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select * from t1").Check(testkit.Rows("" +
-		"1 2021-11-22 01:35:32]\n" +
-		"[2 2021-11-22 01:31:22",
+		"1 2021-11-22 08:35:32]\n" +
+		"[2 2021-11-22 08:31:22",
 	))
 }
 
