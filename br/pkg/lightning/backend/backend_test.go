@@ -189,7 +189,7 @@ func TestOpenEngineFailed(t *testing.T) {
 		Return(errors.New("fake unrecoverable open error"))
 
 	_, err := s.backend.OpenEngine(ctx, &backend.EngineConfig{}, "`db`.`table`", 1)
-	require.Equal(t, "fake unrecoverable open error", err.Error())
+	require.EqualError(t, err, "fake unrecoverable open error")
 }
 
 func TestWriteEngineFailed(t *testing.T) {
