@@ -854,6 +854,26 @@ func (s *testSuite4) TestInsertSetWithDefault(c *C) {
 	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
 	tk.MustGetErrCode("insert into t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
+	// Issue 29926
+	tk.MustExec("create table t1 (a int not null auto_increment,primary key(a), t timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP)")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@timestamp = 1637541064")
+	defer tk.MustExec("set @@timestamp = DEFAULT")
+	tk.MustExec("insert into t1 set a=default,t=default")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("set @@timestamp = 1637541082")
+	tk.MustExec("insert into t1 VALUES (default,default)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("" +
+		"1 2021-11-22 01:31:04]\n" +
+		"[2 2021-11-22 01:31:22",
+	))
+	tk.MustExec("set @@timestamp = 1637541332")
+	tk.MustExec("insert into t1 set a=1,t='2001-02-03 04:05:06' ON DUPLICATE KEY UPDATE t = default")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t1").Check(testkit.Rows("" +
+		"1 2021-11-22 01:35:32]\n" +
+		"[2 2021-11-22 01:31:22",
+	))
 }
 
 func (s *testSuite4) TestInsertOnDupUpdateDefault(c *C) {
