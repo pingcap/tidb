@@ -17,6 +17,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/session"
 	"math/rand"
 	"strconv"
 	"sync"
@@ -1244,7 +1245,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
 		do.wg.Add(1)
-		go do.loadStatsWorker()
+		go do.loadStatsWorker(ctx)
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
@@ -1280,7 +1281,7 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	return statsOwner
 }
 
-func (do *Domain) loadStatsWorker() {
+func (do *Domain) loadStatsWorker(ctx sessionctx.Context) {
 	defer util.Recover(metrics.LabelDomain, "loadStatsWorker", nil, false)
 	lease := do.statsLease
 	if lease == 0 {
@@ -1299,6 +1300,15 @@ func (do *Domain) loadStatsWorker() {
 		logutil.BgLogger().Debug("init stats info failed", zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Duration("take time", time.Since(t)))
+	}
+	// TODO config concurrency
+	for i := 0; i < 20; i++ {
+		sess, err := session.CreateSession(ctx.GetStore())
+		if err != nil {
+			logutil.BgLogger().Fatal("Create sub load session failed", zap.Error(err))
+		} else {
+			go statsHandle.SubLoadWorker(sess)
+		}
 	}
 	for {
 		select {

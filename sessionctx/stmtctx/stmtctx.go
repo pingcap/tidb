@@ -193,10 +193,19 @@ type StatementContext struct {
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
 
-	// EnableOptimizeTrace indicates whether the statement is enable optimize trace
+	// EnableOptimizeTrace indicates whether the statement is enable optimize trace.
 	EnableOptimizeTrace bool
-	// LogicalOptimizeTrace indicates the trace for optimize
+	// LogicalOptimizeTrace indicates the trace for optimize.
 	LogicalOptimizeTrace *tracing.LogicalOptimizeTracer
+
+	StatsLoad struct {
+		// NeededColumnMap stores the columns whose stats are needed for planner.
+		NeededColumnMap map[model.TableColumnID]struct{}
+		// Wg is the wait group waiting for all need columns to be loaded.
+		Wg *sync.WaitGroup
+		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
+		Fallback bool
+	}
 }
 
 // StmtHints are SessionVars related sql hints.

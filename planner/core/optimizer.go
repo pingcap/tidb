@@ -16,8 +16,6 @@ package core
 
 import (
 	"context"
-	"math"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -31,12 +29,17 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
+	"math"
+	"time"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
@@ -262,7 +265,14 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if checkStableResultMode(sctx) {
 		flag |= flagStabilizeResults
 	}
-	logic, err := logicalOptimize(ctx, flag, logic)
+	flag1 := flag - flagJoinReOrder - flagPrunColumnsAgain
+	flag2 := flag & flagJoinReOrder & flagPrunColumnsAgain
+	logic, err := logicalOptimize(ctx, flag1, logic)
+	if err != nil {
+		return nil, 0, err
+	}
+	handleNeededColumns(logic, sctx.GetSessionVars().StmtCtx)
+	logic, err = logicalOptimize(ctx, flag2, logic)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -279,6 +289,33 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	}
 	finalPlan := postOptimize(sctx, physical)
 	return finalPlan, cost, nil
+}
+
+func handleNeededColumns(plan LogicalPlan, stmtCtx *stmtctx.StatementContext) {
+	neededColumns := collectNeededColumns(plan)
+	stmtCtx.StatsLoad.NeededColumnMap = neededColumns
+	wg := stmtCtx.StatsLoad.Wg
+	wg.Add(len(neededColumns))
+	for col := range neededColumns {
+		handle.AppendNeededColumn(col, wg)
+	}
+	if util.WaitTimeout(wg, time.Second*10) { // TODO configurable timeout
+		stmtCtx.StatsLoad.Fallback = true
+	}
+	// check if all loaded from statsCache
+}
+
+func collectNeededColumns(plan LogicalPlan) map[model.TableColumnID]struct{} {
+	var neededColumns map[model.TableColumnID]struct{}
+	switch x := plan.(type) {
+	case *LogicalSelection:
+		exprs := x.Conditions
+		cols := make([]*expression.Column, 0, len(exprs))
+		cols = expression.ExtractColumnsFromExpressions(cols, exprs, nil)
+		// TODO
+	default:
+	}
+	return neededColumns
 }
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.
