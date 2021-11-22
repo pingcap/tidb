@@ -783,7 +783,10 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	if retryInfo.Retrying {
 		id, ok := retryInfo.GetCurrAutoIncrementID()
 		if ok {
-			d.SetAutoID(id, c.Flag)
+			err := setDatumAutoIDAndCast(e.ctx, &d, id, c)
+			if err != nil {
+				return types.Datum{}, err
+			}
 			return d, nil
 		}
 	}
