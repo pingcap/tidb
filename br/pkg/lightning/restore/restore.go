@@ -2365,7 +2365,6 @@ func (cr *chunkRestore) encodeLoop(
 								}
 							}
 						}
-
 					}
 					initializedColumns = true
 				}

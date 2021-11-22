@@ -829,8 +829,6 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated(c *C) {
 	p := parser.New()
 	p.SetSQLMode(mysql.ModeANSIQuotes)
 	se := tmock.NewContext()
-	tr, err := NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, nil, &checkpoints.TableCheckpoint{}, nil)
-	c.Assert(err, IsNil)
 
 	cases := []struct {
 		schema              string
@@ -840,17 +838,12 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated(c *C) {
 		{
 			"CREATE TABLE `table` (a INT, b INT, C INT, d INT AS (a * 2))",
 			[]string{"b", "c", "a"},
-			[]int{2, 0, 1, -1},
+			[]int{2, 0, 1, -1, -1},
 		},
 		// all generated columns and none input columns
 		{
-			"CREATE TABLE `table` (a bigint as (1 + 2) stored, b text as (sha1(repeat('x', uint64))) stored)",
+			"CREATE TABLE `table` (a bigint as (1 + 2) stored, b text as (sha1(repeat('x', a))) stored)",
 			[]string{},
-			[]int{-1, -1, -1},
-		},
-		{
-			"CREATE TABLE `table` (a bigint as (1 + 2) stored, b text as (sha1(repeat('x', uint64))) stored)",
-			[]string{"a", "b"},
 			[]int{-1, -1, -1},
 		},
 	}
@@ -862,7 +855,8 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated(c *C) {
 		c.Assert(err, IsNil)
 		core.State = model.StatePublic
 		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
-		tr.tableInfo = tableInfo
+		s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
+		c.Assert(err, IsNil)
 		ccp := &checkpoints.ChunkCheckpoint{}
 
 		err = s.tr.initializeColumns(testCase.columns, ccp)
@@ -1495,6 +1489,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 }
 
 func (s *chunkRestoreSuite) TestEncodeLoopIgnoreColumnsCSV(c *C) {
+	log.InitLogger(&log.Config{}, "error")
 	cases := []struct {
 		s             string
 		ignoreColumns []*config.IgnoreColumns
@@ -1535,6 +1530,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopIgnoreColumnsCSV(c *C) {
 	}
 
 	for _, cs := range cases {
+		// reset test
+		s.SetUpTest(c)
 		s.testEncodeLoopIgnoreColumnsCSV(c, cs.s, cs.ignoreColumns, cs.kvs, cs.header)
 	}
 }

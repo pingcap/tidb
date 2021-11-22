@@ -895,10 +895,15 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 			colPerm = append(colPerm, -1)
 		}
 	}
+	// append _tidb_rowid column
+	rowIDIdx := -1
 	if i, ok := columnMap[model.ExtraHandleName.L]; ok {
-		colPerm = append(colPerm, i)
-	} else if common.TableHasAutoRowID(tableInfo) {
-		colPerm = append(colPerm, -1)
+		if _, ignored := ignoreColumns[model.ExtraHandleName.L]; !ignored {
+			rowIDIdx = i
+		}
+	}
+	if common.TableHasAutoRowID(tableInfo) {
+		colPerm = append(colPerm, rowIDIdx)
 	}
 
 	return colPerm, nil

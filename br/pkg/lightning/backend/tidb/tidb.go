@@ -582,7 +582,7 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 		serverInfo := version.ParseServerInfo(versionStr)
 
 		rows, e := tx.Query(`
-			SELECT table_name, column_name, column_type, GENERATION_EXPRESSION, extra
+			SELECT table_name, column_name, column_type, generation_expression, extra
 			FROM information_schema.columns
 			WHERE table_schema = ?
 			ORDER BY table_name, ordinal_position;
