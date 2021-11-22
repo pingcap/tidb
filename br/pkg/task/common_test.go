@@ -113,7 +113,7 @@ func (s *testCommonSuite) TestCheckCipherKeyMatch(c *C) {
 	}
 
 	for _, t := range testCases {
-		cipherKey, err := hex.DecodeString(string(t.CipherKey))
+		cipherKey, err := hex.DecodeString(t.CipherKey)
 		c.Assert(err, IsNil)
 
 		r := checkCipherKeyMatch(&backuppb.CipherInfo{
