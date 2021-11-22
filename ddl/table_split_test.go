@@ -57,7 +57,7 @@ func TestTableSplit(t *testing.T) {
 	defer dom.Close()
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	infoSchema := dom.InfoSchema()
-	require.NotNil(t, infoSchema, nil)
+	require.NotNil(t, infoSchema)
 	tbl, err := infoSchema.TableByName(model.NewCIStr("mysql"), model.NewCIStr("tidb"))
 	require.NoError(t, err)
 	checkRegionStartWithTableID(t, tbl.Meta().ID, store.(kvStore))
@@ -65,7 +65,7 @@ func TestTableSplit(t *testing.T) {
 	tbl, err = infoSchema.TableByName(model.NewCIStr("test"), model.NewCIStr("t_part"))
 	require.NoError(t, err)
 	pi := tbl.Meta().GetPartitionInfo()
-	require.NotNil(t, pi, nil)
+	require.NotNil(t, pi)
 	for _, def := range pi.Definitions {
 		checkRegionStartWithTableID(t, def.ID, store.(kvStore))
 	}
