@@ -165,21 +165,21 @@ func (s *tiflashDDLTestSuite) CheckPlacementRule(rule placement.Rule) bool {
 func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
 	time.Sleep(ddl.PollTiFlashInterval * 1)
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	replica := tb.Meta().TiFlashReplica
 	c.Assert(replica, IsNil)
 
-	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 	lessThan := "40"
-	tk.MustExec(fmt.Sprintf("ALTER TABLE t ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
+	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflash ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
 
 	time.Sleep(ddl.PollTiFlashInterval * 5)
 	// Should get schema again
-	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	replica = tb.Meta().TiFlashReplica
 	c.Assert(replica, NotNil)
@@ -204,13 +204,13 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableNormal(c *C) {
 func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
-	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 	// Make sure is available
 	time.Sleep(ddl.PollTiFlashInterval * 4)
 	// Should get schema right now
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	replica := tb.Meta().TiFlashReplica
 	c.Assert(replica, NotNil)
@@ -222,10 +222,10 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 	originInterval := ddl.PollTiFlashInterval
 	// Stop loop
 	ddl.PollTiFlashInterval = 1000 * time.Second
-	tk.MustExec(fmt.Sprintf("ALTER TABLE t ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
+	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflash ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
 	time.Sleep(originInterval * 4)
 
-	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	pi := tb.Meta().GetPartitionInfo()
 	c.Assert(pi, NotNil)
@@ -238,20 +238,20 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 		}
 	}
 	c.Assert(len(pi.AddingDefinitions), Equals, 0)
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists ddltiflash")
 }
 
 // TiFlash Table shall be eventually available.
 func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(z int)")
-	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 
 	time.Sleep(ddl.PollTiFlashInterval * 2)
 	// Should get schema right now
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	replica := tb.Meta().TiFlashReplica
 	c.Assert(replica, NotNil)
@@ -259,9 +259,9 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	c.Assert(replica.Count, Equals, uint64(1))
 	c.Assert(replica.LocationLabels, DeepEquals, []string{})
 
-	tk.MustExec("alter table t set tiflash replica 0")
+	tk.MustExec("alter table ddltiflash set tiflash replica 0")
 	time.Sleep(ddl.PollTiFlashInterval * 2)
-	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	replica = tb.Meta().TiFlashReplica
 	c.Assert(replica, IsNil)
@@ -273,10 +273,10 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
 	gcworker.SetGcSafePointCacheInterval(time.Second * 1)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(z int)")
-	tk.MustExec("alter table t set tiflash replica 1")
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 
 	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
@@ -289,20 +289,20 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
 	c.Assert(res, Equals, true)
 
 	ddl.PullTiFlashPdTick = 1
+	// Wait GC
 	time.Sleep(ddl.PollTiFlashInterval * 5)
 	res = s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
 }
 
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
-	gcworker.SetGcSafePointCacheInterval(time.Second * 1)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(z int)")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
 	s.pdEnabled = false
-	tk.MustExec("alter table t set tiflash replica 1")
-	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 
 	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
