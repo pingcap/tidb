@@ -41,12 +41,12 @@ func (s *testPartitionSuite) TearDownSuite(c *C) {
 }
 
 func (s *testPartitionSuite) TestDropAndTruncatePartition(c *C) {
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
