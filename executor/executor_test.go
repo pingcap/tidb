@@ -4457,16 +4457,6 @@ func (s *testSuiteP2) TestStrToDateBuiltin(c *C) {
 	tk.MustQuery(`SELECT STR_TO_DATE('2020-07-04 00:22:33', '%Y-%m-%d %T')`).Check(testkit.Rows("2020-07-04 00:22:33"))
 }
 
-<<<<<<< HEAD
-=======
-func (s *testSuiteP2) TestAddDateBuiltinWithWarnings(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@sql_mode='NO_ZERO_DATE'")
-	result := tk.MustQuery(`select date_add('2001-01-00', interval -2 hour);`)
-	result.Check(testkit.Rows("<nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '2001-01-00'"))
-}
-
 func (s *testSuiteP2) TestIssue27232(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4477,15 +4467,6 @@ func (s *testSuiteP2) TestIssue27232(c *C) {
 	tk.MustQuery("select * from t where timestampadd(hour, 1, a ) = timestampadd(hour, 1, \"2038-01-19 03:14:07\")").Check(testkit.Rows("2038-01-19 03:14:07"))
 }
 
-func (s *testSuiteP2) TestStrToDateBuiltinWithWarnings(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@sql_mode='NO_ZERO_DATE'")
-	tk.MustExec("use test")
-	tk.MustQuery(`SELECT STR_TO_DATE('0000-1-01', '%Y-%m-%d');`).Check(testkit.Rows("<nil>"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1411 Incorrect datetime value: '0000-1-01' for function str_to_date"))
-}
-
->>>>>>> c9c3463ac... expression: fix wrong result for date add sub (#27244)
 func (s *testSuiteP2) TestReadPartitionedTable(c *C) {
 	// Test three reader on partitioned table.
 	tk := testkit.NewTestKit(c, s.store)
