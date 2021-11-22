@@ -25,6 +25,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/store/helper"
+
 	"github.com/pingcap/log"
 
 	"github.com/google/uuid"
@@ -395,36 +397,38 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
 
-	if EnablePollLoop {
-		go func() {
-			if d.sessPool == nil {
-				log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")
-				return
-			}
-			sctx, err := d.sessPool.get()
-			if err != nil {
-				log.Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))
-			} else {
-				iterTimes := 0
-				for {
-					if d.ownerManager.IsOwner() {
-						err = d.PollTiFlashReplicaStatus(sctx, iterTimes%PullTiFlashPdTick == 0)
-						if err != nil {
-							log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
-						}
+	go func() {
+		if _, ok := d.store.(helper.Storage); !ok {
+			log.Error("failed to get store for PollTiFlashReplicaStatus")
+			return
+		}
+		if d.sessPool == nil {
+			log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")
+			return
+		}
+		sctx, err := d.sessPool.get()
+		if err != nil {
+			log.Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))
+		} else {
+			iterTimes := 0
+			for {
+				if d.ownerManager.IsOwner() {
+					err = d.PollTiFlashReplicaStatus(sctx, iterTimes%PullTiFlashPdTick == 0)
+					if err != nil {
+						log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
 					}
-					select {
-					case <-d.ctx.Done():
-						d.sessPool.put(sctx)
-						return
-					case <-time.After(PollTiFlashInterval):
-					}
-					iterTimes += 1
 				}
+				select {
+				case <-d.ctx.Done():
+					d.sessPool.put(sctx)
+					return
+				case <-time.After(PollTiFlashInterval):
+				}
+				iterTimes += 1
 			}
-			d.sessPool.put(sctx)
-		}()
-	}
+		}
+		d.sessPool.put(sctx)
+	}()
 
 	return nil
 }
