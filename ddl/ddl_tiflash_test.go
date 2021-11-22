@@ -22,13 +22,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/store/gcworker"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pingcap/tidb/store/gcworker"
 
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
