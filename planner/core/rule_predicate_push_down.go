@@ -120,6 +120,9 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 	predicates = DeleteTrueExprs(ds, predicates)
 	ds.allConds = predicates
 	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.ctx.GetSessionVars().StmtCtx, predicates, ds.ctx.GetClient(), kv.UnSpecified)
+	// We need to contain and copy the pushed-down expressions which maybe over-optimized for plan cache.
+	// Because when reusing cached plans and rebuilding range for them, the range builder may return an loose \
+	// range after parameters change. So we keep addition expressions for protection.
 	for _, predicate := range ds.pushedDownConds {
 		if expression.MaybeOverOptimized4PlanCache(ds.ctx, []expression.Expression{predicate}) {
 			predicates = append(predicates, predicate.Clone())
