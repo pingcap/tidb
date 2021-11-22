@@ -4195,18 +4195,18 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			us.SetChildren(ds)
 			result = us
 		} else {
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-					}
-				}()
-				if !b.inUpdateStmt && !b.inDeleteStmt && !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			if !b.inUpdateStmt && !b.inDeleteStmt && !sessionVars.StmtCtx.InExplainStmt {
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+						}
+					}()
 					err := cachedTable.UpdateLockForRead(b.ctx.GetStore(), txn.StartTS())
 					if err != nil {
 						log.Warn("Update Lock Info Error")
 					}
-				}
-			}()
+				}()
+			}
 		}
 	}
 
