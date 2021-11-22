@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/store/gcworker"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -39,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
@@ -269,31 +269,32 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 
 // When set TiFlash replica, tidb shall add one Pd Rule for this table.
 // When drop/truncate table, Pd Rule shall be removed in limited time.
-//func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
-//	gcworker.SetGcSafePointCacheInterval(time.Second * 1)
-//	tk := testkit.NewTestKit(c, s.store)
-//	tk.MustExec("use test")
-//	tk.MustExec("drop table if exists ddltiflash")
-//	tk.MustExec("create table ddltiflash(z int)")
-//	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-//	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
-//	c.Assert(err, IsNil)
-//
-//	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
-//	res := s.CheckPlacementRule(*expectRule)
-//	c.Assert(res, Equals, true)
-//
-//	tk.MustExec("drop table t")
-//	expectRule = ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
-//	res = s.CheckPlacementRule(*expectRule)
-//	c.Assert(res, Equals, true)
-//
-//	ddl.PullTiFlashPdTick = 1
-//	// Wait GC
-//	time.Sleep(ddl.PollTiFlashInterval * 5)
-//	res = s.CheckPlacementRule(*expectRule)
-//	c.Assert(res, Equals, false)
-//}
+func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
+	oldInterval := gcworker.GetGcSafePointCacheInterval()
+	gcworker.SetGcSafePointCacheInterval(oldInterval)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	c.Assert(err, IsNil)
+
+	expectRule := ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
+	res := s.CheckPlacementRule(*expectRule)
+	c.Assert(res, Equals, true)
+
+	tk.MustExec("drop table t")
+	expectRule = ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
+	res = s.CheckPlacementRule(*expectRule)
+	c.Assert(res, Equals, true)
+
+	ddl.PullTiFlashPdTick = 1
+	// Wait GC
+	time.Sleep(ddl.PollTiFlashInterval * 5)
+	res = s.CheckPlacementRule(*expectRule)
+	c.Assert(res, Equals, false)
+}
 
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

@@ -202,6 +202,10 @@ const (
 func SetGcSafePointCacheInterval(interval time.Duration) {
 	gcSafePointCacheInterval = interval
 }
+// GetGcSafePointCacheInterval returns gc interval.
+func GetGcSafePointCacheInterval() time.Duration {
+	return gcSafePointCacheInterval
+}
 
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 	logutil.Logger(ctx).Info("[gc worker] start",
