@@ -2233,6 +2233,9 @@ func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 
+	argTp := b.args[0].GetType()
+	enc := charset.NewEncoding(argTp.Charset)
+
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
@@ -2241,7 +2244,11 @@ func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		str := buf.GetBytes(i)
-		i64s[i] = int64(len(str) * 8)
+		dBytes, err := enc.Encode(nil, str)
+		if err != nil {
+			return err
+		}
+		i64s[i] = int64(len(dBytes) * 8)
 	}
 	return nil
 }
