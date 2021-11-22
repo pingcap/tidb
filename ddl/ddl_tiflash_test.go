@@ -100,11 +100,11 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	session.DisableStats4Test()
 
 	s.dom, err = session.BootstrapSession(s.store)
-	ddl.EnableTiFlashPoll(s.dom.DDL())
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
 
 	mockstorage.ModifyPdAddrs(s.store, []string{s.pdMockAddr})
+	ddl.EnableTiFlashPoll(s.dom.DDL())
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {

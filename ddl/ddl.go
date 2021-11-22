@@ -200,9 +200,9 @@ type ddl struct {
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
-	workers     map[workerType]*worker
-	sessPool    *sessionPool
-	delRangeMgr delRangeManager
+	workers           map[workerType]*worker
+	sessPool          *sessionPool
+	delRangeMgr       delRangeManager
 	enableTiFlashPoll bool
 }
 
@@ -240,7 +240,9 @@ func (dc *ddlCtx) isOwner() bool {
 
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
 func EnableTiFlashPoll(d interface{}) {
+	fmt.Println("!!!! HAHA")
 	if dd, ok := d.(*ddl); ok {
+		fmt.Println("!!!! HOHO")
 		dd.enableTiFlashPoll = true
 	}
 }
@@ -259,7 +261,7 @@ func IsTiFlashPollEnabled(d interface{}) bool {
 	return true
 }
 
-func (d *ddl)IsTiFlashPollEnabled() bool {
+func (d *ddl) IsTiFlashPollEnabled() bool {
 	return d.enableTiFlashPoll
 }
 
@@ -345,9 +347,10 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		ctx:        ctx,
-		ddlCtx:     ddlCtx,
-		limitJobCh: make(chan *limitJobTask, batchAddingJobs),
+		ctx:               ctx,
+		ddlCtx:            ddlCtx,
+		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
+		enableTiFlashPoll: false,
 	}
 
 	return d
@@ -427,35 +430,35 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			log.Error("failed to get store for PollTiFlashReplicaStatus")
 			return
 		}
-		if d.sessPool == nil {
-			log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")
-			return
-		}
-		sctx, err := d.sessPool.get()
-		if err != nil {
-			log.Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))
-		} else {
-			iterTimes := 0
-			for {
-				if !ddl.IsTiFlashPollEnabled() {
-					return
-				}
-				if d.ownerManager.IsOwner() {
-					err = d.PollTiFlashReplicaStatus(sctx, iterTimes%PullTiFlashPdTick == 0)
-					if err != nil {
-						log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
+		iterTimes := 0
+		for {
+			if d.sessPool == nil {
+				log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")
+				return
+			}
+			sctx, err := d.sessPool.get()
+			if err == nil {
+				if d.IsTiFlashPollEnabled() {
+					if d.ownerManager.IsOwner() {
+						err = d.PollTiFlashReplicaStatus(sctx, iterTimes%PullTiFlashPdTick == 0)
+						if err != nil {
+							log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
+						}
 					}
 				}
-				select {
-				case <-d.ctx.Done():
-					d.sessPool.put(sctx)
-					return
-				case <-time.After(PollTiFlashInterval):
-				}
-				iterTimes += 1
+			} else {
+				log.Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))
 			}
+
+			d.sessPool.put(sctx)
+			select {
+			case <-d.ctx.Done():
+				return
+			case <-time.After(PollTiFlashInterval):
+			}
+			iterTimes += 1
+			iterTimes %= 10000
 		}
-		d.sessPool.put(sctx)
 	}()
 
 	return nil
