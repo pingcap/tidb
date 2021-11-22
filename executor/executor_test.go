@@ -588,6 +588,23 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	c.Assert(row[9], Equals, "<nil>")
 }
 
+func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_admin_show_ddl_jobs")
+	tk.MustExec("use test_admin_show_ddl_jobs")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+
+	// Test for issue: https://github.com/pingcap/tidb/issues/29915
+	tk.MustExec("drop placement policy if exists x;")
+	tk.MustExec("create placement policy x followers=4;")
+	tk.MustExec("alter table t placement policy x;")
+	re := tk.MustQuery("admin show ddl jobs 1")
+	row := re.Rows()[0]
+	c.Assert(row[3], Equals, "alter table placement")
+
+}
+
 func (s *testSuiteP2) TestAdminChecksumOfPartitionedTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test;")
