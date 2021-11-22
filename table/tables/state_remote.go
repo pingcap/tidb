@@ -316,15 +316,15 @@ func (r *mockStateRemoteData) renewLeaseForRead(tid int64, oldTs uint64, newTs u
 		return true, nil
 	}
 	if record.lockType != CachedTableLockRead {
-		return false, errors.New("The read lock can be renewed only in the read lock state.")
+		return false, errors.New("The read lock can be renewed only in the read lock state")
 	}
 	if record.lockLease < oldTs {
-		return false, errors.New("The remote Lease is invalid.")
+		return false, errors.New("The remote Lease is invalid")
 	}
 	if record.lockLease <= newTs {
 		record.lockLease = newTs
 		return true, nil
 	}
-	return false, errors.New("The new lease is smaller than the old lease is an illegal contract renewal operation.")
+	return false, errors.New("The new lease is smaller than the old lease is an illegal contract renewal operation")
 
 }
