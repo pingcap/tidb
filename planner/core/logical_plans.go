@@ -146,10 +146,22 @@ type LogicalJoin struct {
 	// Currently, only `aggregation push down` phase will set this.
 	DefaultValues []types.Datum
 
-	// redundantSchema contains columns which are eliminated in join.
-	// For select * from a join b using (c); a.c will in output schema, and b.c will only in redundantSchema.
-	redundantSchema *expression.Schema
-	redundantNames  types.NameSlice
+	// fullSchema contains all the columns that the Join can output. It's ordered as [outer schema..., inner schema...].
+	// This is useful for natural joins and "using" joins. In these cases, the join key columns from the
+	// inner side (or the right side when it's an inner join) will not be in the schema of Join.
+	// But upper operators should be able to find those "redundant" columns, and the user also can specifically select
+	// those columns, so we put the "redundant" columns here to make them be able to be found.
+	//
+	// For example:
+	// create table t1(a int, b int); create table t2(a int, b int);
+	// select * from t1 join t2 using (b);
+	// schema of the Join will be [t1.b, t1.a, t2.a]; fullSchema will be [t1.a, t1.b, t2.a, t2.b].
+	//
+	// We record all columns and keep them ordered is for correctly handling SQLs like
+	// select t1.*, t2.* from t1 join t2 using (b);
+	// (*PlanBuilder).unfoldWildStar() handles the schema for such case.
+	fullSchema *expression.Schema
+	fullNames  types.NameSlice
 
 	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	equalCondOutCnt float64
