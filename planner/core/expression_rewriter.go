@@ -2059,7 +2059,8 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		ret := make(map[string]interface{})
 		ret["table_id"] = tableID
 		handleRet := make(map[string]interface{})
-		for colID, dt := range datumMap {
+		for colID := range datumMap {
+			dt := datumMap[colID]
 			dtStr, err := datumToJSONObject(&dt)
 			if err != nil {
 				return "", errors.Trace(err)

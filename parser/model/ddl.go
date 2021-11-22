@@ -93,6 +93,7 @@ const (
 	ActionAlterTablePlacement           ActionType = 56
 	ActionAlterCacheTable               ActionType = 57
 	ActionAlterTableStatsOptions        ActionType = 58
+	ActionAlterNoCacheTable             ActionType = 59
 )
 
 var actionMap = map[ActionType]string{

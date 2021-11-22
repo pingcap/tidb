@@ -222,15 +222,6 @@ func (b *builtinLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-
-	argTp := b.args[0].GetType()
-	if !types.IsBinaryStr(argTp) {
-		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
-		if err == nil {
-			return int64(len(dBytes)), false, nil
-		}
-	}
-
 	return int64(len([]byte(val))), false, nil
 }
 
@@ -271,13 +262,6 @@ func (b *builtinASCIISig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	if len(val) == 0 {
 		return 0, false, nil
-	}
-	argTp := b.args[0].GetType()
-	if !types.IsBinaryStr(argTp) {
-		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
-		if err == nil {
-			return int64(dBytes[0]), false, nil
-		}
 	}
 	return int64(val[0]), false, nil
 }
@@ -1664,7 +1648,7 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		argFieldTp := args[0].GetType()
 		// Use UTF8MB4 as default.
 		bf.tp.Flen = argFieldTp.Flen * 4 * 2
-		sig := &builtinHexStrArgSig{bf, charset.NewEncoding(argFieldTp.Charset)}
+		sig := &builtinHexStrArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
 	case types.ETInt, types.ETReal, types.ETDecimal:
@@ -1684,15 +1668,11 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 
 type builtinHexStrArgSig struct {
 	baseBuiltinFunc
-	encoding *charset.Encoding
 }
 
 func (b *builtinHexStrArgSig) Clone() builtinFunc {
 	newSig := &builtinHexStrArgSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	if b.encoding != nil {
-		newSig.encoding = charset.NewEncoding(b.encoding.Name())
-	}
 	return newSig
 }
 
@@ -1703,12 +1683,7 @@ func (b *builtinHexStrArgSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-	dBytes := hack.Slice(d)
-	dBytes, err = b.encoding.Encode(nil, dBytes)
-	if err != nil {
-		return d, false, err
-	}
-	return strings.ToUpper(hex.EncodeToString(dBytes)), false, nil
+	return strings.ToUpper(hex.EncodeToString(hack.Slice(d))), false, nil
 }
 
 type builtinHexIntArgSig struct {
@@ -2450,8 +2425,14 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 		bigints = append(bigints, val)
 	}
-	result := string(b.convertToBytes(bigints))
-	return result, false, nil
+
+	dBytes := b.convertToBytes(bigints)
+	resultBytes, err := charset.NewEncoding(b.tp.Charset).Decode(nil, dBytes)
+	if err != nil {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return "", true, nil
+	}
+	return string(resultBytes), false, nil
 }
 
 type charLengthFunctionClass struct {
@@ -2918,14 +2899,21 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, err
 	}
 
-	ord, err := chooseOrdFunc(b.args[0].GetType().Charset)
+	charSet := b.args[0].GetType().Charset
+	ord, err := chooseOrdFunc(charSet)
 	if err != nil {
 		return 0, false, err
 	}
-	return ord(str), false, nil
+
+	enc := charset.NewEncoding(charSet)
+	leftMost, err := enc.EncodeFirstChar(nil, hack.Slice(str))
+	if err != nil {
+		return 0, false, err
+	}
+	return ord(leftMost), false, nil
 }
 
-func chooseOrdFunc(charSet string) (func(string) int64, error) {
+func chooseOrdFunc(charSet string) (func([]byte) int64, error) {
 	// use utf8 by default
 	if charSet == "" {
 		charSet = charset.CharsetUTF8
@@ -2937,22 +2925,17 @@ func chooseOrdFunc(charSet string) (func(string) int64, error) {
 	if desc.Maxlen == 1 {
 		return ordSingleByte, nil
 	}
-	return ordUtf8, nil
+	return ordOthers, nil
 }
 
-func ordSingleByte(str string) int64 {
-	if len(str) == 0 {
+func ordSingleByte(src []byte) int64 {
+	if len(src) == 0 {
 		return 0
 	}
-	return int64(str[0])
+	return int64(src[0])
 }
 
-func ordUtf8(str string) int64 {
-	if len(str) == 0 {
-		return 0
-	}
-	_, size := utf8.DecodeRuneInString(str)
-	leftMost := str[:size]
+func ordOthers(leftMost []byte) int64 {
 	var result int64
 	var factor int64 = 1
 	for i := len(leftMost) - 1; i >= 0; i-- {
@@ -3631,12 +3614,6 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
-	}
-	argTp := b.args[0].GetType()
-	if !types.IsBinaryStr(argTp) {
-		if encodedStr, err := charset.NewEncoding(argTp.Charset).EncodeString(str); err == nil {
-			str = encodedStr
-		}
 	}
 	needEncodeLen := base64NeededEncodedLength(len(str))
 	if needEncodeLen == -1 {

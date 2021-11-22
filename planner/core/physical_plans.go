@@ -579,13 +579,13 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 		for _, baseCol := range baseCols {
 			if !schema.Contains(baseCol) {
 				schema.Columns = append(schema.Columns, baseCol)
-				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID))
+				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID)) // nozero
 			}
 		}
 	}
 	if extraColumn != nil {
 		schema.Columns = append(schema.Columns, extraColumn)
-		copyColumn = append(copyColumn, extraColumnModel)
+		copyColumn = append(copyColumn, extraColumnModel) // nozero
 	}
 	return copyColumn
 }
@@ -1179,6 +1179,8 @@ type PhysicalUnionScan struct {
 	Conditions []expression.Expression
 
 	HandleCols HandleCols
+
+	CacheTable kv.MemBuffer
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
