@@ -1164,19 +1164,19 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			}
 			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
 			sctx := w.idxLookup.ctx.GetSessionVars().StmtCtx
-			for i, val := range vals {
+			for i := range vals {
 				col := w.idxTblCols[i]
 				tp := &col.FieldType
 				idxVal := idxRow.GetDatum(i, tp)
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				cmpRes, err := idxVal.CompareDatum(sctx, &val)
+				cmpRes, err := idxVal.CompareDatum(sctx, &vals[i])
 				if err != nil {
 					return ErrDataInConsistentMisMatchIndex.GenWithStackByArgs(col.Name,
-						handle, idxRow.GetDatum(i, tp), val, err)
+						handle, idxRow.GetDatum(i, tp), vals[i], err)
 				}
 				if cmpRes != 0 {
 					return ErrDataInConsistentMisMatchIndex.GenWithStackByArgs(col.Name,
-						handle, idxRow.GetDatum(i, tp), val, err)
+						handle, idxRow.GetDatum(i, tp), vals[i], err)
 				}
 			}
 		}
