@@ -1054,10 +1054,10 @@ func partitionRangeColumnForInExpr(sctx sessionctx.Context, args []expression.Ex
 		if !ok {
 			return pruner.fullRange()
 		}
-		result = result.intersectionRange(start, end)
+		result = append(result, partitionRange{start, end})
 	}
 
-	return result
+	return result.simplify()
 }
 
 func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expression,
