@@ -77,11 +77,6 @@ func NewEncoding(label string) *Encoding {
 	return UTF8Encoding
 }
 
-// UpdateEncoding updates to a new Encoding.
-func UpdateEncoding(label string) *Encoding {
-	return NewEncoding(label)
-}
-
 // Encode convert bytes from utf-8 charset to a specific charset.
 func (e *Encoding) Encode(dest, src []byte) ([]byte, error) {
 	if !e.enabled() {

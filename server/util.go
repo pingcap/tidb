@@ -326,7 +326,7 @@ func (d *resultEncoder) updateDataEncoding(chsID uint16) {
 	if err != nil {
 		logutil.BgLogger().Warn("unknown charset ID", zap.Error(err))
 	}
-	d.dataEncoding = charset.UpdateEncoding(chs)
+	d.dataEncoding = charset.NewEncoding(chs)
 }
 
 func (d *resultEncoder) columnTypeInfoCharsetID(info *ColumnInfo) uint16 {
