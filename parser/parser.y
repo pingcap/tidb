@@ -6846,7 +6846,7 @@ SimpleExpr:
 	}
 |	"DEFAULT" '(' SimpleIdent ')'
 	{
-		$$ = &ast.DefaultExpr{Name: $3.(*ast.ColumnNameExpr).Name NameIsGiven: true}
+		$$ = &ast.DefaultExpr{Name: $3.(*ast.ColumnNameExpr).Name, NameIsGiven: true}
 	}
 |	"VALUES" '(' SimpleIdent ')' %prec lowerThanInsertValues
 	{
