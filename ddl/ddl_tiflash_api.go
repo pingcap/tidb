@@ -422,7 +422,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 
 	// TODO maybe we should move into `updateVersionAndTableInfo`, since it can fail, and we shall rollback
 	tblInfo := tb.Meta()
-	if !skipSetPd {
+	if EnablePollLoop && !skipSetPd {
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			// TODO Can we make it as a batch request?
 			for _, p := range pi.Definitions {
