@@ -4237,9 +4237,6 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 // Index has a max-prefix-length constraint. eg: a varchar(100), index idx(a), modifying column a to a varchar(4000)
 // will cause index idx to break the max-prefix-length constraint.
 //
-// For clustered index:
-//  Change column in pk need recheck all non-unique index, new pk len + index len < maxIndexLength.
-//  Change column in secondary only need related index, pk len + new index len < maxIndexLength.
 func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol *model.ColumnInfo) error {
 	columns := make([]*model.ColumnInfo, 0, len(tbInfo.Columns))
 	columns = append(columns, tbInfo.Columns...)
@@ -4255,7 +4252,8 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 
 	pkIndex := tables.FindPrimaryIndex(tbInfo)
 
-	checkOneIndex := func(indexInfo *model.IndexInfo) (modified bool, err error) {
+	checkOneIndex := func(indexInfo *model.IndexInfo) (err error) {
+		var modified bool
 		for _, col := range indexInfo.Columns {
 			if col.Name.L == originalCol.Name.L {
 				modified = true
@@ -4273,11 +4271,11 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		return
 	}
 
-	// Check primary key first and get "does primary key's column has be modified?" info.
+	// Check primary key first.
 	var err error
 
 	if pkIndex != nil {
-		_, err = checkOneIndex(pkIndex)
+		err = checkOneIndex(pkIndex)
 		if err != nil {
 			return err
 		}
@@ -4290,7 +4288,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		}
 		// the second param should always be set to true, check index length only if it was modified
 		// checkOneIndex needs one param only.
-		_, err = checkOneIndex(indexInfo)
+		err = checkOneIndex(indexInfo)
 		if err != nil {
 			return err
 		}
