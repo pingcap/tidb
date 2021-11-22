@@ -1754,6 +1754,26 @@ func (s *testSuite13) TestIssue26762(c *C) {
 	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
 }
 
+func (s *testSuite10) TestStringtoDecimal(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id decimal(10))")
+	tk.MustGetErrCode("insert into t values('1sdf')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1edf')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('12Ea')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1E')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1e')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1.2A')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1.2.3.4.5')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1.2.')", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("insert into t values('1,999.00')", errno.ErrTruncatedWrongValueForField)
+	tk.MustExec("insert into t values('12e-3')")
+	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '0.012'"))
+	tk.MustQuery("select id from t").Check(testkit.Rows("0"))
+	tk.MustExec("drop table if exists t")
+}
+
 func (s *testSuite13) TestIssue17745(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -1769,5 +1789,4 @@ func (s *testSuite13) TestIssue17745(c *C) {
 	tk.MustGetErrCode("insert into tt1 values(4556414e723532)", errno.ErrIllegalValueForType)
 	tk.MustQuery("select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888").Check(testkit.Rows("99999999999999999999999999999999999999999999999999999999999999999"))
 	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'"))
-
 }
