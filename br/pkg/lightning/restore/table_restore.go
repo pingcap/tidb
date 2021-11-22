@@ -902,9 +902,9 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 			rowIDIdx = i
 		}
 	}
-	if common.TableHasAutoRowID(tableInfo) {
-		colPerm = append(colPerm, rowIDIdx)
-	}
+	// FIXME: the schema info for tidb backend is not complete, so always add the _tidb_rowid field.
+	// Other logic should ignore this extra field if not needed.
+	colPerm = append(colPerm, rowIDIdx)
 
 	return colPerm, nil
 }
