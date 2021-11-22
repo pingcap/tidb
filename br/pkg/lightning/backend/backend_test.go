@@ -48,9 +48,9 @@ func (s *backendSuite) tearDownTest() {
 }
 
 func TestOpenCloseImportCleanUpEngine(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
-	setUpTest(t)
 	ctx := context.Background()
 	engineUUID := uuid.MustParse("902efee3-a3f9-53d4-8c82-f12fb1900cd1")
 
@@ -81,6 +81,7 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 }
 
 func TestUnsafeCloseEngine(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
@@ -102,6 +103,7 @@ func TestUnsafeCloseEngine(t *testing.T) {
 }
 
 func TestUnsafeCloseEngineWithUUID(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
@@ -123,6 +125,7 @@ func TestUnsafeCloseEngineWithUUID(t *testing.T) {
 }
 
 func TestWriteEngine(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
@@ -161,6 +164,7 @@ func TestWriteEngine(t *testing.T) {
 }
 
 func TestWriteToEngineWithNothing(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
@@ -184,6 +188,7 @@ func TestWriteToEngineWithNothing(t *testing.T) {
 }
 
 func TestOpenEngineFailed(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
@@ -197,6 +202,7 @@ func TestOpenEngineFailed(t *testing.T) {
 }
 
 func TestWriteEngineFailed(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
@@ -224,6 +230,7 @@ func TestWriteEngineFailed(t *testing.T) {
 }
 
 func TestWriteBatchSendFailedWithRetry(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
@@ -251,6 +258,7 @@ func TestWriteBatchSendFailedWithRetry(t *testing.T) {
 }
 
 func TestImportFailedNoRetry(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
@@ -269,6 +277,7 @@ func TestImportFailedNoRetry(t *testing.T) {
 }
 
 func TestImportFailedWithRetry(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
@@ -289,6 +298,7 @@ func TestImportFailedWithRetry(t *testing.T) {
 }
 
 func TestImportFailedRecovered(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
@@ -311,6 +321,7 @@ func TestImportFailedRecovered(t *testing.T) {
 
 //nolint:interfacer // change test case signature causes check panicking.
 func TestClose(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
@@ -320,6 +331,7 @@ func TestClose(t *testing.T) {
 }
 
 func TestMakeEmptyRows(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
@@ -329,6 +341,7 @@ func TestMakeEmptyRows(t *testing.T) {
 }
 
 func TestNewEncoder(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
@@ -342,6 +355,7 @@ func TestNewEncoder(t *testing.T) {
 }
 
 func TestCheckDiskQuota(t *testing.T) {
+	t.Parallel()
 	s := setUpTest(t)
 	defer s.tearDownTest()
 
