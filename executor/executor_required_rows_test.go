@@ -23,10 +23,10 @@ import (
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -39,6 +39,15 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/tikv/client-go/v2/oracle"
 )
+
+var _ = SerialSuites(&testExecSuite{})
+var _ = SerialSuites(&testExecSerialSuite{})
+
+type testExecSuite struct {
+}
+
+type testExecSerialSuite struct {
+}
 
 type requiredRowsDataSource struct {
 	baseExecutor

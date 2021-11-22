@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/pingcap/parser/tidb"
+	"github.com/pingcap/tidb/parser/tidb"
 )
 
 // SpecialCommentVersionPrefix is the prefix of TiDB executable comments.

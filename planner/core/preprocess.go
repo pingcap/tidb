@@ -21,12 +21,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -34,6 +28,12 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -299,6 +299,21 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		for _, cte := range node.CTEs {
 			p.withName[cte.Name.L] = struct{}{}
 		}
+	case *ast.BeginStmt:
+		// If the begin statement was like following:
+		// start transaction read only as of timestamp ....
+		// then we need set StmtCtx.IsStaleness as true in order to avoid take tso in PrepareTSFuture.
+		if node.AsOf != nil {
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+			p.IsStaleness = true
+		} else if p.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS() > 0 {
+			// If the begin statement was like following:
+			// set transaction read only as of timestamp ...
+			// begin
+			// then we need set StmtCtx.IsStaleness as true in order to avoid take tso in PrepareTSFuture.
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+			p.IsStaleness = true
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -438,6 +453,10 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 			p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
 			return
 		}
+		tableInfo := tbl.Meta()
+		dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
+		tn.TableInfo = tableInfo
+		tn.DBInfo = dbInfo
 	}
 
 	originSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()))
@@ -734,8 +753,23 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 	if stmt.TemporaryKeyword != ast.TemporaryNone {
 		for _, opt := range stmt.Options {
-			if opt.Tp == ast.TableOptionShardRowID {
+			switch opt.Tp {
+			case ast.TableOptionShardRowID:
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+				return
+			case ast.TableOptionPlacementPrimaryRegion,
+				ast.TableOptionPlacementRegions,
+				ast.TableOptionPlacementFollowerCount,
+				ast.TableOptionPlacementVoterCount,
+				ast.TableOptionPlacementLearnerCount,
+				ast.TableOptionPlacementSchedule,
+				ast.TableOptionPlacementConstraints,
+				ast.TableOptionPlacementLeaderConstraints,
+				ast.TableOptionPlacementLearnerConstraints,
+				ast.TableOptionPlacementFollowerConstraints,
+				ast.TableOptionPlacementVoterConstraints,
+				ast.TableOptionPlacementPolicy:
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("PLACEMENT")
 				return
 			}
 		}
@@ -1154,6 +1188,9 @@ func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 	if tableMetaInfo.ShardRowIDBits != 0 {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 	}
+	if tableMetaInfo.DirectPlacementOpts != nil || tableMetaInfo.PlacementPolicyRef != nil {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("placement")
+	}
 
 	return nil
 }
@@ -1388,7 +1425,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	tableInfo := table.Meta()
-	dbInfo, _ := p.ensureInfoSchema().SchemaByName(tn.Schema)
+	dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {
@@ -1513,6 +1550,17 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 
 // handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
 func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
+	if p.stmtTp != TypeSelect {
+		return
+	}
+	defer func() {
+		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
+		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
+		// in stmtCtx
+		if p.flag&inPrepare == 0 && p.IsStaleness {
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+		}
+	}()
 	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
 	// otherwise we should directly set the return param from TxnCtx.
 	p.ReadReplicaScope = kv.GlobalReplicaScope
@@ -1579,6 +1627,10 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.IsStaleness = true
 		}
 	case readTS == 0 && node == nil && readStaleness != 0:
+		// If both readTS and node is empty while the readStaleness isn't, it means we meet following situation:
+		// set @@tidb_read_staleness='-5';
+		// select * from t;
+		// Then the following select statement should be affected by the tidb_read_staleness in session.
 		ts, p.err = calculateTsWithReadStaleness(p.ctx, readStaleness)
 		if p.err != nil {
 			return
@@ -1595,6 +1647,8 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.IsStaleness = true
 		}
 	}
+
+	// If the select statement is related to multi tables, we should grantee that all tables use the same timestamp
 	if p.LastSnapshotTS != ts {
 		p.err = ErrAsOf.GenWithStack("can not set different time in the as of")
 		return
@@ -1612,9 +1666,6 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			return
 		}
 		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
-	}
-	if p.flag&inPrepare == 0 {
-		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
 	}
 	p.initedLastSnapshotTS = true
 }

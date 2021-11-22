@@ -21,14 +21,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -43,7 +43,7 @@ import (
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
-	if err := b.validCanReadTemporaryTable(p.TblInfo); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(p.TblInfo); err != nil {
 		b.err = err
 		return nil
 	}
@@ -57,6 +57,10 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		baseExecutor:     newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
+	}
+
+	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		e.cacheTable = b.getCacheTable(p.TblInfo, startTS)
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
@@ -96,7 +100,8 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats *runtimeStatsWithSnapshot
+	stats      *runtimeStatsWithSnapshot
+	cacheTable kv.MemBuffer
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -149,6 +154,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
 		e.snapshot = e.ctx.GetSnapshotWithTS(snapshotTS)
+	}
+	if e.cacheTable != nil {
+		e.snapshot = cacheTableSnapshot{e.snapshot, e.cacheTable}
 	}
 	if err := e.verifyTxnScope(); err != nil {
 		return err

@@ -31,10 +31,10 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -91,7 +91,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
-	derivedCharset, derivedCollate, coer, err := deriveCollation(ctx, funcName, args, retType, retType)
+	ec, err := deriveCollation(ctx, funcName, args, retType, retType)
 	if err != nil {
 		return baseBuiltinFunc{}, err
 	}
@@ -105,9 +105,10 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 		ctx:  ctx,
 		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
-	bf.SetCharsetAndCollation(derivedCharset, derivedCollate)
-	bf.setCollator(collate.GetCollator(derivedCollate))
-	bf.SetCoercibility(coer)
+	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
+	bf.setCollator(collate.GetCollator(ec.Collation))
+	bf.SetCoercibility(ec.Coer)
+	bf.SetRepertoire(ec.Repe)
 	return bf, nil
 }
 
@@ -124,7 +125,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 
 	// derive collation information for string function, and we must do it
 	// before doing implicit cast.
-	derivedCharset, derivedCollate, coer, err := deriveCollation(ctx, funcName, args, retType, argTps...)
+	ec, err := deriveCollation(ctx, funcName, args, retType, argTps...)
 	if err != nil {
 		return
 	}
@@ -139,6 +140,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 			args[i] = WrapWithCastAsDecimal(ctx, args[i])
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
+			args[i] = WrapWithToBinary(ctx, args[i], funcName)
 		case types.ETDatetime:
 			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
 		case types.ETTimestamp:
@@ -177,8 +179,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		fieldType = &types.FieldType{
 			Tp:      mysql.TypeVarString,
 			Decimal: types.UnspecifiedLength,
-			Charset: derivedCharset,
-			Collate: derivedCollate,
+			Charset: ec.Charset,
+			Collate: ec.Collation,
 			Flen:    types.UnspecifiedLength,
 		}
 	case types.ETDatetime:
@@ -227,9 +229,10 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		ctx:  ctx,
 		tp:   fieldType,
 	}
-	bf.SetCharsetAndCollation(derivedCharset, derivedCollate)
-	bf.setCollator(collate.GetCollator(derivedCollate))
-	bf.SetCoercibility(coer)
+	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
+	bf.setCollator(collate.GetCollator(ec.Collation))
+	bf.SetCoercibility(ec.Coer)
+	bf.SetRepertoire(ec.Repe)
 	return bf, nil
 }
 
@@ -877,6 +880,9 @@ var funcs = map[string]functionClass{
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
 	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
 	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
+
+	// TiDB implicit internal functions.
+	InternalFuncToBinary: &tidbConvertCharsetFunctionClass{baseFunctionClass{InternalFuncToBinary, 1, 1}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.
@@ -900,11 +906,17 @@ func GetDisplayName(name string) string {
 func GetBuiltinList() []string {
 	res := make([]string, 0, len(funcs))
 	notImplementedFunctions := []string{ast.RowFunc, ast.IsTruthWithNull}
+	implicitFunctions := []string{InternalFuncToBinary}
 	for funcName := range funcs {
 		skipFunc := false
 		// Skip not implemented functions
 		for _, notImplFunc := range notImplementedFunctions {
 			if funcName == notImplFunc {
+				skipFunc = true
+			}
+		}
+		for _, implicitFunc := range implicitFunctions {
+			if funcName == implicitFunc {
 				skipFunc = true
 			}
 		}

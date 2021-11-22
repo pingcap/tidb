@@ -16,14 +16,16 @@ package executor
 
 import (
 	"context"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -107,6 +110,9 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
+		if variable.IsRemovedSysVar(name) {
+			return nil // removed vars permit parse-but-ignore
+		}
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	if v.IsGlobal {
@@ -115,6 +121,11 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			return err
 		}
 		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, valStr)
+		if err != nil {
+			return err
+		}
+		// Some PD client dynamic options need to be checked first and set here.
+		err = e.checkPDClientDynamicOption(name, sessionVars)
 		if err != nil {
 			return err
 		}
@@ -182,7 +193,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		}
 	}
 
-	err = e.loadSnapshotInfoSchemaIfNeeded(newSnapshotTS)
+	err = e.loadSnapshotInfoSchemaIfNeeded(name, newSnapshotTS)
 	if err != nil {
 		fallbackOldSnapshotTS()
 		return err
@@ -190,6 +201,45 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	// Clients are often noisy in setting session variables such as
 	// autocommit, timezone, query cache
 	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+	return nil
+}
+
+func (e *SetExecutor) checkPDClientDynamicOption(name string, sessionVars *variable.SessionVars) error {
+	if name != variable.TiDBTSOClientBatchMaxWaitTime &&
+		name != variable.TiDBEnableTSOFollowerProxy {
+		return nil
+	}
+	var (
+		err    error
+		valStr string
+	)
+	valStr, err = sessionVars.GlobalVarsAccessor.GetGlobalSysVar(name)
+	if err != nil {
+		return err
+	}
+	switch name {
+	case variable.TiDBTSOClientBatchMaxWaitTime:
+		var val float64
+		val, err = strconv.ParseFloat(valStr, 64)
+		if err != nil {
+			return err
+		}
+		err = domain.GetDomain(e.ctx).SetPDClientDynamicOption(
+			pd.MaxTSOBatchWaitInterval,
+			time.Duration(float64(time.Millisecond)*val),
+		)
+		if err != nil {
+			return err
+		}
+		logutil.BgLogger().Info("set pd client dynamic option", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+	case variable.TiDBEnableTSOFollowerProxy:
+		val := variable.TiDBOptOn(valStr)
+		err = domain.GetDomain(e.ctx).SetPDClientDynamicOption(pd.EnableTSOFollowerProxy, val)
+		if err != nil {
+			return err
+		}
+		logutil.BgLogger().Info("set pd client dynamic option", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+	}
 	return nil
 }
 
@@ -255,7 +305,10 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 	return nativeVal.ToString()
 }
 
-func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(snapshotTS uint64) error {
+func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uint64) error {
+	if name != variable.TiDBSnapshot && name != variable.TiDBTxnReadTS {
+		return nil
+	}
 	vars := e.ctx.GetSessionVars()
 	if snapshotTS == 0 {
 		vars.SnapshotInfoschema = nil

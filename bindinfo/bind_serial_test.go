@@ -19,13 +19,13 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -234,7 +234,7 @@ func TestErrorBind(t *testing.T) {
 
 	rs, err := tk.Exec("show global bindings")
 	require.NoError(t, err)
-	chk := rs.NewChunk()
+	chk := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), chk)
 	require.NoError(t, err)
 	require.Equal(t, 0, chk.NumRows())
@@ -555,7 +555,7 @@ func TestHintsSetID(t *testing.T) {
 
 	utilCleanBindingEnv(tk, dom)
 	err := tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
-	require.True(t, terror.ErrorEqual(err, parser.ErrWarnOptimizerHintParseError))
+	require.True(t, terror.ErrorEqual(err, parser.ErrParse))
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
 	bindData = bindHandle.GetBindRecord(hash, sql, "test")
 	require.NotNil(t, bindData)
@@ -884,16 +884,15 @@ func TestBindingWithoutCharset(t *testing.T) {
 }
 
 func TestGCBindRecord(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
 	// set lease for gc tests
 	originLease := bindinfo.Lease
 	bindinfo.Lease = 0
-
 	defer func() {
 		bindinfo.Lease = originLease
 	}()
+
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

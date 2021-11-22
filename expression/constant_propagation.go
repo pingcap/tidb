@@ -15,9 +15,9 @@
 package expression
 
 import (
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -152,7 +152,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 	}
 	for idx, expr := range sf.GetArgs() {
 		if src.Equal(nil, expr) {
-			_, coll := cond.CharsetAndCollation(ctx)
+			_, coll := cond.CharsetAndCollation()
 			if tgt.GetType().Collate != coll {
 				continue
 			}
@@ -349,6 +349,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.conditions)
+	s.conditions = RemoveDupExprs(s.ctx, s.conditions)
 	return s.conditions
 }
 

@@ -23,10 +23,10 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -331,7 +331,7 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`create table t1(a char(10) charset utf8);`)
 	tk.MustExec(`insert into t1 values('我');`)
 	tk.MustExec(`alter table t1 add column b char(10) charset ascii as ((a));`)
-	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`我 `))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("我 ?"))
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a year);`)
@@ -1460,10 +1460,10 @@ func (s *testSuite10) TestInsertRuntimeStat(c *C) {
 		Prefetch:             1 * time.Second,
 	}
 	stats.BasicRuntimeStats.Record(5*time.Second, 1)
-	c.Assert(stats.String(), Equals, "prepare:3s, check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}")
+	c.Assert(stats.String(), Equals, "prepare: 3s, check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}")
 	c.Assert(stats.String(), Equals, stats.Clone().String())
 	stats.Merge(stats.Clone())
-	c.Assert(stats.String(), Equals, "prepare:6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}")
+	c.Assert(stats.String(), Equals, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}")
 }
 
 func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
@@ -1630,7 +1630,6 @@ func (s *testSuite13) TestGlobalTempTableAutoInc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists temp_test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
 	defer tk.MustExec("drop table if exists temp_test")
 
@@ -1676,7 +1675,6 @@ func (s *testSuite13) TestGlobalTempTableRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists temp_test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table temp_test(id int) on commit delete rows")
 	defer tk.MustExec("drop table if exists temp_test")
 
@@ -1712,7 +1710,6 @@ func (s *testSuite13) TestGlobalTempTableParallel(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists temp_test")
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
 	defer tk.MustExec("drop table if exists temp_test")
 
@@ -1775,4 +1772,21 @@ func (s *testSuite10) TestStringtoDecimal(c *C) {
 	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '0.012'"))
 	tk.MustQuery("select id from t").Check(testkit.Rows("0"))
 	tk.MustExec("drop table if exists t")
+}
+
+func (s *testSuite13) TestIssue17745(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists tt1")
+	tk.MustExec("create table tt1 (c1 decimal(64))")
+	tk.MustGetErrCode("insert into tt1 values(89000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)", errno.ErrWarnDataOutOfRange)
+	tk.MustGetErrCode("insert into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)", errno.ErrWarnDataOutOfRange)
+	tk.MustExec("insert ignore into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)")
+	tk.MustQuery("show warnings;").Check(testkit.Rows(`Warning 1690 DECIMAL value is out of range in '(64, 0)'`, `Warning 1292 Truncated incorrect DECIMAL value: '789012345678901234567890123456789012345678901234567890123456789012345678900000000'`))
+	tk.MustQuery("select c1 from tt1").Check(testkit.Rows("9999999999999999999999999999999999999999999999999999999999999999"))
+	tk.MustGetErrCode("update tt1 set c1 = 89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000", errno.ErrWarnDataOutOfRange)
+	tk.MustExec("drop table if exists tt1")
+	tk.MustGetErrCode("insert into tt1 values(4556414e723532)", errno.ErrIllegalValueForType)
+	tk.MustQuery("select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888").Check(testkit.Rows("99999999999999999999999999999999999999999999999999999999999999999"))
+	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'"))
 }
