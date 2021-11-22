@@ -65,6 +65,10 @@ type StateRemote interface {
 	// If this operation succeed, according to the protocol, the TiKV data will not be
 	// modified until the lease expire. It's safe for the caller to load the table data,
 	// cache and use the data.
+	// The parameter `now` means the current tso. Because the tso is get from PD, in
+	// the TiDB side, its value lags behind the real one forever, this doesn't matter.
+	// Because `now` is only used to clean up the orphan lock, as long as it's smaller
+	// than the real one, the correctness of the algorithm is not violated.
 	LockForRead(ctx context.Context, tid int64, now, lease uint64) (bool, error)
 
 	// LockForWrite try to add a write lock to the table with the specified tableID
