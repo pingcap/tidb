@@ -4521,8 +4521,8 @@ TraceStmt:
 	"TRACE" TraceableStmt
 	{
 		$$ = &ast.TraceStmt{
-			Stmt:   $2,
-			Format: "row",
+			Stmt:      $2,
+			Format:    "row",
 			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
@@ -4531,8 +4531,8 @@ TraceStmt:
 |	"TRACE" "FORMAT" "=" stringLit TraceableStmt
 	{
 		$$ = &ast.TraceStmt{
-			Stmt:   $5,
-			Format: $4,
+			Stmt:      $5,
+			Format:    $4,
 			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
@@ -4541,7 +4541,7 @@ TraceStmt:
 |	"TRACE" "PLAN" TraceableStmt
 	{
 		$$ = &ast.TraceStmt{
-			Stmt:   $3,
+			Stmt:      $3,
 			TracePlan: true,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
