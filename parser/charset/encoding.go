@@ -110,6 +110,16 @@ func (e *Encoding) EncodeString(src string) (string, error) {
 	return string(bs), err
 }
 
+// EncodeFirstChar convert first code point of bytes from utf-8 charset to a specific charset.
+func (e *Encoding) EncodeFirstChar(dest, src []byte) ([]byte, error) {
+	srcNextLen := e.nextCharLenInSrc(src, false)
+	srcEnd := mathutil.Min(srcNextLen, len(src))
+	if !e.enabled() {
+		return src[:srcEnd], nil
+	}
+	return e.transform(e.enc.NewEncoder(), dest, src[:srcEnd], false)
+}
+
 // EncodeInternal convert bytes from utf-8 charset to a specific charset, we actually do not do the real convert, just find the inconvertible character and use ? replace.
 // The code below is equivalent to
 //		expr, _ := e.Encode(dest, src)

@@ -974,3 +974,17 @@ func (s *testSuite3) TestShowGrantsAfterDropRole(c *C) {
 	tk.MustExec("DROP ROLE r29473")
 	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT CREATE USER ON *.* TO 'u29473'@'%'"))
 }
+
+func (s *testSuite3) TestDropRoleAfterRevoke(c *C) {
+	// issue 29781
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+
+	tk.MustExec("create role r1, r2, r3;")
+	defer tk.MustExec("drop role if exists r1, r2, r3;")
+	tk.MustExec("grant r1,r2,r3 to current_user();")
+	tk.MustExec("set role all;")
+	tk.MustExec("revoke r1, r3 from root;")
+	tk.MustExec("drop role r1;")
+}

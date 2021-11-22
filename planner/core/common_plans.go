@@ -381,11 +381,26 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
+	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	prepared := preparedStmt.PreparedAst
+	if prepared.UseCache {
+		// disable the cache if cache table in prepared statement
+		for _, vInfo := range preparedStmt.VisitInfos {
+			tbl, err := is.TableByName(model.NewCIStr(vInfo.db), model.NewCIStr(vInfo.table))
+			// if table does not exist, skip it, maybe it is a `create table` statement
+			if err != nil {
+				continue
+			}
+			if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+				prepared.UseCache = false
+				break
+			}
+		}
+	}
 	stmtCtx.UseCache = prepared.UseCache
-	var cacheKey kvcache.Key
+
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}

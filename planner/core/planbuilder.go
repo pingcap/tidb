@@ -1159,7 +1159,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	return available, nil
 }
 
-func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath, dbName model.CIStr) ([]*util.AccessPath, error) {
+func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath, tblName model.CIStr, dbName model.CIStr) ([]*util.AccessPath, error) {
 	// TODO: filter paths with isolation read locations.
 	if dbName.L == mysql.SystemDB {
 		return paths, nil
@@ -1182,8 +1182,12 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	var err error
 	engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
 	if len(paths) == 0 {
-		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("Can not find access path matching '%v'(value: '%v'). Available values are '%v'.",
-			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr))
+		helpMsg := ""
+		if engineVals == "tiflash" {
+			helpMsg = ". Please check tiflash replica or ensure the query is readonly"
+		}
+		err = ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%v' = '%v', valid values can be '%s'%s.", tblName.String(),
+			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr, helpMsg))
 	}
 	if _, ok := isolationReadEngines[kv.TiFlash]; !ok {
 		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
@@ -3903,6 +3907,11 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			b.capFlag &= ^renameView
 			b.isCreateView = false
 		}()
+
+		if stmt := findStmtAsViewSchema(v); stmt != nil {
+			stmt.AsViewSchema = true
+		}
+
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
 			return nil, err
@@ -4397,4 +4406,19 @@ func adjustOverlongViewColname(plan LogicalPlan) {
 			outputNames[i].ColName = model.NewCIStr(fmt.Sprintf("name_exp_%d", i+1))
 		}
 	}
+}
+
+// findStmtAsViewSchema finds the first SelectStmt as the schema for the view
+func findStmtAsViewSchema(stmt ast.Node) *ast.SelectStmt {
+	switch x := stmt.(type) {
+	case *ast.CreateViewStmt:
+		return findStmtAsViewSchema(x.Select)
+	case *ast.SetOprStmt:
+		return findStmtAsViewSchema(x.SelectList)
+	case *ast.SetOprSelectList:
+		return findStmtAsViewSchema(x.Selects[0])
+	case *ast.SelectStmt:
+		return x
+	}
+	return nil
 }
