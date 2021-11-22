@@ -16,12 +16,12 @@ package ranger
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx"
 	"math"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
