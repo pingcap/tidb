@@ -847,6 +847,14 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	}
 
 	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.IsStaleness, a.ReplicaReadScope)
+	if a.Text == "select '233'" {
+		fmt.Println("yes")
+		a.Plan = plannercore.ConstructPhysicalPlan(ctx, a.InfoSchema)
+	}
+	if a.Text == "select 233" {
+		fmt.Println("yes")
+		a.Plan = plannercore.ConstructPhysicalPlanWithProjection(ctx, a.InfoSchema)
+	}
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)

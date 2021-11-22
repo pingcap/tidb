@@ -563,6 +563,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 	}
 	dbReader := e.dbReader
 	for i, ran := range e.kvRanges {
+		//fmt.Println("execute", i, ran)
 		e.curNdv = 0
 		if e.isPointGetRange(ran) {
 			val, err := dbReader.Get(ran.StartKey, e.startTS)
@@ -600,6 +601,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 			break
 		}
 	}
+	//fmt.Println("num of chunks", len(e.oldChunks))
 	err = e.processor.Finish()
 	return e.oldChunks, err
 }
