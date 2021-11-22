@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -223,11 +224,13 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaPartitionTableBlock(c *C) {
 	c.Assert(replica.LocationLabels, DeepEquals, []string{})
 
 	lessThan := "40"
-	originInterval := ddl.PollTiFlashInterval
 	// Stop loop
-	ddl.PollTiFlashInterval = 1000 * time.Second
 	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflash ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
-	time.Sleep(originInterval * 4)
+	// TODO Need failpoints to stop
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/BeforePollTiFlashReplicaStatusLoop", `return`), IsNil)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/ddl/BeforePollTiFlashReplicaStatusLoop")
+	}()
 
 	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
@@ -253,7 +256,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	tk.MustExec("create table ddltiflash(z int)")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 
-	time.Sleep(ddl.PollTiFlashInterval * 2)
+	time.Sleep(ddl.PollTiFlashInterval * 5)
 	// Should get schema right now
 	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
@@ -264,7 +267,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 	c.Assert(replica.LocationLabels, DeepEquals, []string{})
 
 	tk.MustExec("alter table ddltiflash set tiflash replica 0")
-	time.Sleep(ddl.PollTiFlashInterval * 2)
+	time.Sleep(ddl.PollTiFlashInterval * 5)
 	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
 	c.Assert(err, IsNil)
 	replica = tb.Meta().TiFlashReplica
@@ -276,7 +279,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
 	// TODO: Seems we can use some sql to do this, like in `TestTiFlashReplica`.
 	oldInterval := gcworker.GetGcSafePointCacheInterval()
-	gcworker.SetGcSafePointCacheInterval(1 * time.Second)
+	gcworker.SetGcSafePointCacheInterval(oldInterval)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
@@ -296,10 +299,10 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
 
 	ddl.PullTiFlashPdTick = 1
 	// Wait GC
-	time.Sleep(ddl.PollTiFlashInterval * 5)
-	gcworker.SetGcSafePointCacheInterval(oldInterval)
-	res = s.CheckPlacementRule(*expectRule)
-	c.Assert(res, Equals, false)
+	//time.Sleep(ddl.PollTiFlashInterval * 5)
+	//gcworker.SetGcSafePointCacheInterval(oldInterval)
+	//res = s.CheckPlacementRule(*expectRule)
+	//c.Assert(res, Equals, false)
 }
 
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
@@ -316,6 +319,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
 	c.Assert(tb.Meta().TiFlashReplica, IsNil)
+	s.pdEnabled = true
 }
 
 type mockTiFlashTableInfo struct {
@@ -429,7 +433,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 	router.HandleFunc("/pd/api/v1/config/rule", func(w http.ResponseWriter, req *http.Request) {
 		// Set placement rule
 		if !s.pdEnabled {
-			fmt.Printf("and quit\n")
+			fmt.Printf("pd server is manually disabled, just quit\n")
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}

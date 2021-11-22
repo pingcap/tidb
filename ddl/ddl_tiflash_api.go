@@ -277,7 +277,7 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 
 	for _, store := range tiflashStores {
 		err := d.UpdateTiFlashHTTPAddress(&store)
-		log.Error("set TiFlash status address failed", zap.Error(err))
+		log.Error("update TiFlash status address failed", zap.Error(err))
 	}
 
 	// main body of table_update
@@ -501,7 +501,6 @@ func getDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint ui
 }
 
 func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infoschema.InfoSchema, tikvHelper *helper.Helper, replicaInfos *[]PollTiFlashReplicaStatusContext) error {
-	//store := domain.GetDomain(s).Store()
 	store := tikvHelper.Store.(kv.Storage)
 
 	txn, err := store.Begin()

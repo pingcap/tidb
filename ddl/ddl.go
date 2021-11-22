@@ -240,9 +240,7 @@ func (dc *ddlCtx) isOwner() bool {
 
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
 func EnableTiFlashPoll(d interface{}) {
-	fmt.Println("!!!! HAHA")
 	if dd, ok := d.(*ddl); ok {
-		fmt.Println("!!!! HOHO")
 		dd.enableTiFlashPoll = true
 	}
 }
@@ -254,13 +252,7 @@ func DisableTiFlashPoll(d interface{}) {
 	}
 }
 
-func IsTiFlashPollEnabled(d interface{}) bool {
-	if dd, ok := d.(*ddl); ok {
-		return dd.enableTiFlashPoll
-	}
-	return true
-}
-
+// IsTiFlashPollEnabled reveals enableTiFlashPoll
 func (d *ddl) IsTiFlashPollEnabled() bool {
 	return d.enableTiFlashPoll
 }
@@ -436,6 +428,9 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				log.Error("failed to get sessionPool for PollTiFlashReplicaStatus")
 				return
 			}
+			failpoint.Inject("BeforePollTiFlashReplicaStatusLoop", func() {
+				failpoint.Continue()
+			})
 			sctx, err := d.sessPool.get()
 			if err == nil {
 				if d.IsTiFlashPollEnabled() {
@@ -446,11 +441,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 						}
 					}
 				}
+				d.sessPool.put(sctx)
 			} else {
 				log.Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))
 			}
 
-			d.sessPool.put(sctx)
 			select {
 			case <-d.ctx.Done():
 				return
