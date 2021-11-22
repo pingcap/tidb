@@ -202,6 +202,7 @@ const (
 func SetGcSafePointCacheInterval(interval time.Duration) {
 	gcSafePointCacheInterval = interval
 }
+
 // GetGcSafePointCacheInterval returns gc interval.
 func GetGcSafePointCacheInterval() time.Duration {
 	return gcSafePointCacheInterval
