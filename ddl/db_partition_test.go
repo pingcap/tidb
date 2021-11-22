@@ -2021,9 +2021,9 @@ func (s *testIntegrationSuite7) TestTruncatePartitionMultipleTimes(c *C) {
 		partition p1 values less than (maxvalue));`)
 	dom := domain.GetDomain(tk.Se)
 	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
+	defer dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
-	dom.DDL().SetHook(hook)
+	dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	injected := false
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionTruncateTablePartition && job.SnapshotVer == 0 && !injected {
