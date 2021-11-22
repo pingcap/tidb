@@ -563,7 +563,6 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
 			zap.String("endHandle", tryDecodeToHandleString(endHandleKey)),
 			zap.String("startHandle", tryDecodeToHandleString(startHandleKey)))
-		fmt.Println("HI")
 		endHandleKey = startHandleKey
 	}
 	return
