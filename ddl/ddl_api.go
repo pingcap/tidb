@@ -3270,7 +3270,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
-	if meta.TiFlashReplica != nil {
+	if EnablePollLoop && meta.TiFlashReplica != nil {
 		tikvStore, ok := ctx.GetStore().(helper.Storage)
 		if !ok {
 			log.Error("can not get Helper")
