@@ -292,6 +292,9 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETInt:
+		if bf.tp.Flen == types.UnspecifiedLength {
+			bf.tp.Flen = args[0].GetType().Flen
+		}
 		sig = &builtinCastIntAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsString)
 	case types.ETReal:
@@ -1836,9 +1839,6 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 	case types.ETJson:
 		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETString:
-		if tp.Flen == types.UnspecifiedLength && expr.GetType().Tp != mysql.TypeFloat && expr.GetType().Tp != mysql.TypeDouble {
-			tp.Flen = expr.GetType().Flen
-		}
 		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
