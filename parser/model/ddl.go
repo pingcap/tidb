@@ -152,8 +152,8 @@ var actionMap = map[ActionType]string{
 	ActionDropPlacementPolicy:           "drop placement policy",
 	ActionModifySchemaDefaultPlacement:  "modify schema default placement",
 	ActionAlterTablePlacement:           "alter table placement",
-	ActionAlterCacheTable:               "alter cache table",
-	ActionAlterNoCacheTable:             "alter no cache table",
+	ActionAlterCacheTable:               "alter table cache",
+	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
