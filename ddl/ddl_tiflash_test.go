@@ -277,7 +277,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
 	// TODO: Seems we can use some sql to do this, like in `TestTiFlashReplica`.
 	oldInterval := gcworker.GetGcSafePointCacheInterval()
-	gcworker.SetGcSafePointCacheInterval(oldInterval)
+	gcworker.SetGcSafePointCacheInterval(1 * time.Second)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
@@ -298,6 +298,7 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
 	ddl.PullTiFlashPdTick = 1
 	// Wait GC
 	time.Sleep(ddl.PollTiFlashInterval * 5)
+	gcworker.SetGcSafePointCacheInterval(oldInterval)
 	res = s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, false)
 }
