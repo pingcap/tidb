@@ -40,6 +40,7 @@ import (
 )
 
 func TestSingleSessionInsert(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("set @@tidb_analyze_version = 1")
@@ -166,6 +167,7 @@ func TestSingleSessionInsert(t *testing.T) {
 }
 
 func TestRollback(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -190,6 +192,7 @@ func TestRollback(t *testing.T) {
 }
 
 func TestMultiSession(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -247,6 +250,7 @@ func TestMultiSession(t *testing.T) {
 }
 
 func TestTxnWithFailure(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -294,6 +298,7 @@ func TestTxnWithFailure(t *testing.T) {
 }
 
 func TestUpdatePartition(t *testing.T) {
+	t.Parallel()
 	testKit, do, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows(string(do.StatsHandle().CurrentPruneMode())))
@@ -348,6 +353,7 @@ func TestUpdatePartition(t *testing.T) {
 }
 
 func TestAutoUpdate(t *testing.T) {
+	t.Parallel()
 	testKit, do, clean := createTestKitAndDom(t)
 	defer clean()
 	testkit.WithPruneMode(testKit, variable.Static, func() {
@@ -448,6 +454,7 @@ func TestAutoUpdate(t *testing.T) {
 }
 
 func TestAutoUpdatePartition(t *testing.T) {
+	t.Parallel()
 	testKit, do, clean := createTestKitAndDom(t)
 	defer clean()
 	testkit.WithPruneMode(testKit, variable.Static, func() {
@@ -486,6 +493,7 @@ func TestAutoUpdatePartition(t *testing.T) {
 }
 
 func TestTableAnalyzed(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -520,6 +528,7 @@ func TestTableAnalyzed(t *testing.T) {
 }
 
 func TestUpdateErrorRate(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	h := dom.StatsHandle()
@@ -597,6 +606,7 @@ func TestUpdateErrorRate(t *testing.T) {
 }
 
 func TestUpdatePartitionErrorRate(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	h := dom.StatsHandle()
@@ -662,6 +672,7 @@ func appendBucket(h *statistics.Histogram, l, r int64) {
 }
 
 func TestSplitRange(t *testing.T) {
+	t.Parallel()
 	h := statistics.NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
 	appendBucket(h, 1, 1)
 	appendBucket(h, 2, 5)
@@ -716,6 +727,7 @@ func TestSplitRange(t *testing.T) {
 }
 
 func TestQueryFeedback(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("set @@tidb_analyze_version = 1")
@@ -835,6 +847,7 @@ func TestQueryFeedback(t *testing.T) {
 }
 
 func TestQueryFeedbackForPartition(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("set @@tidb_analyze_version = 1")
@@ -923,6 +936,7 @@ func TestQueryFeedbackForPartition(t *testing.T) {
 }
 
 func TestUpdateSystemTable(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -938,6 +952,7 @@ func TestUpdateSystemTable(t *testing.T) {
 }
 
 func TestOutOfOrderUpdate(t *testing.T) {
+	t.Parallel()
 	testKit, do, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -969,6 +984,7 @@ func TestOutOfOrderUpdate(t *testing.T) {
 }
 
 func TestUpdateStatsByLocalFeedback(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("set @@tidb_analyze_version = 1")
@@ -1032,6 +1048,7 @@ func TestUpdateStatsByLocalFeedback(t *testing.T) {
 }
 
 func TestUpdatePartitionStatsByLocalFeedback(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -1075,6 +1092,7 @@ func TestUpdatePartitionStatsByLocalFeedback(t *testing.T) {
 }
 
 func TestFeedbackWithStatsVer2(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	testKit.MustExec("use test")
@@ -1176,6 +1194,7 @@ func TestFeedbackWithStatsVer2(t *testing.T) {
 }
 
 func TestLogDetailedInfo(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 
@@ -1239,6 +1258,7 @@ func TestLogDetailedInfo(t *testing.T) {
 }
 
 func TestNeedAnalyzeTable(t *testing.T) {
+	t.Parallel()
 	columns := map[int64]*statistics.Column{}
 	columns[1] = &statistics.Column{Count: 1}
 	tests := []struct {
@@ -1457,6 +1477,7 @@ func TestIndexQueryFeedback(t *testing.T) {
 }
 
 func TestIndexQueryFeedback4TopN(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 
@@ -1506,6 +1527,7 @@ func TestIndexQueryFeedback4TopN(t *testing.T) {
 }
 
 func TestAbnormalIndexFeedback(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 
@@ -1580,6 +1602,7 @@ func TestAbnormalIndexFeedback(t *testing.T) {
 }
 
 func TestFeedbackRanges(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	h := dom.StatsHandle()
@@ -1657,6 +1680,7 @@ func TestFeedbackRanges(t *testing.T) {
 }
 
 func TestUnsignedFeedbackRanges(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	h := dom.StatsHandle()
@@ -1750,6 +1774,7 @@ func TestUnsignedFeedbackRanges(t *testing.T) {
 }
 
 func TestLoadHistCorrelation(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 	h := dom.StatsHandle()
@@ -1773,6 +1798,7 @@ func TestLoadHistCorrelation(t *testing.T) {
 }
 
 func TestDeleteUpdateFeedback(t *testing.T) {
+	t.Parallel()
 	testKit, dom, clean := createTestKitAndDom(t)
 	defer clean()
 
@@ -1826,6 +1852,7 @@ func subtraction(newMetric *dto.Metric, oldMetric *dto.Metric) int {
 }
 
 func TestDisableFeedback(t *testing.T) {
+	t.Parallel()
 	testKit, _, clean := createTestKitAndDom(t)
 	defer clean()
 
@@ -1852,6 +1879,7 @@ func TestDisableFeedback(t *testing.T) {
 }
 
 func TestFeedbackCounter(t *testing.T) {
+	t.Parallel()
 	testKit, _, clean := createTestKitAndDom(t)
 	defer clean()
 
