@@ -226,6 +226,12 @@ type session struct {
 	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
 	// allowed when tikv disk full happened.
 	diskFullOpt kvrpcpb.DiskFullOpt
+
+	// execCounter is used to count the number of executions of each SQL in
+	// this session, and will be reported to the background periodically.
+	// Eventually all the local execCounter of the session will be aggregated
+	// and reported to the remote.
+	execCounter *topsql.ExecCounter
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -1536,6 +1542,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	if variable.TopSQLEnabled() {
+		if s.execCounter != nil {
+			s.execCounter.Count(normalizedSQL, 1)
+		}
 		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, s.sessionVars.InRestrictedSQL)
 	}
 
@@ -2207,6 +2216,9 @@ func (s *session) Close() {
 		s.sessionVars.WithdrawAllPreparedStmt()
 	}
 	s.ClearDiskFullOpt()
+	if s.execCounter != nil {
+		s.execCounter.Close()
+	}
 }
 
 // GetSessionVars implements the context.Context interface.
@@ -2619,6 +2631,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
+		execCounter:          topsql.CreateExecCounter(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		if opt != nil && opt.PreparedPlanCache != nil {
@@ -2652,6 +2665,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		client:               store.GetClient(),
 		mppClient:            store.GetMPPClient(),
 		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
+		execCounter:          topsql.CreateExecCounter(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,

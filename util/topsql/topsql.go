@@ -36,7 +36,10 @@ const (
 	MaxPlanTextSize = 32 * 1024
 )
 
-var globalTopSQLReport reporter.TopSQLReporter
+var (
+	globalTopSQLReport       reporter.TopSQLReporter
+	globalExecCounterManager *execCounterManager
+)
 
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
@@ -44,12 +47,17 @@ func SetupTopSQL() {
 	globalTopSQLReport = reporter.NewRemoteTopSQLReporter(rc)
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(globalTopSQLReport)
 	tracecpu.GlobalSQLCPUProfiler.Run()
+	globalExecCounterManager = newExecCountManager()
+	go globalExecCounterManager.Run()
 }
 
 // Close uses to close and release the top sql resource.
 func Close() {
 	if globalTopSQLReport != nil {
 		globalTopSQLReport.Close()
+	}
+	if globalExecCounterManager != nil {
+		globalExecCounterManager.close()
 	}
 }
 
