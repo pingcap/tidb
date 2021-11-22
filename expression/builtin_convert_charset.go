@@ -169,8 +169,8 @@ func (b *builtinInternalFromBinarySig) evalString(row chunk.Row) (res string, is
 		return val, isNull, err
 	}
 	transferString := b.getTransferFunc()
-	res, err = transferString(val)
-	return res, false, err
+	tBytes, err := transferString([]byte(val))
+	return string(tBytes), false, err
 }
 
 func (b *builtinInternalFromBinarySig) vectorized() bool {
@@ -190,36 +190,35 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 	transferString := b.getTransferFunc()
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		var str string
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		str = buf.GetString(i)
-		str, err = transferString(str)
+		str, err := transferString(buf.GetBytes(i))
 		if err != nil {
 			return err
 		}
-		result.AppendString(str)
+		result.AppendBytes(str)
 	}
 	return nil
 }
 
-func (b *builtinInternalFromBinarySig) getTransferFunc() func(string) (string, error) {
-	var transferString func(string) (string, error)
+func (b *builtinInternalFromBinarySig) getTransferFunc() func([]byte) ([]byte, error) {
+	var transferString func([]byte) ([]byte, error)
 	if b.tp.Charset == charset.CharsetUTF8MB4 || b.tp.Charset == charset.CharsetUTF8 {
-		transferString = func(s string) (string, error) {
-			if !utf8.ValidString(s) {
-				return "", errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", s), charset.CharsetBin, b.tp.Charset)
+		transferString = func(s []byte) ([]byte, error) {
+			if !utf8.Valid(s) {
+				return nil, errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", s), charset.CharsetBin, b.tp.Charset)
 			}
 			return s, nil
 		}
 	} else {
 		enc := charset.NewEncoding(b.tp.Charset)
-		transferString = func(s string) (string, error) {
-			str, err := enc.DecodeString(s)
+		var buf []byte
+		transferString = func(s []byte) ([]byte, error) {
+			str, err := enc.Decode(buf, s)
 			if err != nil {
-				return "", errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", s), charset.CharsetBin, b.tp.Charset)
+				return nil, errCannotConvertString.GenWithStackByArgs(fmt.Sprintf("%X", s), charset.CharsetBin, b.tp.Charset)
 			}
 			return str, nil
 		}
