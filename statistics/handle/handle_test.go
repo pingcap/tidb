@@ -671,6 +671,7 @@ func (s *testStatsSuite) TestReloadExtStatsLockRelease(c *C) {
 func (s *testStatsSuite) TestLoadStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
@@ -883,6 +884,7 @@ func (s *testStatsSuite) TestAnalyzeVirtualCol(c *C) {
 func (s *testStatsSuite) TestShowGlobalStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
@@ -2556,6 +2558,7 @@ func (s *testStatsSuite) TestDuplicateFMSketch(c *C) {
 func (s *testStatsSuite) TestIndexFMSketch(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index ia(a), index ibc(b, c)) partition by hash(a) partitions 3")
