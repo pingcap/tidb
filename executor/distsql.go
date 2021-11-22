@@ -1176,7 +1176,6 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				tp := &col.FieldType
 				idxVal := idxRow.GetDatum(i, tp)
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-        cmpRes, err := idxVal.Compare(sctx, &val, collators[i])
 				cmpRes, err := idxVal.Compare(sctx, &vals[i], collators[i])
 				if err != nil {
 					return ErrDataInConsistentMisMatchIndex.GenWithStackByArgs(col.Name,
