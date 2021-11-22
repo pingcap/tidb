@@ -97,8 +97,6 @@ var (
 	PollTiFlashInterval = 2 * time.Second
 	// PullTiFlashPdTick indicates the number of intervals before we pull all pd rules.
 	PullTiFlashPdTick = 60
-	// EnablePollLoop indicates whether PollTiFlashReplicaStatus is queried everytime.
-	EnablePollLoop = false
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -205,6 +203,7 @@ type ddl struct {
 	workers     map[workerType]*worker
 	sessPool    *sessionPool
 	delRangeMgr delRangeManager
+	enableTiFlashPoll bool
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -237,6 +236,31 @@ func (dc *ddlCtx) isOwner() bool {
 		metrics.DDLCounter.WithLabelValues(metrics.DDLOwner + "_" + mysql.TiDBReleaseVersion).Inc()
 	}
 	return isOwner
+}
+
+// EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
+func EnableTiFlashPoll(d interface{}) {
+	if dd, ok := d.(*ddl); ok {
+		dd.enableTiFlashPoll = true
+	}
+}
+
+// DisableTiFlashPoll disables TiFlash poll loop aka PollTiFlashReplicaStatus.
+func DisableTiFlashPoll(d interface{}) {
+	if dd, ok := d.(*ddl); ok {
+		dd.enableTiFlashPoll = false
+	}
+}
+
+func IsTiFlashPollEnabled(d interface{}) bool {
+	if dd, ok := d.(*ddl); ok {
+		return dd.enableTiFlashPoll
+	}
+	return true
+}
+
+func (d *ddl)IsTiFlashPollEnabled() bool {
+	return d.enableTiFlashPoll
 }
 
 // RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
@@ -413,7 +437,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		} else {
 			iterTimes := 0
 			for {
-				if !EnablePollLoop {
+				if !ddl.IsTiFlashPollEnabled() {
 					return
 				}
 				if d.ownerManager.IsOwner() {

@@ -67,7 +67,6 @@ var _ = SerialSuites(&tiflashDDLTestSuite{})
 func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	var err error
 
-	ddl.EnablePollLoop = true
 	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
@@ -101,6 +100,7 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 	session.DisableStats4Test()
 
 	s.dom, err = session.BootstrapSession(s.store)
+	ddl.EnableTiFlashPoll(s.dom.DDL())
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
 
@@ -108,7 +108,6 @@ func (s *tiflashDDLTestSuite) SetUpSuite(c *C) {
 }
 
 func (s *tiflashDDLTestSuite) TearDownSuite(c *C) {
-	ddl.EnablePollLoop = false
 	if s.pdHTTPServer != nil {
 		s.pdHTTPServer.Close()
 	}
