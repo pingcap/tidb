@@ -3619,3 +3619,115 @@ func (s *testIntegrationSuite3) TestIssue29282(c *C) {
 		c.Fail()
 	}
 }
+
+func (s *testIntegrationSuite3) TestIssue29326(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("insert into t1 values(1)")
+	defer tk.MustExec("drop table t1")
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (id int)")
+	tk.MustExec("insert into t2 values(1)")
+	defer tk.MustExec("drop table t2")
+
+	tk.MustExec("drop view if exists v1")
+	defer tk.MustExec("drop view if exists v1")
+
+	tk.MustExec("create view v1 as select 1,1")
+	rs, err := tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "1")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "Name_exp_1")
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create view v1 as select 1, 2, 1, 2, 1, 2, 1, 2")
+	rs, err = tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 2 1 2 1 2 1 2"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "1")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "2")
+	c.Assert(rs.Fields()[2].Column.Name.O, Equals, "Name_exp_1")
+	c.Assert(rs.Fields()[3].Column.Name.O, Equals, "Name_exp_2")
+	c.Assert(rs.Fields()[4].Column.Name.O, Equals, "Name_exp_1_1")
+	c.Assert(rs.Fields()[5].Column.Name.O, Equals, "Name_exp_1_2")
+	c.Assert(rs.Fields()[6].Column.Name.O, Equals, "Name_exp_2_1")
+	c.Assert(rs.Fields()[7].Column.Name.O, Equals, "Name_exp_2_2")
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create view v1 as select 't', 't', 1 as t")
+	rs, err = tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("t t 1"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "Name_exp_t")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "Name_exp_1_t")
+	c.Assert(rs.Fields()[2].Column.Name.O, Equals, "t")
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select 1, 1 union all select 1, 1")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
+		"SQL SECURITY DEFINER VIEW `v1` (`1`, `Name_exp_1`) " +
+		"AS SELECT 1 AS `1`,1 AS `Name_exp_1` UNION ALL SELECT 1 AS `1`,1 AS `1` " +
+		"utf8mb4 utf8mb4_bin"))
+	rs, err = tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1", "1 1"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "1")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "Name_exp_1")
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select 'id', id from t1")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
+		"SQL SECURITY DEFINER VIEW `v1` (`Name_exp_id`, `id`) " +
+		"AS SELECT _UTF8MB4'id' AS `Name_exp_id`,`id` AS `id` FROM `test`.`t1` " +
+		"utf8mb4 utf8mb4_bin"))
+	rs, err = tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("id 1"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "Name_exp_id")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "id")
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select 1, (select id from t1 where t1.id=t2.id) as '1' from t2")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
+		"SQL SECURITY DEFINER VIEW `v1` (`Name_exp_1`, `1`) " +
+		"AS SELECT 1 AS `Name_exp_1`,(SELECT `id` AS `id` FROM `test`.`t1` WHERE `t1`.`id`=`t2`.`id`) AS `1` FROM `test`.`t2` " +
+		"utf8mb4 utf8mb4_bin"))
+	rs, err = tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "Name_exp_1")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "1")
+
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as select 1 as 'abs(t1.id)', abs(t1.id) from t1")
+	tk.MustQuery("show create view v1").Check(testkit.Rows("v1 CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` " +
+		"SQL SECURITY DEFINER VIEW `v1` (`abs(t1.id)`, `Name_exp_abs(t1.id)`) " +
+		"AS SELECT 1 AS `abs(t1.id)`,ABS(`t1`.`id`) AS `Name_exp_abs(t1.id)` FROM `test`.`t1` " +
+		"utf8mb4 utf8mb4_bin"))
+	rs, err = tk.Exec("select * from v1")
+	c.Assert(err, IsNil)
+	tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 1"))
+	c.Assert(rs.Fields()[0].Column.Name.O, Equals, "abs(t1.id)")
+	c.Assert(rs.Fields()[1].Column.Name.O, Equals, "Name_exp_abs(t1.id)")
+
+	tk.MustExec("drop view if exists v1")
+	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select 1 as t,1 as t")
+	c.Assert(infoschema.ErrColumnExists.Equal(err), IsTrue)
+
+	tk.MustExec("drop view if exists v1")
+	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select 1 as id, id from t1")
+	c.Assert(infoschema.ErrColumnExists.Equal(err), IsTrue)
+
+	tk.MustExec("drop view if exists v1")
+	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select * from t1 left join t2 on t1.id=t2.id")
+	c.Assert(infoschema.ErrColumnExists.Equal(err), IsTrue)
+
+	tk.MustExec("drop view if exists v1")
+	err = tk.ExecToErr("create definer=`root`@`127.0.0.1` view v1 as select t1.id, t2.id from t1,t2 where t1.id=t2.id")
+	c.Assert(infoschema.ErrColumnExists.Equal(err), IsTrue)
+}
