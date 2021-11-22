@@ -2048,7 +2048,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, err error) {
 	// To set rand seed, it's for unit test.
 	// To ensure that random sequences are different in non-test environments, RandSeed must be set time.Now().
-	if RandSeed == 1 {
+	if atomic.LoadInt64(&RandSeed) == 1 {
 		atomic.StoreInt64(&e.randSeed, time.Now().UnixNano())
 	} else {
 		atomic.StoreInt64(&e.randSeed, RandSeed)
