@@ -1374,7 +1374,7 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 			if err != nil {
 				return nil, err
 			}
-			if !dec.IsZero() && frac > decimal && dec.Compare(&old) != 0 {
+			if !old.IsZero() && frac > decimal && dec.Compare(&old) != 0 {
 				sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", &old))
 				err = nil
 			}
