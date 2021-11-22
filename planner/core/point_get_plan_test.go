@@ -905,6 +905,7 @@ func (s *testPointGetSuite) TestIssue26638(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a float, unique index uidx(a));")
 	tk.MustExec("insert into t values(9.46347e37), (1.1);")
+	// If we do not define the precision for the float type. We can not use the equal/ in conditions to find the result. We can only use like to find the result. There is no such restriction for the double type.
 	tk.MustQuery("explain format='brief' select * from t where a = 9.46347e37;").Check(testkit.Rows("TableDual 0.00 root  rows:0"))
 	tk.MustQuery("explain format='brief' select * from t where a in (-1.56018e38, -1.96716e38, 9.46347e37);").Check(testkit.Rows("TableDual 0.00 root  rows:0"))
 	tk.MustQuery("explain format='brief' select * from t where a in (1.1, 9.46347e37);").Check(testkit.Rows("TableDual 0.00 root  rows:0"))
