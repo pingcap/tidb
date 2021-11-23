@@ -528,6 +528,7 @@ type %[1]sLexer interface {
 	Lex(lval *%[1]sSymType) int
 	Errorf(format string, a ...interface{}) error
 	AppendError(err error)
+	AppendWarn(err error)
 	Errors() (warns []error, errs []error)
 }
 

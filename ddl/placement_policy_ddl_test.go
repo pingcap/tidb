@@ -60,7 +60,8 @@ func (s *testDDLSuite) TestPlacementPolicyInUse(c *C) {
 	}()
 
 	ctx := context.Background()
-	d := testNewDDLAndStart(ctx, c, WithStore(store))
+	d, err := testNewDDLAndStart(ctx, WithStore(store))
+	c.Assert(err, IsNil)
 	sctx := testNewContext(d)
 
 	db1 := testSchemaInfo(c, d, "db1")
@@ -112,7 +113,7 @@ func (s *testDDLSuite) TestPlacementPolicyInUse(c *C) {
 	t4.State = model.StatePublic
 	db1.Tables = append(db1.Tables, t4)
 
-	builder, err := infoschema.NewBuilder(store).InitWithDBInfos(
+	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos(
 		[]*model.DBInfo{db1, db2, dbP},
 		nil,
 		[]*model.PolicyInfo{p1, p2, p3, p4, p5},
