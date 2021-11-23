@@ -1011,9 +1011,15 @@ func (s *testDBSuite6) TestDatabasePlacement(c *C) {
 func (s *testDBSuite6) TestDropDatabaseGCPlacement(c *C) {
 	clearAllBundles(c)
 	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
-	defer func() {
+	defer func(originGC bool) {
 		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
-	}()
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+	ddl.EmulatorGCDisable()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists db2")
@@ -1054,9 +1060,15 @@ func (s *testDBSuite6) TestDropDatabaseGCPlacement(c *C) {
 func (s *testDBSuite6) TestDropTableGCPlacement(c *C) {
 	clearAllBundles(c)
 	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
-	defer func() {
+	defer func(originGC bool) {
 		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
-	}()
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+	ddl.EmulatorGCDisable()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1183,9 +1195,15 @@ func (s *testDBSuite6) TestAlterTablePlacement(c *C) {
 func (s *testDBSuite6) TestDropTablePartitionGCPlacement(c *C) {
 	clearAllBundles(c)
 	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
-	defer func() {
+	defer func(originGC bool) {
 		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
-	}()
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+	ddl.EmulatorGCDisable()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1499,9 +1517,15 @@ func (s *testDBSuite6) TestTruncateTableWithPlacement(c *C) {
 func (s *testDBSuite6) TestTruncateTableGCWithPlacement(c *C) {
 	clearAllBundles(c)
 	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
-	defer func() {
+	defer func(originGC bool) {
 		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
-	}()
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+	ddl.EmulatorGCDisable()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1619,9 +1643,15 @@ func (s *testDBSuite6) TestTruncateTablePartitionWithPlacement(c *C) {
 func (s *testDBSuite6) TestTruncatePartitionGCWithPlacement(c *C) {
 	clearAllBundles(c)
 	failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`)
-	defer func() {
+	defer func(originGC bool) {
 		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
-	}()
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+	ddl.EmulatorGCDisable()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
