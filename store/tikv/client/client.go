@@ -348,7 +348,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		c.updateTiKVSendReqHistogram(req, start)
 	}()
 
-	if atomic.CompareAndSwapUint32(&c.idleNotify, 1, 0) {
+	if true { // atomic.CompareAndSwapUint32(&c.idleNotify, 1, 0) {
 		c.recycleMu.Lock()
 		c.recycleIdleConnArray()
 		c.recycleMu.Unlock()
