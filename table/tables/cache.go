@@ -19,6 +19,7 @@ import (
 	"context"
 	"sync/atomic"
 	"time"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -90,10 +91,10 @@ func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 		nowTime := oracle.GetTimeFromTS(ts)
 		distance := leaseTime.Sub(nowTime)
 		// TODO make this configurable in the following PRs
-		if distance >= 0 && distance <= (1*time.Second) {
+		if distance >= 0 && distance <= (1500*time.Millisecond) {
 			c.renewCh <- c.renewLease(ts, RenewReadLease, data)
 		}
-		return data
+		return data.MemBuffer
 	}
 	fmt.Println("TryReadFromCache return nil because ... ts not correct...", ts, data.Start, data.Lease)
 	return nil
@@ -164,7 +165,7 @@ func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, t
 	// Load data from original table and the update lock information.
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts)
-	succ, err := c.handle.LockForRead(ctx, tid, ts, lease)
+	succ, err := c.handle.LockForRead(ctx, tid, lease)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -191,7 +192,7 @@ func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		return nil, err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, leaseFromTS(now))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -205,7 +206,7 @@ func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(ctx, c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(ctx, c.Meta().ID, leaseFromTS(now))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -219,7 +220,7 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, leaseFromTS(now))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -230,15 +231,15 @@ func (c *cachedTable) renewLease(ts uint64, op RenewLeaseType, data *cacheData) 
 	return func() {
 		tid := c.Meta().ID
 		lease := leaseFromTS(ts)
-		succ, err := c.handle.RenewLease(context.Background(), tid, ts, lease, op)
+		succ, err := c.handle.RenewLease(context.Background(), tid, lease, op)
 		if err != nil {
-			log.Warn("Renew read lease error")
+			log.Warn("Renew read lease error", zap.Error(err))
 		}
 		if succ {
 			c.cacheData.Store(&cacheData{
 				Start:     data.Start,
 				Lease:     lease,
-				MemBuffer: data,
+				MemBuffer: data.MemBuffer,
 			})
 		}
 	}

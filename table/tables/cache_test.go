@@ -18,10 +18,11 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"context"
 
-	// "github.com/pingcap/tidb/infoschema"
-	// "github.com/pingcap/tidb/parser/model"
-	// "github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -219,11 +220,14 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 	tk.MustQuery("select * from write_tmp1").Check(testkit.Rows("1 101 1001",
 		"3 113 1003"))
 	// read lock should valid
-	for i := 0; i < 10; i++ {
+	var i int
+	for i = 0; i < 10; i++ {
 		if tk.HasPlan("select * from write_tmp1", "UnionScan") {
 			break
 		}
 	}
+	require.True(t, i<10)
+
 	tk.MustExec("use test")
 	tk1.MustExec("insert into write_tmp1 values (2, 222, 222)")
 	// write lock exists
@@ -420,27 +424,43 @@ func TestCacheTableBatchPointGet(t *testing.T) {
 	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 14)").Check(testkit.Rows("1 11 101"))
 }
 
-// func TestRenewLease(t *testing.T) {
-// 	// Test RenewLeaseForRead
-// 	store, clean := testkit.CreateMockStore(t)
-// 	defer clean()
-// 	tk := testkit.NewTestKit(t, store)
-// 	tk.MustExec("use test")
-// 	se := tk.Session()
-// 	tk.MustExec("create table cache_renew_t (id int)")
-// 	tk.MustExec("alter table cache_renew_t cache")
-// 	tbl, err := se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("cache_renew_t"))
-// 	require.NoError(t, err)
-// 	var i int
-// 	tk.MustExec("select * from cache_renew_t")
-// 	_, oldLease, _ := tables.MockStateRemote.Data.Load(tbl.Meta().ID)
-// 	for i = 0; i < 20; i++ {
-// 		time.Sleep(200 * time.Millisecond)
-// 		tk.MustExec("select * from cache_renew_t")
-// 		_, lease, _ := tables.MockStateRemote.Data.Load(tbl.Meta().ID)
-// 		if lease != oldLease {
-// 			break
-// 		}
-// 	}
-// 	require.True(t, i < 20)
-// }
+func TestRenewLease(t *testing.T) {
+	// Test RenewLeaseForRead
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	se := tk.Session()
+	tk.MustExec("create table cache_renew_t (id int)")
+	tk.MustExec("alter table cache_renew_t cache")
+	tbl, err := se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("cache_renew_t"))
+	require.NoError(t, err)
+	var i int
+	tk.MustExec("select * from cache_renew_t")
+
+	tk1 := testkit.NewTestKit(t, store)
+	remote := tables.NewStateRemote(tk1.Session())
+	var leaseBefore uint64
+	for i =0; i<20; i++ {
+		time.Sleep(200 * time.Millisecond)
+		lockType, lease, err := remote.Load(context.Background(), tbl.Meta().ID)
+		require.NoError(t, err)
+		if lockType == tables.CachedTableLockRead {
+			leaseBefore = lease
+			break
+		}
+	}
+	require.True(t, i < 20)
+
+	for i = 0; i < 20; i++ {
+		time.Sleep(200 * time.Millisecond)
+		tk.MustExec("select * from cache_renew_t")
+		lockType, lease, err := remote.Load(context.Background(), tbl.Meta().ID)
+		require.NoError(t, err)
+		require.Equal(t, lockType, tables.CachedTableLockRead)
+		if leaseBefore != lease {
+			break
+		}
+	}
+	require.True(t, i < 20)
+}
