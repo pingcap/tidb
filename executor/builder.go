@@ -4260,7 +4260,8 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 
 		for j, dataSource := range v.DataSources {
 			stub := plannercore.PhysicalShuffleReceiverStub{
-				Receiver: (unsafe.Pointer)(receivers[j]),
+				Receiver:   (unsafe.Pointer)(receivers[j]),
+				DataSource: dataSource,
 			}.Init(b.ctx, dataSource.Stats(), dataSource.SelectBlockOffset(), nil)
 			stub.SetSchema(dataSource.Schema())
 			v.Tails[j].SetChildren(stub)
