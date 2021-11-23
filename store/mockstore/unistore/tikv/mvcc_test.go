@@ -1587,7 +1587,7 @@ func TestAccessCommittedLocks(t *testing.T) {
 	// ignore lock
 	val, err = kvGet(k1, 60, []uint64{50}, nil, store)
 	require.NoError(store.t, err)
-	require.Nil(store.t, val)
+	require.Len(store.t, val, 0)
 	// access lock
 	val, err = kvGet(k1, 60, nil, []uint64{50}, store)
 	require.NoError(store.t, err)
