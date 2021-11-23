@@ -17,12 +17,13 @@ package executor_test
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/pingcap/tidb/ddl"
 	"net"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pingcap/tidb/ddl"
 
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"

@@ -17,13 +17,14 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/ddl"
 	"math"
 	"math/rand"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/tidb/ddl"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
