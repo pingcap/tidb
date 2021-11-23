@@ -27,7 +27,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
@@ -300,7 +299,7 @@ func TestTableRange(t *testing.T) {
 			conds, filter = ranger.DetachCondsForColumn(sctx, conds, col)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", filter))
-			result, err := ranger.BuildTableRange(conds, new(stmtctx.StatementContext), col.RetType)
+			result, err := ranger.BuildTableRange(conds, sctx, col.RetType)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
 			require.Equal(t, tt.resultStr, got)
@@ -1203,7 +1202,7 @@ func TestColumnRange(t *testing.T) {
 			require.NotNil(t, col)
 			conds = ranger.ExtractAccessConditionsForColumn(conds, col)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
-			result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType, tt.length)
+			result, err := ranger.BuildColumnRange(conds, sctx, col.RetType, tt.length)
 			require.NoError(t, err)
 			got := fmt.Sprintf("%v", result)
 			require.Equal(t, tt.resultStr, got)
