@@ -431,22 +431,22 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			failpoint.Inject("BeforePollTiFlashReplicaStatusLoop", func() {
 				failpoint.Continue()
 			})
-			sctx, err := d.sessPool.get()
-			if err == nil {
-				if d.IsTiFlashPollEnabled() {
+			if d.IsTiFlashPollEnabled() {
+				sctx, err := d.sessPool.get()
+				if err == nil {
 					if d.ownerManager.IsOwner() {
 						err = d.PollTiFlashReplicaStatus(sctx, iterTimes%PullTiFlashPdTick == 0)
 						if err != nil {
 							log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
 						}
 					}
-				}
-				d.sessPool.put(sctx)
-			} else {
-				if sctx != nil {
 					d.sessPool.put(sctx)
+				} else {
+					if sctx != nil {
+						d.sessPool.put(sctx)
+					}
+					log.Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))
 				}
-				log.Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))
 			}
 
 			select {
