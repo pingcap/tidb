@@ -235,7 +235,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	defer func() {
 		sessVars.StmtCtx.StmtHints = savedStmtHints
 	}()
-	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil && sessVars.SelectLimit == math.MaxUint64 {
+	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil &&
+		sessVars.SelectLimit == math.MaxUint64 { // do not evolve this query if sql_select_limit is enabled
 		// Check bestPlanFromBind firstly to avoid nil stmtNode.
 		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
 			sessVars.StmtCtx.StmtHints = originStmtHints
