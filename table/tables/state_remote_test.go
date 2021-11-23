@@ -86,7 +86,7 @@ func TestStateRemote(t *testing.T) {
 	require.Equal(t, lease, uint64(1235))
 
 	// Renew read lock lease operation.
-	succ, err = h.RenewLease(ctx, 5, 1264)
+	succ, err = h.RenewLease(ctx, 5, 0, 1264, tables.RenewReadLease)
 	require.NoError(t, err)
 	require.True(t, succ)
 	lockType, lease, err = h.Load(ctx, 5)
@@ -112,7 +112,7 @@ func TestStateRemote(t *testing.T) {
 	require.Equal(t, lease, uint64(3234))
 
 	// Renew read lock lease should fail when the write lock is hold.
-	succ, err = h.RenewLease(ctx, 5, 1264)
+	succ, err = h.RenewLease(ctx, 5, 0, 1264, tables.RenewReadLease)
 	require.NoError(t, err)
 	require.False(t, succ)
 

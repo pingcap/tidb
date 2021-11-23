@@ -1257,7 +1257,8 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	// A map of "DB.Table" => Priv(col1, col2 ...)
 	sortFromIdx = len(gs)
 	columnPrivTable := make(map[string]privOnColumns)
-	for _, record := range p.ColumnsPriv {
+	for i := range p.ColumnsPriv {
+		record := p.ColumnsPriv[i]
 		if !collectColumnGrant(&record, user, host, columnPrivTable) {
 			for _, r := range allRoles {
 				collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable)
