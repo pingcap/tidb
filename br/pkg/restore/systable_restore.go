@@ -8,12 +8,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -34,15 +34,16 @@ var unRecoverableTable = map[string]struct{}{
 	"global_variables": {},
 
 	// all user related tables cannot be recovered for now.
-	"columns_priv":  {},
-	"db":            {},
-	"default_roles": {},
-	"global_grants": {},
-	"global_priv":   {},
-	"role_edges":    {},
-	"tables_priv":   {},
-	"user":          {},
-
+	"column_stats_usage":               {},
+	"columns_priv":                     {},
+	"db":                               {},
+	"default_roles":                    {},
+	"global_grants":                    {},
+	"global_priv":                      {},
+	"role_edges":                       {},
+	"tables_priv":                      {},
+	"user":                             {},
+	"capture_plan_baselines_blacklist": {},
 	// gc info don't need to recover.
 	"gc_delete_range":      {},
 	"gc_delete_range_done": {},
@@ -98,7 +99,7 @@ func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) {
 			tablesRestored = append(tablesRestored, tableName.L)
 		}
 	}
-	if err := rc.afterSystemTablesReplaced(ctx, tablesRestored); err != nil {
+	if err := rc.afterSystemTablesReplaced(tablesRestored); err != nil {
 		for _, e := range multierr.Errors(err) {
 			log.Warn("error during reconfigurating the system tables", zap.String("database", sysDB), logutil.ShortError(e))
 		}
@@ -133,14 +134,14 @@ func (rc *Client) getDatabaseByName(name string) (*database, bool) {
 
 // afterSystemTablesReplaced do some extra work for special system tables.
 // e.g. after inserting to the table mysql.user, we must execute `FLUSH PRIVILEGES` to allow it take effect.
-func (rc *Client) afterSystemTablesReplaced(ctx context.Context, tables []string) error {
+func (rc *Client) afterSystemTablesReplaced(tables []string) error {
 	var err error
 	for _, table := range tables {
 		switch {
 		case table == "user":
 			// We cannot execute `rc.dom.NotifyUpdatePrivilege` here, because there isn't
 			// sessionctx.Context provided by the glue.
-			// TODO: update the glue type and allow we retrive a session context from it.
+			// TODO: update the glue type and allow we retrieve a session context from it.
 			err = multierr.Append(err, errors.Annotatef(berrors.ErrUnsupportedSystemTable,
 				"restored user info may not take effect, until you should execute `FLUSH PRIVILEGES` manually"))
 		}

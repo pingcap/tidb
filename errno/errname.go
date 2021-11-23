@@ -14,7 +14,7 @@
 
 package errno
 
-import "github.com/pingcap/parser/mysql"
+import "github.com/pingcap/tidb/parser/mysql"
 
 // MySQLErrName maps error code to MySQL error messages.
 // Note: all ErrMessage to be added should be considered about the log redaction
@@ -683,7 +683,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrFailedReadFromParFile:                                 mysql.Message("Failed to read from the .par file", nil),
 	ErrValuesIsNotIntType:                                    mysql.Message("VALUES value for partition '%-.64s' must have type INT", nil),
 	ErrAccessDeniedNoPassword:                                mysql.Message("Access denied for user '%-.48s'@'%-.255s'", nil),
-	ErrSetPasswordAuthPlugin:                                 mysql.Message("SET PASSWORD has no significance for users authenticating via plugins", nil),
+	ErrSetPasswordAuthPlugin:                                 mysql.Message("SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication plugin does not support it.", nil),
 	ErrGrantPluginUserExists:                                 mysql.Message("GRANT with IDENTIFIED WITH is illegal because the user %-.*s already exists", nil),
 	ErrTruncateIllegalFk:                                     mysql.Message("Cannot truncate a table referenced in a foreign key constraint (%.192s)", nil),
 	ErrPluginIsPermanent:                                     mysql.Message("Plugin '%s' is forcePlusPermanent and can not be unloaded", nil),
@@ -877,7 +877,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWindowNoGroupOrderUnused:                              mysql.Message("ASC or DESC with GROUP BY isn't allowed with window functions; put ASC or DESC in ORDER BY", nil),
 	ErrWindowExplainJSON:                                     mysql.Message("To get information about window functions use EXPLAIN FORMAT=JSON", nil),
 	ErrWindowFunctionIgnoresFrame:                            mysql.Message("Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition", nil),
-	ErrRoleNotGranted:                                        mysql.Message("%s is is not granted to %s", nil),
+	ErrRoleNotGranted:                                        mysql.Message("%s is not granted to %s", nil),
 	ErrMaxExecTimeExceeded:                                   mysql.Message("Query execution was interrupted, max_execution_time exceeded.", nil),
 	ErrLockAcquireFailAndNoWaitSet:                           mysql.Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),
 	ErrNotHintUpdatable:                                      mysql.Message("Variable '%s' cannot be set using SET_VAR hint.", nil),
@@ -1020,6 +1020,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrAddColumnWithSequenceAsDefault:      mysql.Message("Unsupported using sequence as default value in add column '%s'", nil),
 	ErrUnsupportedType:                     mysql.Message("Unsupported type %T", nil),
 	ErrAnalyzeMissIndex:                    mysql.Message("Index '%s' in field list does not exist in table '%s'", nil),
+	ErrAnalyzeMissColumn:                   mysql.Message("Column '%s' in ANALYZE column option does not exist in table '%s'", nil),
 	ErrCartesianProductUnsupported:         mysql.Message("Cartesian product is unsupported", nil),
 	ErrPreparedStmtNotFound:                mysql.Message("Prepared statement not found", nil),
 	ErrWrongParamCount:                     mysql.Message("Wrong parameter count", nil),
@@ -1050,16 +1051,16 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPartitionStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
 	ErrNotSupportedWithSem:   mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
-	ErrInvalidPlacementSpec:            mysql.Message("Invalid placement policy '%s': %s", nil),
 	ErrPlacementPolicyCheck:            mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 	ErrMultiStatementDisabled:          mysql.Message("client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", nil),
 	ErrAsOf:                            mysql.Message("invalid as of timestamp: %s", nil),
+	ErrVariableNoLongerSupported:       mysql.Message("option '%s' is no longer supported. Reason: %s", nil),
 	ErrInvalidAttributesSpec:           mysql.Message("Invalid attributes '%s': %s", nil),
 	ErrPlacementPolicyExists:           mysql.Message("Placement policy '%-.192s' already exists", nil),
 	ErrPlacementPolicyNotExists:        mysql.Message("Unknown placement policy '%-.192s'", nil),
 	ErrPlacementPolicyWithDirectOption: mysql.Message("Placement policy '%s' can't co-exist with direct placement options", nil),
 	ErrPlacementPolicyInUse:            mysql.Message("Placement policy '%-.192s' is still in use", nil),
-
+	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),
 	ErrTiKVServerTimeout:         mysql.Message("TiKV server timeout", nil),

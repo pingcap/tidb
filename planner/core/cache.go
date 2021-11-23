@@ -19,11 +19,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -38,7 +38,7 @@ var (
 	// The value is false unless "prepared-plan-cache-enabled" is true in configuration.
 	preparedPlanCacheEnabledValue int32 = 0
 	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
-	PreparedPlanCacheCapacity uint = 100
+	PreparedPlanCacheCapacity uint = 1000
 	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
 	PreparedPlanCacheMemoryGuardRatio = 0.1
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-server-memory-quota".
@@ -160,8 +160,11 @@ func (s FieldSlice) Equal(tps []*types.FieldType) bool {
 		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
 		tpEqual := (s[i].Tp == tps[i].Tp) ||
 			(s[i].Tp == mysql.TypeVarchar && tps[i].Tp == mysql.TypeVarString) ||
-			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar)
-		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate {
+			(s[i].Tp == mysql.TypeVarString && tps[i].Tp == mysql.TypeVarchar) ||
+			// TypeNull should be considered the same as other types.
+			(s[i].Tp == mysql.TypeNull || tps[i].Tp == mysql.TypeNull)
+		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate ||
+			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].Flag) != mysql.HasUnsignedFlag(tps[i].Flag)) {
 			return false
 		}
 	}

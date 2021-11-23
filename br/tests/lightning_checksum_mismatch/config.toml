@@ -1,0 +1,9 @@
+[tikv-importer]
+backend = "local"
+duplicate-resolution = "none"
+
+[post-restore]
+checksum = "required"
+
+[mydumper.csv]
+header = false

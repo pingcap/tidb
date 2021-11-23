@@ -30,7 +30,10 @@ import (
 
 func main() {
 	globalCfg := config.Must(config.LoadGlobalConfig(os.Args[1:], nil))
-	fmt.Fprintf(os.Stdout, "Verbose debug logs will be written to %s\n\n", globalCfg.App.Config.File)
+	logToFile := globalCfg.App.File != "" && globalCfg.App.File != "-"
+	if logToFile {
+		fmt.Fprintf(os.Stdout, "Verbose debug logs will be written to %s\n\n", globalCfg.App.Config.File)
+	}
 
 	app := lightning.New(globalCfg)
 
@@ -88,7 +91,6 @@ func main() {
 
 	if err != nil {
 		logger.Error("tidb lightning encountered error stack info", zap.Error(err))
-		logger.Error("tidb lightning encountered error", log.ShortError(err))
 		fmt.Fprintln(os.Stderr, "tidb lightning encountered error: ", err)
 	} else {
 		logger.Info("tidb lightning exit")
@@ -96,7 +98,7 @@ func main() {
 	}
 
 	// call Sync() with log to stdout may return error in some case, so just skip it
-	if globalCfg.App.File != "" {
+	if logToFile {
 		syncErr := logger.Sync()
 		if syncErr != nil {
 			fmt.Fprintln(os.Stderr, "sync log failed", syncErr)
