@@ -319,12 +319,6 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 	var opt *ast.CharsetOpt
-<<<<<<< HEAD
-	if len(s.Options) != 0 {
-		opt = &ast.CharsetOpt{}
-=======
-	var directPlacementOpts *model.PlacementSettings
-	var placementPolicyRef *model.PolicyRefInfo
 	var err error
 	sessionVars := e.ctx.GetSessionVars()
 
@@ -344,40 +338,14 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 	explicitCharset := false
 	explicitCollation := false
 	if len(s.Options) != 0 {
->>>>>>> 466e826a7... executor: Use charset and collation from server vars for new schemas (#27216)
 		for _, val := range s.Options {
 			switch val.Tp {
 			case ast.DatabaseOptionCharset:
 				opt.Chs = val.Value
-<<<<<<< HEAD
-			case ast.DatabaseOptionCollate:
-				opt.Col = val.Value
-			}
-		}
-	}
-	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt)
-=======
 				explicitCharset = true
 			case ast.DatabaseOptionCollate:
 				opt.Col = val.Value
 				explicitCollation = true
-			case ast.DatabaseOptionPlacementPrimaryRegion, ast.DatabaseOptionPlacementRegions,
-				ast.DatabaseOptionPlacementFollowerCount, ast.DatabaseOptionPlacementLeaderConstraints,
-				ast.DatabaseOptionPlacementLearnerCount, ast.DatabaseOptionPlacementVoterCount,
-				ast.DatabaseOptionPlacementSchedule, ast.DatabaseOptionPlacementConstraints,
-				ast.DatabaseOptionPlacementFollowerConstraints, ast.DatabaseOptionPlacementVoterConstraints,
-				ast.DatabaseOptionPlacementLearnerConstraints:
-				if directPlacementOpts == nil {
-					directPlacementOpts = &model.PlacementSettings{}
-				}
-				err := ddl.SetDirectPlacementOpt(directPlacementOpts, ast.PlacementOptionType(val.Tp), val.Value, val.UintValue)
-				if err != nil {
-					return err
-				}
-			case ast.DatabaseOptionPlacementPolicy:
-				placementPolicyRef = &model.PolicyRefInfo{
-					Name: model.NewCIStr(val.Value),
-				}
 			}
 		}
 	}
@@ -403,8 +371,7 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 
 	}
 
-	err = domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt, directPlacementOpts, placementPolicyRef)
->>>>>>> 466e826a7... executor: Use charset and collation from server vars for new schemas (#27216)
+	err = domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
 			err = nil
