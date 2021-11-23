@@ -8825,19 +8825,16 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 		commentf := Commentf("%v", ca.sql)
 
 		_, expectSQLDigest := parser.NormalizeDigest(ca.sql)
-		var expectPlanDigest *parser.Digest
 		checkCnt := 0
 		checkFn = func() {
 			if ca.ignore {
 				return
 			}
-			if expectPlanDigest == nil {
-				info := tk.Se.ShowProcess()
-				c.Assert(info, NotNil)
-				p, ok := info.Plan.(plannercore.Plan)
-				c.Assert(ok, IsTrue)
-				_, expectPlanDigest = plannercore.NormalizePlan(p)
-			}
+			info := tk.Se.ShowProcess()
+			c.Assert(info, NotNil)
+			p, ok := info.Plan.(plannercore.Plan)
+			c.Assert(ok, IsTrue)
+			_, expectPlanDigest := plannercore.NormalizePlan(p)
 			c.Assert(sqlDigest.String(), Equals, expectSQLDigest.String(), commentf)
 			c.Assert(planDigest.String(), Equals, expectPlanDigest.String())
 			if len(ca.tagLabels) > 0 {
