@@ -2668,6 +2668,7 @@ func TestGrantCreateTmpTables(t *testing.T) {
 	tk.MustExec("CREATE TABLE create_tmp_table_table (a int)")
 	tk.MustExec("GRANT CREATE TEMPORARY TABLES on create_tmp_table_db.* to u1")
 	tk.MustExec("GRANT CREATE TEMPORARY TABLES on *.* to u1")
+	tk.MustGetErrCode("GRANT CREATE TEMPORARY TABLES on create_tmp_table_db.tmp to u1", mysql.ErrIllegalGrantForTable)
 	// Must set a session user to avoid null pointer dereference
 	tk.Session().Auth(&auth.UserIdentity{
 		Username: "root",

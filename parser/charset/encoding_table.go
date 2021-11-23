@@ -28,6 +28,15 @@ import (
 	"golang.org/x/text/encoding/unicode"
 )
 
+var encodingMap = map[EncodingLabel]*Encoding{
+	CharsetUTF8MB4: UTF8Encoding,
+	CharsetUTF8:    UTF8Encoding,
+	CharsetGBK:     GBKEncoding,
+	CharsetLatin1:  LatinEncoding,
+	CharsetBin:     BinaryEncoding,
+	CharsetASCII:   ASCIIEncoding,
+}
+
 // Lookup returns the encoding with the specified label, and its canonical
 // name. It returns nil and the empty string if label is not one of the
 // standard encodings for HTML. Matching is case-insensitive and ignores
@@ -266,45 +275,6 @@ var encodings = map[string]struct {
 	"x-user-defined":      {charmap.XUserDefined, "x-user-defined"},
 }
 
-// FindNextCharacterLength is used in lexer.peek() to determine the next character length.
-func FindNextCharacterLength(label string) func([]byte) int {
-	if f, ok := encodingNextCharacterLength[label]; ok {
-		return f
-	}
-	return nil
-}
-
-var encodingNextCharacterLength = map[string]func([]byte) int{
-	// https://en.wikipedia.org/wiki/GBK_(character_encoding)#Layout_diagram
-	"gbk":          characterLengthGBK,
-	"utf-8":        characterLengthUTF8,
-	"binary":       characterLengthOne,
-	"windows-1252": characterLengthOne,
-}
-
-func characterLengthGBK(bs []byte) int {
-	if len(bs) == 0 || bs[0] < 0x80 {
-		// A byte in the range 00–7F is a single byte that means the same thing as it does in ASCII.
-		return 1
-	}
-	return 2
-}
-
-func characterLengthUTF8(bs []byte) int {
-	if len(bs) == 0 || bs[0] < 0x80 {
-		return 1
-	} else if bs[0] < 0xe0 {
-		return 2
-	} else if bs[0] < 0xf0 {
-		return 3
-	}
-	return 4
-}
-
-func characterLengthOne(_ []byte) int {
-	return 1
-}
-
 // TruncateStrategy indicates the way to handle the invalid strings in specific charset.
 //   - TruncateStrategyEmpty: returns an empty string.
 //   - TruncateStrategyTrim: returns the valid prefix part of string.
@@ -359,7 +329,7 @@ func (s StringValidatorASCII) Truncate(str string, strategy TruncateStrategy) (s
 		for i, w := 0, 0; i < len(str); i += w {
 			w = 1
 			if str[i] > go_unicode.MaxASCII {
-				w = characterLengthUTF8(Slice(str)[i:])
+				w = UTF8Encoding.CharLength(Slice(str)[i:])
 				w = mathutil.Min(w, len(str)-i)
 				result = append(result, '?')
 				continue
@@ -454,7 +424,7 @@ func (s StringValidatorOther) Truncate(str string, strategy TruncateStrategy) (s
 	transformer := enc.enc.NewEncoder()
 	invalidPos := -1
 	for i, w := 0, 0; i < len(str); i += w {
-		w = characterLengthUTF8(strBytes[i:])
+		w = UTF8Encoding.CharLength(strBytes[i:])
 		w = mathutil.Min(w, len(str)-i)
 		_, _, err := transformer.Transform(buf[:], strBytes[i:i+w], true)
 		if err != nil {
