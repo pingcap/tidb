@@ -49,6 +49,7 @@ func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 }
 
 type Midparams struct {
+	TotalTables       float64
 	CompletedTables   float64
 	FinishedBytes     float64
 	FinishedRows      float64
@@ -58,6 +59,7 @@ type Midparams struct {
 func (d *Dumper) GetParameters() (midparams *Midparams) {
 	conf := d.conf
 	var mid *Midparams
+	mid.TotalTables = float64(calculateTableCount(conf.Tables))
 	mid.CompletedTables = ReadCounter(finishedTablesCounter, conf.Labels)
 	mid.FinishedBytes = ReadGauge(finishedSizeGauge, conf.Labels)
 	mid.FinishedRows = ReadGauge(finishedRowsGauge, conf.Labels)
