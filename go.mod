@@ -66,7 +66,7 @@ require (
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20211118154139-b11da6307c6f
-	github.com/tikv/pd v1.1.0-beta.0.20211118054146-02848d2660ee
+	github.com/tikv/pd v1.1.0-beta.0.20211122113955-dbe5e29e0ca7
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/uber/jaeger-lib v2.4.1+incompatible // indirect
@@ -102,5 +102,3 @@ replace github.com/pingcap/tidb/parser => ./parser
 
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
-
-replace github.com/pingcap/kvproto => github.com/you06/kvproto v0.0.0-20211103092205-d293f9d58c90
