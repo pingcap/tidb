@@ -20,7 +20,7 @@ file_not_exist "$DUMPLING_OUTPUT_DIR/views.v-schema-view.sql"
 
 rm -rf $DUMPLING_OUTPUT_DIR
 run_dumpling --no-views=false
-#diff "$DUMPLING_BASE_NAME/data/views-schema-create.sql" "$DUMPLING_OUTPUT_DIR/views-schema-create.sql"
+#diff "$DUMPLING_BASE_NAME/data/policy-schema-create.sql" "$DUMPLING_OUTPUT_DIR/policy-schema-create.sql"
 diff "$DUMPLING_BASE_NAME/data/views.v-schema.sql" "$DUMPLING_OUTPUT_DIR/views.v-schema.sql"
 diff "$DUMPLING_BASE_NAME/data/views.v-schema-view.sql" "$DUMPLING_OUTPUT_DIR/views.v-schema-view.sql"
 file_not_exist "$DUMPLING_OUTPUT_DIR/views.v.000000000.sql"
