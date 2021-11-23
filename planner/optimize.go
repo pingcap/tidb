@@ -157,19 +157,28 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	sctx.PrepareTSFuture(ctx)
 
-	var bindRecord *bindinfo.BindRecord
-	var scope string
-	var useBinding bool
-	stmtNode, isStmtNode := node.(ast.StmtNode)
-	if isStmtNode {
-		bindRecord, scope, useBinding = matchSQLBinding(stmtNode, sctx)
-		// add the extra Limit after matching the bind record
-		node = plannercore.TryAddExtraLimit(sctx, stmtNode)
+	useBinding := sessVars.UsePlanBaselines
+	stmtNode, ok := node.(ast.StmtNode)
+	if !ok {
+		useBinding = false
 	}
+	var (
+		bindRecord *bindinfo.BindRecord
+		scope      string
+		err        error
+	)
+	if useBinding {
+		bindRecord, scope, err = getBindRecord(sctx, stmtNode)
+		if err != nil || bindRecord == nil || len(bindRecord.Bindings) == 0 {
+			useBinding = false
+		}
+	}
+	// add the extra Limit after matching the bind record
+	stmtNode = plannercore.TryAddExtraLimit(sctx, stmtNode)
+	node = stmtNode
 
 	var names types.NameSlice
 	var bestPlan, bestPlanFromBind plannercore.Plan
-	var err error
 	if useBinding {
 		minCost := math.MaxFloat64
 		var (
@@ -239,7 +248,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}()
 	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil {
 		// Check bestPlanFromBind firstly to avoid nil stmtNode.
-		if _, ok := node.(*ast.SelectStmt); ok && !bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
+		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
 			sessVars.StmtCtx.StmtHints = originStmtHints
 			defPlan, _, _, err := optimize(ctx, sctx, node, is)
 			if err != nil {
@@ -259,7 +268,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			defPlanHintsStr := hint.RestoreOptimizerHints(defPlanHints)
 			binding := bindRecord.FindBinding(defPlanHintsStr)
 			if binding == nil {
-				handleEvolveTasks(ctx, sctx, bindRecord, node.(ast.StmtNode), defPlanHintsStr)
+				handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, defPlanHintsStr)
 			}
 		}
 	}
