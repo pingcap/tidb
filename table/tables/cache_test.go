@@ -18,6 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -155,15 +158,37 @@ func TestCacheCondition(t *testing.T) {
 
 	// Explain should not trigger cache.
 	tk.MustQuery("explain select * from t2")
-	require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	}
 
 	// Insert should not trigger cache.
 	tk.MustExec("insert into t2 values (1,1)")
-	require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	}
 
 	// Update should not trigger cache.
 	tk.MustExec("update t2 set v = v + 1 where id > 0")
-	require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	}
+	// Contains PointGet Update should not trigger cache.
+	tk.MustExec("update t2 set v = v + 1 where id = 2")
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	}
+
+	// Contains PointGet Delete should not trigger cache.
+	tk.MustExec("delete from t2  where id = 2")
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
+	}
 
 	// Normal query should trigger cache.
 	tk.MustQuery("select * from t2")
@@ -336,7 +361,7 @@ func TestCacheTableBatchPointGet(t *testing.T) {
 	tk.MustExec("insert into bp_cache_tmp1 values(2, 12, 102)")
 	tk.MustExec("insert into bp_cache_tmp1 values(3, 13, 103)")
 	tk.MustExec("insert into bp_cache_tmp1 values(4, 14, 104)")
-
+	tk.MustExec("alter table bp_cache_tmp1 cache")
 	// check point get out transaction
 	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 103"))
 	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 103"))
@@ -366,4 +391,29 @@ func TestCacheTableBatchPointGet(t *testing.T) {
 	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13, 16)").Check(testkit.Rows("1 11 101", "3 13 999", "6 16 106"))
 	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 4)").Check(testkit.Rows("1 11 101"))
 	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 14)").Check(testkit.Rows("1 11 101"))
+}
+
+func TestRenewLease(t *testing.T) {
+	// Test RenewLeaseForRead
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	se := tk.Session()
+	tk.MustExec("create table cache_renew_t (id int)")
+	tk.MustExec("alter table cache_renew_t cache")
+	tbl, err := se.GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("cache_renew_t"))
+	require.NoError(t, err)
+	var i int
+	tk.MustExec("select * from cache_renew_t")
+	_, oldLease, _ := tables.MockStateRemote.Data.Load(tbl.Meta().ID)
+	for i = 0; i < 20; i++ {
+		time.Sleep(200 * time.Millisecond)
+		tk.MustExec("select * from cache_renew_t")
+		_, lease, _ := tables.MockStateRemote.Data.Load(tbl.Meta().ID)
+		if lease != oldLease {
+			break
+		}
+	}
+	require.True(t, i < 20)
 }

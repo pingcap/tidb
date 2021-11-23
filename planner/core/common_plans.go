@@ -381,11 +381,26 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
+	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	prepared := preparedStmt.PreparedAst
+	if prepared.UseCache {
+		// disable the cache if cache table in prepared statement
+		for _, vInfo := range preparedStmt.VisitInfos {
+			tbl, err := is.TableByName(model.NewCIStr(vInfo.db), model.NewCIStr(vInfo.table))
+			// if table does not exist, skip it, maybe it is a `create table` statement
+			if err != nil {
+				continue
+			}
+			if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+				prepared.UseCache = false
+				break
+			}
+		}
+	}
 	stmtCtx.UseCache = prepared.UseCache
-	var cacheKey kvcache.Key
+
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
@@ -606,7 +621,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 					}
 				}
 				if pkCol != nil {
-					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx.GetSessionVars().StmtCtx, pkCol.RetType)
+					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType)
 					if err != nil {
 						return err
 					}
@@ -656,7 +671,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 					}
 				}
 				if pkCol != nil {
-					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx.GetSessionVars().StmtCtx, pkCol.RetType)
+					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType)
 					if err != nil {
 						return err
 					}
@@ -727,7 +742,16 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 		for _, colInfo := range pk.Columns {
 			if pkCol := expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]); pkCol != nil {
 				pkCols = append(pkCols, pkCol)
-				pkColsLen = append(pkColsLen, colInfo.Length)
+				// We need to consider the prefix index.
+				// For example: when we have 'a varchar(50), index idx(a(10))'
+				// So we will get 'colInfo.Length = 50' and 'pkCol.RetType.Flen = 10'.
+				// In 'hasPrefix' function from 'util/ranger/ranger.go' file,
+				// we use 'columnLength == types.UnspecifiedLength' to check whether we have prefix index.
+				if colInfo.Length != types.UnspecifiedLength && colInfo.Length == pkCol.RetType.Flen {
+					pkColsLen = append(pkColsLen, types.UnspecifiedLength)
+				} else {
+					pkColsLen = append(pkColsLen, colInfo.Length)
+				}
 			}
 		}
 		if len(pkCols) > 0 {
@@ -750,7 +774,7 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 			}
 		}
 		if pkCol != nil {
-			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sctx.GetSessionVars().StmtCtx, pkCol.RetType)
+			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sctx, pkCol.RetType)
 			if err != nil {
 				return err
 			}
@@ -1460,10 +1484,10 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 	switch v := p.(type) {
 	case *PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
+		return indexScan.IsPointGetByUniqueKey(ctx), nil
 	case *PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*PhysicalTableScan)
-		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
+		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx)
 		if !isPointRange {
 			return false, nil
 		}
