@@ -286,20 +286,23 @@ select ord(a), ord(b), ord(c) from t;
 ord(a)	ord(b)	ord(c)
 14989485	54992	228
 set @@tidb_enable_vectorized_expression = false;
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
 set @@block_encryption_mode='aes-128-ecb';
-select hex(aes_encrypt(123456789, '123')) as a, hex(aes_encrypt(987654321, '123')) as b;
-a	b
-3375C2B28622D121067C9D78CEF48B20	35BDCDDBA3C0E0B4427FA199FFF0566C
+select hex(aes_encrypt(a, '123')), hex(aes_encrypt(b, '123')), hex(aes_encrypt(c, '123')) from t;
+hex(aes_encrypt(a, '123'))	hex(aes_encrypt(b, '123'))	hex(aes_encrypt(c, '123'))
+C54279F381B0710E145E94106F03C94C	7A747EC6F1906276D036B1F3CE27BAAB	A0E5E01289017B8A3691CCFBDE81A59ED4A9D5BF50A298D41287E395CDDCAD56
 set @@block_encryption_mode='aes-128-ofb';
-select hex(aes_encrypt(123456789, '1234567890123456', '1234567890123456')) as a, hex(aes_encrypt(987654321, '1234567890123456', '1234567890123456')) as b;
-a	b
-444EFE38E96AA7D2E2	4C44FA3AE968A3D8EA
+select hex(aes_encrypt(a, '123', '1234567890123456')), hex(aes_encrypt(b, '123', '1234567890123456')), hex(aes_encrypt(c, '123', '1234567890123456')) from t;
+hex(aes_encrypt(a, '123', '1234567890123456'))	hex(aes_encrypt(b, '123', '1234567890123456'))	hex(aes_encrypt(c, '123', '1234567890123456'))
+65473346EE2BF64CD2	5344055C9C5A	65473346EE2BF64CD2BA02F128114B0E061E095B
 set @@tidb_enable_vectorized_expression = true;
-select hex(aes_encrypt(123456789, '1234567890123456', '1234567890123456')) as a, hex(aes_encrypt(987654321, '1234567890123456', '1234567890123456')) as b;
-a	b
-444EFE38E96AA7D2E2	4C44FA3AE968A3D8EA
+select hex(aes_encrypt(a, '123', '1234567890123456')), hex(aes_encrypt(b, '123', '1234567890123456')), hex(aes_encrypt(c, '123', '1234567890123456')) from t;
+hex(aes_encrypt(a, '123', '1234567890123456'))	hex(aes_encrypt(b, '123', '1234567890123456'))	hex(aes_encrypt(c, '123', '1234567890123456'))
+65473346EE2BF64CD2	5344055C9C5A	65473346EE2BF64CD2BA02F128114B0E061E095B
 set @@block_encryption_mode='aes-128-ecb';
-select hex(aes_encrypt(123456789, '123')) as a, hex(aes_encrypt(987654321, '123')) as b;
-a	b
-3375C2B28622D121067C9D78CEF48B20	35BDCDDBA3C0E0B4427FA199FFF0566C
+select hex(aes_encrypt(a, '123')), hex(aes_encrypt(b, '123')), hex(aes_encrypt(c, '123')) from t;
+hex(aes_encrypt(a, '123'))	hex(aes_encrypt(b, '123'))	hex(aes_encrypt(c, '123'))
+C54279F381B0710E145E94106F03C94C	7A747EC6F1906276D036B1F3CE27BAAB	A0E5E01289017B8A3691CCFBDE81A59ED4A9D5BF50A298D41287E395CDDCAD56
 set @@tidb_enable_vectorized_expression = false;
