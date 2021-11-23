@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -6624,7 +6625,22 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
+
+	// exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	// stmt, err := exec.ParseWithParams(context.Background(), "insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
+	// _, _, err = exec.ExecRestrictedStmt(context.Background(), stmt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return err
 }
 
 func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error) {

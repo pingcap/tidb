@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/domainutil"
 )
 
@@ -43,6 +45,7 @@ type Builder struct {
 	store kv.Storage
 	// TODO: renewLeaseCh is only used to pass data between table and domain
 	renewLeaseCh chan func()
+	factory func() (pools.Resource, error)
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -630,7 +633,13 @@ func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInf
 		return nil, errors.Trace(err)
 	}
 	if t, ok := ret.(table.CachedTable); ok {
-		err = t.Init(b.renewLeaseCh)
+		var tmp pools.Resource
+		tmp, err = b.factory()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		err = t.Init(b.renewLeaseCh, tmp.(sqlexec.SQLExecutor))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -674,7 +683,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(store kv.Storage, renewCh chan func()) *Builder {
+func NewBuilder(store kv.Storage, renewCh chan func(), factory func() (pools.Resource, error)) *Builder {
 	return &Builder{
 		store: store,
 		is: &infoSchema{
@@ -684,6 +693,7 @@ func NewBuilder(store kv.Storage, renewCh chan func()) *Builder {
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
 		renewLeaseCh: renewCh,
+		factory: factory,
 	}
 }
 

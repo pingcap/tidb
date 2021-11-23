@@ -4697,7 +4697,7 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 			}
 		}()
 		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-			err := tbl.(table.CachedTable).UpdateLockForRead(b.ctx.GetStore(), startTS)
+			err := tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS)
 			if err != nil {
 				log.Warn("Update Lock Info Error")
 			}

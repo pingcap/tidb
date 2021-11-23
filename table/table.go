@@ -24,6 +24,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -252,12 +253,12 @@ var MockTableFromMeta func(tableInfo *model.TableInfo) Table
 type CachedTable interface {
 	Table
 
-	Init(renewCh chan func()) error
+	Init(renewCh chan func(), exec sqlexec.SQLExecutor) error
 
 	// TryReadFromCache checks if the cache table is readable.
 	TryReadFromCache(ts uint64) kv.MemBuffer
 
 	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
 	// you need to update the lock information and read the data from the original table
-	UpdateLockForRead(store kv.Storage, ts uint64) error
+	UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64) error
 }

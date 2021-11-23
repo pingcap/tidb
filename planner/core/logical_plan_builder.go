@@ -4209,7 +4209,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 						if r := recover(); r != nil {
 						}
 					}()
-					err := cachedTable.UpdateLockForRead(b.ctx.GetStore(), txn.StartTS())
+					err := cachedTable.UpdateLockForRead(ctx, b.ctx.GetStore(), txn.StartTS())
 					if err != nil {
 						log.Warn("Update Lock Info Error")
 					}

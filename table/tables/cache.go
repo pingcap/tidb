@@ -15,6 +15,7 @@
 package tables
 
 import (
+	"fmt"
 	"context"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -41,7 +43,6 @@ const (
 )
 
 var (
-	_ table.Table       = &cachedTable{}
 	_ table.CachedTable = &cachedTable{}
 )
 
@@ -80,6 +81,7 @@ func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
 func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 	tmp := c.cacheData.Load()
 	if tmp == nil {
+		fmt.Println("TryReadFromCache return nil because ... data not loaded")
 		return nil
 	}
 	data := tmp.(*cacheData)
@@ -93,36 +95,27 @@ func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 		}
 		return data
 	}
+	fmt.Println("TryReadFromCache return nil because ... ts not correct...", ts, data.Start, data.Lease)
 	return nil
 }
 
-// MockStateRemote represents the information of stateRemote.
-// Exported it only for testing.
-var MockStateRemote = struct {
-	Ch   chan remoteTask
-	Data *mockStateRemoteData
-}{}
-
-// NewCachedTable creates a new CachedTable Instance
-func NewCachedTable(tbl *TableCommon) (table.Table, error) {
-	if MockStateRemote.Data == nil {
-		MockStateRemote.Data = newMockStateRemoteData()
-		MockStateRemote.Ch = make(chan remoteTask, 100)
-		go mockRemoteService(MockStateRemote.Data, MockStateRemote.Ch)
-	}
-
+// newCachedTable creates a new CachedTable Instance
+func newCachedTable(tbl *TableCommon) (table.Table, error) {
 	ret := &cachedTable{
 		TableCommon: *tbl,
-		handle:      &mockStateRemoteHandle{MockStateRemote.Ch},
-		renewCh:     make(chan func()),
 	}
 	return ret, nil
 }
 
 // Init is an extra operation for cachedTable after TableFromMeta,
 // Because cachedTable need some additional parameter that can't be passed in TableFromMeta.
-func (c *cachedTable) Init(renewCh chan func()) error {
+func (c *cachedTable) Init(renewCh chan func(), exec sqlexec.SQLExecutor) error {
 	c.renewCh = renewCh
+	raw, ok := exec.(sqlExec)
+	if !ok {
+		return errors.New("Need sqlExec rather than sqlexec.SQLExecutor")
+	}
+	c.handle = NewStateRemote(raw)
 	return nil
 }
 
@@ -167,11 +160,11 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) 
 	return buffer, startTS, nil
 }
 
-func (c *cachedTable) UpdateLockForRead(store kv.Storage, ts uint64) error {
+func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64) error {
 	// Load data from original table and the update lock information.
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts)
-	succ, err := c.handle.LockForRead(tid, ts, lease)
+	succ, err := c.handle.LockForRead(ctx, tid, ts, lease)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -198,7 +191,7 @@ func (c *cachedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		return nil, err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, now, leaseFromTS(now))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -212,7 +205,7 @@ func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(ctx, c.Meta().ID, now, leaseFromTS(now))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -226,7 +219,7 @@ func (c *cachedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 	now := txn.StartTS()
-	err = c.handle.LockForWrite(c.Meta().ID, now, leaseFromTS(now))
+	err = c.handle.LockForWrite(context.Background(), c.Meta().ID, now, leaseFromTS(now))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -237,7 +230,7 @@ func (c *cachedTable) renewLease(ts uint64, op RenewLeaseType, data *cacheData) 
 	return func() {
 		tid := c.Meta().ID
 		lease := leaseFromTS(ts)
-		succ, err := c.handle.RenewLease(tid, ts, lease, op)
+		succ, err := c.handle.RenewLease(context.Background(), tid, ts, lease, op)
 		if err != nil {
 			log.Warn("Renew read lease error")
 		}
