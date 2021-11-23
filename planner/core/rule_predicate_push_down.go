@@ -273,7 +273,16 @@ func (p *LogicalJoin) updateEQCond() {
 			if rProj != nil {
 				rKey = rProj.appendExpr(rKey)
 			}
+			// If one side of the join key is string, and the another is json, the expression of the string would be cast to json
+			// and marked ParseToJSONFlag. In order to avoid wrap extra json wrap on this key in `WrapWithCastAsJSON`, we remove
+			// ParseToJSONFlag here
+			lFlag := lKey.GetType().Flag
+			rFlag := rKey.GetType().Flag
+			lKey.GetType().Flag &= ^mysql.ParseToJSONFlag
+			rKey.GetType().Flag &= ^mysql.ParseToJSONFlag
 			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+			lKey.GetType().Flag = lFlag
+			rKey.GetType().Flag = rFlag
 			p.EqualConditions = append(p.EqualConditions, eqCond.(*expression.ScalarFunction))
 		}
 	}
