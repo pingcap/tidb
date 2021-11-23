@@ -1298,10 +1298,12 @@ func TestSetVariable(t *testing.T) {
 		{"set xx.xx = 666", "xx.xx", false, true},
 		// Set session system variable xx.xx
 		{"set session xx.xx = 666", "xx.xx", false, true},
+		{"set local xx.xx = 666", "xx.xx", false, true},
 		{"set global xx.xx = 666", "xx.xx", true, true},
 
 		{"set @@xx.xx = 666", "xx.xx", false, true},
 		{"set @@session.xx.xx = 666", "xx.xx", false, true},
+		{"set @@local.xx.xx = 666", "xx.xx", false, true},
 		{"set @@global.xx.xx = 666", "xx.xx", true, true},
 
 		// Set user defined variable xx.xx
