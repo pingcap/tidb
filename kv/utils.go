@@ -16,6 +16,7 @@ package kv
 
 import (
 	"context"
+	"encoding/binary"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -25,27 +26,33 @@ import (
 func IncInt64(rm RetrieverMutator, k Key, step int64) (int64, error) {
 	val, err := rm.Get(context.TODO(), k)
 	if IsErrNotFound(err) {
-		err = rm.Set(k, []byte(strconv.FormatInt(step, 10)))
-		if err != nil {
+		b := make([]byte, 8, 8)
+		binary.BigEndian.PutUint64(b, uint64(step))
+
+		if err := rm.Set(k, b); err != nil {
 			return 0, err
 		}
+
 		return step, nil
 	}
 	if err != nil {
 		return 0, err
 	}
 
-	intVal, err := strconv.ParseInt(string(val), 10, 64)
+	intVal := binary.BigEndian.Uint64(val)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	intVal += step
-	err = rm.Set(k, []byte(strconv.FormatInt(intVal, 10)))
-	if err != nil {
+	intVal += uint64(step)
+	b := make([]byte, 8, 8)
+	binary.BigEndian.PutUint64(b, intVal)
+
+	if err := rm.Set(k, b); err != nil {
 		return 0, err
 	}
-	return intVal, nil
+
+	return int64(intVal), nil
 }
 
 // GetInt64 get int64 value which created by IncInt64 method.
