@@ -6,9 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"testing"
 
 	"github.com/golang/protobuf/proto"
-	. "github.com/pingcap/check"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -16,20 +17,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/stretchr/testify/require"
 )
-
-type testSchemaSuite struct {
-	store storage.ExternalStorage
-}
-
-var _ = Suite(&testSchemaSuite{})
-
-func (r *testSchemaSuite) SetUpSuite(c *C) {
-	var err error
-	base := c.MkDir()
-	r.store, err = storage.NewLocalStorage(base)
-	c.Assert(err, IsNil)
-}
 
 func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) *backuppb.BackupMeta {
 	return &backuppb.BackupMeta{
@@ -38,7 +27,15 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 	}
 }
 
-func (r *testSchemaSuite) TestLoadBackupMeta(c *C) {
+func TestLoadBackupMeta(t *testing.T) {
+	t.Parallel()
+
+	testDir, err := os.MkdirTemp("", "load_backup_meta_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(testDir)
+	store, err := storage.NewLocalStorage(testDir)
+	require.NoError(t, err)
+
 	tblName := model.NewCIStr("t1")
 	dbName := model.NewCIStr("test")
 	tblID := int64(123)
@@ -58,11 +55,11 @@ func (r *testSchemaSuite) TestLoadBackupMeta(c *C) {
 		},
 	}
 	dbBytes, err := json.Marshal(mockDB)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tblBytes, err := json.Marshal(mockTbl)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	statsBytes, err := json.Marshal(mockStats)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	mockSchemas := []*backuppb.Schema{
 		{
@@ -89,28 +86,43 @@ func (r *testSchemaSuite) TestLoadBackupMeta(c *C) {
 
 	meta := mockBackupMeta(mockSchemas, mockFiles)
 	data, err := proto.Marshal(meta)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	ctx := context.Background()
-	err = r.store.WriteFile(ctx, metautil.MetaFile, data)
-	c.Assert(err, IsNil)
+	err = store.WriteFile(ctx, metautil.MetaFile, data)
+	require.NoError(t, err)
 
 	dbs, err := LoadBackupTables(
 		ctx,
 		metautil.NewMetaReader(
 			meta,
-			r.store,
+			store,
 			&backuppb.CipherInfo{
 				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 			}),
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Files, HasLen, 1)
-	c.Assert(tbl.Files[0].Name, Equals, "1.sst")
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tbl.Files))
+	require.Equal(t, "1.sst", tbl.Files[0].Name)
 }
 
-func (r *testSchemaSuite) TestLoadBackupMetaPartionTable(c *C) {
+func newStore(t require.TestingT) (store storage.ExternalStorage, cleanFunc func()) {
+	base, err := os.MkdirTemp("", "br_schema_test")
+	require.NoError(t, err)
+	store, err = storage.NewLocalStorage(base)
+	require.NoError(t, err)
+	return store, func() {
+		require.NoError(t, os.RemoveAll(base))
+	}
+}
+
+func TestLoadBackupMetaPartionTable(t *testing.T) {
+	t.Parallel()
+
+	store, cleanFunc := newStore(t)
+	defer cleanFunc()
+
 	tblName := model.NewCIStr("t1")
 	dbName := model.NewCIStr("test")
 	tblID := int64(123)
@@ -138,11 +150,11 @@ func (r *testSchemaSuite) TestLoadBackupMetaPartionTable(c *C) {
 		},
 	}
 	dbBytes, err := json.Marshal(mockDB)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tblBytes, err := json.Marshal(mockTbl)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	statsBytes, err := json.Marshal(mockStats)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	mockSchemas := []*backuppb.Schema{
 		{
@@ -180,25 +192,25 @@ func (r *testSchemaSuite) TestLoadBackupMetaPartionTable(c *C) {
 	meta := mockBackupMeta(mockSchemas, mockFiles)
 
 	data, err := proto.Marshal(meta)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	ctx := context.Background()
-	err = r.store.WriteFile(ctx, metautil.MetaFile, data)
-	c.Assert(err, IsNil)
+	err = store.WriteFile(ctx, metautil.MetaFile, data)
+	require.NoError(t, err)
 
 	dbs, err := LoadBackupTables(
 		ctx,
 		metautil.NewMetaReader(
 			meta,
-			r.store,
+			store,
 			&backuppb.CipherInfo{
 				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 			},
 		),
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Files, HasLen, 3)
+	require.NoError(t, err)
+	require.Equal(t, 3, len(tbl.Files))
 	contains := func(name string) bool {
 		for i := range tbl.Files {
 			if tbl.Files[i].Name == name {
@@ -207,9 +219,9 @@ func (r *testSchemaSuite) TestLoadBackupMetaPartionTable(c *C) {
 		}
 		return false
 	}
-	c.Assert(contains("1.sst"), IsTrue)
-	c.Assert(contains("2.sst"), IsTrue)
-	c.Assert(contains("3.sst"), IsTrue)
+	require.True(t, contains("1.sst"))
+	require.True(t, contains("2.sst"))
+	require.True(t, contains("3.sst"))
 }
 
 func buildTableAndFiles(name string, tableID, fileCount int) (*model.TableInfo, []*backuppb.File) {
@@ -231,7 +243,7 @@ func buildTableAndFiles(name string, tableID, fileCount int) (*model.TableInfo, 
 	return mockTbl, mockFiles
 }
 
-func buildBenchmarkBackupmeta(c *C, dbName string, tableCount, fileCountPerTable int) *backuppb.BackupMeta {
+func buildBenchmarkBackupmeta(b *testing.B, dbName string, tableCount, fileCountPerTable int) *backuppb.BackupMeta {
 	mockFiles := make([]*backuppb.File, 0, tableCount*fileCountPerTable)
 	mockSchemas := make([]*backuppb.Schema, 0, tableCount)
 	for i := 1; i <= tableCount; i++ {
@@ -246,9 +258,9 @@ func buildBenchmarkBackupmeta(c *C, dbName string, tableCount, fileCountPerTable
 			},
 		}
 		dbBytes, err := json.Marshal(mockDB)
-		c.Assert(err, IsNil)
+		require.NoError(b, err)
 		tblBytes, err := json.Marshal(mockTbl)
-		c.Assert(err, IsNil)
+		require.NoError(b, err)
 		mockSchemas = append(mockSchemas, &backuppb.Schema{
 			Db:    dbBytes,
 			Table: tblBytes,
@@ -257,87 +269,95 @@ func buildBenchmarkBackupmeta(c *C, dbName string, tableCount, fileCountPerTable
 	return mockBackupMeta(mockSchemas, mockFiles)
 }
 
-// Run `go test github.com/pingcap/tidb/br/pkg/utils -check.b -test.v` to get benchmark result.
-func (r *testSchemaSuite) BenchmarkLoadBackupMeta64(c *C) {
-	meta := buildBenchmarkBackupmeta(c, "bench", 64, 64)
-	c.ResetTimer()
-	for i := 0; i < c.N; i++ {
+func BenchmarkLoadBackupMeta64(b *testing.B) {
+	store, cleanFunc := newStore(b)
+	defer cleanFunc()
+
+	meta := buildBenchmarkBackupmeta(b, "bench", 64, 64)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
 		data, err := proto.Marshal(meta)
-		c.Assert(err, IsNil)
+		require.NoError(b, err)
 
 		ctx := context.Background()
-		err = r.store.WriteFile(ctx, metautil.MetaFile, data)
-		c.Assert(err, IsNil)
+		err = store.WriteFile(ctx, metautil.MetaFile, data)
+		require.NoError(b, err)
 
 		dbs, err := LoadBackupTables(
 			ctx,
 			metautil.NewMetaReader(
 				meta,
-				r.store,
+				store,
 				&backuppb.CipherInfo{
 					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 				},
 			),
 		)
-		c.Assert(err, IsNil)
-		c.Assert(dbs, HasLen, 1)
-		c.Assert(dbs, HasKey, "bench")
-		c.Assert(dbs["bench"].Tables, HasLen, 64)
+		require.NoError(b, err)
+		require.Equal(b, 1, len(dbs))
+		require.Contains(b, dbs, "bench")
+		require.Equal(b, 64, len(dbs["bench"].Tables))
 	}
 }
 
-func (r *testSchemaSuite) BenchmarkLoadBackupMeta1024(c *C) {
-	meta := buildBenchmarkBackupmeta(c, "bench", 1024, 64)
-	c.ResetTimer()
-	for i := 0; i < c.N; i++ {
+func BenchmarkLoadBackupMeta1024(b *testing.B) {
+	store, cleanFunc := newStore(b)
+	defer cleanFunc()
+
+	meta := buildBenchmarkBackupmeta(b, "bench", 1024, 64)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
 		data, err := proto.Marshal(meta)
-		c.Assert(err, IsNil)
+		require.NoError(b, err)
 
 		ctx := context.Background()
-		err = r.store.WriteFile(ctx, metautil.MetaFile, data)
-		c.Assert(err, IsNil)
+		err = store.WriteFile(ctx, metautil.MetaFile, data)
+		require.NoError(b, err)
 
 		dbs, err := LoadBackupTables(
 			ctx,
 			metautil.NewMetaReader(
 				meta,
-				r.store,
+				store,
 				&backuppb.CipherInfo{
 					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 				},
 			),
 		)
-		c.Assert(err, IsNil)
-		c.Assert(dbs, HasLen, 1)
-		c.Assert(dbs, HasKey, "bench")
-		c.Assert(dbs["bench"].Tables, HasLen, 1024)
+		require.NoError(b, err)
+		require.Equal(b, 1, len(dbs))
+		require.Contains(b, dbs, "bench")
+		require.Equal(b, 1024, len(dbs["bench"].Tables))
 	}
 }
 
-func (r *testSchemaSuite) BenchmarkLoadBackupMeta10240(c *C) {
-	meta := buildBenchmarkBackupmeta(c, "bench", 10240, 64)
-	c.ResetTimer()
-	for i := 0; i < c.N; i++ {
+func BenchmarkLoadBackupMeta10240(b *testing.B) {
+	store, cleanFunc := newStore(b)
+	defer cleanFunc()
+
+	meta := buildBenchmarkBackupmeta(b, "bench", 10240, 64)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
 		data, err := proto.Marshal(meta)
-		c.Assert(err, IsNil)
+		require.NoError(b, err)
 
 		ctx := context.Background()
-		err = r.store.WriteFile(ctx, metautil.MetaFile, data)
-		c.Assert(err, IsNil)
+		err = store.WriteFile(ctx, metautil.MetaFile, data)
+		require.NoError(b, err)
 
 		dbs, err := LoadBackupTables(
 			ctx,
 			metautil.NewMetaReader(
 				meta,
-				r.store,
+				store,
 				&backuppb.CipherInfo{
 					CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 				},
 			),
 		)
-		c.Assert(err, IsNil)
-		c.Assert(dbs, HasLen, 1)
-		c.Assert(dbs, HasKey, "bench")
-		c.Assert(dbs["bench"].Tables, HasLen, 10240)
+		require.NoError(b, err)
+		require.Equal(b, 1, len(dbs))
+		require.Contains(b, dbs, "bench")
+		require.Equal(b, 10240, len(dbs["bench"].Tables))
 	}
 }
