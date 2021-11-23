@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
@@ -108,7 +107,7 @@ func TestLoadBackupMeta(t *testing.T) {
 func TestLoadBackupMetaPartionTable(t *testing.T) {
 	t.Parallel()
 
-	testDir := os.TempDir()
+	testDir := t.TempDir()
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)
 
@@ -259,7 +258,7 @@ func buildBenchmarkBackupmeta(b *testing.B, dbName string, tableCount, fileCount
 }
 
 func BenchmarkLoadBackupMeta64(b *testing.B) {
-	testDir := os.TempDir()
+	testDir := b.TempDir()
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(b, err)
 
@@ -291,7 +290,7 @@ func BenchmarkLoadBackupMeta64(b *testing.B) {
 }
 
 func BenchmarkLoadBackupMeta1024(b *testing.B) {
-	testDir := os.TempDir()
+	testDir := b.TempDir()
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(b, err)
 
@@ -323,7 +322,7 @@ func BenchmarkLoadBackupMeta1024(b *testing.B) {
 }
 
 func BenchmarkLoadBackupMeta10240(b *testing.B) {
-	testDir := os.TempDir()
+	testDir := b.TempDir()
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(b, err)
 
