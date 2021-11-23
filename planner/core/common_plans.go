@@ -1310,6 +1310,8 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		}
 	case *PhysicalCTE:
 		e.ctes = append(e.ctes, x)
+	case *PhysicalShuffleReceiverStub:
+		err = e.explainPlanInRowFormat(x.DataSource, "root", "", childIndent, true)
 	}
 	return
 }
