@@ -1720,7 +1720,8 @@ func BuildFinalModeAggregation(
 				// we must call deep clone in this case, to avoid sharing the arguments.
 				sumAgg := aggFunc.Clone()
 				sumAgg.Name = ast.AggFuncSum
-				sumAgg.RetTp = ExpandRetTypeForAvgSum(partial.Schema.Columns[partialCursor-1].GetType())
+				partial.Schema.Columns[partialCursor-1].RetType = ExpandRetTypeForAvgSum(partial.Schema.Columns[partialCursor-1].GetType())
+				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].RetType
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
 				newAggFunc := *aggFunc
