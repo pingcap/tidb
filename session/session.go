@@ -3015,7 +3015,7 @@ func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 	return &s.txn.writeSLI
 }
 
-var _ telemetry.TemporaryTableFeatureChecker = &session{}
+var _ telemetry.TemporaryOrCacheTableFeatureChecker = &session{}
 
 // TemporaryTableExists is used by the telemetry package to avoid circle dependency.
 func (s *session) TemporaryTableExists() bool {
@@ -3023,6 +3023,19 @@ func (s *session) TemporaryTableExists() bool {
 	for _, dbInfo := range is.AllSchemas() {
 		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
 			if tbInfo.Meta().TempTableType != model.TempTableNone {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// CachedTableExists is used by the telemetry package to avoid circle dependency.
+func (s *session) CachedTableExists() bool {
+	is := domain.GetDomain(s).InfoSchema()
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
+			if tbInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return true
 			}
 		}
