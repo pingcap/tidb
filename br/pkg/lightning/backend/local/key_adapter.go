@@ -67,7 +67,7 @@ func (dupDetectKeyAdapter) Encode(dst []byte, key []byte, rowID int64) []byte {
 	dst = reallocBytes(dst, 8)
 	n := len(dst)
 	dst = dst[:n+8]
-	binary.BigEndian.PutUint64(dst[n:n+8], uint64(rowID))
+	binary.BigEndian.PutUint64(dst[n:n+8], codec.EncodeIntToCmpUint(rowID))
 	return dst
 }
 

@@ -221,9 +221,7 @@ func TestDupDetectIterSeek(t *testing.T) {
 		},
 	}
 
-	storeDir, err := os.MkdirTemp("", "lightning-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(storeDir)
+	storeDir := t.TempDir()
 	db, err := pebble.Open(filepath.Join(storeDir, "kv"), &pebble.Options{})
 	require.NoError(t, err)
 
