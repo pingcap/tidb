@@ -51,18 +51,19 @@ func (s *testSerialStatSuite) TestDDLStatsInfo(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	c.Assert(err, IsNil)
 	defer func() {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
 
-	dbInfo := testSchemaInfo(c, d, "test_stat")
+	dbInfo, err := testSchemaInfo(d, "test_stat")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	tblInfo := testTableInfo(c, d, "t", 2)
 	ctx := testNewContext(d)
@@ -70,7 +71,7 @@ func (s *testSerialStatSuite) TestDDLStatsInfo(c *C) {
 
 	t := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	// insert t values (1, 1), (2, 2), (3, 3)
-	_, err := t.AddRecord(ctx, types.MakeDatums(1, 1))
+	_, err = t.AddRecord(ctx, types.MakeDatums(1, 1))
 	c.Assert(err, IsNil)
 	_, err = t.AddRecord(ctx, types.MakeDatums(2, 2))
 	c.Assert(err, IsNil)

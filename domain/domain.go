@@ -93,8 +93,8 @@ type Domain struct {
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
-
-	onClose func()
+	renewLeaseCh         chan func()       // It is used to call the renewLease function of the cache table.
+	onClose              func()
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -159,7 +159,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store()).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.renewLeaseCh).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -271,7 +271,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.Store()).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do.Store(), do.renewLeaseCh).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
@@ -287,6 +287,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			actions = append(actions, uint64(1<<diff.Type))
 		}
 	}
+
 	is := builder.Build()
 	relatedChange := transaction.RelatedSchemaChange{}
 	relatedChange.PhyTblIDS = phyTblIDs
@@ -406,7 +407,6 @@ func (do *Domain) Reload() error {
 
 	// lease renew, so it must be executed despite it is cache or not
 	do.SchemaValidator.Update(ver.Ver, oldSchemaVersion, is.SchemaMetaVersion(), changes)
-
 	lease := do.DDL().GetLease()
 	sub := time.Since(startTime)
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
@@ -700,6 +700,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		indexUsageSyncLease: idxUsageSyncLease,
 		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
 		onClose:             onClose,
+		renewLeaseCh:        make(chan func(), 10),
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -824,11 +825,11 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
-	do.wg.Add(3)
+	do.wg.Add(4)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
+	go do.renewLease()
 	go do.globalConfigSyncerKeeper()
-
 	if !skipRegisterToDashboard {
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()
@@ -1446,13 +1447,9 @@ const (
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
 func (do *Domain) NotifyUpdatePrivilege() error {
-	// If skip-grant-table is configured, do not flush privileges.
-	// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
-	// the call to do.PrivilegeHandle().Update would panic.
-	if config.GetGlobalConfig().Security.SkipGrantTable {
-		return nil
-	}
-
+	// No matter skip-grant-table is configured or not, sending an etcd message is required.
+	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
+	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), privilegeKey, "")
@@ -1460,6 +1457,14 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
 	}
+
+	// If skip-grant-table is configured, do not flush privileges.
+	// Because LoadPrivilegeLoop does not run and the privilege Handle is nil,
+	// the call to do.PrivilegeHandle().Update would panic.
+	if config.GetGlobalConfig().Security.SkipGrantTable {
+		return nil
+	}
+
 	// update locally
 	sysSessionPool := do.SysSessionPool()
 	ctx, err := sysSessionPool.Get()
@@ -1723,6 +1728,22 @@ func (do *Domain) serverIDKeeper() {
 func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
 	do.infoCache = infoschema.NewCache(16)
 	do.infoCache.Insert(is, 0)
+}
+
+func (do *Domain) renewLease() {
+	defer func() {
+		do.wg.Done()
+		logutil.BgLogger().Info("renew lease goroutine exited.")
+	}()
+	for {
+		select {
+		case <-do.exit:
+			close(do.renewLeaseCh)
+			return
+		case op := <-do.renewLeaseCh:
+			op()
+		}
+	}
 }
 
 func init() {

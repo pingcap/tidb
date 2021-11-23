@@ -548,13 +548,13 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C)
 	tk.MustExec("insert into t values ('123.45', '123.45', '123.45', '123.45', '123.45', '123.45', '123', '123')")
 	tk.MustExec("alter table t modify c decimal(7, 4)")
 	tk.MustExec("alter table t modify vc decimal(7, 4)")
-	tk.MustExec("alter table t modify bny decimal(7, 4)")
+	tk.MustGetErrCode("alter table t modify bny decimal(7, 4)", mysql.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify vbny decimal(7, 4)")
 	tk.MustExec("alter table t modify bb decimal(7, 4)")
 	tk.MustExec("alter table t modify txt decimal(7, 4)")
 	tk.MustExec("alter table t modify e decimal(7, 4)")
 	tk.MustExec("alter table t modify s decimal(7, 4)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("123.4500 123.4500 123.4500 123.4500 123.4500 123.4500 1.0000 1.0000"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("123.4500 123.4500 123.45\x00\x00 123.4500 123.4500 123.4500 1.0000 1.0000"))
 	// double
 	reset(tk)
 	tk.MustExec("insert into t values ('123.45', '123.45', '123.45', '123.45', '123.45', '123.45', '123', '123')")
@@ -2226,4 +2226,15 @@ func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c
 	tk.MustExec("insert into t values (1174717);")
 	errMsg := "[table:1366]Incorrect string value '\\xEC\\xBD' for column 'a'"
 	tk.MustGetErrMsg("alter table t modify column a varchar(31) collate utf8mb4_general_ci;", errMsg)
+}
+
+func (s *testColumnTypeChangeSuite) TestForIssue24621(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(250));")
+	tk.MustExec("insert into t values('0123456789abc');")
+	errMsg := "[types:1265]Data truncated for column 'a', value is '0123456789abc'"
+	tk.MustGetErrMsg("alter table t modify a char(12) null;", errMsg)
 }

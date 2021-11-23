@@ -544,7 +544,7 @@ func TestGetSessionVarsWaitTimeout(t *testing.T) {
 		},
 		ctx: tc,
 	}
-	require.Equal(t, uint64(0), cc.getSessionVarsWaitTimeout(context.Background()))
+	require.Equal(t, uint64(variable.DefWaitTimeout), cc.getSessionVarsWaitTimeout(context.Background()))
 }
 
 func mapIdentical(m1, m2 map[string]string) bool {
@@ -942,4 +942,48 @@ func TestHandleAuthPlugin(t *testing.T) {
 	resp.Capability = mysql.ClientProtocol41
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
+}
+
+func TestAuthPlugin2(t *testing.T) {
+
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	cfg := newTestConfig()
+	cfg.Socket = ""
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		chunkAlloc:   chunk.NewAllocator(),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "root",
+	}
+	ctx := context.Background()
+	se, _ := session.CreateSession4Test(store)
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc.ctx = tc
+
+	resp := handshakeResponse41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+	}
+
+	cc.isUnixSocket = true
+	_, err = cc.checkAuthPlugin(ctx, &resp)
+	require.NoError(t, err)
+
 }

@@ -589,7 +589,9 @@ func (n *PriorityEnum) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// PrimaryKeyName defines primary key name.
 const (
+	// PrimaryKeyName defines primary key name.
 	PrimaryKeyName = "PRIMARY"
+	// DefaultDecimal defines the default decimal value when the value out of range.
+	DefaultDecimal = "99999999999999999999999999999999999999999999999999999999999999999"
 )
