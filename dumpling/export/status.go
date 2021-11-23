@@ -48,6 +48,23 @@ func (d *Dumper) runLogProgress(tctx *tcontext.Context) {
 	}
 }
 
+type Midparams struct {
+	CompletedTables   float64
+	FinishedBytes     float64
+	FinishedRows      float64
+	EstimateTotalRows float64
+}
+
+func (d *Dumper) GetParameters() (midparams *Midparams) {
+	conf := d.conf
+	var mid *Midparams
+	mid.CompletedTables = ReadCounter(finishedTablesCounter, conf.Labels)
+	mid.FinishedBytes = ReadGauge(finishedSizeGauge, conf.Labels)
+	mid.FinishedRows = ReadGauge(finishedRowsGauge, conf.Labels)
+	mid.EstimateTotalRows = ReadCounter(estimateTotalRowsCounter, conf.Labels)
+	return mid
+}
+
 func calculateTableCount(m DatabaseTables) int {
 	cnt := 0
 	for _, tables := range m {
