@@ -357,7 +357,8 @@ func (s *testTableSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.d = ddl
 
-	s.dbInfo = testSchemaInfo(c, s.d, "test_table")
+	s.dbInfo, err = testSchemaInfo(s.d, "test_table")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 }
 
@@ -403,7 +404,8 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, true)
 
 	// for rename table
-	dbInfo1 := testSchemaInfo(c, s.d, "test_rename_table")
+	dbInfo1, err := testSchemaInfo(s.d, "test_rename_table")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(s.d), s.d, dbInfo1)
 	job = testRenameTable(c, ctx, d, dbInfo1.ID, s.dbInfo.ID, s.dbInfo.Name, tblInfo)
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)

@@ -64,11 +64,13 @@ func (s *testDDLSuite) TestPlacementPolicyInUse(c *C) {
 	c.Assert(err, IsNil)
 	sctx := testNewContext(d)
 
-	db1 := testSchemaInfo(c, d, "db1")
+	db1, err := testSchemaInfo(d, "db1")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, sctx, d, db1)
 	db1.State = model.StatePublic
 
-	db2 := testSchemaInfo(c, d, "db2")
+	db2, err := testSchemaInfo(d, "db2")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, sctx, d, db2)
 	db2.State = model.StatePublic
 
@@ -102,7 +104,8 @@ func (s *testDDLSuite) TestPlacementPolicyInUse(c *C) {
 	t3.State = model.StatePublic
 	db1.Tables = append(db1.Tables, t3)
 
-	dbP := testSchemaInfo(c, d, "db_p")
+	dbP, err := testSchemaInfo(d, "db_p")
+	c.Assert(err, IsNil)
 	dbP.PlacementPolicyRef = &model.PolicyRefInfo{ID: p4.ID, Name: p4.Name}
 	dbP.State = model.StatePublic
 	testCreateSchema(c, sctx, d, dbP)
