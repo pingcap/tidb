@@ -1998,7 +1998,7 @@ func WrapWithCastAsDuration(ctx sessionctx.Context, expr Expression) Expression 
 // WrapWithCastAsJSON wraps `expr` with `cast` if the return type of expr is not
 // type json, otherwise, returns `expr` directly.
 func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
-	if expr.GetType().Tp == mysql.TypeJSON && mysql.HasParseToJSONFlag(expr.GetType().Flag) {
+	if expr.GetType().Tp == mysql.TypeJSON {
 		return expr
 	}
 	tp := &types.FieldType{
