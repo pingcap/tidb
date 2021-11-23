@@ -49,9 +49,20 @@ func newLonglong(value int64) *Constant {
 	}
 }
 
+func newString(value string, collation string) *Constant {
+	return &Constant{
+		Value:   types.NewStringDatum(value),
+		RetType: types.NewFieldTypeWithCollation(mysql.TypeVarchar, collation, 255),
+	}
+}
+
 func newFunction(funcName string, args ...Expression) Expression {
-	typeLong := types.NewFieldType(mysql.TypeLonglong)
-	return NewFunctionInternal(mock.NewContext(), funcName, typeLong, args...)
+	return newFunctionWithType(funcName, mysql.TypeLonglong, args...)
+}
+
+func newFunctionWithType(funcName string, tp byte, args ...Expression) Expression {
+	ft := types.NewFieldType(tp)
+	return NewFunctionInternal(mock.NewContext(), funcName, ft, args...)
 }
 
 func TestConstantPropagation(t *testing.T) {
@@ -212,6 +223,31 @@ func TestConstantFolding(t *testing.T) {
 		{
 			condition: newFunction(ast.LT, newColumn(0), newFunction(ast.Plus, newColumn(1), newFunction(ast.Plus, newLonglong(2), newLonglong(1)))),
 			result:    "lt(Column#0, plus(Column#1, 3))",
+		},
+	}
+	for _, tt := range tests {
+		newConds := FoldConstant(tt.condition)
+		require.Equalf(t, tt.result, newConds.String(), "different for expr %s", tt.condition)
+	}
+}
+
+func TestConstantFoldingCharsetConvert(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		condition Expression
+		result    string
+	}{
+		{
+			condition: newFunction(ast.Length, newFunctionWithType(
+				InternalFuncToBinary, mysql.TypeVarchar,
+				newString("中文", "gbk_bin"))),
+			result: "4",
+		},
+		{
+			condition: newFunction(ast.Length, newFunctionWithType(
+				InternalFuncToBinary, mysql.TypeVarchar,
+				newString("中文", "utf8mb4_bin"))),
+			result: "6",
 		},
 	}
 	for _, tt := range tests {
