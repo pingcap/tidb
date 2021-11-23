@@ -371,7 +371,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		samples := mockExec.Collectors[i].Samples
 		c.Assert(len(samples), Equals, 20)
 		for j := 1; j < 20; j++ {
-			cmp, err := samples[j].Value.CompareDatum(tk.Se.GetSessionVars().StmtCtx, &samples[j-1].Value)
+			cmp, err := samples[j].Value.Compare(tk.Se.GetSessionVars().StmtCtx, &samples[j-1].Value, collate.GetBinaryCollator())
 			c.Assert(err, IsNil)
 			c.Assert(cmp, Greater, 0)
 		}
@@ -381,7 +381,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (bool, error) {
 	for i := 0; i < len(hg.Buckets); i++ {
 		lower, upper := hg.GetLower(i), hg.GetUpper(i)
-		cmp, err := upper.CompareDatum(sc, lower)
+		cmp, err := upper.Compare(sc, lower, collate.GetBinaryCollator())
 		if cmp < 0 || err != nil {
 			return false, err
 		}
@@ -389,7 +389,7 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 			continue
 		}
 		previousUpper := hg.GetUpper(i - 1)
-		cmp, err = lower.CompareDatum(sc, previousUpper)
+		cmp, err = lower.Compare(sc, previousUpper, collate.GetBinaryCollator())
 		if cmp <= 0 || err != nil {
 			return false, err
 		}
