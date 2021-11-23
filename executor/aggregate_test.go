@@ -1474,7 +1474,6 @@ func TestIssue20658(t *testing.T) {
 }
 
 func TestRandomPanicAggConsume(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
