@@ -61,7 +61,6 @@ type testSerialStatsSuite struct {
 type testSuiteBase struct {
 	store kv.Storage
 	do    *domain.Domain
-	hook  *logHook
 }
 
 var _ = Suite(&testStatsSuite{})
