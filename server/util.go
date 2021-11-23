@@ -179,16 +179,16 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 		dur = -dur
 	}
 	days := dur / (24 * time.Hour)
-	dur -= days * 24 * time.Hour
+	dur -= days * 24 * time.Hour //nolint:durationcheck
 	data[2] = byte(days)
 	hours := dur / time.Hour
-	dur -= hours * time.Hour
+	dur -= hours * time.Hour //nolint:durationcheck
 	data[6] = byte(hours)
 	minutes := dur / time.Minute
-	dur -= minutes * time.Minute
+	dur -= minutes * time.Minute //nolint:durationcheck
 	data[7] = byte(minutes)
 	seconds := dur / time.Second
-	dur -= seconds * time.Second
+	dur -= seconds * time.Second //nolint:durationcheck
 	data[8] = byte(seconds)
 	if dur == 0 {
 		data[0] = 8
