@@ -693,7 +693,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 
 func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeResponse41) error {
 	if resp.Capability&mysql.ClientPluginAuth > 0 {
-		newAuth, err := cc.checkAuthPlugin(ctx, &resp.AuthPlugin)
+		newAuth, err := cc.checkAuthPlugin(ctx, resp)
 		if err != nil {
 			logutil.Logger(ctx).Warn("failed to check the user authplugin", zap.Error(err))
 		}
@@ -810,7 +810,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 }
 
 // Check if the Authentication Plugin of the server, client and user configuration matches
-func (cc *clientConn) checkAuthPlugin(ctx context.Context, authPlugin *string) ([]byte, error) {
+func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeResponse41) ([]byte, error) {
 	// Open a context unless this was done before.
 	if cc.ctx == nil {
 		err := cc.openSession()
@@ -819,12 +819,36 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, authPlugin *string) (
 		}
 	}
 
-	userplugin, err := cc.ctx.AuthPluginForUser(&auth.UserIdentity{Username: cc.user, Hostname: cc.peerHost})
+	authData := resp.Auth
+	hasPassword := "YES"
+	if len(authData) == 0 {
+		hasPassword = "NO"
+	}
+	host, _, err := cc.PeerHost(hasPassword)
 	if err != nil {
 		return nil, err
 	}
+	userplugin, err := cc.ctx.AuthPluginForUser(&auth.UserIdentity{Username: cc.user, Hostname: host})
+	if err != nil {
+		return nil, err
+	}
+<<<<<<< HEAD
 	if len(userplugin) == 0 {
 		*authPlugin = mysql.AuthNativePassword
+=======
+	if userplugin == mysql.AuthSocket {
+		resp.AuthPlugin = mysql.AuthSocket
+		user, err := user.LookupId(fmt.Sprint(cc.socketCredUID))
+		if err != nil {
+			return nil, err
+		}
+		return []byte(user.Username), nil
+	}
+	if len(userplugin) == 0 {
+		logutil.Logger(ctx).Warn("No user plugin set, assuming MySQL Native Password",
+			zap.String("user", cc.user), zap.String("host", cc.peerHost))
+		resp.AuthPlugin = mysql.AuthNativePassword
+>>>>>>> 0f86a53d4... server: fix bug https://asktug.com/t/topic/213082/11 (#29577)
 		return nil, nil
 	}
 
@@ -833,12 +857,12 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, authPlugin *string) (
 	// or if the authentication method send by the server doesn't match the authentication
 	// method send by the client (*authPlugin) then we need to switch the authentication
 	// method to match the one configured for that specific user.
-	if (cc.authPlugin != userplugin) || (cc.authPlugin != *authPlugin) {
+	if (cc.authPlugin != userplugin) || (cc.authPlugin != resp.AuthPlugin) {
 		authData, err := cc.authSwitchRequest(ctx, userplugin)
 		if err != nil {
 			return nil, err
 		}
-		*authPlugin = userplugin
+		resp.AuthPlugin = userplugin
 		return authData, nil
 	}
 
