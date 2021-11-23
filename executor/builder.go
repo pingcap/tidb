@@ -1529,6 +1529,14 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					extractor: v.Extractor.(*plannercore.ClusterLogTableExtractor),
 				},
 			}
+		case strings.ToLower(infoschema.TableTiDBHotRegionsHistory):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &hotRegionsHistoryRetriver{
+					extractor: v.Extractor.(*plannercore.HotRegionsHistoryTableExtractor),
+				},
+			}
 		case strings.ToLower(infoschema.TableInspectionResult):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -4044,7 +4052,7 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*indexJoin
 		return retRanges, nil
 	}
 
-	return ranger.UnionRanges(ctx.GetSessionVars().StmtCtx, tmpDatumRanges, true)
+	return ranger.UnionRanges(ctx, tmpDatumRanges, true)
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
@@ -4098,7 +4106,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		return kvRanges, nil
 	}
 
-	tmpDatumRanges, err = ranger.UnionRanges(ctx.GetSessionVars().StmtCtx, tmpDatumRanges, true)
+	tmpDatumRanges, err = ranger.UnionRanges(ctx, tmpDatumRanges, true)
 	if err != nil {
 		return nil, err
 	}
