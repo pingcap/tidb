@@ -298,6 +298,24 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskChan chan<- Task) error {
 	conf := d.conf
 	allTables := conf.Tables
+	policyNames, err := ListAllPlacementPolicyNames(metaConn)
+	if err != nil {
+		return err
+	}
+	// policy should be created before database
+	for _, policy := range policyNames {
+		createPolicySQL, err := ShowCreatePlacementPolicy(metaConn, policy)
+		tctx.L().Info(fmt.Sprintf("%s aaaaa", createPolicySQL),zap.String("database", ""))
+		if err != nil {
+			return err
+		}
+		task := NewTaskPolicyMeta(policy, createPolicySQL)
+		ctxDone := d.sendTaskToChan(tctx, task, taskChan)
+		if ctxDone {
+			return tctx.Err()
+		}
+	}
+
 	for dbName, tables := range allTables {
 		if !conf.NoSchemas {
 			createDatabaseSQL, err := ShowCreateDatabase(metaConn, dbName)
