@@ -235,7 +235,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	defer func() {
 		sessVars.StmtCtx.StmtHints = savedStmtHints
 	}()
-	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil {
+	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil && sessVars.SelectLimit == math.MaxUint64 {
 		// Check bestPlanFromBind firstly to avoid nil stmtNode.
 		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
 			sessVars.StmtCtx.StmtHints = originStmtHints
@@ -280,7 +280,7 @@ func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
 	switch node.(type) {
 	// allow change variables (otherwise can't unset read-only mode)
 	case *ast.SetStmt,
-		// allow analyze table
+	// allow analyze table
 		*ast.AnalyzeTableStmt,
 		*ast.UseStmt,
 		*ast.ShowStmt,
