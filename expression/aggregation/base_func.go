@@ -43,7 +43,7 @@ type baseFuncDesc struct {
 
 func newBaseFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) (baseFuncDesc, error) {
 	b := baseFuncDesc{Name: strings.ToLower(name), Args: args}
-	err := b.typeInfer(ctx)
+	err := b.TypeInfer(ctx)
 	return b, err
 }
 
@@ -84,8 +84,8 @@ func (a *baseFuncDesc) String() string {
 	return buffer.String()
 }
 
-// typeInfer infers the arguments and return types of an function.
-func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
+// TypeInfer infers the arguments and return types of an function.
+func (a *baseFuncDesc) TypeInfer(ctx sessionctx.Context) error {
 	switch a.Name {
 	case ast.AggFuncCount:
 		a.typeInfer4Count(ctx)

@@ -1520,17 +1520,6 @@ type AggInfo struct {
 	Schema       *expression.Schema
 }
 
-// ExpandRetTypeForAvgSum expands the Flen of decimal type to avoid overflow
-// align with typeInfer4Sum(), be compatible with mysql
-func ExpandRetTypeForAvgSum(oldTp *types.FieldType) *types.FieldType {
-	if oldTp.Tp == mysql.TypeNewDecimal {
-		newType := oldTp.Clone()
-		newType.Flen = mathutil.Min(mysql.MaxDecimalWidth, oldTp.Flen + 22)
-		return newType
-	}
-	return oldTp
-}
-
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
 // returns the information of partial and final agg.
 // partialIsCop means whether partial agg is a cop task.
@@ -1720,8 +1709,8 @@ func BuildFinalModeAggregation(
 				// we must call deep clone in this case, to avoid sharing the arguments.
 				sumAgg := aggFunc.Clone()
 				sumAgg.Name = ast.AggFuncSum
-				partial.Schema.Columns[partialCursor-1].RetType = ExpandRetTypeForAvgSum(partial.Schema.Columns[partialCursor-1].GetType())
-				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].RetType
+				sumAgg.TypeInfer(sctx)
+				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
 				newAggFunc := *aggFunc
@@ -1757,8 +1746,6 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	newSchema.Keys = p.schema.Keys
 	newSchema.UniqueKeys = p.schema.UniqueKeys
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
-	ft := types.NewFieldType(mysql.TypeLonglong)
-	ft.Flen, ft.Decimal, ft.Charset, ft.Collate = mysql.MaxIntWidth, 0, charset.CharsetBin, charset.CollationBin
 	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
 	// add agg functions schema
 	for i, aggFunc := range p.AggFuncs {
@@ -1766,18 +1753,18 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			// inset a count(column)
 			avgCount := aggFunc.Clone()
 			avgCount.Name = ast.AggFuncCount
+			avgCount.TypeInfer(p.ctx)
 			newAggFuncs = append(newAggFuncs, avgCount)
-			avgCount.RetTp = ft
 			avgCountCol := &expression.Column{
 				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  ft,
+				RetType:  avgCount.RetTp,
 			}
 			newSchema.Append(avgCountCol)
 			// insert a sum(column)
 			avgSum := aggFunc.Clone()
 			avgSum.Name = ast.AggFuncSum
+			avgSum.TypeInfer(p.ctx)
 			newAggFuncs = append(newAggFuncs, avgSum)
-			avgSum.RetTp = ExpandRetTypeForAvgSum(avgSum.RetTp)
 			avgSumCol := &expression.Column{
 				UniqueID: p.schema.Columns[i].UniqueID,
 				RetType:  avgSum.RetTp,
