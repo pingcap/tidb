@@ -764,7 +764,7 @@ func TestLcTimeNamesReadOnly(t *testing.T) {
 	vars := NewSessionVars()
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
 	_, err := sv.Validate(vars, "newvalue", ScopeGlobal)
-	require.True(t, terror.ErrorEqual(err, ErrReadOnly))
+	require.Error(t, err)
 }
 
 func TestDDLWorkers(t *testing.T) {
