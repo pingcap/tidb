@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -99,11 +99,7 @@ func (e *ReplaceExec) EqualDatumsAsBinary(sc *stmtctx.StatementContext, a []type
 		return false, nil
 	}
 	for i, ai := range a {
-		collation := ai.Collation()
-		// We should use binary collation to compare datum, otherwise the result will be incorrect
-		ai.SetCollation(charset.CollationBin)
-		v, err := ai.CompareDatum(sc, &b[i])
-		ai.SetCollation(collation)
+		v, err := ai.Compare(sc, &b[i], collate.GetBinaryCollator())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
