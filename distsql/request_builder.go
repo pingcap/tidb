@@ -666,6 +666,9 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 		if err != nil {
 			return nil, err
 		}
+		if i == 0 {
+			estimatedMemUsage += int64(cap(low) + cap(high))
+		}
 		for _, tid := range tids {
 			startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
 			endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)

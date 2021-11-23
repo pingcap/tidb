@@ -231,12 +231,12 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		memTracker:    memory.NewTracker(memory.LabelForIndexJoinInnerWorker, -1),
 	}
 	iw.memTracker.AttachTo(e.memTracker)
-	for _, ran := range copiedRanges {
+	if len(copiedRanges) != 0 {
 		// We should not consume this memory usage in `iw.memTracker`. The
 		// memory usage of inner worker will be reset the end of iw.handleTask.
 		// While the life cycle of this memory consumption exists throughout the
 		// whole active period of inner worker.
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.Consume(2 * types.EstimatedMemUsage(ran.LowVal, len(ran.LowVal)))
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.Consume(2 * types.EstimatedMemUsage(copiedRanges[0].LowVal, len(copiedRanges)))
 	}
 	if e.lastColHelper != nil {
 		// nextCwf.TmpConstant needs to be reset for every individual
@@ -550,7 +550,6 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 		numRows := chk.NumRows()
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 			dLookUpKey, dHashKey, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
-			iw.lookup.memTracker.Consume(types.EstimatedMemUsage(dLookUpKey, len(dLookUpKey)))
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrWrongValue) {
 					// We ignore rows with invalid datetime.
@@ -558,6 +557,9 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 					continue
 				}
 				return nil, err
+			}
+			if rowIdx == 0 {
+				iw.lookup.memTracker.Consume(types.EstimatedMemUsage(dLookUpKey, numRows))
 			}
 			if dHashKey == nil {
 				// Append null to make looUpKeys the same length as outer Result.

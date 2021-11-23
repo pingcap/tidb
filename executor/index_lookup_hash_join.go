@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -454,6 +455,13 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		outerRowStatus:    make([]outerRowStatusFlag, 0, e.maxChunkSize),
 	}
 	iw.memTracker.AttachTo(e.memTracker)
+	if len(copiedRanges) != 0 {
+		// We should not consume this memory usage in `iw.memTracker`. The
+		// memory usage of inner worker will be reset the end of iw.handleTask.
+		// While the life cycle of this memory consumption exists throughout the
+		// whole active period of inner worker.
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.Consume(2 * types.EstimatedMemUsage(copiedRanges[0].LowVal, len(copiedRanges)))
+	}
 	if e.lastColHelper != nil {
 		// nextCwf.TmpConstant needs to be reset for every individual
 		// inner worker to avoid data race when the inner workers is running
