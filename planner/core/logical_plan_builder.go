@@ -953,11 +953,8 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 	if len(expressions) == 0 {
 		return p, nil
 	}
-<<<<<<< HEAD
-	selection.Conditions = expressions
-=======
 	// check expr field types.
-	for i, expr := range cnfExpres {
+	for i, expr := range expressions {
 		if expr.GetType().EvalType() == types.ETString {
 			tp := &types.FieldType{
 				Tp:      mysql.TypeDouble,
@@ -966,11 +963,10 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 				Decimal: types.UnspecifiedLength,
 			}
 			types.SetBinChsClnFlag(tp)
-			cnfExpres[i] = expression.TryPushCastIntoControlFunctionForHybridType(b.ctx, expr, tp)
+			expressions[i] = expression.TryPushCastIntoControlFunctionForHybridType(b.ctx, expr, tp)
 		}
 	}
-	selection.Conditions = cnfExpres
->>>>>>> ac7e6a42c... expression, planner: push cast down to control function with enum type. (#24542)
+	selection.Conditions = expressions
 	selection.SetChildren(p)
 	return selection, nil
 }
