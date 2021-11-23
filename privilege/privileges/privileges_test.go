@@ -2994,6 +2994,7 @@ func TestIssue29823(t *testing.T) {
 	tk2.MustQuery("show tables from test").Check(testkit.Rows("t1"))
 
 	tk.MustExec("revoke r1 from u1")
+	tk2.MustQuery("select current_role()").Check(testkit.Rows("`r1`@`%`"))
 	err := tk2.ExecToErr("select * from test.t1")
 	require.EqualError(t, err, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't1'")
 	tk2.MustQuery("show databases like 'test'").Check(testkit.Rows())
