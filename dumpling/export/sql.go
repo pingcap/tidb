@@ -99,7 +99,7 @@ func ShowCreatePlacementPolicy(db *sql.Conn, policy string) (string, error) {
 	handleOneRow := func(rows *sql.Rows) error {
 		return rows.Scan(&oneRow[0], &oneRow[1])
 	}
-	query := fmt.Sprintf("SHOW CREATE PLACEMENT POLICY %s", escapeString(policy))
+	query := fmt.Sprintf("SHOW CREATE PLACEMENT POLICY `%s`", escapeString(policy))
 	err := simpleQuery(db, query, handleOneRow)
 	if err != nil {
 		return "", errors.Annotatef(err, "sql: %s", query)

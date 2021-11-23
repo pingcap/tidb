@@ -352,11 +352,11 @@ func TestShowCreatePolicy(t *testing.T) {
 	conn, err := db.Conn(context.Background())
 	require.NoError(t, err)
 
-	mock.ExpectQuery("SHOW CREATE PLACEMENT POLICY `test`.`policy_x`").
+	mock.ExpectQuery("SHOW CREATE PLACEMENT POLICY `policy_x`").
 		WillReturnRows(sqlmock.NewRows([]string{"Policy", "Create Policy"}).
 			AddRow("policy_x", "CREATE PLACEMENT POLICY `policy_x` LEARNERS=1"))
 
-	createPolicySQL, err := ShowCreatePlacementPolicy(conn, "test", "policy_x")
+	createPolicySQL, err := ShowCreatePlacementPolicy(conn, "policy_x")
 	require.NoError(t, err)
 	require.Equal(t, "CREATE PLACEMENT POLICY `policy_x` LEARNERS=1", createPolicySQL)
 	require.NoError(t, mock.ExpectationsWereMet())
