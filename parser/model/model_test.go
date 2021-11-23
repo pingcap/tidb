@@ -300,7 +300,7 @@ func TestString(t *testing.T) {
 		{ActionDropIndexes, "drop multi-indexes"},
 		{ActionAlterTablePlacement, "alter table placement"},
 		{ActionAlterTablePartitionPolicy, "alter table partition policy"},
-		{ActionAlterNoCacheTable, "alter no cache table"},
+		{ActionAlterNoCacheTable, "alter table nocache"},
 	}
 
 	for _, v := range acts {
