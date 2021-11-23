@@ -443,6 +443,9 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				}
 				d.sessPool.put(sctx)
 			} else {
+				if sctx != nil {
+					d.sessPool.put(sctx)
+				}
 				log.Error("failed to get session for PollTiFlashReplicaStatus", zap.Error(err))
 			}
 

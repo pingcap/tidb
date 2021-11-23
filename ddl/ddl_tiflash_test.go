@@ -22,13 +22,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pingcap/failpoint"
 
 	"github.com/pingcap/tidb/store/gcworker"
 
