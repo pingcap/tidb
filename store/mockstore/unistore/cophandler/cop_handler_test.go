@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -339,10 +340,10 @@ func TestPointGet(t *testing.T) {
 
 	// verify the returned rows value as input
 	expectedRow := data.rows[handle]
-	eq, err := returnedRow[0].CompareDatum(nil, &expectedRow[0])
+	eq, err := returnedRow[0].Compare(nil, &expectedRow[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, eq)
-	eq, err = returnedRow[1].CompareDatum(nil, &expectedRow[1])
+	eq, err = returnedRow[1].Compare(nil, &expectedRow[1], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, eq)
 }
