@@ -317,8 +317,8 @@ var sha1Tests = []struct {
 	{mysql.DefaultCollationName, 1024, "128351137a9c47206c4507dcf2e6fbeeca3a9079"},
 	{mysql.DefaultCollationName, 123.45, "22f8b438ad7e89300b51d88684f3f0b9fa1d7a32"},
 	{"gbk", 123.45, "22f8b438ad7e89300b51d88684f3f0b9fa1d7a32"},
-	{"gbk", "一二三", "01c1743ce7a7e822454a659f659bad61375ff10c"},
-	{"gbk", "一二三123", "7c9a76465a02c41d377596431ef29418e2f6a72c"},
+	{"gbk", "一二三", "30cda4eed59a2ff592f2881f39d42fed6e10cad8"},
+	{"gbk", "一二三123", "1e24acbf708cd889c1d5be90abc1f14eaf14d0b4"},
 	{"gbk", "", "da39a3ee5e6b4b0d3255bfef95601890afd80709"},
 }
 
@@ -330,8 +330,7 @@ func TestSha1Hash(t *testing.T) {
 	for _, tt := range sha1Tests {
 		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
-		in := types.NewDatum(tt.origin)
-		f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{in}))
+		f, _ := fc.getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{tt.origin}))
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		res, err := crypt.ToString()
