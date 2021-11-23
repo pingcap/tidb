@@ -1520,11 +1520,12 @@ type AggInfo struct {
 	Schema       *expression.Schema
 }
 
-// ExpandRetTypeForAvg expands the Flen of decimal type to avoid overflow
-func ExpandRetTypeForAvg(oldTp *types.FieldType) *types.FieldType {
+// ExpandRetTypeForAvgSum expands the Flen of decimal type to avoid overflow
+// align with typeInfer4Sum(), be compatible with mysql
+func ExpandRetTypeForAvgSum(oldTp *types.FieldType) *types.FieldType {
 	if oldTp.Tp == mysql.TypeNewDecimal {
 		newType := oldTp.Clone()
-		newType.Flen = mathutil.Max(mysql.MaxDecimalWidth-oldTp.Decimal, oldTp.Flen)
+		newType.Flen = mathutil.Min(mysql.MaxDecimalWidth, oldTp.Flen + 22)
 		return newType
 	}
 	return oldTp
@@ -1719,7 +1720,7 @@ func BuildFinalModeAggregation(
 				// we must call deep clone in this case, to avoid sharing the arguments.
 				sumAgg := aggFunc.Clone()
 				sumAgg.Name = ast.AggFuncSum
-				sumAgg.RetTp = ExpandRetTypeForAvg(partial.Schema.Columns[partialCursor-1].GetType())
+				sumAgg.RetTp = ExpandRetTypeForAvgSum(partial.Schema.Columns[partialCursor-1].GetType())
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
 				newAggFunc := *aggFunc
@@ -1775,7 +1776,7 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			avgSum := aggFunc.Clone()
 			avgSum.Name = ast.AggFuncSum
 			newAggFuncs = append(newAggFuncs, avgSum)
-			avgSum.RetTp = ExpandRetTypeForAvg(avgSum.RetTp)
+			avgSum.RetTp = ExpandRetTypeForAvgSum(avgSum.RetTp)
 			avgSumCol := &expression.Column{
 				UniqueID: p.schema.Columns[i].UniqueID,
 				RetType:  avgSum.RetTp,
