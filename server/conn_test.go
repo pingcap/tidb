@@ -20,9 +20,10 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/tidb/ddl"
 	"io"
 	"testing"
+
+	"github.com/pingcap/tidb/ddl"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"

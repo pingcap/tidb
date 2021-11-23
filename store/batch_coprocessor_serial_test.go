@@ -17,8 +17,9 @@ package store
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/ddl"
 	"testing"
+
+	"github.com/pingcap/tidb/ddl"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"

@@ -17,6 +17,7 @@ package executor_test
 import (
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/ddl"
 	"net"
 	"net/http/httptest"
 	"strconv"
@@ -83,6 +84,7 @@ func (s *testInfoschemaTableSuiteBase) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
+	ddl.DisableTiFlashPoll(s.dom.DDL())
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionLog
 	})

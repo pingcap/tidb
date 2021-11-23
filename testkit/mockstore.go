@@ -18,8 +18,9 @@
 package testkit
 
 import (
-	"github.com/pingcap/tidb/ddl"
 	"testing"
+
+	"github.com/pingcap/tidb/ddl"
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
