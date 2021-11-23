@@ -273,14 +273,17 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		bf.tp.Flag |= mysql.UnsignedFlag
 	}
 
-	bf.tp.Flen = argFieldTp.Flen
-	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
-	if bf.tp.Decimal != types.UnspecifiedLength {
-		if argFieldTp.Decimal != types.UnspecifiedLength {
-			decimalDelta := bf.tp.Decimal - argFieldTp.Decimal
-			bf.tp.Flen += mathutil.Max(decimalDelta, 0)
-		} else {
-			bf.tp.Flen = argFieldTp.Flen + bf.tp.Decimal
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if argTp == types.ETDecimal {
+		bf.tp.Flen = argFieldTp.Flen
+		bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
+		if bf.tp.Decimal != types.UnspecifiedLength {
+			if argFieldTp.Decimal != types.UnspecifiedLength {
+				decimalDelta := bf.tp.Decimal - argFieldTp.Decimal
+				bf.tp.Flen += mathutil.Max(decimalDelta, 0)
+			} else {
+				bf.tp.Flen = argFieldTp.Flen + bf.tp.Decimal
+			}
 		}
 	}
 
@@ -487,8 +490,10 @@ func (c *ceilFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	setFlag4FloorAndCeil(bf.tp, args[0])
-	argFieldTp := args[0].GetType()
-	bf.tp.Flen, bf.tp.Decimal = argFieldTp.Flen, 0
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if retTp == types.ETDecimal {
+		bf.tp.Flen, bf.tp.Decimal = args[0].GetType().Flen, 0
+	}
 
 	switch argTp {
 	case types.ETInt:
@@ -675,7 +680,11 @@ func (c *floorFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, err
 	}
 	setFlag4FloorAndCeil(bf.tp, args[0])
-	bf.tp.Flen, bf.tp.Decimal = args[0].GetType().Flen, 0
+
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if retTp == types.ETDecimal {
+		bf.tp.Flen, bf.tp.Decimal = args[0].GetType().Flen, 0
+	}
 	switch argTp {
 	case types.ETInt:
 		if retTp == types.ETInt {
@@ -1898,9 +1907,11 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-
-	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
-	bf.tp.Flen = args[0].GetType().Flen - args[0].GetType().Decimal + bf.tp.Decimal
+	// ETInt or ETReal is set correctly by newBaseBuiltinFuncWithTp, only need to handle ETDecimal.
+	if argTp == types.ETDecimal {
+		bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
+		bf.tp.Flen = args[0].GetType().Flen - args[0].GetType().Decimal + bf.tp.Decimal
+	}
 	bf.tp.Flag |= args[0].GetType().Flag
 
 	var sig builtinFunc
