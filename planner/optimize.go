@@ -160,9 +160,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			useBinding = false
 		}
 	}
-	// add the extra Limit after matching the bind record
-	stmtNode = plannercore.TryAddExtraLimit(sctx, stmtNode)
-	node = stmtNode
+	if ok {
+		// add the extra Limit after matching the bind record
+		stmtNode = plannercore.TryAddExtraLimit(sctx, stmtNode)
+		node = stmtNode
+	}
 
 	var names types.NameSlice
 	var bestPlan, bestPlanFromBind plannercore.Plan
@@ -278,7 +280,7 @@ func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
 	switch node.(type) {
 	// allow change variables (otherwise can't unset read-only mode)
 	case *ast.SetStmt,
-	// allow analyze table
+		// allow analyze table
 		*ast.AnalyzeTableStmt,
 		*ast.UseStmt,
 		*ast.ShowStmt,
