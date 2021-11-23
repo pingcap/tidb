@@ -449,7 +449,8 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 		}
 	case mysql.TypeDouble:
 		f64s := column.Float64s()
-		for i, f := range f64s {
+		for i := range f64s {
+			f := f64s[i]
 			if sel != nil && !sel[i] {
 				continue
 			}

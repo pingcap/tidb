@@ -4311,6 +4311,18 @@ func (s *testIntegrationSuite) TestCreateViewWithWindowFunc(c *C) {
 	rows.Check(testkit.Rows("1 1"))
 }
 
+func (s *testIntegrationSuite) TestIssue29834(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists IDT_MC21814;")
+	tk.MustExec("CREATE TABLE `IDT_MC21814` (`COL1` year(4) DEFAULT NULL,`COL2` year(4) DEFAULT NULL,KEY `U_M_COL` (`COL1`,`COL2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into IDT_MC21814 values(1901, 2119), (2155, 2000);")
+	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(1) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
+	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(2) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
+	// Only can generate one index join plan. Because the index join inner child can not be tableDual.
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The parameter of nth_plan() is out of range."))
+}
+
 func (s *testIntegrationSuite) TestIssue29221(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4705,6 +4717,26 @@ func (s *testIntegrationSuite) TestIssue27797(c *C) {
 	tk.MustExec("insert into IDT_HP24172(col1) values(8388607);")
 	result = tk.MustQuery("select col2 from IDT_HP24172 where col1 = 8388607 and col1 in (select col1 from IDT_HP24172);")
 	result.Check(testkit.Rows("<nil>"))
+}
+
+func (s *testIntegrationSuite) TestIssue27949(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t27949")
+	tk.MustExec("create table t27949 (a int, b int, key(b))")
+	tk.MustQuery("explain format = 'brief' select * from t27949 where b=1").Check(testkit.Rows("IndexLookUp 10.00 root  ",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t27949, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t27949 keep order:false, stats:pseudo"))
+	tk.MustExec("create global binding for select * from t27949 where b=1 using select * from t27949 ignore index(b) where b=1")
+	tk.MustQuery("explain format = 'brief' select * from t27949 where b=1").Check(testkit.Rows("TableReader 10.00 root  data:Selection",
+		"└─Selection 10.00 cop[tikv]  eq(test.t27949.b, 1)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t27949 keep order:false, stats:pseudo"))
+	tk.MustExec("set @@sql_select_limit=100")
+	tk.MustQuery("explain format = 'brief' select * from t27949 where b=1").Check(testkit.Rows("Limit 10.00 root  offset:0, count:100",
+		"└─TableReader 10.00 root  data:Limit",
+		"  └─Limit 10.00 cop[tikv]  offset:0, count:100",
+		"    └─Selection 10.00 cop[tikv]  eq(test.t27949.b, 1)",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t27949 keep order:false, stats:pseudo"))
 }
 
 func (s *testIntegrationSuite) TestIssue28154(c *C) {

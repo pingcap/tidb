@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	testkit2 "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
@@ -81,6 +82,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -109,12 +111,9 @@ var _ = Suite(&testSuiteJoin1{&baseTestSuite{}})
 var _ = Suite(&testSuiteJoin2{&baseTestSuite{}})
 var _ = Suite(&testSuiteJoin3{&baseTestSuite{}})
 var _ = SerialSuites(&testSuiteJoinSerial{&baseTestSuite{}})
-var _ = Suite(&testSuiteAgg{baseTestSuite: &baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
 var _ = Suite(&testSuite8{&baseTestSuite{}})
-var _ = SerialSuites(&testShowStatsSuite{&baseTestSuite{}})
-var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = SerialSuites(&testRecoverTable{})
@@ -619,35 +618,33 @@ type testCase struct {
 }
 
 func checkCases(tests []testCase, ld *executor.LoadDataInfo,
-	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
+	t *testing.T, tk *testkit2.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
 	origin := ld.IgnoreLines
 	for _, tt := range tests {
 		ld.IgnoreLines = origin
-		c.Assert(ctx.NewTxn(context.Background()), IsNil)
+		require.Nil(t, ctx.NewTxn(context.Background()))
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
 		ctx.GetSessionVars().StmtCtx.InDeleteStmt = false
 		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
-		c.Assert(err1, IsNil)
-		c.Assert(reachLimit, IsFalse)
+		require.NoError(t, err1)
+		require.False(t, reachLimit)
 		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
-		c.Assert(err1, IsNil)
+		require.NoError(t, err1)
 		ld.SetMaxRowsInBatch(20000)
 		if tt.restData == nil {
-			c.Assert(data, HasLen, 0,
-				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
+			require.Len(t, data, 0, "data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data))
 		} else {
-			c.Assert(data, DeepEquals, tt.restData,
-				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
+			require.Equal(t, tt.restData, data, "data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data))
 		}
 		ld.SetMessage()
-		tk.CheckLastMessage(tt.expectedMsg)
+		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage())
 		ctx.StmtCommit()
 		txn, err := ctx.Txn(true)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = txn.Commit(context.Background())
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		r := tk.MustQuery(selectSQL)
 		r.Check(testutil.RowsWithSep("|", tt.expected...))
 		tk.MustExec(deleteSQL)
@@ -3315,6 +3312,16 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("", ""))
 	tk.MustExec("insert into t values (null)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("", "", "<nil>"))
+
+	// Test https://github.com/pingcap/tidb/issues/29525.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int auto_increment primary key, c1 enum('a', '', 'c'));")
+	tk.MustExec("insert into t(c1) values (0);")
+	tk.MustQuery("select id, c1+0, c1 from t;").Check(testkit.Rows("1 0 "))
+	tk.MustExec("alter table t change c1 c1 enum('a', '') not null;")
+	tk.MustQuery("select id, c1+0, c1 from t;").Check(testkit.Rows("1 0 "))
+	tk.MustExec("insert into t(c1) values (0);")
+	tk.MustQuery("select id, c1+0, c1 from t;").Check(testkit.Rows("1 0 ", "2 0 "))
 }
 
 // TestIssue4024 This tests https://github.com/pingcap/tidb/issues/4024
