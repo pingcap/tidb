@@ -84,6 +84,13 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 
 	var t TableCommon
 	initTableCommon(&t, tblInfo, tblInfo.ID, columns, nil)
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		ret, err := NewCachedTable(&t)
+		if err != nil {
+			return nil
+		}
+		return ret
+	}
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t); err != nil {
 			return nil
