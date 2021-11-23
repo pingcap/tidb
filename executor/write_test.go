@@ -78,7 +78,7 @@ func TestInsert(t *testing.T) {
 
 	insertSetSQL := `insert insert_test set c1 = 3;`
 	tk.MustExec(insertSetSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	errInsertSelectSQL = `insert insert_test set c1 = 4, c1 = 5;`
 	tk.MustExec("begin")
@@ -123,14 +123,14 @@ func TestInsert(t *testing.T) {
 	r.Check(testkit.Rows(rowStr))
 	insertSQL := `insert into insert_test (id, c3) values (1, 2) on duplicate key update id=values(id), c2=10;`
 	tk.MustExec(insertSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	r = tk.MustQuery("select * from insert_test where id = 1;")
 	rowStr = fmt.Sprintf("%v %v %v %v", "1", "1", "10", "1")
 	r.Check(testkit.Rows(rowStr))
 
 	insertSQL = `insert into insert_test (id, c2) values (1, 1) on duplicate key update insert_test.c2=10;`
 	tk.MustExec(insertSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	_, err = tk.Exec(`insert into insert_test (id, c2) values(1, 1) on duplicate key update t.c2 = 10`)
 	require.Error(t, err)
@@ -138,7 +138,7 @@ func TestInsert(t *testing.T) {
 	// for on duplicate key
 	insertSQL = `INSERT INTO insert_test (id, c3) VALUES (1, 2) ON DUPLICATE KEY UPDATE c3=values(c3)+c3+3;`
 	tk.MustExec(insertSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	r = tk.MustQuery("select * from insert_test where id = 1;")
 	rowStr = fmt.Sprintf("%v %v %v %v", "1", "1", "10", "6")
 	r.Check(testkit.Rows(rowStr))
@@ -146,7 +146,7 @@ func TestInsert(t *testing.T) {
 	// for on duplicate key with ignore
 	insertSQL = `INSERT IGNORE INTO insert_test (id, c3) VALUES (1, 2) ON DUPLICATE KEY UPDATE c3=values(c3)+c3+3;`
 	tk.MustExec(insertSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	r = tk.MustQuery("select * from insert_test where id = 1;")
 	rowStr = fmt.Sprintf("%v %v %v %v", "1", "1", "10", "11")
 	r.Check(testkit.Rows(rowStr))
@@ -160,7 +160,7 @@ func TestInsert(t *testing.T) {
 	tk.MustExec("create table TEST1 (ID INT NOT NULL, VALUE INT DEFAULT NULL, PRIMARY KEY (ID))")
 	_, err = tk.Exec("INSERT INTO TEST1(id,value) VALUE(3,3) on DUPLICATE KEY UPDATE VALUE=4")
 	require.NoError(t, err)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("insert into t values(1)")
@@ -487,7 +487,7 @@ func TestInsertIgnore(t *testing.T) {
 	tk.MustExec(testSQL)
 	testSQL = `insert into t values (1, 2);`
 	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	r := tk.MustQuery("select * from t;")
 	rowStr := fmt.Sprintf("%v %v", "1", "2")
@@ -531,7 +531,7 @@ func TestInsertIgnore(t *testing.T) {
 	testSQL = "insert ignore into t values ('1a')"
 	_, err = tk.Exec(testSQL)
 	require.NoError(t, err)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	r = tk.MustQuery("SHOW WARNINGS")
 	r.Check(testkit.Rows("Warning 1292 Truncated incorrect DOUBLE value: '1a'"))
 
@@ -541,9 +541,9 @@ func TestInsertIgnore(t *testing.T) {
 	tk.MustExec(testSQL)
 	testSQL = "insert ignore into t values (1,1);"
 	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	_, err = tk.Exec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	require.NoError(t, err)
 	r = tk.MustQuery("SHOW WARNINGS")
 	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
@@ -586,7 +586,7 @@ commit;`
 	tk.MustExec(testSQL)
 	testSQL = `insert ignore into badnull values (null)`
 	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'i' cannot be null"))
 	testSQL = `select * from badnull`
 	tk.MustQuery(testSQL).Check(testkit.Rows("0"))
@@ -631,14 +631,14 @@ func TestInsertOnDup(t *testing.T) {
 	tk.MustExec(testSQL)
 	testSQL = `insert into t values (-1, 1);`
 	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	r = tk.MustQuery("select * from t;")
 	rowStr1 = fmt.Sprintf("%v %v", "-1", "1")
 	r.Check(testkit.Rows(rowStr1))
 
 	tk.MustExec("insert into t values (1, 1) on duplicate key update j = values(j)")
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows(rowStr1))
 
@@ -703,13 +703,13 @@ commit;`
 	f2 VARCHAR(5) NOT NULL UNIQUE);
 	INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);`
 	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	testSQL = `SELECT LAST_INSERT_ID();`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1"))
 	testSQL = `INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);`
 	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	testSQL = `SELECT LAST_INSERT_ID();`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1"))
@@ -719,19 +719,19 @@ commit;`
 	f2 VARCHAR(5) NOT NULL UNIQUE);
 	INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);`
 	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	testSQL = `SELECT LAST_INSERT_ID();`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1"))
 	testSQL = `INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);`
 	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	testSQL = `SELECT LAST_INSERT_ID();`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1"))
 	testSQL = `INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = 2;`
 	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	testSQL = `SELECT LAST_INSERT_ID();`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1"))
@@ -740,21 +740,21 @@ commit;`
 	CREATE TABLE t1 (f1 INT);
 	INSERT t1 VALUES (1) ON DUPLICATE KEY UPDATE f1 = 1;`
 	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	tk.MustQuery(`SELECT * FROM t1;`).Check(testkit.Rows("1"))
 
 	testSQL = `DROP TABLE IF EXISTS t1;
 	CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT NOT NULL UNIQUE);
 	INSERT t1 VALUES (1, 1);`
 	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	tk.MustExec(`INSERT t1 VALUES (1, 1), (1, 1) ON DUPLICATE KEY UPDATE f1 = 2, f2 = 2;`)
 	require.Equal(t, tk.Session().LastMessage(), "Records: 2  Duplicates: 1  Warnings: 0")
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 1", "2 2"))
 	_, err := tk.Exec(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
 	require.Error(t, err)
 	tk.MustExec(`INSERT IGNORE t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'f2' cannot be null"))
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
 
@@ -778,13 +778,13 @@ func TestInsertIgnoreOnDup(t *testing.T) {
 	require.Equal(t, tk.Session().LastMessage(), "Records: 2  Duplicates: 0  Warnings: 0")
 	testSQL = `insert ignore into t values(1, 1) on duplicate key update i = 2;`
 	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	testSQL = `select * from t;`
 	r := tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1", "2 2"))
 	testSQL = `insert ignore into t values(1, 1) on duplicate key update j = 2;`
 	tk.MustExec(testSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	testSQL = `select * from t;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1", "2 2"))
@@ -956,7 +956,7 @@ func TestReplace(t *testing.T) {
 
 	replaceSetSQL := `replace replace_test set c1 = 3;`
 	tk.MustExec(replaceSetSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	errReplaceSetSQL := `replace replace_test set c1 = 4, c1 = 5;`
 	tk.MustExec("begin")
@@ -995,19 +995,19 @@ func TestReplace(t *testing.T) {
 	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=1;`
 	tk.MustExec(replaceUniqueIndexSQL)
 	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	replaceUniqueIndexSQL = `replace into replace_test_3 set c1=1, c2=1;`
 	tk.MustExec(replaceUniqueIndexSQL)
 	require.Equal(t, int64(2), int64(tk.Session().AffectedRows()))
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
 	tk.MustExec(replaceUniqueIndexSQL)
 	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
 	tk.MustExec(replaceUniqueIndexSQL)
 	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2));`
 	tk.MustExec(replaceUniqueIndexSQL)
@@ -1016,7 +1016,7 @@ func TestReplace(t *testing.T) {
 	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
 	tk.MustExec(replaceUniqueIndexSQL)
 	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	replacePrimaryKeySQL := `create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2));`
 	tk.MustExec(replacePrimaryKeySQL)
@@ -1025,17 +1025,17 @@ func TestReplace(t *testing.T) {
 	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
 	tk.MustExec(replacePrimaryKeySQL)
 	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	// For Issue989
 	issue989SQL := `CREATE TABLE tIssue989 (a int, b int, PRIMARY KEY(a), UNIQUE KEY(b));`
 	tk.MustExec(issue989SQL)
 	issue989SQL = `insert into tIssue989 (a, b) values (1, 2);`
 	tk.MustExec(issue989SQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	issue989SQL = `replace into tIssue989(a, b) values (111, 2);`
 	tk.MustExec(issue989SQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	r := tk.MustQuery("select * from tIssue989;")
 	r.Check(testkit.Rows("111 2"))
 
@@ -1049,7 +1049,7 @@ func TestReplace(t *testing.T) {
 	issue1012SQL = `replace into tIssue1012(a, b) values (1, 1);`
 	tk.MustExec(issue1012SQL)
 	require.Equal(t, int64(3), int64(tk.Session().AffectedRows()))
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	r = tk.MustQuery("select * from tIssue1012;")
 	r.Check(testkit.Rows("1 1"))
 
@@ -1059,7 +1059,7 @@ func TestReplace(t *testing.T) {
 	tk.MustExec(`insert into t1 values(1,1),(2,2),(3,3),(4,4),(5,5);`)
 	tk.MustExec(`replace into t1 values(1,1);`)
 	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	tk.MustExec(`replace into t1 values(1,1),(2,2);`)
 	require.Equal(t, int64(2), int64(tk.Session().AffectedRows()))
 	require.Equal(t, tk.Session().LastMessage(), "Records: 2  Duplicates: 0  Warnings: 0")
@@ -1197,7 +1197,7 @@ func TestPartitionedTableReplace(t *testing.T) {
 
 	replaceSetSQL := `replace replace_test set c1 = 3;`
 	tk.MustExec(replaceSetSQL)
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	errReplaceSetSQL := `replace replace_test set c1 = 4, c1 = 5;`
 	tk.MustExec("begin")
@@ -1247,18 +1247,18 @@ func TestPartitionedTableReplace(t *testing.T) {
 	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=8;`
 	tk.MustExec(replaceUniqueIndexSQL)
 	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 	replaceUniqueIndexSQL = `replace into replace_test_3 set c1=8, c2=8;`
 	tk.MustExec(replaceUniqueIndexSQL)
 	require.Equal(t, int64(2), int64(tk.Session().AffectedRows()))
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
 	tk.MustExec(replaceUniqueIndexSQL)
 	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
 	tk.MustExec(replaceUniqueIndexSQL)
 	require.Equal(t, int64(1), int64(tk.Session().AffectedRows()))
-	require.Equal(t, tk.Session().LastMessage(), "")
+	require.Empty(t, tk.Session().LastMessage())
 
 	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by range (c1) (
 				    PARTITION p0 VALUES LESS THAN (4),
