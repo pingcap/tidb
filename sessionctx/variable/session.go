@@ -955,6 +955,9 @@ type SessionVars struct {
 		curr int8
 		data [2]stmtctx.StatementContext
 	}
+
+	// EnableStmtOptimizeTrace indicates whether enable optimizer trace by 'trace plan statement'
+	EnableStmtOptimizeTrace bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

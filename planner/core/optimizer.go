@@ -377,12 +377,12 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 
 func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 	opt := defaultLogicalOptimizeOption()
-	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
-	if stmtCtx.EnableOptimizeTrace {
+	vars := logic.SCtx().GetSessionVars()
+	if vars.EnableStmtOptimizeTrace {
 		tracer := &tracing.LogicalOptimizeTracer{Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0)}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
-			stmtCtx.LogicalOptimizeTrace = tracer
+			vars.StmtCtx.LogicalOptimizeTrace = tracer
 		}()
 	}
 	var err error

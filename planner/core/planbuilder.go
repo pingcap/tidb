@@ -4048,7 +4048,14 @@ const (
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
-	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format}
+	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format, OptimizerTrace: trace.TracePlan}
+	if trace.TracePlan {
+		schema := newColumnsWithNames(1)
+		schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))
+		p.SetSchema(schema.col2Schema())
+		p.names = schema.names
+		return p, nil
+	}
 	switch trace.Format {
 	case TraceFormatRow:
 		schema := newColumnsWithNames(3)
