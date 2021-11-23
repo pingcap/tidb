@@ -9536,6 +9536,11 @@ func (s *testIntegrationSuite) TestEnumPushDown(c *C) {
 	tk.MustExec("insert into tdm values (1, 'a');")
 	tk.MustExec("update tdm set c12 = 2 where id = 1;")
 	tk.MustQuery("select * from tdm").Check(testkit.Rows("1 b"))
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("update tdm set c12 = 0 where id = 1;")
+	tk.MustQuery("select c12+0 from tdm").Check(testkit.Rows("0"))
+	tk.MustExec("update tdm set c12 = '0' where id = 1;")
+	tk.MustQuery("select c12+0 from tdm").Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSuite) TestJiraSetInnoDBDefaultRowFormat(c *C) {

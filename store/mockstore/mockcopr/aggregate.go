@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 type aggCtxsMapper map[string][]*aggregation.AggEvaluateContext
@@ -208,6 +209,7 @@ type streamAggExec struct {
 	aggExprs          []aggregation.Aggregation
 	aggCtxs           []*aggregation.AggEvaluateContext
 	groupByExprs      []expression.Expression
+	groupByCollators  []collate.Collator
 	relatedColOffsets []int
 	row               []types.Datum
 	tmpGroupByRow     []types.Datum
@@ -288,7 +290,7 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 			return false, errors.Trace(err)
 		}
 		if matched {
-			c, err := d.CompareDatum(e.evalCtx.sc, &e.nextGroupByRow[i])
+			c, err := d.Compare(e.evalCtx.sc, &e.nextGroupByRow[i], e.groupByCollators[i])
 			if err != nil {
 				return false, errors.Trace(err)
 			}
