@@ -153,6 +153,7 @@ type innerWorker struct {
 	nextColCompareFilters *plannercore.ColWithCmpFuncManager
 	keyOff2IdxOff         []int
 	stats                 *innerWorkerRuntimeStats
+	memTracker            *memory.Tracker
 }
 
 // Open implements the Executor interface.
@@ -227,6 +228,15 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		keyOff2IdxOff: e.keyOff2IdxOff,
 		stats:         innerStats,
 		lookup:        e,
+		memTracker:    memory.NewTracker(memory.LabelForIndexJoinInnerWorker, -1),
+	}
+	iw.memTracker.AttachTo(e.memTracker)
+	for _, ran := range copiedRanges {
+		// We should not consume this memory usage in `iw.memTracker`. The
+		// memory usage of inner worker will be reset the end of iw.handleTask.
+		// While the life cycle of this memory consumption exists throughout the
+		// whole active period of inner worker.
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.Consume(2 * types.EstimatedMemUsage(ran.LowVal, len(ran.LowVal)))
 	}
 	if e.lastColHelper != nil {
 		// nextCwf.TmpConstant needs to be reset for every individual
@@ -507,6 +517,9 @@ func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) err
 			atomic.AddInt64(&iw.stats.totalTime, int64(time.Since(start)))
 		}()
 	}
+	defer func() {
+		iw.memTracker.Consume(-iw.memTracker.BytesConsumed())
+	}()
 	lookUpContents, err := iw.constructLookupContent(task)
 	if err != nil {
 		return err
@@ -670,7 +683,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			atomic.AddInt64(&iw.stats.fetch, int64(time.Since(start)))
 		}()
 	}
-	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true, iw.lookup.finished)
+	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true, iw.memTracker, iw.lookup.finished)
 	if innerExec != nil {
 		defer terror.Call(innerExec.Close)
 	}

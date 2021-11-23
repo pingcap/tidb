@@ -202,6 +202,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
+		e.IndexLookUpJoin.finished.Store(true)
 		err := errors.New(fmt.Sprintf("%v", r))
 		if !e.keepOuterOrder {
 			e.resultCh <- &indexHashJoinResult{err: err}
@@ -210,6 +211,7 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 			e.taskCh <- task
 		}
 		if e.cancelFunc != nil {
+			e.IndexLookUpJoin.ctxCancelReason.Store(err)
 			e.cancelFunc()
 		}
 	}
@@ -246,6 +248,9 @@ func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) er
 			return result.err
 		}
 	case <-ctx.Done():
+		if err := e.IndexLookUpJoin.ctxCancelReason.Load(); err != nil {
+			return err.(error)
+		}
 		return ctx.Err()
 	}
 	req.SwapColumns(result.chk)
@@ -275,6 +280,9 @@ func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chu
 				return result.err
 			}
 		case <-ctx.Done():
+			if err := e.IndexLookUpJoin.ctxCancelReason.Load(); err != nil {
+				return err.(error)
+			}
 			return ctx.Err()
 		}
 		req.SwapColumns(result.chk)
@@ -435,6 +443,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 			keyOff2IdxOff: e.keyOff2IdxOff,
 			stats:         innerStats,
 			lookup:        &e.IndexLookUpJoin,
+			memTracker:    memory.NewTracker(memory.LabelForIndexJoinInnerWorker, -1),
 		},
 		taskCh:            taskCh,
 		joiner:            e.joiners[workerID],
@@ -444,6 +453,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		joinKeyBuf:        make([]byte, 1),
 		outerRowStatus:    make([]outerRowStatusFlag, 0, e.maxChunkSize),
 	}
+	iw.memTracker.AttachTo(e.memTracker)
 	if e.lastColHelper != nil {
 		// nextCwf.TmpConstant needs to be reset for every individual
 		// inner worker to avoid data race when the inner workers is running
@@ -587,6 +597,9 @@ func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(r interface{}
 }
 
 func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) error {
+	defer func() {
+		iw.memTracker.Consume(-iw.memTracker.BytesConsumed())
+	}()
 	var joinStartTime time.Time
 	if iw.stats != nil {
 		start := time.Now()
@@ -634,6 +647,9 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 				select {
 				case resultCh <- joinResult:
 				case <-ctx.Done():
+					if err := iw.lookup.ctxCancelReason.Load(); err != nil {
+						return err.(error)
+					}
 					return ctx.Err()
 				}
 				joinResult, ok = iw.getNewJoinResult(ctx)
@@ -782,6 +798,9 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 					select {
 					case resultCh <- joinResult:
 					case <-ctx.Done():
+						if err := iw.lookup.ctxCancelReason.Load(); err != nil {
+							return err.(error)
+						}
 						return ctx.Err()
 					}
 					joinResult, ok = iw.getNewJoinResult(ctx)

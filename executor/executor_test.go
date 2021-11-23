@@ -9337,19 +9337,21 @@ func (s *testSerialSuite) TestIssue28650(c *C) {
 
 	wg := &sync.WaitGroup{}
 	sql := `explain analyze
-	select /*+ stream_agg(@sel_1) stream_agg(@sel_3) inl_join(@sel_2 t2)*/ count(1) from
+	select /*+ stream_agg(@sel_1) stream_agg(@sel_3) %s(@sel_2 t2)*/ count(1) from
 		(
 			SELECT t2.a AS t2_external_user_ext_id, t2.b AS t2_t1_ext_id  FROM t2 INNER JOIN (SELECT t1.a AS d_t1_ext_id  FROM t1 GROUP BY t1.a) AS anon_1 ON anon_1.d_t1_ext_id = t2.a  WHERE t2.c = 123 AND t2.b
 		IN ("%s") ) tmp`
 
 	wg.Add(1)
+	sqls := make([]string, 2)
 	go func() {
 		defer wg.Done()
 		inElems := make([]string, 1000)
 		for i := 0; i < len(inElems); i++ {
 			inElems[i] = fmt.Sprintf("wm_%dbDgAAwCD-v1QB%dxky-g_dxxQCw", rand.Intn(100), rand.Intn(100))
 		}
-		sql = fmt.Sprintf(sql, strings.Join(inElems, "\",\""))
+		sqls[0] = fmt.Sprintf(sql, "inl_join", strings.Join(inElems, "\",\""))
+		sqls[1] = fmt.Sprintf(sql, "inl_hash_join", strings.Join(inElems, "\",\""))
 	}()
 
 	tk.MustExec("insert into t1 select rand()*400;")
@@ -9365,18 +9367,20 @@ func (s *testSerialSuite) TestIssue28650(c *C) {
 		})
 	}()
 	wg.Wait()
-	tk.MustExec("set @@tidb_mem_quota_query = 1073741824") // 1GB
-	c.Assert(tk.QueryToErr(sql), IsNil)
-	tk.MustExec("set @@tidb_mem_quota_query = 104857600") // 100MB, out of memory during executing
-	c.Assert(strings.Contains(tk.QueryToErr(sql).Error(), "Out Of Memory Quota!"), IsTrue)
-	tk.MustExec("set @@tidb_mem_quota_query = 64000") // 64KB, out of memory during building the plan
-	func() {
-		defer func() {
-			r := recover()
-			c.Assert(r, NotNil)
-			err := errors.Errorf("%v", r)
-			c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
+	for _, sql := range sqls {
+		tk.MustExec("set @@tidb_mem_quota_query = 1073741824") // 1GB
+		c.Assert(tk.QueryToErr(sql), IsNil)
+		tk.MustExec("set @@tidb_mem_quota_query = 67108864") // 64MB, out of memory during executing
+		c.Assert(strings.Contains(tk.QueryToErr(sql).Error(), "Out Of Memory Quota!"), IsTrue)
+		tk.MustExec("set @@tidb_mem_quota_query = 65536") // 64KB, out of memory during building the plan
+		func() {
+			defer func() {
+				r := recover()
+				c.Assert(r, NotNil)
+				err := errors.Errorf("%v", r)
+				c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
+			}()
+			tk.MustExec(sql)
 		}()
-		tk.MustExec(sql)
-	}()
+	}
 }
