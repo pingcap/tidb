@@ -379,16 +379,16 @@ var sha2Tests = []struct {
 	{"gbk", nil, 224, nil, false},
 	{"gbk", "pingcap", nil, nil, false},
 	{"gbk", "pingcap", 123, nil, false},
-	{"gbk", "一二三", 0, "4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7", true},
-	{"gbk", "一二三", 224, "ae47a60dd96e1deed3988d8fff3d662165e0aac7ddf371f244d7c11e", true},
-	{"gbk", "一二三", 256, "4fc9d8955b6155d931b24a583a6ad872f7d77fd4e4562cf8f619faa9c1a2cdc7", true},
-	{"gbk", "一二三", 384, "cdb9c8d3e2579d021116ebe9d7d7bb4f5b3a489cae84768f7b3348c9b8d716897a409ea96fd92bfb95e3fd8aa91ffc74", true},
-	{"gbk", "一二三", 512, "f033786177a79c88567e39a44eef41b9da7a21912b4b64464fe5021f75c0e1da120e5018bb0d115746512e758966eff1aa6f7d6eca1617164189e4e1bd975908", true},
-	{"gbk", "一二三123", 0, "1d1494c249ac99db8ff845b1b53b468fbbf2fb2a67b7889e8a780aff78a2e43b", true},
-	{"gbk", "一二三123", 224, "7974f24c519c5a7b8a907b6e34b6a9830898ea5af46dc80e53892ee4", true},
-	{"gbk", "一二三123", 256, "1d1494c249ac99db8ff845b1b53b468fbbf2fb2a67b7889e8a780aff78a2e43b", true},
-	{"gbk", "一二三123", 384, "bddc0f0cf70dd9ecf0bb64c6039d178e3fd8e5b1ec0d57bd1ccd82889f83cd6d9ea8ea74ab37b8377369ebf922426519", true},
-	{"gbk", "一二三123", 512, "0fee43a57577416e0674e2de4cc9d43d96b81453b5b2c5d03c83f840ed420993535f3c54ad63b9bf7a4e02d5425fe1291770b0b2cca0624ca47ef8354dc651d6", true},
+	{"gbk", "一二三", 0, "b6c1ae1f8d8a07426ddb13fca5124fb0b9f1f0ef1cca6730615099cf198ca8af", true},
+	{"gbk", "一二三", 224, "2362f577783f6cd6cc10b0308f946f479fef868a39d6339b5d74cc6d", true},
+	{"gbk", "一二三", 256, "b6c1ae1f8d8a07426ddb13fca5124fb0b9f1f0ef1cca6730615099cf198ca8af", true},
+	{"gbk", "一二三", 384, "54e75070f1faab03e7ce808ca2824ed4614ad1d58ee1409d8c1e4fd72ecab12c92ac3a2f919721c2aa09b23e5f3cc8aa", true},
+	{"gbk", "一二三", 512, "54fae3d0bb68bb4645af4a97a01fee1a6e3ecf7850f1ba41a994a46d23b60082262d00d9c635ff7ed02203e4806794dfa57c3654b3a4549bfb77ef1ddeab0224", true},
+	{"gbk", "一二三123", 0, "de059637dd572c2e21df1dd6d04512ad3a34f71964f14338e966356a091c0e7e", true},
+	{"gbk", "一二三123", 224, "a192909220fea1b74bcea87740f7550a2c03cf4f92d4c78ccedc9e3f", true},
+	{"gbk", "一二三123", 256, "de059637dd572c2e21df1dd6d04512ad3a34f71964f14338e966356a091c0e7e", true},
+	{"gbk", "一二三123", 384, "a487131f07fd46f66d7300be3c10bdae255e3296334a239240b28d32f038983331b276bd717363673e54733b594e7781", true},
+	{"gbk", "一二三123", 512, "9336a0844a5a1dc656d02ded28bf768cef9c39b47bd7292c75fc0d27fcb509ca765d24d502e5906e8afe1803fd5ea325e3d855a0206df6bc08fef5e7e34b0082", true},
 	{"gbk", "", 0, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", true},
 	{"gbk", "", 224, "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f", true},
 	{"gbk", "", 256, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", true},
@@ -404,9 +404,7 @@ func TestSha2Hash(t *testing.T) {
 	for _, tt := range sha2Tests {
 		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
-		str := types.NewDatum(tt.origin)
-		hashLength := types.NewDatum(tt.hashLength)
-		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, hashLength}))
+		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{tt.origin, tt.hashLength}))
 		require.NoError(t, err)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
