@@ -99,13 +99,9 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 	return nil
 }
 
-func matchSQLBinding(node ast.Node, sctx sessionctx.Context) (bindRecord *bindinfo.BindRecord, scope string, matched bool) {
+func matchSQLBinding(stmtNode ast.StmtNode, sctx sessionctx.Context) (bindRecord *bindinfo.BindRecord, scope string, matched bool) {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	stmtNode, ok := node.(ast.StmtNode)
-	if !ok {
-		useBinding = false
-	}
-	if !useBinding {
+	if !useBinding || stmtNode == nil {
 		return nil, "", false
 	}
 	var err error
@@ -121,9 +117,13 @@ func matchSQLBinding(node ast.Node, sctx sessionctx.Context) (bindRecord *bindin
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	sessVars := sctx.GetSessionVars()
 
-	bindRecord, scope, useBinding := matchSQLBinding(node, sctx)
-	// add the extra Limit after matching the bind record
-	if stmtNode, ok := node.(ast.StmtNode); ok {
+	var bindRecord *bindinfo.BindRecord
+	var scope string
+	var useBinding bool
+	stmtNode, isStmtNode := node.(ast.StmtNode)
+	if isStmtNode {
+		bindRecord, scope, useBinding = matchSQLBinding(stmtNode, sctx)
+		// add the extra Limit after matching the bind record
 		node = plannercore.TryAddExtraLimit(sctx, stmtNode)
 	}
 
@@ -171,7 +171,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	var bestPlan, bestPlanFromBind plannercore.Plan
 	var err error
 	if useBinding {
-		stmtNode := node.(ast.StmtNode) // must be StmtNode if useBinding is true
 		minCost := math.MaxFloat64
 		var (
 			bindStmtHints stmtctx.StmtHints
@@ -283,7 +282,7 @@ func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
 	switch node.(type) {
 	// allow change variables (otherwise can't unset read-only mode)
 	case *ast.SetStmt,
-		// allow analyze table
+	// allow analyze table
 		*ast.AnalyzeTableStmt,
 		*ast.UseStmt,
 		*ast.ShowStmt,
