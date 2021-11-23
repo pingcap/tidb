@@ -196,6 +196,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_max_dirty_pages_pct_lwm", Value: "0"},
 	{Scope: ScopeGlobal, Name: LogQueriesNotUsingIndexes, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_heap_table_size", Value: "16777216", IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: "tmp_table_size", Value: "16777216", Type: TypeUnsigned, MinValue: 1024, MaxValue: math.MaxUint64, IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "div_precision_increment", Value: "4", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_lru_scan_depth", Value: "1024"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_rseg_truncate_frequency", Value: ""},

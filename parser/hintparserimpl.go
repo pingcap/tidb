@@ -38,7 +38,7 @@ type hintScanner struct {
 
 func (hs *hintScanner) Errorf(format string, args ...interface{}) error {
 	inner := hs.Scanner.Errorf(format, args...)
-	return ErrWarnOptimizerHintParseError.GenWithStackByArgs(inner)
+	return ErrParse.GenWithStackByArgs("Optimizer hint syntax error at", inner)
 }
 
 func (hs *hintScanner) Lex(lval *yyhintSymType) int {

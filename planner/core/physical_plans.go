@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -548,7 +547,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 	} else {
 		var err error
 		pkTP := ts.Table.GetPkColInfo().FieldType
-		ts.Ranges, err = ranger.BuildTableRange(access, ts.SCtx().GetSessionVars().StmtCtx, &pkTP)
+		ts.Ranges, err = ranger.BuildTableRange(access, ts.SCtx(), &pkTP)
 		if err != nil {
 			return nil, err
 		}
@@ -579,13 +578,13 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 		for _, baseCol := range baseCols {
 			if !schema.Contains(baseCol) {
 				schema.Columns = append(schema.Columns, baseCol)
-				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID))
+				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID)) // nozero
 			}
 		}
 	}
 	if extraColumn != nil {
 		schema.Columns = append(schema.Columns, extraColumn)
-		copyColumn = append(copyColumn, extraColumnModel)
+		copyColumn = append(copyColumn, extraColumnModel) // nozero
 	}
 	return copyColumn
 }
@@ -832,7 +831,7 @@ type PhysicalIndexJoin struct {
 	innerTask task
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
-	Ranges []*ranger.Range
+	Ranges ranger.MutableRanges
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
 	// IdxColLens stores the length of each index column.
@@ -1179,6 +1178,8 @@ type PhysicalUnionScan struct {
 	Conditions []expression.Expression
 
 	HandleCols HandleCols
+
+	CacheTable kv.MemBuffer
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -1196,11 +1197,11 @@ func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
-func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *stmtctx.StatementContext) bool {
+func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sctx sessionctx.Context) bool {
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
-		p.Ranges[0].IsPoint(sc)
+		p.Ranges[0].IsPoint(sctx)
 }
 
 // PhysicalSelection represents a filter.
@@ -1324,8 +1325,10 @@ const (
 type PhysicalShuffleReceiverStub struct {
 	physicalSchemaProducer
 
-	// Worker points to `executor.shuffleReceiver`.
+	// Receiver points to `executor.shuffleReceiver`.
 	Receiver unsafe.Pointer
+	// DataSource is the PhysicalPlan of the Receiver.
+	DataSource PhysicalPlan
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.

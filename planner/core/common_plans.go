@@ -365,7 +365,8 @@ func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
 func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
 	preparedObj *CachedPrepareStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, preparedObj.VisitInfos); err != nil {
+		visitInfo := VisitInfo4PrivCheck(is, preparedObj.PreparedAst.Stmt, preparedObj.VisitInfos)
+		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
 			return err
 		}
 	}
@@ -380,11 +381,26 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
+	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	prepared := preparedStmt.PreparedAst
+	if prepared.UseCache {
+		// disable the cache if cache table in prepared statement
+		for _, vInfo := range preparedStmt.VisitInfos {
+			tbl, err := is.TableByName(model.NewCIStr(vInfo.db), model.NewCIStr(vInfo.table))
+			// if table does not exist, skip it, maybe it is a `create table` statement
+			if err != nil {
+				continue
+			}
+			if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
+				prepared.UseCache = false
+				break
+			}
+		}
+	}
 	stmtCtx.UseCache = prepared.UseCache
-	var cacheKey kvcache.Key
+
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
@@ -547,6 +563,20 @@ func (e *Execute) rebuildRange(p Plan) error {
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
 	switch x := p.(type) {
+	case *PhysicalIndexHashJoin:
+		return e.rebuildRange(&x.PhysicalIndexJoin)
+	case *PhysicalIndexMergeJoin:
+		return e.rebuildRange(&x.PhysicalIndexJoin)
+	case *PhysicalIndexJoin:
+		if err := x.Ranges.Rebuild(); err != nil {
+			return err
+		}
+		for _, child := range x.Children() {
+			err = e.rebuildRange(child)
+			if err != nil {
+				return err
+			}
+		}
 	case *PhysicalTableScan:
 		err = e.buildRangeForTableScan(sctx, x)
 		if err != nil {
@@ -591,7 +621,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 					}
 				}
 				if pkCol != nil {
-					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx.GetSessionVars().StmtCtx, pkCol.RetType)
+					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType)
 					if err != nil {
 						return err
 					}
@@ -641,7 +671,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 					}
 				}
 				if pkCol != nil {
-					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx.GetSessionVars().StmtCtx, pkCol.RetType)
+					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType)
 					if err != nil {
 						return err
 					}
@@ -712,13 +742,25 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 		for _, colInfo := range pk.Columns {
 			if pkCol := expression.ColInfo2Col(ts.schema.Columns, ts.Table.Columns[colInfo.Offset]); pkCol != nil {
 				pkCols = append(pkCols, pkCol)
-				pkColsLen = append(pkColsLen, colInfo.Length)
+				// We need to consider the prefix index.
+				// For example: when we have 'a varchar(50), index idx(a(10))'
+				// So we will get 'colInfo.Length = 50' and 'pkCol.RetType.Flen = 10'.
+				// In 'hasPrefix' function from 'util/ranger/ranger.go' file,
+				// we use 'columnLength == types.UnspecifiedLength' to check whether we have prefix index.
+				if colInfo.Length != types.UnspecifiedLength && colInfo.Length == pkCol.RetType.Flen {
+					pkColsLen = append(pkColsLen, types.UnspecifiedLength)
+				} else {
+					pkColsLen = append(pkColsLen, colInfo.Length)
+				}
 			}
 		}
 		if len(pkCols) > 0 {
 			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, ts.AccessCondition, pkCols, pkColsLen)
 			if err != nil {
 				return err
+			}
+			if len(res.AccessConds) != len(ts.AccessCondition) {
+				return errors.New("rebuild range for cached plan failed")
 			}
 			ts.Ranges = res.Ranges
 		} else {
@@ -732,7 +774,7 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 			}
 		}
 		if pkCol != nil {
-			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sctx.GetSessionVars().StmtCtx, pkCol.RetType)
+			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sctx, pkCol.RetType)
 			if err != nil {
 				return err
 			}
@@ -751,6 +793,9 @@ func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIn
 	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, is.IdxCols, is.IdxColLens)
 	if err != nil {
 		return err
+	}
+	if len(res.AccessConds) != len(is.AccessCondition) {
+		return errors.New("rebuild range for cached plan failed")
 	}
 	is.Ranges = res.Ranges
 	return
@@ -965,8 +1010,8 @@ type LoadStats struct {
 	Path string
 }
 
-// PlanReplayerSingle represents a plan replayer plan.
-type PlanReplayerSingle struct {
+// PlanReplayer represents a plan replayer plan.
+type PlanReplayer struct {
 	baseSchemaProducer
 	ExecStmt ast.StmtNode
 	Analyze  bool
@@ -1253,6 +1298,8 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		}
 	case *PhysicalCTE:
 		e.ctes = append(e.ctes, x)
+	case *PhysicalShuffleReceiverStub:
+		err = e.explainPlanInRowFormat(x.DataSource, "root", "", childIndent, true)
 	}
 	return
 }
@@ -1439,10 +1486,10 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 	switch v := p.(type) {
 	case *PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
+		return indexScan.IsPointGetByUniqueKey(ctx), nil
 	case *PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*PhysicalTableScan)
-		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
+		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx)
 		if !isPointRange {
 			return false, nil
 		}
@@ -1456,8 +1503,16 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		// If the PointGetPlan needs to read data using unique index (double read), we
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
 		// and the data and index would be inconsistent!
-		isPointGet := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
-		return isPointGet, nil
+		// If the PointGetPlan needs to read data from Cache Table, we can't use max uint64,
+		// because math.MaxUint64 always make cacheData invalid.
+		noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
+		if !noSecondRead {
+			return false, nil
+		}
+		if v.TblInfo != nil && (v.TblInfo.TableCacheStatusType != model.TableCacheStatusDisable) {
+			return false, nil
+		}
+		return true, nil
 	default:
 		return false, nil
 	}

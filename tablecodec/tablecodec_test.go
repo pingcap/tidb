@@ -216,7 +216,7 @@ func TestUnflattenDatums(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
-	input = []types.Datum{types.NewCollationStringDatum("aaa", "utf8mb4_unicode_ci", 0)}
+	input = []types.Datum{types.NewCollationStringDatum("aaa", "utf8mb4_unicode_ci")}
 	tps = []*types.FieldType{types.NewFieldType(mysql.TypeBlob)}
 	tps[0].Collate = "utf8mb4_unicode_ci"
 	output, err = UnflattenDatums(input, tps, sc.TimeZone)

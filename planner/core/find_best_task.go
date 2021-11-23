@@ -812,10 +812,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				p: dual,
 			}, cntPlan, nil
 		}
-		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema() &&
-			// to avoid the over-optimized risk, do not generate PointGet for plan cache, for example,
-			// `pk>=$a and pk<=$b` can be optimized to a PointGet when `$a==$b`, but it can cause wrong results when `$a!=$b`.
-			!ds.ctx.GetSessionVars().StmtCtx.UseCache
+		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
+
+		if canConvertPointGet && expression.MaybeOverOptimized4PlanCache(ds.ctx, path.AccessConds) {
+			canConvertPointGet = ds.canConvertToPointGetForPlanCache(path)
+		}
+
 		if canConvertPointGet && !path.IsIntHandlePath {
 			// We simply do not build [batch] point get for prefix indexes. This can be optimized.
 			canConvertPointGet = path.Index.Unique && !path.Index.HasPrefixIndex()
@@ -858,7 +860,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if canConvertPointGet {
 			allRangeIsPoint := true
 			for _, ran := range path.Ranges {
-				if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
+				if !ran.IsPoint(ds.ctx) {
 					allRangeIsPoint = false
 					break
 				}
@@ -932,6 +934,27 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	}
 
 	return
+}
+
+func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bool {
+	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
+	// these assumptions may be broken after parameters change.
+	// So for safety, we narrow down the scope and just generate PointGet in some particular and simple scenarios.
+
+	// scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
+	if len(path.Ranges) > 0 && path.Ranges[0].Width() == len(path.AccessConds) {
+		for _, accessCond := range path.AccessConds {
+			f, ok := accessCond.(*expression.ScalarFunction)
+			if !ok {
+				return false
+			}
+			if f.FuncName.L != ast.EQ {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
@@ -1177,8 +1200,11 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.C
 
 // addSelection4PlanCache adds an extra safeguard selection upon this root task for safety.
 // When reusing cached plans and rebuilding range for them, the range builder may return an loose range after parameters change.
+// When we add the extra selection, it should meet two conditions:
+// 1. The length of 'ds.pushedDownConds` should not be zero.
+// 2. The result of function `MaybeOverOptimized4PlanCache(ds.pushedDownConds)` call needs to return true.
 func (ds *DataSource) addSelection4PlanCache(task *rootTask, stats *property.StatsInfo, prop *property.PhysicalProperty) {
-	if !ds.ctx.GetSessionVars().StmtCtx.UseCache || ds.ctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
+	if !expression.MaybeOverOptimized4PlanCache(ds.ctx, ds.pushedDownConds) || len(ds.pushedDownConds) == 0 {
 		return
 	}
 	sel := PhysicalSelection{Conditions: ds.pushedDownConds}.Init(ds.ctx, stats, ds.blockOffset, prop)
@@ -1555,7 +1581,7 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expre
 		return 0, false, corr
 	}
 	sc := ds.ctx.GetSessionVars().StmtCtx
-	ranges, err := ranger.BuildColumnRange(accessConds, sc, col.RetType, types.UnspecifiedLength)
+	ranges, err := ranger.BuildColumnRange(accessConds, ds.ctx, col.RetType, types.UnspecifiedLength)
 	if len(ranges) == 0 || err != nil {
 		return 0, err == nil, corr
 	}
@@ -1821,7 +1847,8 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {
 		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
-			for _, def := range pi.Definitions {
+			for i := range pi.Definitions {
+				def := pi.Definitions[i]
 				if def.ID == ds.physicalTableID {
 					partitionInfo = &def
 					break
