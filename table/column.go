@@ -208,7 +208,8 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 		return types.NewDatum(zeroV), true, nil
 	} else if tm.IsZero() || tm.InvalidZero() {
 		if tm.IsZero() {
-			if !mode.HasNoZeroDateMode() {
+			// Don't care NoZeroDate mode if time val is invalid.
+			if !tmIsInvalid && !mode.HasNoZeroDateMode() {
 				return types.NewDatum(zeroV), true, nil
 			}
 		} else if tm.InvalidZero() {

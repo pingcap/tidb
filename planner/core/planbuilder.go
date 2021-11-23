@@ -435,6 +435,8 @@ type cteInfo struct {
 	limitLP       LogicalPlan
 	// seedStat is shared between logicalCTE and logicalCTETable.
 	seedStat *property.StatsInfo
+	// The LogicalCTEs that reference the same table should share the same CteClass.
+	cteClass *CTEClass
 }
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -1187,6 +1189,10 @@ func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo)
 func addExtraPIDColumnToDataSource(p LogicalPlan, info *extraPIDInfo) error {
 	switch raw := p.(type) {
 	case *DataSource:
+		// Fix issue 26250, do not add extra pid column to normal table.
+		if raw.tableInfo.GetPartitionInfo() == nil {
+			return nil
+		}
 		raw.addExtraPIDColumn(info)
 		return nil
 	default:

@@ -220,6 +220,17 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	}
 }
 
+// HasPseudoStats checks if the plan for this SQL used pseudo stats.
+func (tk *TestKit) HasPseudoStats(sql string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][4], "stats:pseudo") {
+			return true
+		}
+	}
+	return false
+}
+
 // HasPlan checks if the result execution plan contains specific plan.
 func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)

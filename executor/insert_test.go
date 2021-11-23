@@ -1726,3 +1726,20 @@ func (s *testSuite13) TestGlobalTempTableParallel(c *C) {
 	}
 	wg.Wait()
 }
+
+func (s *testSuite13) TestIssue26762(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 date);")
+	_, err := tk.Exec("insert into t1 values('2020-02-31');")
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
+
+	tk.MustExec("set @@sql_mode='ALLOW_INVALID_DATES';")
+	tk.MustExec("insert into t1 values('2020-02-31');")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2020-02-31"))
+
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES';")
+	_, err = tk.Exec("insert into t1 values('2020-02-31');")
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
+}

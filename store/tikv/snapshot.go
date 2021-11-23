@@ -312,7 +312,7 @@ func (s *KVSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, collect
 }
 
 func (s *KVSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
-	cli := NewClientHelper(s.store, s.resolvedLocks)
+	cli := NewClientHelper(s.store, s.resolvedLocks, false)
 	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
@@ -483,7 +483,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *Backoffer, k []byte) ([]byte, 
 		}
 	})
 
-	cli := NewClientHelper(s.store, s.resolvedLocks)
+	cli := NewClientHelper(s.store, s.resolvedLocks, true)
 
 	s.mu.RLock()
 	if s.mu.stats != nil {

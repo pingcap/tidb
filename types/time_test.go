@@ -1557,35 +1557,67 @@ func (s *testTimeSuite) TestExtractDatetimeNum(c *C) {
 }
 
 func (s *testTimeSuite) TestExtractDurationNum(c *C) {
-	in := types.Duration{Duration: time.Duration(3600 * 24 * 365), Fsp: types.DefaultFsp}
-	tbl := []struct {
+	type resultTbl struct {
 		unit   string
 		expect int64
-	}{
-		{"MICROSECOND", 31536},
-		{"SECOND", 0},
-		{"MINUTE", 0},
-		{"HOUR", 0},
-		{"SECOND_MICROSECOND", 31536},
-		{"MINUTE_MICROSECOND", 31536},
-		{"MINUTE_SECOND", 0},
-		{"HOUR_MICROSECOND", 31536},
-		{"HOUR_SECOND", 0},
-		{"HOUR_MINUTE", 0},
-		{"DAY_MICROSECOND", 31536},
-		{"DAY_SECOND", 0},
-		{"DAY_MINUTE", 0},
-		{"DAY_HOUR", 0},
+	}
+	type testCase struct {
+		in      types.Duration
+		resTbls []resultTbl
+	}
+	cases := []testCase{
+		{
+			in: types.Duration{Duration: time.Duration(3600 * 24 * 365), Fsp: types.DefaultFsp},
+			resTbls: []resultTbl{
+				{"MICROSECOND", 31536},
+				{"SECOND", 0},
+				{"MINUTE", 0},
+				{"HOUR", 0},
+				{"SECOND_MICROSECOND", 31536},
+				{"MINUTE_MICROSECOND", 31536},
+				{"MINUTE_SECOND", 0},
+				{"HOUR_MICROSECOND", 31536},
+				{"HOUR_SECOND", 0},
+				{"HOUR_MINUTE", 0},
+				{"DAY_MICROSECOND", 31536},
+				{"DAY_SECOND", 0},
+				{"DAY_MINUTE", 0},
+				{"DAY_HOUR", 0},
+			},
+		},
+		{
+			// "-10:59:1" = -10^9 * (10 * 3600 + 59 * 60 + 1)
+			in: types.Duration{Duration: time.Duration(-39541000000000), Fsp: types.DefaultFsp},
+			resTbls: []resultTbl{
+				{"MICROSECOND", 0},
+				{"SECOND", -1},
+				{"MINUTE", -59},
+				{"HOUR", -10},
+				{"SECOND_MICROSECOND", -1000000},
+				{"MINUTE_MICROSECOND", -5901000000},
+				{"MINUTE_SECOND", -5901},
+				{"HOUR_MICROSECOND", -105901000000},
+				{"HOUR_SECOND", -105901},
+				{"HOUR_MINUTE", -1059},
+				{"DAY_MICROSECOND", -105901000000},
+				{"DAY_SECOND", -105901},
+				{"DAY_MINUTE", -1059},
+				{"DAY_HOUR", -10},
+			},
+		},
 	}
 
-	for _, col := range tbl {
-		res, err := types.ExtractDurationNum(&in, col.unit)
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, col.expect)
+	for _, testcase := range cases {
+		in := testcase.in
+		for _, col := range testcase.resTbls {
+			res, err := types.ExtractDurationNum(&in, col.unit)
+			c.Assert(err, IsNil)
+			c.Assert(res, Equals, col.expect)
+		}
+		res, err := types.ExtractDurationNum(&in, "TEST_ERROR")
+		c.Assert(res, Equals, int64(0))
+		c.Assert(err, ErrorMatches, "invalid unit.*")
 	}
-	res, err := types.ExtractDurationNum(&in, "TEST_ERROR")
-	c.Assert(res, Equals, int64(0))
-	c.Assert(err, ErrorMatches, "invalid unit.*")
 }
 
 func (s *testTimeSuite) TestParseDurationValue(c *C) {

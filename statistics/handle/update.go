@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -42,6 +41,8 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -162,9 +163,9 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 
 var (
 	// MinLogScanCount is the minimum scan count for a feedback to be logged.
-	MinLogScanCount = int64(1000)
+	MinLogScanCount = atomic.NewInt64(1000)
 	// MinLogErrorRate is the minimum error rate for a feedback to be logged.
-	MinLogErrorRate = 0.5
+	MinLogErrorRate = atomic.NewFloat64(0.5)
 )
 
 // StoreQueryFeedback merges the feedback into stats collector.
@@ -178,7 +179,9 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 		return errors.Trace(err)
 	}
 	rate := q.CalcErrorRate()
-	if !(rate >= MinLogErrorRate && (q.Actual() >= MinLogScanCount || q.Expected >= MinLogScanCount)) {
+	minScanCnt := MinLogScanCount.Load()
+	minErrRate := MinLogErrorRate.Load()
+	if !(rate >= minErrRate && (q.Actual() >= minScanCnt || q.Expected >= minScanCnt)) {
 		return nil
 	}
 	metrics.SignificantFeedbackCounter.Inc()
@@ -876,10 +879,14 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 		return false, ""
 	}
 	// No need to analyze it.
-	if float64(tbl.ModifyCount)/float64(tbl.Count) <= autoAnalyzeRatio {
+	tblCnt := float64(tbl.Count)
+	if histCnt := tbl.GetColRowCount(); histCnt > 0 {
+		tblCnt = histCnt
+	}
+	if float64(tbl.ModifyCount)/tblCnt <= autoAnalyzeRatio {
 		return false, ""
 	}
-	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
+	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tblCnt, autoAnalyzeRatio)
 }
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {

@@ -1873,8 +1873,22 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	} else {
 		if prop.MPPPartitionTp == property.HashType {
 			var matches []int
-			if matches = prop.IsSubsetOf(lkeys); len(matches) == 0 {
+			if p.JoinType == InnerJoin {
+				if matches = prop.IsSubsetOf(lkeys); len(matches) == 0 {
+					matches = prop.IsSubsetOf(rkeys)
+				}
+			} else if p.JoinType == RightOuterJoin {
+				// for right out join, only the right partition keys can possibly matches the prop, because
+				// the left partition keys will generate NULL values randomly
+				// todo maybe we can add a null-sensitive flag in the MPPPartitionColumn to indicate whether the partition column is
+				//  null-sensitive(used in aggregation) or null-insensitive(used in join)
 				matches = prop.IsSubsetOf(rkeys)
+			} else {
+				// for left out join, only the left partition keys can possibly matches the prop, because
+				// the right partition keys will generate NULL values randomly
+				// for semi/anti semi/left out semi/anti left out semi join, only left partition keys are returned,
+				// so just check the left partition keys
+				matches = prop.IsSubsetOf(lkeys)
 			}
 			if len(matches) == 0 {
 				return nil

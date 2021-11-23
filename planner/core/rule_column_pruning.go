@@ -94,7 +94,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
 			allFirstRow = false
 		}
-		if !used[i] {
+		if !used[i] && !ExprsHasSideEffects(la.AggFuncs[i].Args) {
 			la.schema.Columns = append(la.schema.Columns[:i], la.schema.Columns[i+1:]...)
 			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
 		} else if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
@@ -135,7 +135,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	if len(la.GroupByItems) > 0 {
 		for i := len(la.GroupByItems) - 1; i >= 0; i-- {
 			cols := expression.ExtractColumns(la.GroupByItems[i])
-			if len(cols) == 0 {
+			if len(cols) == 0 && !exprHasSetVarOrSleep(la.GroupByItems[i]) {
 				la.GroupByItems = append(la.GroupByItems[:i], la.GroupByItems[i+1:]...)
 			} else {
 				selfUsedCols = append(selfUsedCols, cols...)

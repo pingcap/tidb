@@ -593,16 +593,20 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 			keyMayBeLocked := !(tikverr.IsErrWriteConflict(err) || tikverr.IsErrKeyExist(err))
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
 			if len(keys) > 1 || keyMayBeLocked {
-				dl, ok := errors.Cause(err).(*tikverr.ErrDeadlock)
-				if ok && lockCtx.OnDeadlock != nil {
-					// Call OnDeadlock before pessimistic rollback.
-					lockCtx.OnDeadlock(dl)
-				}
-				wg := txn.asyncPessimisticRollback(ctx, keys)
-				if ok {
-					logutil.Logger(ctx).Debug("deadlock error received", zap.Uint64("startTS", txn.startTS), zap.Stringer("deadlockInfo", dl))
+				dl, isDeadlock := errors.Cause(err).(*tikverr.ErrDeadlock)
+				if isDeadlock {
 					if hashInKeys(dl.DeadlockKeyHash, keys) {
 						dl.IsRetryable = true
+					}
+					if lockCtx.OnDeadlock != nil {
+						// Call OnDeadlock before pessimistic rollback.
+						lockCtx.OnDeadlock(dl)
+					}
+				}
+				wg := txn.asyncPessimisticRollback(ctx, keys)
+				if isDeadlock {
+					logutil.Logger(ctx).Debug("deadlock error received", zap.Uint64("startTS", txn.startTS), zap.Stringer("deadlockInfo", dl))
+					if dl.IsRetryable {
 						// Wait for the pessimistic rollback to finish before we retry the statement.
 						wg.Wait()
 						// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.

@@ -929,8 +929,9 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				if len(e.partitionedTable) > 0 {
 					// Replace the table ID with partition ID.
 					// The partition ID is returned as an extra column from the table reader.
-					offset := e.tblID2PIDColumnIndex[id]
-					physicalID = row.GetInt64(offset)
+					if offset, ok := e.tblID2PIDColumnIndex[id]; ok {
+						physicalID = row.GetInt64(offset)
+					}
 				}
 
 				for _, col := range cols {
@@ -1738,7 +1739,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		sc.InCreateOrAlterStmt = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
+		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true

@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -65,7 +66,7 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) kv.Response {
 	vars, ok := variables.(*tikv.Variables)
 	if !ok {
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
@@ -77,7 +78,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req)
+	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -136,6 +137,8 @@ type copTask struct {
 	storeAddr string
 	cmdType   tikvrpc.CmdType
 	storeType kv.StoreType
+
+	eventCb trxevents.EventCallback
 }
 
 func (r *copTask) String() string {
@@ -146,7 +149,7 @@ func (r *copTask) String() string {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request) ([]*copTask, error) {
+func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
 	start := time.Now()
 	cmdType := tikvrpc.CmdCop
 	if req.Streaming {
@@ -179,6 +182,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				respChan:  make(chan *copResponse, 2),
 				cmdType:   cmdType,
 				storeType: req.StoreType,
+				eventCb:   eventCb,
 			})
 			i = nextI
 		}
@@ -405,7 +409,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
 			respChan:        it.respChan,
 			finishCh:        it.finishCh,
 			vars:            it.vars,
-			kvclient:        tikv.NewClientHelper(it.store.store, it.resolvedLocks),
+			kvclient:        tikv.NewClientHelper(it.store.store, it.resolvedLocks, false),
 			memTracker:      it.memTracker,
 			replicaReadSeed: it.replicaReadSeed,
 			actionOnExceed:  it.actionOnExceed,
@@ -877,11 +881,18 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		return buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req)
+		return buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
-		logutil.BgLogger().Debug("coprocessor encounters",
-			zap.Stringer("lock", lockErr))
+		// Be care that we didn't redact the SQL statement because the log is DEBUG level.
+		if task.eventCb != nil {
+			task.eventCb(trxevents.WrapCopMeetLock(&trxevents.CopMeetLock{
+				LockInfo: lockErr,
+			}))
+		} else {
+			logutil.Logger(bo.GetCtx()).Debug("coprocessor encounters lock",
+				zap.Stringer("lock", lockErr))
+		}
 		msBeforeExpired, err1 := worker.kvclient.ResolveLocks(bo.TiKVBackoffer(), worker.req.StartTs, []*tikv.Lock{tikv.NewLock(lockErr)})
 		err1 = derr.ToTiDBErr(err1)
 		if err1 != nil {
@@ -896,7 +907,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
-		logutil.BgLogger().Warn("other error",
+		logutil.Logger(bo.GetCtx()).Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.GetID()),
 			zap.String("storeAddr", task.storeAddr),
@@ -1025,7 +1036,7 @@ func (worker *copIteratorWorker) buildCopTasksFromRemain(bo *Backoffer, lastRang
 	if worker.req.Streaming && lastRange != nil {
 		remainedRanges = worker.calculateRemain(task.ranges, lastRange, worker.req.Desc)
 	}
-	return buildCopTasks(bo, worker.store.GetRegionCache(), remainedRanges, worker.req)
+	return buildCopTasks(bo, worker.store.GetRegionCache(), remainedRanges, worker.req, task.eventCb)
 }
 
 // calculateRemain splits the input ranges into two, and take one of them according to desc flag.
