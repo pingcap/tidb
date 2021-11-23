@@ -26,9 +26,12 @@ func TestDumpBlock(t *testing.T) {
 		require.NoError(t, db.Close())
 	}()
 
-	mock.ExpectQuery(fmt.Sprintf("SHOW CREATE DATABASE `%s`", escapeString(database))).
-		WillReturnRows(sqlmock.NewRows([]string{"Database", "Create Database"}).
-			AddRow("test", "CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
+	mock.ExpectQuery("select distinct policy_name from information_schema.placement_rules where policy_name is not null;").
+		WillReturnRows(sqlmock.NewRows([]string{"policy_name"}).
+			AddRow("x"))
+	mock.ExpectQuery("SHOW CREATE PLACEMENT POLICY `x`").
+		WillReturnRows(sqlmock.NewRows([]string{"Policy", "Create Policy"}).
+			AddRow("x", "CREATE PLACEMENT POLICY `x` FOLLOWERS=4"))
 
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 	defer cancel()
@@ -54,7 +57,6 @@ func TestDumpBlock(t *testing.T) {
 	// simulate taskChan is full
 	taskChan := make(chan Task, 1)
 	taskChan <- &TaskDatabaseMeta{}
-	d.conf.Tables = DatabaseTables{}.AppendTable(database, nil)
 	require.ErrorIs(t, d.dumpDatabases(writerCtx, conn, taskChan), context.Canceled)
 	require.ErrorIs(t, wg.Wait(), writerErr)
 }
