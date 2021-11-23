@@ -461,12 +461,12 @@ func TestParseBinaryFromString(t *testing.T) {
 	obj, err := ParseBinaryFromString("")
 	require.Error(t, err)
 	require.Equal(t, "", obj.String())
-	require.Regexp(t, ".*The document is empty.*", err.Error())
+	require.Regexp(t, "The document is empty", err.Error())
 
 	obj, err = ParseBinaryFromString(`"a""`)
 	require.Error(t, err)
 	require.Equal(t, "", obj.String())
-	require.Regexp(t, ".*The document root must not be followed by other values\\..*", err.Error())
+	require.Regexp(t, "The document root must not be followed by other values\\.", err.Error())
 }
 
 func TestCreateBinary(t *testing.T) {
@@ -493,7 +493,7 @@ func TestCreateBinary(t *testing.T) {
 	func() {
 		defer func() {
 			r := recover()
-			require.Regexp(t, "unknown type:.*", r)
+			require.Regexp(t, "^unknown type:", r)
 		}()
 		bj = CreateBinary(int8(123))
 		require.Equal(t, bj.TypeCode, bj.TypeCode)

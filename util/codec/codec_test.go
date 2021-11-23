@@ -944,12 +944,12 @@ func TestCutOneError(t *testing.T) {
 	var b []byte
 	_, _, err := CutOne(b)
 	require.Error(t, err)
-	require.Regexp(t, "invalid encoded key", err.Error())
+	require.Regexp(t, "^invalid encoded key$", err.Error())
 
 	b = []byte{4 /* codec.uintFlag */, 0, 0, 0}
 	_, _, err = CutOne(b)
 	require.Error(t, err)
-	require.Regexp(t, "invalid encoded key.*", err.Error())
+	require.Regexp(t, "^invalid encoded key", err.Error())
 }
 
 func TestSetRawValues(t *testing.T) {

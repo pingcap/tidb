@@ -267,9 +267,9 @@ func TestGetConnOnCanceledContext(t *testing.T) {
 
 	_, err := mgr.GetBackupClient(ctx, 42)
 	require.Error(t, err)
-	require.Regexp(t, ".*context canceled.*", err.Error())
+	require.Regexp(t, "context canceled", err.Error())
 
 	_, err = mgr.ResetBackupClient(ctx, 42)
 	require.Error(t, err)
-	require.Regexp(t, ".*context canceled.*", err.Error())
+	require.Regexp(t, "context canceled", err.Error())
 }
