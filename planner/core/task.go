@@ -1704,12 +1704,17 @@ func BuildFinalModeAggregation(
 			if aggFunc.Name == ast.AggFuncAvg {
 				cntAgg := aggFunc.Clone()
 				cntAgg.Name = ast.AggFuncCount
-				cntAgg.RetTp = partial.Schema.Columns[partialCursor-2].GetType()
-				cntAgg.RetTp.Flag = aggFunc.RetTp.Flag
+				err := cntAgg.TypeInfer(sctx)
+				if err != nil { // must not happen
+					partial = nil
+					final = original
+					return
+				}
+				partial.Schema.Columns[partialCursor-2].RetType = cntAgg.RetTp
 				// we must call deep clone in this case, to avoid sharing the arguments.
 				sumAgg := aggFunc.Clone()
 				sumAgg.Name = ast.AggFuncSum
-				err := sumAgg.TypeInfer(sctx)
+				err = sumAgg.TypeInfer(sctx)
 				if err != nil { // must not happen
 					partial = nil
 					final = original
