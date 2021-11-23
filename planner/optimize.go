@@ -99,19 +99,6 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 	return nil
 }
 
-func matchSQLBinding(stmtNode ast.StmtNode, sctx sessionctx.Context) (bindRecord *bindinfo.BindRecord, scope string, matched bool) {
-	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	if !useBinding || stmtNode == nil {
-		return nil, "", false
-	}
-	var err error
-	bindRecord, scope, err = getBindRecord(sctx, stmtNode)
-	if err != nil || bindRecord == nil || len(bindRecord.Bindings) == 0 {
-		return nil, "", false
-	}
-	return bindRecord, scope, true
-}
-
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
