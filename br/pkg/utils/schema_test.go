@@ -103,7 +103,7 @@ func TestLoadBackupMeta(t *testing.T) {
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
-	require.Equal(t, 1, len(tbl.Files))
+	require.Len(t, tbl.Files, 1)
 	require.Equal(t, "1.sst", tbl.Files[0].Name)
 }
 
@@ -210,7 +210,7 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
-	require.Equal(t, 3, len(tbl.Files))
+	require.Len(t, tbl.Files, 3)
 	contains := func(name string) bool {
 		for i := range tbl.Files {
 			if tbl.Files[i].Name == name {
@@ -294,9 +294,9 @@ func BenchmarkLoadBackupMeta64(b *testing.B) {
 			),
 		)
 		require.NoError(b, err)
-		require.Equal(b, 1, len(dbs))
+		require.Len(b, dbs, 1)
 		require.Contains(b, dbs, "bench")
-		require.Equal(b, 64, len(dbs["bench"].Tables))
+		require.Len(b, dbs["bench"].Tables, 64)
 	}
 }
 
@@ -325,9 +325,9 @@ func BenchmarkLoadBackupMeta1024(b *testing.B) {
 			),
 		)
 		require.NoError(b, err)
-		require.Equal(b, 1, len(dbs))
+		require.Len(b, dbs, 1)
 		require.Contains(b, dbs, "bench")
-		require.Equal(b, 1024, len(dbs["bench"].Tables))
+		require.Len(b, dbs["bench"].Tables, 1024)
 	}
 }
 
@@ -356,8 +356,8 @@ func BenchmarkLoadBackupMeta10240(b *testing.B) {
 			),
 		)
 		require.NoError(b, err)
-		require.Equal(b, 1, len(dbs))
+		require.Len(b, dbs, 1)
 		require.Contains(b, dbs, "bench")
-		require.Equal(b, 10240, len(dbs["bench"].Tables))
+		require.Len(b, dbs["bench"].Tables, 10240)
 	}
 }

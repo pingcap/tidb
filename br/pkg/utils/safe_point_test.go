@@ -23,15 +23,16 @@ func TestCheckGCSafepoint(t *testing.T) {
 	}
 	{
 		err := utils.CheckGCSafePoint(ctx, pdClient, 2333)
-		require.NotNil(t, err)
+		require.Error(t, err)
 	}
 	{
 		err := utils.CheckGCSafePoint(ctx, pdClient, 2333-1)
-		require.NotNil(t, err)
+		require.Error(t, err)
 	}
 	{
 		err := utils.CheckGCSafePoint(ctx, pdClient, 0)
-		require.Regexp(t, ".*GC safepoint 2333 exceed TS 0.*", err)
+		require.Error(t, err)
+		require.Regexp(t, ".*GC safepoint 2333 exceed TS 0.*", err.Error())
 	}
 }
 
@@ -125,7 +126,7 @@ func TestStartServiceSafePointKeeper(t *testing.T) {
 		if cs.ok {
 			require.NoErrorf(t, err, "case #%d, %v", i, cs)
 		} else {
-			require.NotNilf(t, err, "case #%d, %v", i, cs)
+			require.Errorf(t, err, "case #%d, %v", i, cs)
 		}
 		cancel()
 	}

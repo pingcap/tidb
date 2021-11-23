@@ -33,15 +33,15 @@ func TestProgress(t *testing.T) {
 	progress2.Inc()
 	time.Sleep(2 * time.Second)
 	p = <-pCh2
-	require.Regexp(t, `.*"P":"50\.00%".*`, p)
+	require.Contains(t, p, `"P":"50.00%"`)
 	progress2.Inc()
 	time.Sleep(2 * time.Second)
 	p = <-pCh2
-	require.Regexp(t, `.*"P":"100\.00%".*`, p)
+	require.Contains(t, p, `"P":"100.00%"`)
 	progress2.Inc()
 	time.Sleep(2 * time.Second)
 	p = <-pCh2
-	require.Regexp(t, `.*"P":"100\.00%".*`, p)
+	require.Contains(t, p, `"P":"100.00%"`)
 	progress2.Close()
 
 	pCh4 := make(chan string, 4)
@@ -52,12 +52,12 @@ func TestProgress(t *testing.T) {
 	progress4.Inc()
 	time.Sleep(2 * time.Second)
 	p = <-pCh4
-	require.Regexp(t, `.*"P":"25\.00%".*`, p)
+	require.Contains(t, p, `"P":"25.00%"`)
 	progress4.Inc()
 	progress4.Close()
 	time.Sleep(2 * time.Second)
 	p = <-pCh4
-	require.Regexp(t, `.*"P":"100\.00%".*`, p)
+	require.Contains(t, p, `"P":"100.00%"`)
 
 	pCh8 := make(chan string, 8)
 	progress8 := NewProgressPrinter("test", 8, false)
@@ -68,11 +68,11 @@ func TestProgress(t *testing.T) {
 	progress8.Inc()
 	time.Sleep(2 * time.Second)
 	p = <-pCh8
-	require.Regexp(t, `.*"P":"25\.00%".*`, p)
+	require.Contains(t, p, `"P":"25.00%"`)
 
 	// Cancel should stop progress at the current position.
 	cancel()
 	p = <-pCh8
-	require.Regexp(t, `.*"P":"25\.00%".*`, p)
+	require.Contains(t, p, `"P":"25.00%"`)
 	progress8.Close()
 }
