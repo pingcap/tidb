@@ -1435,6 +1435,7 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 type CreatePlacementPolicyStmt struct {
 	ddlNode
 
+	OrReplace        bool
 	IfNotExists      bool
 	PolicyName       model.CIStr
 	PlacementOptions []*PlacementOption
@@ -1442,7 +1443,11 @@ type CreatePlacementPolicyStmt struct {
 
 // Restore implements Node interface.
 func (n *CreatePlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("CREATE PLACEMENT POLICY ")
+	ctx.WriteKeyWord("CREATE ")
+	if n.OrReplace {
+		ctx.WriteKeyWord("OR REPLACE ")
+	}
+	ctx.WriteKeyWord("PLACEMENT POLICY ")
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}

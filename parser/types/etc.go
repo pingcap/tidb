@@ -151,5 +151,13 @@ const (
 	wordSize      = 4 // A word is 4 bytes int32.
 )
 
-// ErrInvalidDefault is returned when meet a invalid default value.
-var ErrInvalidDefault = terror.ClassTypes.NewStd(mysql.ErrInvalidDefault)
+var (
+	// ErrInvalidDefault is returned when meet a invalid default value.
+	ErrInvalidDefault = terror.ClassTypes.NewStd(mysql.ErrInvalidDefault)
+	// ErrDataOutOfRange is returned when meet a value out of range.
+	ErrDataOutOfRange = terror.ClassTypes.NewStd(mysql.ErrDataOutOfRange)
+	// ErrTruncatedWrongValue is returned when meet a value bigger than 99999999999999999999999999999999999999999999999999999999999999999 during parsing.
+	ErrTruncatedWrongValue = terror.ClassTypes.NewStd(mysql.ErrTruncatedWrongValue)
+	// ErrIllegalValueForType is returned when strconv.ParseFloat meet strconv.ErrRange during parsing.
+	ErrIllegalValueForType = terror.ClassTypes.NewStd(mysql.ErrIllegalValueForType)
+)

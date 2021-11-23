@@ -36,7 +36,10 @@ func tiflash(version string) []*metapb.Store {
 }
 
 func TestCheckClusterVersion(t *testing.T) {
-	t.Parallel()
+	oldReleaseVersion := build.ReleaseVersion
+	defer func() {
+		build.ReleaseVersion = oldReleaseVersion
+	}()
 
 	mock := mockPDClient{
 		Client: nil,
@@ -184,7 +187,10 @@ func TestCompareVersion(t *testing.T) {
 }
 
 func TestNextMajorVersion(t *testing.T) {
-	t.Parallel()
+	oldReleaseVersion := build.ReleaseVersion
+	defer func() {
+		build.ReleaseVersion = oldReleaseVersion
+	}()
 
 	build.ReleaseVersion = "v4.0.0-rc.1"
 	require.Equal(t, "5.0.0", NextMajorVersion().String())
@@ -197,6 +203,10 @@ func TestNextMajorVersion(t *testing.T) {
 	require.Equal(t, "6.0.0", NextMajorVersion().String())
 	build.ReleaseVersion = "v5.0.0-master"
 	require.Equal(t, "6.0.0", NextMajorVersion().String())
+
+	build.ReleaseVersion = "b7ed87d-dirty"
+	_ = NextMajorVersion()
+	//^ doesn't matter what is returned, just need to ensure it doesn't crash.
 }
 
 func TestExtractTiDBVersion(t *testing.T) {
