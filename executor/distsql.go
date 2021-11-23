@@ -360,9 +360,6 @@ type IndexLookUpExecutor struct {
 	indexStreaming bool
 	tableStreaming bool
 
-	indexPaging bool
-	tablePaging bool
-
 	corColInIdxSide bool
 	corColInTblSide bool
 	corColInAccess  bool
@@ -561,7 +558,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
-			SetPaging(e.indexPaging).
 			SetReadReplicaScope(e.readReplicaScope).
 			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -653,16 +649,14 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table = task.partitionTable
 	}
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:     newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
-		table:            table,
-		dagPB:            e.tableRequest,
-		startTS:          e.startTS,
-		readReplicaScope: e.readReplicaScope,
-		isStaleness:      e.isStaleness,
-		columns:          e.columns,
-		streaming:        e.tableStreaming,
-		paging:           e.tablePaging,
-
+		baseExecutor:        newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
+		table:               table,
+		dagPB:               e.tableRequest,
+		startTS:             e.startTS,
+		readReplicaScope:    e.readReplicaScope,
+		isStaleness:         e.isStaleness,
+		columns:             e.columns,
+		streaming:           e.tableStreaming,
 		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
 		corColInFilter:      e.corColInTblSide,
 		plans:               e.tblPlans,

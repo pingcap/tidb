@@ -61,9 +61,11 @@ const (
 	copNextMaxBackoff      = 20000
 )
 
+// The paging size grows from min to max, it's not well tuned yet.
 var (
-	minPagingSize uint64 = 64
-	maxPagingSize        = minPagingSize * 128
+	minPagingSize  uint64 = 64
+	maxPagingSize         = minPagingSize * 128
+	pagingSizeGrow uint64 = 2
 )
 
 // CopClient is coprocessor client.
@@ -653,10 +655,14 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	remainTasks := []*copTask{task}
 	backoffermap := make(map[uint64]*Backoffer)
 	for len(remainTasks) > 0 {
+		finished := false
 		select {
 		case <-worker.finishCh:
-			break
+			finished = true
 		default:
+		}
+		if finished {
+			break
 		}
 		curTask := remainTasks[0]
 		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
@@ -692,14 +698,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 
 	copReq := coprocessor.Request{
-		Tp:        worker.req.Tp,
-		StartTs:   worker.req.StartTs,
-		Data:      worker.req.Data,
-		Ranges:    task.ranges.ToPBRanges(),
-		SchemaVer: worker.req.SchemaVar,
-	}
-	if task.paging {
-		copReq.PagingSize = task.pagingSize
+		Tp:         worker.req.Tp,
+		StartTs:    worker.req.StartTs,
+		Data:       worker.req.Data,
+		Ranges:     task.ranges.ToPBRanges(),
+		SchemaVer:  worker.req.SchemaVar,
+		PagingSize: task.pagingSize,
 	}
 
 	var cacheKey []byte = nil
@@ -1025,10 +1029,10 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	if err != nil {
 		return nil, err
 	}
-	if task.pagingSize < maxPagingSize {
-		for _, t := range tasks {
-			t.pagingSize *= 2
-		}
+	// grow the paging size
+	pagingSize := growPagingSize(task.pagingSize)
+	for _, t := range tasks {
+		t.pagingSize *= pagingSize
 	}
 	return tasks, err
 }
@@ -1290,4 +1294,12 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 	default:
 		return kvrpcpb.IsolationLevel_SI
 	}
+}
+
+func growPagingSize(size uint64) uint64 {
+	size *= pagingSizeGrow
+	if size > maxPagingSize {
+		return maxPagingSize
+	}
+	return size
 }
