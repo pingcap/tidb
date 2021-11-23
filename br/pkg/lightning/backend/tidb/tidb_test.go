@@ -76,7 +76,7 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.
-		ExpectExec("\\QREPLACE INTO `foo`.`bar`(`a`,`b`,`c`,`d`,`e`,`f`,`g`,`h`,`i`,`j`,`k`,`l`,`m`,`n`,`o`) VALUES(18446744073709551615,-9223372036854775808,0,NULL,7.5,5e-324,1.7976931348623157e+308,0,'甲乙丙\\r\\n\\0\\Z''\"\\\\`',x'000000abcdef',2557891634,'12.5',51)\\E").
+		ExpectExec("\\QREPLACE INTO `foo`.`bar`(`b`,`d`,`e`,`f`,`g`,`h`,`i`,`j`,`k`,`l`,`m`,`n`,`o`) VALUES(-9223372036854775808,NULL,7.5,5e-324,1.7976931348623157e+308,0,'甲乙丙\\r\\n\\0\\Z''\"\\\\`',x'000000abcdef',2557891634,'12.5',51)\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	ctx := context.Background()
@@ -96,6 +96,9 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 		perms = append(perms, i)
 	}
 	perms = append(perms, -1)
+	// skip column a,c due to ignore-columns
+	perms[0] = -1
+	perms[2] = -1
 	encoder, err := s.backend.NewEncoder(s.tbl, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890})
 	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
@@ -120,7 +123,7 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 
 	writer, err := engine.LocalWriter(ctx, nil)
 	require.NoError(t, err)
-	err = writer.WriteRows(ctx, []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
+	err = writer.WriteRows(ctx, []string{"b", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
 	require.NoError(t, err)
 	st, err := writer.Close(ctx)
 	require.NoError(t, err)
@@ -151,7 +154,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "1.csv", 0)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "1.csv", 0)
 	require.NoError(t, err)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
@@ -198,7 +201,7 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "3.csv", 0)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "3.csv", 0)
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
@@ -261,10 +264,10 @@ func TestFetchRemoteTableModels_3_x(t *testing.T) {
 	s.mockDB.ExpectBegin()
 	s.mockDB.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v3.0.18"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
 		WithArgs("test").
-		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
-			AddRow("t", "id", "int(10)", "auto_increment"))
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t", "id", "int(10)", "", "auto_increment"))
 	s.mockDB.ExpectCommit()
 
 	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
@@ -296,10 +299,10 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 	s.mockDB.ExpectBegin()
 	s.mockDB.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.0"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
 		WithArgs("test").
-		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
-			AddRow("t", "id", "bigint(20) unsigned", "auto_increment"))
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t", "id", "bigint(20) unsigned", "", "auto_increment"))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID"}).
 			AddRow("test", "t", "id", int64(1)))
@@ -334,10 +337,10 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 	s.mockDB.ExpectBegin()
 	s.mockDB.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.7"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
 		WithArgs("test").
-		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
-			AddRow("t", "id", "bigint(20)", ""))
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t", "id", "bigint(20)", "", ""))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
 			AddRow("test", "t", "id", int64(1), "AUTO_INCREMENT"))
@@ -372,10 +375,10 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 	s.mockDB.ExpectBegin()
 	s.mockDB.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.7"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
 		WithArgs("test").
-		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
-			AddRow("t", "id", "bigint(20)", ""))
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t", "id", "bigint(20)", "1 + 2", ""))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
 			AddRow("test", "t", "id", int64(1), "AUTO_RANDOM"))
@@ -398,6 +401,7 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 					FieldType: types.FieldType{
 						Flag: mysql.PriKeyFlag,
 					},
+					GeneratedExprString: "1 + 2",
 				},
 			},
 		},
@@ -465,35 +469,35 @@ func TestWriteRowsErrorDowngrading(t *testing.T) {
 	require.NoError(t, err)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "7.csv", 0)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "7.csv", 0)
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(2),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "8.csv", 0)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "8.csv", 0)
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(3),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "9.csv", 0)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "9.csv", 0)
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(4),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "10.csv", 0)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "10.csv", 0)
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(5),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "11.csv", 0)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "11.csv", 0)
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
