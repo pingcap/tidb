@@ -1887,6 +1887,7 @@ func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
 
 	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
 
+    // If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
 	var checkErr error
 	d := s.dom.DDL()
