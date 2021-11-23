@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -215,11 +214,6 @@ func TestEncodeAndDecode(t *testing.T) {
 		require.NoError(t, err)
 		metaJSON, err := MarshalBackupMeta(meta)
 		require.NoError(t, err)
-
-		var metaMap map[string]interface{}
-		require.NoError(t, json.Unmarshal(metaJSON, &metaMap))
-		var testMetaMap map[string]interface{}
-		require.NoError(t, json.Unmarshal(testMetaJSON, &testMetaMap))
-		require.Equal(t, testMetaMap, metaMap)
+		require.JSONEq(t, string(testMetaJSON), string(metaJSON))
 	}
 }

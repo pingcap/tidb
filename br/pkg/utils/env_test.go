@@ -36,7 +36,7 @@ func TestProxyFields(t *testing.T) {
 		for _, field := range proxyFields() {
 			idx, ok := revIndex[field.Key]
 			require.True(t, ok)
-			require.NotEqual(t, 0, (1<<idx)&mask)
+			require.NotZero(t, (1<<idx)&mask)
 			require.Equal(t, envPreset[idx], field.String)
 		}
 	}

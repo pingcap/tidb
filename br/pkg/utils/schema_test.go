@@ -30,9 +30,7 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 func TestLoadBackupMeta(t *testing.T) {
 	t.Parallel()
 
-	testDir, err := os.MkdirTemp("", "load_backup_meta_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(testDir)
+	testDir := t.TempDir()
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)
 
@@ -107,21 +105,12 @@ func TestLoadBackupMeta(t *testing.T) {
 	require.Equal(t, "1.sst", tbl.Files[0].Name)
 }
 
-func newStore(t require.TestingT) (store storage.ExternalStorage, cleanFunc func()) {
-	base, err := os.MkdirTemp("", "br_schema_test")
-	require.NoError(t, err)
-	store, err = storage.NewLocalStorage(base)
-	require.NoError(t, err)
-	return store, func() {
-		require.NoError(t, os.RemoveAll(base))
-	}
-}
-
 func TestLoadBackupMetaPartionTable(t *testing.T) {
 	t.Parallel()
 
-	store, cleanFunc := newStore(t)
-	defer cleanFunc()
+	testDir := os.TempDir()
+	store, err := storage.NewLocalStorage(testDir)
+	require.NoError(t, err)
 
 	tblName := model.NewCIStr("t1")
 	dbName := model.NewCIStr("test")
@@ -270,8 +259,9 @@ func buildBenchmarkBackupmeta(b *testing.B, dbName string, tableCount, fileCount
 }
 
 func BenchmarkLoadBackupMeta64(b *testing.B) {
-	store, cleanFunc := newStore(b)
-	defer cleanFunc()
+	testDir := os.TempDir()
+	store, err := storage.NewLocalStorage(testDir)
+	require.NoError(b, err)
 
 	meta := buildBenchmarkBackupmeta(b, "bench", 64, 64)
 	b.ResetTimer()
@@ -301,8 +291,9 @@ func BenchmarkLoadBackupMeta64(b *testing.B) {
 }
 
 func BenchmarkLoadBackupMeta1024(b *testing.B) {
-	store, cleanFunc := newStore(b)
-	defer cleanFunc()
+	testDir := os.TempDir()
+	store, err := storage.NewLocalStorage(testDir)
+	require.NoError(b, err)
 
 	meta := buildBenchmarkBackupmeta(b, "bench", 1024, 64)
 	b.ResetTimer()
@@ -332,8 +323,9 @@ func BenchmarkLoadBackupMeta1024(b *testing.B) {
 }
 
 func BenchmarkLoadBackupMeta10240(b *testing.B) {
-	store, cleanFunc := newStore(b)
-	defer cleanFunc()
+	testDir := os.TempDir()
+	store, err := storage.NewLocalStorage(testDir)
+	require.NoError(b, err)
 
 	meta := buildBenchmarkBackupmeta(b, "bench", 10240, 64)
 	b.ResetTimer()
