@@ -15,10 +15,9 @@
 package tables_test
 
 import (
-	"fmt"
+	"context"
 	"testing"
 	"time"
-	"context"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
@@ -174,21 +173,18 @@ func TestCacheCondition(t *testing.T) {
 
 	// Update should not trigger cache.
 	tk.MustExec("update t2 set v = v + 1 where id > 0")
-	fmt.Println("======= update 1")
 	for i := 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
 	}
 	// Contains PointGet Update should not trigger cache.
 	tk.MustExec("update t2 set v = v + 1 where id = 2")
-	fmt.Println("======= update 2")
 	for i := 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, tk.HasPlan("select * from t2 where id>0", "UnionScan"))
 	}
 
 	// Contains PointGet Delete should not trigger cache.
-	fmt.Println("======= delete ")
 	tk.MustExec("delete from t2  where id = 2")
 	for i := 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
@@ -226,7 +222,7 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 			break
 		}
 	}
-	require.True(t, i<10)
+	require.True(t, i < 10)
 
 	tk.MustExec("use test")
 	tk1.MustExec("insert into write_tmp1 values (2, 222, 222)")
@@ -247,7 +243,6 @@ func TestCacheTableBasicReadAndWrite(t *testing.T) {
 func TestCacheTableComplexRead(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	doneCh := make(chan struct{}, 1)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -266,27 +261,16 @@ func TestCacheTableComplexRead(t *testing.T) {
 	require.True(t, i < 10)
 
 	tk1.MustExec("begin")
-	// go func() {
-	// 	defer func() {
-	// 		if r := recover(); r != nil {
-	// 			fmt.Println("xxxx", r)
-	// 		}
-	// 	}()
 	tk2.MustExec("begin")
 	tk2.MustQuery("select * from complex_cache where id > 7").Check(testkit.Rows("9 109 1009"))
-	fmt.Println("run here 1111111111111111111111")
 	for i = 0; i < 10; i++ {
 		time.Sleep(100 * time.Millisecond)
 		if tk2.HasPlan("select * from complex_cache where id > 7", "UnionScan") {
 			break
 		}
-		fmt.Println("run here 2222222222222222222222222")
 	}
 	require.True(t, i < 10)
 	tk2.MustExec("commit")
-	doneCh <- struct{}{}
-	// }()
-	// <-doneCh
 
 	tk1.HasPlan("select * from complex_cache where id > 7", "UnionScan")
 	tk1.MustExec("commit")
@@ -441,7 +425,7 @@ func TestRenewLease(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	remote := tables.NewStateRemote(tk1.Session())
 	var leaseBefore uint64
-	for i =0; i<20; i++ {
+	for i = 0; i < 20; i++ {
 		time.Sleep(200 * time.Millisecond)
 		lockType, lease, err := remote.Load(context.Background(), tbl.Meta().ID)
 		require.NoError(t, err)

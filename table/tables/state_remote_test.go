@@ -15,16 +15,16 @@
 package tables_test
 
 import (
-	"time"
 	"context"
 	"testing"
+	"time"
 
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/tikv/client-go/v2/oracle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // CreateMetaLockForCachedTable initializes the cached table meta lock information.
@@ -70,7 +70,7 @@ func TestStateRemote(t *testing.T) {
 	ts, err := se.GetStore().GetOracle().GetTimestamp(ctx, &oracle.Option{TxnScope: kv.GlobalTxnScope})
 	require.NoError(t, err)
 	physicalTime := oracle.GetTimeFromTS(ts)
-	leaseVal := oracle.GoTimeToTS(physicalTime.Add(200*time.Millisecond))
+	leaseVal := oracle.GoTimeToTS(physicalTime.Add(200 * time.Millisecond))
 
 	// Check read lock.
 	succ, err := h.LockForRead(ctx, 5, leaseVal)
@@ -84,17 +84,17 @@ func TestStateRemote(t *testing.T) {
 
 	// LockForRead when read lock is hold.
 	// This operation equals to renew lease.
-	succ, err = h.LockForRead(ctx, 5, leaseVal + 1)
+	succ, err = h.LockForRead(ctx, 5, leaseVal+1)
 	require.NoError(t, err)
 	require.True(t, succ)
 	lockType, lease, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockRead)
 	require.Equal(t, lockType.String(), "READ")
-	require.Equal(t, lease, leaseVal + 1)
+	require.Equal(t, lease, leaseVal+1)
 
 	// Renew read lock lease operation.
-	leaseVal = oracle.GoTimeToTS(physicalTime.Add(400*time.Millisecond))
+	leaseVal = oracle.GoTimeToTS(physicalTime.Add(400 * time.Millisecond))
 	succ, err = h.RenewLease(ctx, 5, leaseVal, tables.RenewReadLease)
 	require.NoError(t, err)
 	require.True(t, succ)
@@ -105,7 +105,7 @@ func TestStateRemote(t *testing.T) {
 	require.Equal(t, lease, leaseVal)
 
 	// Check write lock.
-	leaseVal = oracle.GoTimeToTS(physicalTime.Add(700*time.Millisecond))
+	leaseVal = oracle.GoTimeToTS(physicalTime.Add(700 * time.Millisecond))
 	require.NoError(t, h.LockForWrite(ctx, 5, leaseVal))
 	lockType, lease, err = h.Load(ctx, 5)
 	require.NoError(t, err)
@@ -114,13 +114,12 @@ func TestStateRemote(t *testing.T) {
 	require.Equal(t, lease, leaseVal)
 
 	// // Lock for write again
-	leaseVal = oracle.GoTimeToTS(physicalTime.Add(800*time.Millisecond))
+	leaseVal = oracle.GoTimeToTS(physicalTime.Add(800 * time.Millisecond))
 	require.NoError(t, h.LockForWrite(ctx, 5, leaseVal))
-	lockType, lease, err = h.Load(ctx, 5)
+	lockType, _, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockWrite)
 	require.Equal(t, lockType.String(), "WRITE")
-	// require.Equal(t, lease, leaseVal)
 
 	// Renew read lock lease should fail when the write lock is hold.
 	succ, err = h.RenewLease(ctx, 5, leaseVal, tables.RenewReadLease)
@@ -134,7 +133,7 @@ func TestStateRemote(t *testing.T) {
 
 	// But clear orphan write lock should success.
 	time.Sleep(time.Second)
-	leaseVal = oracle.GoTimeToTS(physicalTime.Add(2*time.Second))
+	leaseVal = oracle.GoTimeToTS(physicalTime.Add(2 * time.Second))
 	succ, err = h.LockForRead(ctx, 5, leaseVal)
 	require.NoError(t, err)
 	require.True(t, succ)

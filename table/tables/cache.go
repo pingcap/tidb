@@ -15,11 +15,10 @@
 package tables
 
 import (
-	"fmt"
 	"context"
+	"go.uber.org/zap"
 	"sync/atomic"
 	"time"
-	"go.uber.org/zap"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -82,7 +81,6 @@ func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
 func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 	tmp := c.cacheData.Load()
 	if tmp == nil {
-		fmt.Println("TryReadFromCache return nil because ... data not loaded")
 		return nil
 	}
 	data := tmp.(*cacheData)
@@ -96,7 +94,6 @@ func (c *cachedTable) TryReadFromCache(ts uint64) kv.MemBuffer {
 		}
 		return data.MemBuffer
 	}
-	fmt.Println("TryReadFromCache return nil because ... ts not correct...", ts, data.Start, data.Lease)
 	return nil
 }
 

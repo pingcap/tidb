@@ -20,9 +20,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // Builder builds a new InfoSchema.
@@ -45,7 +45,7 @@ type Builder struct {
 	store kv.Storage
 	// TODO: renewLeaseCh is only used to pass data between table and domain
 	renewLeaseCh chan func()
-	factory func() (pools.Resource, error)
+	factory      func() (pools.Resource, error)
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -693,7 +693,7 @@ func NewBuilder(store kv.Storage, renewCh chan func(), factory func() (pools.Res
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
 		renewLeaseCh: renewCh,
-		factory: factory,
+		factory:      factory,
 	}
 }
 

@@ -95,7 +95,7 @@ type Domain struct {
 	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
 	renewLeaseCh         chan func()       // It is used to call the renewLease function of the cache table.
 	onClose              func()
-	sysFactory func(*Domain) (pools.Resource, error)
+	sysFactory           func(*Domain) (pools.Resource, error)
 }
 
 // loadInfoSchema loads infoschema at startTS.

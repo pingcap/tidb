@@ -15,14 +15,14 @@
 package tables
 
 import (
-	"strconv"
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
-	// "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
@@ -224,11 +224,11 @@ type stateRecord struct {
 	lockType     CachedTableLockType
 }
 
-// func newMockStateRemoteData() *mockStateRemoteData {
-// 	return &mockStateRemoteData{
-// 		data: make(map[int64]*stateRecord),
-// 	}
-// }
+func newMockStateRemoteData() *mockStateRemoteData {
+	return &mockStateRemoteData{
+		data: make(map[int64]*stateRecord),
+	}
+}
 
 func (r *mockStateRemoteData) Load(tid int64) (CachedTableLockType, uint64, error) {
 	record, ok := r.data[tid]
@@ -323,7 +323,7 @@ func (r *mockStateRemoteData) LockForWrite(tid int64, now, ts uint64) (uint64, e
 	return 0, nil
 }
 
-func (r *mockStateRemoteData) renewLeaseForRead(tid int64, newTs uint64) (bool, error) {
+func (r *mockStateRemoteData) renewLeaseForRead(tid int64, oldTs uint64, newTs uint64) (bool, error) {
 	record, ok := r.data[tid]
 	if !ok {
 		record = &stateRecord{
@@ -336,6 +336,9 @@ func (r *mockStateRemoteData) renewLeaseForRead(tid int64, newTs uint64) (bool, 
 	if record.lockType != CachedTableLockRead {
 		return false, errors.New("The read lock can be renewed only in the read lock state")
 	}
+	if record.lockLease < oldTs {
+		return false, errors.New("The remote Lease is invalid")
+	}
 	if record.lockLease <= newTs {
 		record.lockLease = newTs
 		return true, nil
@@ -345,7 +348,6 @@ func (r *mockStateRemoteData) renewLeaseForRead(tid int64, newTs uint64) (bool, 
 
 type sqlExec interface {
 	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
-	// GetStore() kv.Storage
 }
 
 type stateRemoteHandle struct {
@@ -379,7 +381,6 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, ts uint6
 		// The old lock is outdated, clear orphan lock.
 		if now > lease {
 			succ = true
-			fmt.Println("lock for read .... now=", now, "lease=", lease, ts)
 			if err := h.updateRow(ctx, tid, "READ", ts); err != nil {
 				return errors.Trace(err)
 			}
@@ -413,16 +414,7 @@ func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64, ts uint
 		if waitAndRetry == 0 {
 			break
 		}
-
-		fmt.Println("lock for write sleep and retry ===", waitAndRetry)
 		time.Sleep(waitAndRetry)
-		// store := h.exec.GetStore()
-		// o := store.GetOracle()
-		// newTS, err := o.GetTimestamp(ctx, &oracle.Option{TxnScope: kv.GlobalTxnScope})
-		// if err != nil {
-		// 	return errors.Trace(err)
-		// }
-		// now, ts = newTS, leaseFromTS(newTS)
 	}
 	return nil
 }
@@ -435,7 +427,6 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, ts 
 		}
 		// The lease is outdated, so lock is invalid, clear orphan lock of any kind.
 		if now > lease {
-			fmt.Println("old lock outdated ... now = ", now, " lease=", lease)
 			if err := h.updateRow(ctx, tid, "WRITE", ts); err != nil {
 				return errors.Trace(err)
 			}
@@ -463,7 +454,6 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, ts 
 
 			// Wait for lease to expire, and then retry.
 			waitAndRetry = waitForLeaseExpire(lease, now)
-			fmt.Println("lease ===", lease, "now ===", now, "wait ===", waitAndRetry)
 		case CachedTableLockIntend:
 			// `now` exceed `oldReadLease` means wait for READ lock lease is done, it's safe to read here.
 			if now > oldReadLease {
@@ -502,8 +492,10 @@ func (h *stateRemoteHandle) RenewLease(ctx context.Context, tid int64, newLease 
 	if op == RenewReadLease {
 		err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
 			lockType, oldLease, _, err := h.loadRow(ctx, tid)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			if now >= oldLease {
-				fmt.Println("now=", now, "oldLease=", oldLease,  "newLease=", newLease)
 				// read lock had already expired, fail to renew
 				return nil
 			}
@@ -530,19 +522,16 @@ func (h *stateRemoteHandle) RenewLease(ctx context.Context, tid int64, newLease 
 
 func (h *stateRemoteHandle) beginTxn(ctx context.Context) error {
 	_, err := h.execSQL(ctx, "begin")
-	fmt.Printf("EEEEEEEEEEEEEEEE   begin ...%p...\n", h.exec)
 	return err
 }
 
 func (h *stateRemoteHandle) commitTxn(ctx context.Context) error {
 	_, err := h.execSQL(ctx, "commit")
-	fmt.Printf("EEEEEEEEEEEEEEEE   commit %v...%p ...\n", err, h.exec)
 	return err
 }
 
 func (h *stateRemoteHandle) rollbackTxn(ctx context.Context) error {
 	_, err := h.execSQL(ctx, "rollback")
-	fmt.Println("EEEEEEEEEEEEEEEE   rollback")
 	return err
 }
 
@@ -564,8 +553,7 @@ func (h *stateRemoteHandle) runInTxn(ctx context.Context, fn func(ctx context.Co
 
 	err = fn(ctx, txnTS)
 	if err != nil {
-		h.rollbackTxn(ctx)
-		fmt.Println("==== rollback exec error ===", err)
+		terror.Log(h.rollbackTxn(ctx))
 		return errors.Trace(err)
 	}
 
