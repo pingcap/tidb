@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/metrics"
 	"io"
 	"math"
 	"net/http"
@@ -767,10 +768,12 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 	if err != nil {
 		return err
 	}
+	start := time.Now()
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	metrics.PDApiExecutionHistogram.Observe(time.Since(start).Seconds())
 
 	defer func() {
 		err = resp.Body.Close()
