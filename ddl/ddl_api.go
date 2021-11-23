@@ -6341,7 +6341,7 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 		if e := spec.Restore(restoreCtx); e != nil {
 			return ErrInvalidAttributesSpec.GenWithStackByArgs(sb.String(), err)
 		}
-		return ErrInvalidAttributesSpec.GenWithStackByArgs(err)
+		return ErrInvalidAttributesSpec.GenWithStackByArgs("", err)
 	}
 	ids := getIDs([]*model.TableInfo{meta})
 	rule.Reset(schema.Name.L, meta.Name.L, "", ids...)
