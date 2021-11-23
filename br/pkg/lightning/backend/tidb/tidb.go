@@ -71,6 +71,9 @@ type tidbEncoder struct {
 	// the index of table columns for each data field.
 	// index == len(table.columns) means this field is `_tidb_rowid`
 	columnIdx []int
+	// the max index used in this chunk, due to the ignore-columns config, we can't
+	// directly check the total column count, so we fall back to only check that
+	// the there are enough columns.
 	columnCnt int
 }
 
@@ -265,22 +268,27 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 	cols := enc.tbl.Cols()
 
 	if len(enc.columnIdx) == 0 {
-		columnCount := 0
+		columnMaxIdx := -1
 		columnIdx := make([]int, len(columnPermutation))
+		for i := 0; i < len(columnPermutation); i++ {
+			columnIdx[i] = -1
+		}
 		for i, idx := range columnPermutation {
 			if idx >= 0 {
 				columnIdx[idx] = i
-				columnCount++
+				if idx > columnMaxIdx {
+					columnMaxIdx = idx
+				}
 			}
 		}
 		enc.columnIdx = columnIdx
-		enc.columnCnt = columnCount
+		enc.columnCnt = columnMaxIdx + 1
 	}
 
 	// TODO: since the column count doesn't exactly reflect the real column names, we only check the upper bound currently.
 	// See: tests/generated_columns/data/gencol.various_types.0.sql this sql has no columns, so encodeLoop will fill the
 	// column permutation with default, thus enc.columnCnt > len(row).
-	if len(row) > enc.columnCnt {
+	if len(row) < enc.columnCnt {
 		logger.Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
 			zap.Array("data", kv.RowArrayMarshaler(row)))
 		return nil, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
@@ -289,8 +297,12 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 	var encoded strings.Builder
 	encoded.Grow(8 * len(row))
 	encoded.WriteByte('(')
+	cnt := 0
 	for i, field := range row {
-		if i != 0 {
+		if enc.columnIdx[i] < 0 {
+			continue
+		}
+		if cnt > 0 {
 			encoded.WriteByte(',')
 		}
 		datum := field
@@ -302,6 +314,7 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 			)
 			return nil, err
 		}
+		cnt++
 	}
 	encoded.WriteByte(')')
 	return tidbRow(encoded.String()), nil
@@ -456,7 +469,7 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 		serverInfo := version.ParseServerInfo(versionStr)
 
 		rows, e := tx.Query(`
-			SELECT table_name, column_name, column_type, extra
+			SELECT table_name, column_name, column_type, generation_expression, extra
 			FROM information_schema.columns
 			WHERE table_schema = ?
 			ORDER BY table_name, ordinal_position;
@@ -472,8 +485,8 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 			curTable     *model.TableInfo
 		)
 		for rows.Next() {
-			var tableName, columnName, columnType, columnExtra string
-			if e := rows.Scan(&tableName, &columnName, &columnType, &columnExtra); e != nil {
+			var tableName, columnName, columnType, generationExpr, columnExtra string
+			if e := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); e != nil {
 				return e
 			}
 			if tableName != curTableName {
@@ -502,6 +515,7 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 				FieldType: types.FieldType{
 					Flag: flag,
 				},
+				GeneratedExprString: generationExpr,
 			})
 			curColOffset++
 		}

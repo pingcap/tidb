@@ -20,6 +20,12 @@ check_cluster_version 4 0 0 'local backend' || exit 0
 LOG_FILE1="$TEST_DIR/lightning-duplicate-detection1.log"
 LOG_FILE2="$TEST_DIR/lightning-duplicate-detection2.log"
 
+<<<<<<< HEAD
+=======
+# let lightning run a bit slow to avoid some table in the first lightning finish too fast.
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownImport=sleep(250)"
+
+>>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_detection.sorted1" \
   --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "tests/$TEST_NAME/config1.toml" && exit 1 &
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_detection.sorted2" \

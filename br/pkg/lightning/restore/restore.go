@@ -1317,7 +1317,7 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.Columns)
+			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap())
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2092,6 +2092,16 @@ func (cr *chunkRestore) encodeLoop(
 
 	pauser, maxKvPairsCnt := rc.pauser, rc.cfg.TikvImporter.MaxKVPairs
 	initializedColumns, reachEOF := false, false
+	// filteredColumns is column names that excluded ignored columns
+	// WARN: this might be not correct when different SQL statements contains different fields,
+	// but since ColumnPermutation also depends on the hypothesis that the columns in one source file is the same
+	// so this should be ok.
+	var filteredColumns []string
+	ignoreColumns, err1 := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(t.dbInfo.Name, t.tableInfo.Core.Name.O, rc.cfg.Mydumper.CaseSensitive)
+	if err1 != nil {
+		err = err1
+		return
+	}
 	for !reachEOF {
 		if err = pauser.Wait(ctx); err != nil {
 			return
@@ -2122,6 +2132,26 @@ func (cr *chunkRestore) encodeLoop(
 							return
 						}
 					}
+					filteredColumns = columnNames
+					if ignoreColumns != nil && len(ignoreColumns.Columns) > 0 {
+						filteredColumns = make([]string, 0, len(columnNames))
+						ignoreColsMap := ignoreColumns.ColumnsMap()
+						if len(columnNames) > 0 {
+							for _, c := range columnNames {
+								if _, ok := ignoreColsMap[c]; !ok {
+									filteredColumns = append(filteredColumns, c)
+								}
+							}
+						} else {
+							// init column names by table schema
+							// after filtered out some columns, we must explicitly set the columns for TiDB backend
+							for _, col := range t.tableInfo.Core.Columns {
+								if _, ok := ignoreColsMap[col.Name.L]; !col.Hidden && !ok {
+									filteredColumns = append(filteredColumns, col.Name.O)
+								}
+							}
+						}
+					}
 					initializedColumns = true
 				}
 			case io.EOF:
@@ -2142,7 +2172,15 @@ func (cr *chunkRestore) encodeLoop(
 				err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
 				return
 			}
+<<<<<<< HEAD
 			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: columnNames, offset: newOffset, rowID: rowID})
+=======
+			if hasIgnoredEncodeErr {
+				continue
+			}
+
+			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset, rowID: rowID})
+>>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))

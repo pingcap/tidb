@@ -78,7 +78,7 @@ func (s *mysqlSuite) TearDownTest(c *C) {
 
 func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 	s.mockDB.
-		ExpectExec("\\QREPLACE INTO `foo`.`bar`(`a`,`b`,`c`,`d`,`e`,`f`,`g`,`h`,`i`,`j`,`k`,`l`,`m`,`n`,`o`) VALUES(18446744073709551615,-9223372036854775808,0,NULL,7.5,5e-324,1.7976931348623157e+308,0,'甲乙丙\\r\\n\\0\\Z''\"\\\\`',x'000000abcdef',2557891634,'12.5',51)\\E").
+		ExpectExec("\\QREPLACE INTO `foo`.`bar`(`b`,`d`,`e`,`f`,`g`,`h`,`i`,`j`,`k`,`l`,`m`,`n`,`o`) VALUES(-9223372036854775808,NULL,7.5,5e-324,1.7976931348623157e+308,0,'甲乙丙\\r\\n\\0\\Z''\"\\\\`',x'000000abcdef',2557891634,'12.5',51)\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	ctx := context.Background()
@@ -98,6 +98,9 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 		perms = append(perms, i)
 	}
 	perms = append(perms, -1)
+	// skip column a,c due to ignore-columns
+	perms[0] = -1
+	perms[2] = -1
 	encoder, err := s.backend.NewEncoder(s.tbl, &kv.SessionOptions{SQLMode: 0, Timestamp: 1234567890})
 	c.Assert(err, IsNil)
 	row, err := encoder.Encode(logger, []types.Datum{
@@ -121,9 +124,15 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	writer, err := engine.LocalWriter(ctx, nil)
+<<<<<<< HEAD
 	c.Assert(err, IsNil)
 	err = writer.WriteRows(ctx, []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
 	c.Assert(err, IsNil)
+=======
+	require.NoError(t, err)
+	err = writer.WriteRows(ctx, []string{"b", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
+	require.NoError(t, err)
+>>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
 	st, err := writer.Close(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(st, IsNil)
@@ -150,8 +159,13 @@ func (s *mysqlSuite) TestWriteRowsIgnoreOnDup(c *C) {
 	c.Assert(err, IsNil)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
+<<<<<<< HEAD
 	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
 	c.Assert(err, IsNil)
+=======
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "1.csv", 0)
+	require.NoError(t, err)
+>>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	writer, err := engine.LocalWriter(ctx, nil)
@@ -194,8 +208,13 @@ func (s *mysqlSuite) TestWriteRowsErrorOnDup(c *C) {
 	c.Assert(err, IsNil)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
+<<<<<<< HEAD
 	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
 	c.Assert(err, IsNil)
+=======
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "3.csv", 0)
+	require.NoError(t, err)
+>>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
@@ -250,10 +269,10 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_3_x(c *C) {
 	s.mockDB.ExpectBegin()
 	s.mockDB.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v3.0.18"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
 		WithArgs("test").
-		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
-			AddRow("t", "id", "int(10)", "auto_increment"))
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t", "id", "int(10)", "", "auto_increment"))
 	s.mockDB.ExpectCommit()
 
 	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
@@ -282,10 +301,10 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_4_0(c *C) {
 	s.mockDB.ExpectBegin()
 	s.mockDB.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.0"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
 		WithArgs("test").
-		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
-			AddRow("t", "id", "bigint(20) unsigned", "auto_increment"))
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t", "id", "bigint(20) unsigned", "", "auto_increment"))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID"}).
 			AddRow("test", "t", "id", int64(1)))
@@ -317,10 +336,10 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_4_x_auto_increment(c *C) {
 	s.mockDB.ExpectBegin()
 	s.mockDB.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.7"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
 		WithArgs("test").
-		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
-			AddRow("t", "id", "bigint(20)", ""))
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t", "id", "bigint(20)", "", ""))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
 			AddRow("test", "t", "id", int64(1), "AUTO_INCREMENT"))
@@ -352,10 +371,10 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_4_x_auto_random(c *C) {
 	s.mockDB.ExpectBegin()
 	s.mockDB.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("5.7.25-TiDB-v4.0.7"))
-	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
+	s.mockDB.ExpectQuery("\\QSELECT table_name, column_name, column_type, generation_expression, extra FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position;\\E").
 		WithArgs("test").
-		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "extra"}).
-			AddRow("t", "id", "bigint(20)", ""))
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "column_name", "column_type", "generation_expression", "extra"}).
+			AddRow("t", "id", "bigint(20)", "1 + 2", ""))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`t` NEXT_ROW_ID").
 		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
 			AddRow("test", "t", "id", int64(1), "AUTO_RANDOM"))
@@ -378,8 +397,116 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_4_x_auto_random(c *C) {
 					FieldType: types.FieldType{
 						Flag: mysql.PriKeyFlag,
 					},
+					GeneratedExprString: "1 + 2",
 				},
 			},
 		},
+<<<<<<< HEAD
 	})
+=======
+	}, tableInfos)
+}
+
+func TestWriteRowsErrorDowngrading(t *testing.T) {
+	t.Parallel()
+	nonRetryableError := sql.ErrNoRows
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
+	// First, batch insert, fail and rollback.
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1),(2),(3),(4),(5)\\E").
+		WillReturnError(nonRetryableError)
+	// Then, insert row-by-row due to the non-retryable error.
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "7.csv", int64(0), nonRetryableError.Error(), "(1)").
+		WillReturnResult(driver.ResultNoRows)
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), nonRetryableError.Error(), "(2)").
+		WillReturnResult(driver.ResultNoRows)
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(3)\\E").
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "9.csv", int64(0), nonRetryableError.Error(), "(3)").
+		WillReturnResult(driver.ResultNoRows)
+	// the forth row will exceed the error threshold, won't record this error
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
+		WillReturnError(nonRetryableError)
+
+	ctx := context.Background()
+	logger := log.L()
+
+	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup,
+		errormanager.New(s.dbHandle, &config.Config{
+			App: config.Lightning{
+				TaskInfoSchemaName: "tidb_lightning_errors",
+				MaxError: config.MaxError{
+					Type: *atomic.NewInt64(3),
+				},
+			},
+		}),
+	)
+	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	require.NoError(t, err)
+
+	dataRows := ignoreBackend.MakeEmptyRows()
+	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
+	indexRows := ignoreBackend.MakeEmptyRows()
+	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
+
+	encoder, err := ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
+	require.NoError(t, err)
+	row, err := encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(1),
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "7.csv", 0)
+	require.NoError(t, err)
+
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	row, err = encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(2),
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "8.csv", 0)
+	require.NoError(t, err)
+
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	row, err = encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(3),
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "9.csv", 0)
+	require.NoError(t, err)
+
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	row, err = encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(4),
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "10.csv", 0)
+	require.NoError(t, err)
+
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	row, err = encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(5),
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "11.csv", 0)
+	require.NoError(t, err)
+
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	writer, err := engine.LocalWriter(ctx, nil)
+	require.NoError(t, err)
+	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
+	require.Error(t, err)
+	st, err := writer.Close(ctx)
+	require.NoError(t, err)
+	require.Nil(t, st)
+>>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
 }
