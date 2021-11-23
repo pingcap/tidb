@@ -29,11 +29,6 @@ type FieldName struct {
 
 	Hidden bool
 
-	// NotExplicitUsable is used for mark whether a column can be explicit used in SQL.
-	// update stmt can write `writeable` column implicitly but cannot use non-public columns explicit.
-	// e.g. update t set a = 10 where b = 10; which `b` is in `writeOnly` state
-	NotExplicitUsable bool
-
 	Redundant bool
 }
 
