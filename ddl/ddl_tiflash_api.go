@@ -275,8 +275,9 @@ func (d *ddl) TiFlashReplicaTableUpdate(ctx sessionctx.Context, handlePd bool) (
 		}
 	}
 
-	for i, _ := range tiflashStores {
-		err := d.UpdateTiFlashHTTPAddress(&tiflashStores[i])
+	for _, store := range tiflashStores {
+		s := store
+		err := d.UpdateTiFlashHTTPAddress(&s)
 		log.Error("update TiFlash status address failed", zap.Error(err))
 	}
 
