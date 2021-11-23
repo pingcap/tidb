@@ -9370,7 +9370,7 @@ func (s *testSerialSuite) TestIssue28650(c *C) {
 	for _, sql := range sqls {
 		tk.MustExec("set @@tidb_mem_quota_query = 1073741824") // 1GB
 		c.Assert(tk.QueryToErr(sql), IsNil)
-		tk.MustExec("set @@tidb_mem_quota_query = 67108864") // 64MB, out of memory during executing
+		tk.MustExec("set @@tidb_mem_quota_query = 33554432") // 32MB, out of memory during executing
 		c.Assert(strings.Contains(tk.QueryToErr(sql).Error(), "Out Of Memory Quota!"), IsTrue)
 		tk.MustExec("set @@tidb_mem_quota_query = 65536") // 64KB, out of memory during building the plan
 		func() {
