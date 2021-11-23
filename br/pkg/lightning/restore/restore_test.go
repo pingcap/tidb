@@ -1451,7 +1451,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverErrored(c *C) {
 func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 	dir := c.MkDir()
 	fileName := "db.table.000.csv"
-	err := os.WriteFile(filepath.Join(dir, fileName), []byte("1,2,3,4\r\n4,5,6,7\r\n"), 0o644)
+	err := os.WriteFile(filepath.Join(dir, fileName), []byte("1,2\r\n4,5,6,7\r\n"), 0o644)
 	c.Assert(err, IsNil)
 
 	store, err := storage.NewLocalStorage(dir)
@@ -1484,7 +1484,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 	defer kvEncoder.Close()
 
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
-	c.Assert(err, ErrorMatches, "in file db.table.2.sql:0 at offset 8: column count mismatch, expected 3, got 4")
+	c.Assert(err, ErrorMatches, "in file db.table.2.sql:0 at offset 4: column count mismatch, expected 3, got 2")
 	c.Assert(kvsCh, HasLen, 0)
 }
 
