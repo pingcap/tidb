@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/ddl"
 	"io"
 	"testing"
 
@@ -778,11 +779,13 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustExec("use test")
 	cc.ctx = &TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)}
 
+	dom := domain.GetDomain(tk.Session())
+	ddl.DisableTiFlashPoll(dom.DDL())
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := testGetTableByName(t, tk.Session(), "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := dom.DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	dml := "insert into t values"

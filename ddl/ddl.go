@@ -342,7 +342,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ctx:               ctx,
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
-		enableTiFlashPoll: false,
+		enableTiFlashPoll: true,
 	}
 
 	return d

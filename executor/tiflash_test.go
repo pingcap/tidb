@@ -17,6 +17,7 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/ddl"
 	"math"
 	"math/rand"
 	"strings"
@@ -76,6 +77,7 @@ func (s *tiflashTestSuite) SetUpSuite(c *C) {
 
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	ddl.DisableTiFlashPoll(s.dom.DDL())
 	s.dom.SetStatsUpdating(true)
 }
 
