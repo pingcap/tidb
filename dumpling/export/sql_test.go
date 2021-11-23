@@ -363,7 +363,6 @@ func TestShowCreatePolicy(t *testing.T) {
 
 }
 
-
 func TestGetSuitableRows(t *testing.T) {
 	t.Parallel()
 

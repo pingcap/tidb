@@ -37,7 +37,7 @@ type TaskViewMeta struct {
 // TaskPolicyMeta is a dumping view metadata task
 type TaskPolicyMeta struct {
 	Task
-	PolicyName   string
+	PolicyName      string
 	CreatePolicySQL string
 }
 
@@ -80,8 +80,8 @@ func NewTaskViewMeta(dbName, tblName, createTableSQL, createViewSQL string) *Tas
 // NewTaskPolicyMeta returns a new dumping placement policy metadata task
 func NewTaskPolicyMeta(policyName, createPolicySQL string) *TaskPolicyMeta {
 	return &TaskPolicyMeta{
-		PolicyName:   policyName,
-		CreatePolicySQL:  createPolicySQL,
+		PolicyName:      policyName,
+		CreatePolicySQL: createPolicySQL,
 	}
 }
 

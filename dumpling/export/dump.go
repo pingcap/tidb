@@ -305,7 +305,6 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 	// policy should be created before database
 	for _, policy := range policyNames {
 		createPolicySQL, err := ShowCreatePlacementPolicy(metaConn, policy)
-		tctx.L().Info(fmt.Sprintf("%s aaaaa", createPolicySQL),zap.String("database", ""))
 		if err != nil {
 			return err
 		}
