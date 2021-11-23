@@ -26,7 +26,7 @@ import (
 func IncInt64(rm RetrieverMutator, k Key, step int64) (int64, error) {
 	val, err := rm.Get(context.TODO(), k)
 	if IsErrNotFound(err) {
-		b := make([]byte, 8, 8)
+		b := make([]byte, 8)
 		binary.BigEndian.PutUint64(b, uint64(step))
 
 		if err := rm.Set(k, b); err != nil {
@@ -45,7 +45,7 @@ func IncInt64(rm RetrieverMutator, k Key, step int64) (int64, error) {
 	}
 
 	intVal += uint64(step)
-	b := make([]byte, 8, 8)
+	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, intVal)
 
 	if err := rm.Set(k, b); err != nil {
