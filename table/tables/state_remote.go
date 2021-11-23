@@ -120,10 +120,10 @@ func (r *mockStateRemoteHandle) LockForWrite(ctx context.Context, tid int64, now
 	return op.err
 }
 
-func (r *mockStateRemoteHandle) RenewLease(ctx context.Context, tid int64, newTs uint64, op RenewLeaseType) (bool, error) {
+func (r *mockStateRemoteHandle) RenewLease(tid int64, oldTs uint64, newTs uint64, op RenewLeaseType) (bool, error) {
 	switch op {
 	case RenewReadLease:
-		op := &renewLeaseForReadOP{tid: tid, newTs: newTs}
+		op := &renewLeaseForReadOP{tid: tid, oldTs: oldTs, newTs: newTs}
 		op.Add(1)
 		r.ch <- op
 		op.Wait()
@@ -202,6 +202,7 @@ type renewLeaseForReadOP struct {
 	sync.WaitGroup
 	// Input
 	tid   int64
+	oldTs uint64
 	newTs uint64
 
 	// Output
@@ -210,7 +211,7 @@ type renewLeaseForReadOP struct {
 }
 
 func (op *renewLeaseForReadOP) Exec(r *mockStateRemoteData) {
-	op.succ, op.err = r.renewLeaseForRead(op.tid, op.newTs)
+	op.succ, op.err = r.renewLeaseForRead(op.tid, op.oldTs, op.newTs)
 	op.Done()
 }
 
