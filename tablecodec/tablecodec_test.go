@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/stretchr/testify/require"
 )
@@ -107,7 +108,7 @@ func TestRowCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.CompareDatum(sc, &row[i])
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equalf(t, 0, equal, "expect: %v, got %v", row[i], v)
 	}
@@ -121,7 +122,7 @@ func TestRowCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.CompareDatum(sc, &row[i])
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equal(t, 0, equal)
 	}
@@ -139,7 +140,7 @@ func TestRowCodec(t *testing.T) {
 		}
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.CompareDatum(sc, &row[i])
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equal(t, 0, equal)
 	}
@@ -168,7 +169,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeTimestamp)
 	d1, err := DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err := d1.CompareDatum(sc, &d)
+	cmp, err := d1.Compare(sc, &d, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -185,7 +186,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp.Elems = elems
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err = d1.CompareDatum(sc, &d)
+	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.Collate))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -200,7 +201,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp.Flen = 24
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err = d1.CompareDatum(sc, &d)
+	cmp, err = d1.Compare(sc, &d, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -214,7 +215,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp = types.NewFieldType(mysql.TypeEnum)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err = d1.CompareDatum(sc, &d)
+	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.Collate))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 }
@@ -226,7 +227,7 @@ func TestUnflattenDatums(t *testing.T) {
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	output, err := UnflattenDatums(input, tps, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err := input[0].CompareDatum(sc, &output[0])
+	cmp, err := input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -235,7 +236,7 @@ func TestUnflattenDatums(t *testing.T) {
 	tps[0].Collate = "utf8mb4_unicode_ci"
 	output, err = UnflattenDatums(input, tps, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err = input[0].CompareDatum(sc, &output[0])
+	cmp, err = input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 	require.Equal(t, "utf8mb4_unicode_ci", output[0].Collation())
@@ -285,7 +286,7 @@ func TestTimeCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.CompareDatum(sc, &row[i])
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
 		require.Nil(t, err1)
 		require.Equal(t, 0, equal)
 	}
