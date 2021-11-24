@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +36,7 @@ func TestMutRow(t *testing.T) {
 		val := zeroValForType(allTypes[i])
 		d := row.GetDatum(i, allTypes[i])
 		d2 := types.NewDatum(val)
-		cmp, err := d.CompareDatum(sc, &d2)
+		cmp, err := d.Compare(sc, &d2, collate.GetCollator(allTypes[i].Collate))
 		require.Nil(t, err)
 		require.Equal(t, 0, cmp)
 	}
