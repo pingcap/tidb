@@ -42,7 +42,6 @@ func getRandomLocalAddr() url.URL {
 func runEtcd(t *testing.T) (*embed.Etcd, *clientv3.Client) {
 	cfg := embed.NewConfig()
 	cfg.Dir = t.TempDir()
-	// TODO: randomize the port...
 	clientURL := getRandomLocalAddr()
 	cfg.LCUrls = []url.URL{clientURL}
 	cfg.LPUrls = []url.URL{getRandomLocalAddr()}
@@ -148,14 +147,22 @@ func testBasic(t *testing.T, metaCli stream.MetaDataClient, etcd *embed.Etcd) {
 		{[]byte(stream.RangeKeyOf(taskName, tablecodec.EncodeTablePrefix(3))), tablecodec.EncodeTablePrefix(4)},
 	}, etcd)
 
-	require.NoError(t, metaCli.PauseTask(ctx, taskName))
+	remoteTask, err := metaCli.GetTask(ctx, taskName)
+	require.NoError(t, err)
+	require.NoError(t, remoteTask.Pause(ctx))
 	keyExists(t, []byte(stream.Pause(taskName)), etcd)
 	require.NoError(t, metaCli.PauseTask(ctx, taskName))
 	keyExists(t, []byte(stream.Pause(taskName)), etcd)
+	paused, err := remoteTask.Paused(ctx)
+	require.NoError(t, err)
+	require.True(t, paused)
 	require.NoError(t, metaCli.ResumeTask(ctx, taskName))
 	keyNotExists(t, []byte(stream.Pause(taskName)), etcd)
 	require.NoError(t, metaCli.ResumeTask(ctx, taskName))
 	keyNotExists(t, []byte(stream.Pause(taskName)), etcd)
+	paused, err = remoteTask.Paused(ctx)
+	require.NoError(t, err)
+	require.False(t, paused)
 
 	require.NoError(t, metaCli.DeleteTask(ctx, taskName))
 	keyNotExists(t, []byte(stream.TaskOf(taskName)), etcd)
@@ -164,8 +171,11 @@ func testBasic(t *testing.T, metaCli stream.MetaDataClient, etcd *embed.Etcd) {
 
 func testForwardProgress(t *testing.T, metaCli stream.MetaDataClient, etcd *embed.Etcd) {
 	ctx := context.Background()
-	taskName := "four-tables"
-	taskInfo := simpleTask(taskName, 4)
+	taskName := "many-tables"
+	taskInfo := simpleTask(taskName, 65)
+	defer func() {
+		require.NoError(t, metaCli.DeleteTask(ctx, taskName))
+	}()
 
 	require.NoError(t, metaCli.PutTask(ctx, taskInfo))
 	task, err := metaCli.GetTask(ctx, taskName)
@@ -176,7 +186,7 @@ func testForwardProgress(t *testing.T, metaCli stream.MetaDataClient, etcd *embe
 	require.NoError(t, task.Step(ctx, 2, 5, 40))
 	rs, err := task.Ranges(ctx)
 	require.NoError(t, err)
-	require.Equal(t, simpleRanges(4), rs)
+	require.Equal(t, simpleRanges(65), rs)
 	store1Checkpoint, err := task.MinNextBackupTS(ctx, 1)
 	require.NoError(t, err)
 	require.Equal(t, store1Checkpoint, uint64(42))

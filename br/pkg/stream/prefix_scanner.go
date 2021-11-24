@@ -1,0 +1,95 @@
+package stream
+
+import (
+	"context"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/tikv/client-go/v2/kv"
+	"go.etcd.io/etcd/clientv3"
+)
+
+// EtcdSource is the adapter for etcd client and the `Source` interface.
+type EtcdSource struct {
+	*clientv3.Client
+}
+
+// Scan ordered in range [from, to).
+// return at most limit kvs at once.
+// WARNING: The method for scanning keeps poor consistency: we may get different reversion of different pages.
+// This might be accpetable just for calculating min backup ts or ranges to backup.
+func (e EtcdSource) Scan(ctx context.Context, from []byte, to []byte, limit int) (kvs [][2][]byte, more bool, err error) {
+	kvs = make([][2][]byte, 0, limit)
+	configs := []clientv3.OpOption{clientv3.WithRange(string(to)), clientv3.WithLimit(int64(limit))}
+	resp, err := e.Get(ctx, string(from), configs...)
+	if err != nil {
+		err = errors.Annotatef(err, "failed to scan [%s, %s)", redact.Key(from), redact.Key(to))
+		return
+	}
+	more = resp.More
+	for _, kv := range resp.Kvs {
+		kvs = append(kvs, [2][]byte{kv.Key, kv.Value})
+	}
+	return
+}
+
+// Source is the abstraction of some KV storage supports range scan.
+type Source interface {
+	// Scan ordered in range [from, to).
+	// return at most limit kvs at once.
+	Scan(ctx context.Context, from, to []byte, limit int) (kvs [][2][]byte, more bool, err error)
+}
+
+type PrefixScanner struct {
+	src  Source
+	next []byte
+	end  []byte
+	done bool
+}
+
+// ScanPrefix make a PrefixScanner from the source.
+func ScanPrefix(src Source, prefix string) *PrefixScanner {
+	return &PrefixScanner{
+		src:  src,
+		next: []byte(prefix),
+		end:  kv.PrefixNextKey([]byte(prefix)),
+	}
+}
+
+// ScanEtcdPrefix is a shortcut for making a adaptor for etcd client and then create a PrefixScanner.
+func ScanEtcdPrefix(cli *clientv3.Client, prefix string) *PrefixScanner {
+	return ScanPrefix(EtcdSource{Client: cli}, prefix)
+}
+
+// Page scans one page of the source.
+func (scan *PrefixScanner) Page(ctx context.Context, size int) ([][2][]byte, error) {
+	kvs, more, err := scan.src.Scan(ctx, scan.next, scan.end, size)
+	if err != nil {
+		return nil, err
+	}
+	if !more {
+		scan.done = true
+	}
+	// Append a 0x00 to the end, for getting the 'next key' of the last key.
+	scan.next = append(kvs[len(kvs)-1][0], 0)
+	return kvs, nil
+}
+
+// AllPages collects all pages into one vector.
+// NOTE: like io.ReadAll, maybe the `size` parameter is redundant?
+func (scan *PrefixScanner) AllPages(ctx context.Context, size int) ([][2][]byte, error) {
+	kvs := make([][2][]byte, 0, size)
+	for !scan.Done() {
+		newKvs, err := scan.Page(ctx, size)
+		if err != nil {
+			return kvs, err
+		}
+		kvs = append(kvs, newKvs...)
+	}
+	return kvs, nil
+}
+
+// Done checks whether the PrefixScanner scan all items in the range.
+func (scan *PrefixScanner) Done() bool {
+	return scan.done
+}
