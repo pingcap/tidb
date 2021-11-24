@@ -310,7 +310,8 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *sql.Conn, taskC
 			if err != nil {
 				return err
 			}
-			task := NewTaskPolicyMeta(policy, createPolicySQL)
+			wrappedCreatePolicySQL := fmt.Sprintf("/*T![placement] %s */", createPolicySQL)
+			task := NewTaskPolicyMeta(policy, wrappedCreatePolicySQL)
 			ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 			if ctxDone {
 				return tctx.Err()
