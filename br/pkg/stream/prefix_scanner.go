@@ -5,7 +5,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/tikv/client-go/v2/kv"
+	"github.com/pingcap/tidb/kv"
+	kvutil "github.com/tikv/client-go/v2/kv"
 	"go.etcd.io/etcd/clientv3"
 )
 
@@ -18,8 +19,8 @@ type EtcdSource struct {
 // return at most limit kvs at once.
 // WARNING: The method for scanning keeps poor consistency: we may get different reversion of different pages.
 // This might be accpetable just for calculating min backup ts or ranges to backup.
-func (e EtcdSource) Scan(ctx context.Context, from []byte, to []byte, limit int) (kvs [][2][]byte, more bool, err error) {
-	kvs = make([][2][]byte, 0, limit)
+func (e EtcdSource) Scan(ctx context.Context, from []byte, to []byte, limit int) (kvs []kv.Entry, more bool, err error) {
+	kvs = make([]kv.Entry, 0, limit)
 	configs := []clientv3.OpOption{clientv3.WithRange(string(to)), clientv3.WithLimit(int64(limit))}
 	resp, err := e.Get(ctx, string(from), configs...)
 	if err != nil {
@@ -27,8 +28,8 @@ func (e EtcdSource) Scan(ctx context.Context, from []byte, to []byte, limit int)
 		return
 	}
 	more = resp.More
-	for _, kv := range resp.Kvs {
-		kvs = append(kvs, [2][]byte{kv.Key, kv.Value})
+	for _, kvp := range resp.Kvs {
+		kvs = append(kvs, kv.Entry{Key: kvp.Key, Value: kvp.Value})
 	}
 	return
 }
@@ -37,7 +38,7 @@ func (e EtcdSource) Scan(ctx context.Context, from []byte, to []byte, limit int)
 type Source interface {
 	// Scan ordered in range [from, to).
 	// return at most limit kvs at once.
-	Scan(ctx context.Context, from, to []byte, limit int) (kvs [][2][]byte, more bool, err error)
+	Scan(ctx context.Context, from, to []byte, limit int) (kvs []kv.Entry, more bool, err error)
 }
 
 type PrefixScanner struct {
@@ -52,7 +53,7 @@ func ScanPrefix(src Source, prefix string) *PrefixScanner {
 	return &PrefixScanner{
 		src:  src,
 		next: []byte(prefix),
-		end:  kv.PrefixNextKey([]byte(prefix)),
+		end:  kvutil.PrefixNextKey([]byte(prefix)),
 	}
 }
 
@@ -62,7 +63,7 @@ func ScanEtcdPrefix(cli *clientv3.Client, prefix string) *PrefixScanner {
 }
 
 // Page scans one page of the source.
-func (scan *PrefixScanner) Page(ctx context.Context, size int) ([][2][]byte, error) {
+func (scan *PrefixScanner) Page(ctx context.Context, size int) ([]kv.Entry, error) {
 	kvs, more, err := scan.src.Scan(ctx, scan.next, scan.end, size)
 	if err != nil {
 		return nil, err
@@ -71,14 +72,14 @@ func (scan *PrefixScanner) Page(ctx context.Context, size int) ([][2][]byte, err
 		scan.done = true
 	}
 	// Append a 0x00 to the end, for getting the 'next key' of the last key.
-	scan.next = append(kvs[len(kvs)-1][0], 0)
+	scan.next = append(kvs[len(kvs)-1].Key, 0)
 	return kvs, nil
 }
 
 // AllPages collects all pages into one vector.
 // NOTE: like io.ReadAll, maybe the `size` parameter is redundant?
-func (scan *PrefixScanner) AllPages(ctx context.Context, size int) ([][2][]byte, error) {
-	kvs := make([][2][]byte, 0, size)
+func (scan *PrefixScanner) AllPages(ctx context.Context, size int) ([]kv.Entry, error) {
+	kvs := make([]kv.Entry, 0, size)
 	for !scan.Done() {
 		newKvs, err := scan.Page(ctx, size)
 		if err != nil {

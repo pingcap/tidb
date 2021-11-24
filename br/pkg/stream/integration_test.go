@@ -65,7 +65,10 @@ func simpleRanges(tableCount int) stream.Ranges {
 	ranges := stream.Ranges{}
 	for i := 0; i < tableCount; i++ {
 		base := int64(i*2 + 1)
-		ranges = append(ranges, stream.Range{tablecodec.EncodeTablePrefix(base), tablecodec.EncodeTablePrefix(base + 1)})
+		ranges = append(ranges, stream.Range{
+			StartKey: tablecodec.EncodeTablePrefix(base),
+			EndKey:   tablecodec.EncodeTablePrefix(base + 1),
+		})
 	}
 	return ranges
 }
@@ -106,7 +109,7 @@ func keyNotExists(t *testing.T, key []byte, etcd *embed.Etcd) {
 }
 
 func rangeMatches(t *testing.T, ranges stream.Ranges, etcd *embed.Etcd) {
-	r, err := etcd.Server.KV().Range(ranges[0][0], ranges[len(ranges)-1][1], mvcc.RangeOptions{})
+	r, err := etcd.Server.KV().Range(ranges[0].StartKey, ranges[len(ranges)-1].EndKey, mvcc.RangeOptions{})
 	require.NoError(t, err)
 	if len(r.KVs) != len(ranges) {
 		t.Logf("len(ranges) not match len(response.KVs) [%d vs %d]", len(ranges), len(r.KVs))
@@ -114,8 +117,8 @@ func rangeMatches(t *testing.T, ranges stream.Ranges, etcd *embed.Etcd) {
 		return
 	}
 	for i, rng := range ranges {
-		require.Equalf(t, r.KVs[i].Key, rng[0], "the %dth of ranges not matched.(key)", i)
-		require.Equalf(t, r.KVs[i].Value, rng[1], "the %dth of ranges not matched.(value)", i)
+		require.Equalf(t, r.KVs[i].Key, []byte(rng.StartKey), "the %dth of ranges not matched.(key)", i)
+		require.Equalf(t, r.KVs[i].Value, []byte(rng.EndKey), "the %dth of ranges not matched.(value)", i)
 	}
 }
 
@@ -142,9 +145,9 @@ func testBasic(t *testing.T, metaCli stream.MetaDataClient, etcd *embed.Etcd) {
 	require.NoError(t, metaCli.PutTask(ctx, task))
 	keyIs(t, []byte(stream.TaskOf(taskName)), taskData, etcd)
 	keyNotExists(t, []byte(stream.Pause(taskName)), etcd)
-	rangeMatches(t, [][2][]byte{
-		{[]byte(stream.RangeKeyOf(taskName, tablecodec.EncodeTablePrefix(1))), tablecodec.EncodeTablePrefix(2)},
-		{[]byte(stream.RangeKeyOf(taskName, tablecodec.EncodeTablePrefix(3))), tablecodec.EncodeTablePrefix(4)},
+	rangeMatches(t, []stream.Range{
+		{StartKey: []byte(stream.RangeKeyOf(taskName, tablecodec.EncodeTablePrefix(1))), EndKey: tablecodec.EncodeTablePrefix(2)},
+		{StartKey: []byte(stream.RangeKeyOf(taskName, tablecodec.EncodeTablePrefix(3))), EndKey: tablecodec.EncodeTablePrefix(4)},
 	}, etcd)
 
 	remoteTask, err := metaCli.GetTask(ctx, taskName)

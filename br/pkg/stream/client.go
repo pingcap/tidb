@@ -11,6 +11,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/kv"
 	"go.etcd.io/etcd/clientv3"
 )
 
@@ -29,7 +30,7 @@ func (c *MetaDataClient) PutTask(ctx context.Context, task TaskInfo) error {
 	ops := make([]clientv3.Op, 0, 2+len(task.Ranges))
 	ops = append(ops, clientv3.OpPut(TaskOf(task.GetName()), string(data)))
 	for _, r := range task.Ranges {
-		ops = append(ops, clientv3.OpPut(RangeKeyOf(task.Name, r[0]), string(r[1])))
+		ops = append(ops, clientv3.OpPut(RangeKeyOf(task.Name, r.StartKey), string(r.EndKey)))
 	}
 	if task.Pausing {
 		ops = append(ops, clientv3.OpPut(Pause(task.Name), ""))
@@ -127,20 +128,18 @@ func (t *Task) Ranges(ctx context.Context) (Ranges, error) {
 		return nil, errors.Annotatef(err, "failed to fetch ranges of task %s", t.Info.Name)
 	}
 	commonPrefix := []byte(RangesOf(t.Info.Name))
-	for _, kv := range kvs {
+	for _, kvp := range kvs {
 		// Given we scan the key `RangesOf(t.Info.Name)` with `WithPrefix()`,
 		// The prefix should always be RangesOf(t.Info.Name).
 		// It would be safe to cut the prefix directly. (instead of use TrimPrefix)
 		// But the rule not apply for the slash. Maybe scan the prefix RangesOf(t.Info.Name) + "/"?
-		startKey := bytes.TrimPrefix(kv[0][len(commonPrefix):], []byte("/"))
-		ranges = append(ranges, [...][]byte{startKey, kv[1]})
+		startKey := bytes.TrimPrefix(kvp.Key[len(commonPrefix):], []byte("/"))
+		ranges = append(ranges, kv.KeyRange{StartKey: startKey, EndKey: kvp.Value})
 	}
 	return ranges, nil
 }
 
 // MinNextBackupTS query the all next backup ts of a store, returning the minimal next backup ts of the store.
-// FIXME: this would probably exceed the gRPC max request size (1.5M), maybe we need page scanning,
-//        but we cannot both do `WithPrefix` and `WithStart`. Maybe impl a `PrefixScanner` with `kv.NextPrefixKey()`?
 func (t *Task) MinNextBackupTS(ctx context.Context, store uint64) (uint64, error) {
 	min := uint64(0xffffffff)
 	scanner := ScanEtcdPrefix(t.cli.Client, CheckPointsOf(t.Info.Name, store))
@@ -149,14 +148,14 @@ func (t *Task) MinNextBackupTS(ctx context.Context, store uint64) (uint64, error
 		return 0, errors.Annotatef(err, "failed to get checkpoints of %s", t.Info.Name)
 	}
 	for _, kv := range kvs {
-		if len(kv[1]) != 8 {
+		if len(kv.Value) != 8 {
 			return 0, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
 				"the next backup ts of store %d isn't 64bits (it is %d bytes, value = %s)",
 				store,
-				len(kv[1]),
-				redact.Key(kv[1]))
+				len(kv.Value),
+				redact.Key(kv.Value))
 		}
-		nextBackupTS := binary.BigEndian.Uint64(kv[1])
+		nextBackupTS := binary.BigEndian.Uint64(kv.Value)
 		if nextBackupTS < min {
 			min = nextBackupTS
 		}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/kv"
 )
 
 const (
@@ -80,7 +81,7 @@ func Pause(task string) string {
 
 // Ranges is a vector of [start_key, end_key) pairs.
 type Ranges = []Range
-type Range = [2][]byte
+type Range = kv.KeyRange
 
 // TaskInfo is a task info with extra information.
 // When returning by a query, the `Ranges` and `Pausing` field may be lazily fetched.
