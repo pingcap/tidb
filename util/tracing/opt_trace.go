@@ -32,8 +32,8 @@ type LogicalOptimizeTracer struct {
 }
 
 // AppendRuleTracerBeforeRuleOptimize add plan tracer before optimize
-func (tracer *LogicalOptimizeTracer) AppendRuleTracerBeforeRuleOptimize(name string, before *LogicalPlanTrace) {
-	ruleTracer := buildLogicalRuleOptimizeTracerBeforeOptimize(name, before)
+func (tracer *LogicalOptimizeTracer) AppendRuleTracerBeforeRuleOptimize(index int, name string, before *LogicalPlanTrace) {
+	ruleTracer := buildLogicalRuleOptimizeTracerBeforeOptimize(index, name, before)
 	tracer.Steps = append(tracer.Steps, ruleTracer)
 	tracer.curRuleTracer = ruleTracer
 }
@@ -56,6 +56,7 @@ func (tracer *LogicalOptimizeTracer) TrackLogicalPlanAfterRuleOptimize(after *Lo
 // LogicalRuleOptimizeTracer indicates the trace for the LogicalPlan tree before and after
 // logical rule optimize
 type LogicalRuleOptimizeTracer struct {
+	Index    int                            `json:"index"`
 	Before   *LogicalPlanTrace              `json:"before"`
 	After    *LogicalPlanTrace              `json:"after"`
 	RuleName string                         `json:"name"`
@@ -63,8 +64,9 @@ type LogicalRuleOptimizeTracer struct {
 }
 
 // buildLogicalRuleOptimizeTracerBeforeOptimize build rule tracer before rule optimize
-func buildLogicalRuleOptimizeTracerBeforeOptimize(name string, before *LogicalPlanTrace) *LogicalRuleOptimizeTracer {
+func buildLogicalRuleOptimizeTracerBeforeOptimize(index int, name string, before *LogicalPlanTrace) *LogicalRuleOptimizeTracer {
 	return &LogicalRuleOptimizeTracer{
+		Index:    index,
 		Before:   before,
 		RuleName: name,
 		Steps:    make([]LogicalRuleOptimizeTraceStep, 0),

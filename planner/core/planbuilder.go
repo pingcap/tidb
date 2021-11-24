@@ -4049,6 +4049,7 @@ const (
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format, OptimizerTrace: trace.TracePlan}
+	// TODO: forbid trace plan if the statement isn't select read-only statement
 	if trace.TracePlan {
 		schema := newColumnsWithNames(1)
 		schema.Append(buildColumnWithName("", "Dump_link", mysql.TypeVarchar, 128))

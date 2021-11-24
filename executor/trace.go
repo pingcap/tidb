@@ -319,7 +319,6 @@ func generateOptimizerTraceFile() (*os.File, string, error) {
 	key := base64.URLEncoding.EncodeToString(b)
 	fileName := fmt.Sprintf("optimizer_trace_%v_%v.zip", key, time)
 	zf, err := os.Create(filepath.Join(dirPath, fileName))
-	fmt.Println(filepath.Join(dirPath, fileName))
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
