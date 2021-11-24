@@ -97,10 +97,7 @@ func (p *hashPartitionPruner) reduceConstantEQ() bool {
 			id := p.getColID(col)
 			if p.constantMap[id] != nil {
 				// We can choose collation from lhs or rhs, they should be equal. Exception is that `NULL` values.
-				if eq, err := p.constantMap[id].Value.Compare(p.ctx.GetSessionVars().StmtCtx, &cond.Value, collate.GetCollator(cond.GetType().Collate)); eq != 0 || err != nil {
-					return true
-				}
-				if p.constantMap[id].Equal(p.ctx, cond) {
+				if eq, err := p.constantMap[id].Value.Compare(p.ctx.GetSessionVars().StmtCtx, &cond.Value, collate.GetCollator(cond.GetType().Collate)); eq == 0 && err == nil {
 					continue
 				}
 				return true
