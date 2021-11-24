@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Connection is only used in test currently.
+// MockConn is a mock connection.
 type MockConn interface {
 	// HandleQuery executes a statement
 	HandleQuery(ctx context.Context, sql string) error
@@ -61,6 +61,7 @@ func (mc *mockConn) Dispatch(ctx context.Context, data []byte) error {
 	return mc.dispatch(ctx, data)
 }
 
+// Close implements MockConn.Close
 func (mc *mockConn) Close() {
 	require.NoError(mc.t, mc.clientConn.Close())
 }
