@@ -588,6 +588,41 @@ func (s *testSuiteP2) TestAdminShowDDLJobs(c *C) {
 	c.Assert(row[9], Equals, "<nil>")
 }
 
+func (s *testSuiteP2) TestAdminShowDDLJobsInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_admin_show_ddl_jobs")
+	defer tk.MustExec("drop database if exists test_admin_show_ddl_jobs")
+	tk.MustExec("use test_admin_show_ddl_jobs")
+	tk.MustExec("drop table if exists t, t1;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("create table t1 (a int);")
+
+	// Test for issue: https://github.com/pingcap/tidb/issues/29915
+	tk.MustExec("drop placement policy if exists x;")
+	tk.MustExec("create placement policy x followers=4;")
+	tk.MustExec("alter table t placement policy x;")
+	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table placement")
+
+	tk.MustExec("rename table t to tt, t1 to tt1")
+	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "rename tables")
+
+	tk.MustExec("create table tt2 (c int) PARTITION BY RANGE (c) " +
+		"(PARTITION p0 VALUES LESS THAN (6)," +
+		"PARTITION p1 VALUES LESS THAN (11)," +
+		"PARTITION p2 VALUES LESS THAN (16)," +
+		"PARTITION p3 VALUES LESS THAN (21));")
+	tk.MustExec("alter table tt2 partition p0 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 ")
+	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table partition policy")
+
+	tk.MustExec("alter table tt1 cache")
+	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table cache")
+	tk.MustExec("alter table tt1 nocache")
+	c.Assert(tk.MustQuery("admin show ddl jobs 1").Rows()[0][3], Equals, "alter table nocache")
+}
+
 func (s *testSuiteP2) TestAdminChecksumOfPartitionedTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test;")
