@@ -84,7 +84,6 @@ type Ranges = []Range
 type Range = kv.KeyRange
 
 // TaskInfo is a task info with extra information.
-// When returning by a query, the `Ranges` and `Pausing` field may be lazily fetched.
 type TaskInfo struct {
 	backuppb.StreamBackupTaskInfo
 	Ranges  Ranges

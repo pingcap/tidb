@@ -123,7 +123,7 @@ func (t *Task) Paused(ctx context.Context) (bool, error) {
 // Ranges tries to fetch the range from the metadata storage.
 func (t *Task) Ranges(ctx context.Context) (Ranges, error) {
 	ranges := make(Ranges, 0, 64)
-	kvs, err := ScanEtcdPrefix(t.cli.Client, RangesOf(t.Info.Name)).AllPages(ctx, 64)
+	kvs, err := scanEtcdPrefix(t.cli.Client, RangesOf(t.Info.Name)).AllPages(ctx, 64)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to fetch ranges of task %s", t.Info.Name)
 	}
@@ -142,7 +142,7 @@ func (t *Task) Ranges(ctx context.Context) (Ranges, error) {
 // MinNextBackupTS query the all next backup ts of a store, returning the minimal next backup ts of the store.
 func (t *Task) MinNextBackupTS(ctx context.Context, store uint64) (uint64, error) {
 	min := uint64(0xffffffff)
-	scanner := ScanEtcdPrefix(t.cli.Client, CheckPointsOf(t.Info.Name, store))
+	scanner := scanEtcdPrefix(t.cli.Client, CheckPointsOf(t.Info.Name, store))
 	kvs, err := scanner.AllPages(ctx, 1024)
 	if err != nil {
 		return 0, errors.Annotatef(err, "failed to get checkpoints of %s", t.Info.Name)
