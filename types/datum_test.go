@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/require"
 )
@@ -248,7 +249,7 @@ func TestToJSON(t *testing.T) {
 			require.NoError(t, err)
 
 			var cmp int
-			cmp, err = obtain.CompareDatum(sc, &expected)
+			cmp, err = obtain.Compare(sc, &expected, collate.GetBinaryCollator())
 			require.NoError(t, err)
 			require.Equal(t, 0, cmp)
 		} else {
@@ -324,7 +325,7 @@ func TestComputePlusAndMinus(t *testing.T) {
 	for ith, tt := range tests {
 		got, err := ComputePlus(tt.a, tt.b)
 		require.Equal(t, tt.hasErr, err != nil)
-		v, err := got.CompareDatum(sc, &tt.plus)
+		v, err := got.Compare(sc, &tt.plus, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equalf(t, 0, v, "%dth got:%#v, %#v, expect:%#v, %#v", ith, got, got.x, tt.plus, tt.plus.x)
 	}
@@ -347,7 +348,7 @@ func TestCloneDatum(t *testing.T) {
 	sc.IgnoreTruncate = true
 	for _, tt := range tests {
 		tt1 := *tt.Clone()
-		res, err := tt.CompareDatum(sc, &tt1)
+		res, err := tt.Compare(sc, &tt1, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, res)
 		if tt.b != nil {
@@ -542,7 +543,7 @@ func BenchmarkCompareDatum(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j, v := range vals {
-			_, err := v.CompareDatum(sc, &vals1[j])
+			_, err := v.Compare(sc, &vals1[j], collate.GetBinaryCollator())
 			if err != nil {
 				b.Fatal(err)
 			}
