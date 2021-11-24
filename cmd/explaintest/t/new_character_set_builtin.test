@@ -61,7 +61,6 @@ select hex(convert(0x1e240 using gbk)), convert(0x1e240 using gbk);
 select convert(a using binary) from t;
 select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
 select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
-drop table if exists t;
 
 -- test for builtin function md5()
 drop table if exists t;
