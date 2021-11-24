@@ -50,6 +50,7 @@ var (
 	errUnsupportedAlterTableWithoutValidation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER TABLE WITHOUT VALIDATION is currently unsupported", nil))
 	errUnsupportedAlterTableOption            = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("This type of ALTER TABLE is currently unsupported", nil))
 	errUnsupportedAlterReplicaForSysTable     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table replica for tables in system database is currently unsupported", nil))
+	errUnsupportedAlterCacheForSysTable       = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table cache for tables in system database is currently unsupported", nil))
 	errBlobKeyWithoutLength                   = dbterror.ClassDDL.NewStd(mysql.ErrBlobKeyWithoutLength)
 	errKeyPart0                               = dbterror.ClassDDL.NewStd(mysql.ErrKeyPart0)
 	errIncorrectPrefixKey                     = dbterror.ClassDDL.NewStd(mysql.ErrWrongSubKey)
