@@ -167,7 +167,7 @@ func TestWriteBatchSendFailed(t *testing.T) {
 		After(batchSendCall)
 
 	writer, err := s.engine.LocalWriter(s.ctx, nil)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = writer.WriteRows(s.ctx, nil, s.kvPairs)
 	require.Error(t, err)
 	require.Regexp(t, "fake unrecoverable write batch error.*", err.Error())
