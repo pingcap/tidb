@@ -961,7 +961,13 @@ func peek(b []byte) (length int, err error) {
 		return 0, errors.Trace(err)
 	}
 	length += l
+<<<<<<< HEAD
 	if length > originLength {
+=======
+	if length <= 0 {
+		return 0, errors.New("invalid encoded key")
+	} else if length > originLength {
+>>>>>>> d04a1285a... ddl, util/codec: fix add index OOM and prevent panic in logging (#29925)
 		return 0, errors.Errorf("invalid encoded key, "+
 			"expected length: %d, actual length: %d", length, originLength)
 	}
