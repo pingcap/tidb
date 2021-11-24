@@ -585,7 +585,7 @@ func (d *Datum) Compare(sc *stmtctx.StatementContext, ad *Datum, comparer collat
 	case KindString:
 		return d.compareStringNew(sc, ad.GetString(), comparer)
 	case KindBytes:
-		return comparer.Compare(d.GetString(), ad.GetString()), nil
+		return d.compareStringNew(sc, ad.GetString(), comparer)
 	case KindMysqlDecimal:
 		return d.compareMysqlDecimal(sc, ad.GetMysqlDecimal())
 	case KindMysqlDuration:
@@ -754,7 +754,7 @@ func (d *Datum) compareStringNew(sc *stmtctx.StatementContext, s string, compare
 	case KindMysqlEnum:
 		return comparer.Compare(d.GetMysqlEnum().String(), s), nil
 	case KindBinaryLiteral, KindMysqlBit:
-		return comparer.Compare(d.GetBinaryLiteral4Cmp().String(), s), nil
+		return comparer.Compare(d.GetBinaryLiteral4Cmp().ToString(), s), nil
 	default:
 		fVal, err := StrToFloat(sc, s, false)
 		if err != nil {
