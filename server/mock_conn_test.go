@@ -29,9 +29,9 @@ func TestMockConn(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	server := CreateMockServer(t, store)
+	defer server.Close()
 	conn := CreateMockConn(t, store, server)
 	defer conn.Close()
-	defer server.Close()
 
 	require.NoError(t, conn.HandleQuery(context.Background(), "select 1"))
 	require.Equal(t, "select 1", conn.Context().GetSessionVars().StmtCtx.OriginalSQL)
