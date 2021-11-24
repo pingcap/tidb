@@ -188,7 +188,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 
 	// Default concurrency is different for backup and restore.
 	// Leave it 0 and let them adjust the value.
-	flags.Uint32(flagConcurrency, 0, "The size of thread pool on br that executes the task")
+	flags.Uint32(flagConcurrency, 0, "The size of thread pool on br that executes the task, the default value of backup is 4, (restore is 128)")
 
 	flags.Uint64(flagRateLimitUnit, units.MiB, "The unit of rate limit")
 	_ = flags.MarkHidden(flagRateLimitUnit)
