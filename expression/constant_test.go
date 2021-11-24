@@ -254,6 +254,24 @@ func TestConstantFoldingCharsetConvert(t *testing.T) {
 				newString("中文", "binary"))),
 			result: "中文",
 		},
+		{
+			condition: newFunction(ast.Concat,
+				newFunctionWithType(
+					InternalFuncFromBinary, types.NewFieldTypeWithCollation(mysql.TypeVarchar, "gbk_bin", -1),
+					newString("\xd2\xbb", "binary")),
+				newString("中文", "gbk_bin"),
+			),
+			result: "一中文",
+		},
+		{
+			condition: newFunction(ast.Concat,
+				newString("中文", "gbk_bin"),
+				newFunctionWithType(
+					InternalFuncFromBinary, types.NewFieldTypeWithCollation(mysql.TypeVarchar, "gbk_bin", -1),
+					newString("\xd2\xbb", "binary")),
+			),
+			result: "中文一",
+		},
 		// The result is binary charset, so gbk constant will convert to binary which is \xd6\xd0\xce\xc4.
 		{
 			condition: newFunction(ast.Concat,
