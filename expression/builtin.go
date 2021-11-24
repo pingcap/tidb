@@ -130,28 +130,6 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		return
 	}
 
-	for i := range args {
-		switch argTps[i] {
-		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i])
-		case types.ETReal:
-			args[i] = WrapWithCastAsReal(ctx, args[i])
-		case types.ETDecimal:
-			args[i] = WrapWithCastAsDecimal(ctx, args[i])
-		case types.ETString:
-			args[i] = WrapWithCastAsString(ctx, args[i])
-			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
-		case types.ETDatetime:
-			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
-		case types.ETTimestamp:
-			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeTimestamp))
-		case types.ETDuration:
-			args[i] = WrapWithCastAsDuration(ctx, args[i])
-		case types.ETJson:
-			args[i] = WrapWithCastAsJSON(ctx, args[i])
-		}
-	}
-
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:
@@ -214,12 +192,37 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 			Flag:    mysql.BinaryFlag,
 		}
 	}
+
 	if mysql.HasBinaryFlag(fieldType.Flag) && fieldType.Tp != mysql.TypeJSON {
 		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
 	}
 	if _, ok := booleanFunctions[funcName]; ok {
 		fieldType.Flag |= mysql.IsBooleanFlag
 	}
+
+	for i := range args {
+		switch argTps[i] {
+		case types.ETInt:
+			args[i] = WrapWithCastAsInt(ctx, args[i])
+		case types.ETReal:
+			args[i] = WrapWithCastAsReal(ctx, args[i])
+		case types.ETDecimal:
+			args[i] = WrapWithCastAsDecimal(ctx, args[i])
+		case types.ETString:
+			args[i] = WrapWithCastAsString(ctx, args[i])
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
+		case types.ETDatetime:
+			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
+		case types.ETTimestamp:
+			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeTimestamp))
+		case types.ETDuration:
+			args[i] = WrapWithCastAsDuration(ctx, args[i])
+		case types.ETJson:
+			args[i] = WrapWithCastAsJSON(ctx, args[i])
+		}
+		fieldType.Flag |= args[i].GetType().Flag
+	}
+
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),

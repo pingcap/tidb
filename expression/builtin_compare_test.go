@@ -295,6 +295,10 @@ func TestGreatestLeastFunc(t *testing.T) {
 			int64(4), int64(1), false, false,
 		},
 		{
+			[]interface{}{uint64(9223372036854775808), uint64(9223372036854775809)},
+			uint64(9223372036854775809), uint64(9223372036854775808), false, false,
+		},
+		{
 			[]interface{}{"a", "b", "c"},
 			"c", "a", false, false,
 		},
