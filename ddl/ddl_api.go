@@ -6606,7 +6606,10 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 		return nil
 	}
 
-	if t.Meta().TempTableType != model.TempTableNone {
+	// forbit cache table in system database.
+	if util.IsMemOrSysDB(schema.Name.L) {
+		return errors.Trace(errUnsupportedAlterCacheForSysTable)
+	} else if t.Meta().TempTableType != model.TempTableNone {
 		return errors.Trace(ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache"))
 	}
 
