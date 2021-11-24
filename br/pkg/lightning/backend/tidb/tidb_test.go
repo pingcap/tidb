@@ -128,15 +128,9 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	writer, err := engine.LocalWriter(ctx, nil)
-<<<<<<< HEAD
 	c.Assert(err, IsNil)
-	err = writer.WriteRows(ctx, []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
-	c.Assert(err, IsNil)
-=======
-	require.NoError(t, err)
 	err = writer.WriteRows(ctx, []string{"b", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o"}, dataRows)
-	require.NoError(t, err)
->>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
+	c.Assert(err, IsNil)
 	st, err := writer.Close(ctx)
 	c.Assert(err, IsNil)
 	c.Assert(st, IsNil)
@@ -163,13 +157,8 @@ func (s *mysqlSuite) TestWriteRowsIgnoreOnDup(c *C) {
 	c.Assert(err, IsNil)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-<<<<<<< HEAD
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "1.csv", 0)
-	c.Assert(err, IsNil)
-=======
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "1.csv", 0)
-	require.NoError(t, err)
->>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
+	c.Assert(err, IsNil)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	writer, err := engine.LocalWriter(ctx, nil)
@@ -212,13 +201,8 @@ func (s *mysqlSuite) TestWriteRowsErrorOnDup(c *C) {
 	c.Assert(err, IsNil)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-<<<<<<< HEAD
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "3.csv", 0)
-	c.Assert(err, IsNil)
-=======
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "3.csv", 0)
-	require.NoError(t, err)
->>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
+	c.Assert(err, IsNil)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
@@ -467,61 +451,36 @@ func (s *mysqlSuite) TestWriteRowsErrorDowngrading(c *C) {
 	c.Assert(err, IsNil)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-<<<<<<< HEAD
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "7.csv", 0)
-	c.Assert(err, IsNil)
-=======
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "7.csv", 0)
-	require.NoError(t, err)
->>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
+	c.Assert(err, IsNil)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(2),
-<<<<<<< HEAD
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "8.csv", 0)
-	c.Assert(err, IsNil)
-=======
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "8.csv", 0)
-	require.NoError(t, err)
->>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
+	c.Assert(err, IsNil)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(3),
-<<<<<<< HEAD
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "9.csv", 0)
-	c.Assert(err, IsNil)
-=======
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "9.csv", 0)
-	require.NoError(t, err)
->>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
+	c.Assert(err, IsNil)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(4),
-<<<<<<< HEAD
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "10.csv", 0)
-	c.Assert(err, IsNil)
-=======
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "10.csv", 0)
-	require.NoError(t, err)
->>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
+	c.Assert(err, IsNil)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(5),
-<<<<<<< HEAD
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "11.csv", 0)
-	c.Assert(err, IsNil)
-=======
 	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "11.csv", 0)
-	require.NoError(t, err)
->>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
+	c.Assert(err, IsNil)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
