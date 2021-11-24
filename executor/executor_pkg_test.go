@@ -195,8 +195,13 @@ func (s *testExecSuite) TestBuildKvRangesForIndexJoinWithoutCwc(c *C) {
 
 	keyOff2IdxOff := []int{1, 3}
 	ctx := mock.NewContext()
+<<<<<<< HEAD
 	kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil)
 	c.Assert(err, IsNil)
+=======
+	kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, nil, nil)
+	require.NoError(t, err)
+>>>>>>> 481455728... *: track the memory usage of IndexJoin more accurate (#29068)
 	// Check the kvRanges is in order.
 	for i, kvRange := range kvRanges {
 		c.Assert(kvRange.StartKey.Cmp(kvRange.EndKey) < 0, IsTrue)
