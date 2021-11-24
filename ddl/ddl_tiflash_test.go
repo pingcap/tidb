@@ -293,17 +293,25 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	res := s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
 
+	// Set lastSafePoint to a timepoint in future, so all dropped table can be reckon as gc-ed.
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 + 3*time.Second).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	ddl.PullTiFlashPdTick = 1
 	tk.MustExec("drop table ddltiflash")
 	expectRule = ddl.MakeNewRule(tb.Meta().ID, 1, []string{})
 	res = s.CheckPlacementRule(*expectRule)
 	c.Assert(res, Equals, true)
 
-	ddl.PullTiFlashPdTick = 1
 	// Wait GC
-	//time.Sleep(ddl.PollTiFlashInterval * 5)
-	//res = s.CheckPlacementRule(*expectRule)
-	//c.Assert(res, Equals, false)
-	//gcworker.SetGcSafePointCacheInterval(oldInterval)
+	time.Sleep(ddl.PollTiFlashInterval * 5)
+	res = s.CheckPlacementRule(*expectRule)
+	c.Assert(res, Equals, false)
+	gcworker.SetGcSafePointCacheInterval(oldInterval)
 }
 
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
@@ -423,6 +431,7 @@ func (s *tiflashDDLTestSuite) setUpMockPDHTTPServer() (*httptest.Server, string)
 		}, nil
 	}))
 	router.HandleFunc("/pd/api/v1/config/rules/group/tiflash", func(w http.ResponseWriter, req *http.Request) {
+		// Query placement rule
 		var result = make([]placement.Rule, 0)
 		for _, item := range globalTiFlashPlacementRules {
 			result = append(result, item)

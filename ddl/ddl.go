@@ -435,7 +435,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 				sctx, err := d.sessPool.get()
 				if err == nil {
 					if d.ownerManager.IsOwner() {
-						err = d.PollTiFlashReplicaStatus(sctx, iterTimes%PullTiFlashPdTick == 0)
+						handlePd := iterTimes%PullTiFlashPdTick == 0
+						err = d.PollTiFlashReplicaStatus(sctx, handlePd)
 						if err != nil {
 							log.Warn("PollTiFlashReplicaStatus returns error", zap.Error(err))
 						}

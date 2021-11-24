@@ -568,14 +568,15 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []Poll
 
 	// Cover getDropOrTruncateTableTiflash
 	if err := getDropOrTruncateTableTiflash(ctx, currentSchema, tikvHelper, &tableList); err != nil {
-		return errors.Trace(err)
+		// TODO May fails when no `tikv_gc_safe_point` available.
+		log.Error("getDropOrTruncateTableTiflash returns error", zap.Error(err))
 	}
 	for _, tb := range tableList {
 		// for every region in each table, if it has one replica, we reckon it ready
 		// TODO Can we batch request table?
 		// implement _check_and_make_rule
 		ruleID := fmt.Sprintf("table-%v-r", tb.ID)
-		//rule, ok := allRules[ruleId]
+		_, ok := allRules[ruleID]
 		if ok {
 			//match, ruleNew := isRuleMatch(rule, tb)
 			//if !match {
