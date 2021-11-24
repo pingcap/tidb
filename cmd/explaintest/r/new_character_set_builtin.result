@@ -143,7 +143,6 @@ select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binar
 convert(convert('ㅂ' using gbk) using binary)	convert('ㅂ' using binary)
 ?	ㅂ
 drop table if exists t;
-drop table if exists t;
 create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
 insert into t values ('一二三', '一二三', '一二三');
 select md5(a), md5(b), md5(c) from t;
