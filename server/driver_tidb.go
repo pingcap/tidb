@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -367,6 +368,11 @@ func (tc *TiDBContext) ShowProcess() *util.ProcessInfo {
 // SetCommandValue implements QueryCtx SetCommandValue method.
 func (tc *TiDBContext) SetCommandValue(command byte) {
 	tc.session.SetCommandValue(command)
+}
+
+// GetPrivilegeManager implements QueryCtx GetPrivilegeManager method.
+func (tc *TiDBContext) GetPrivilegeManager() privilege.Manager {
+	return privilege.GetPrivilegeManager(tc.session)
 }
 
 // GetSessionVars return SessionVars.
