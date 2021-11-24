@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package expression
+package math
 
 import (
 	"testing"
@@ -55,8 +55,23 @@ func TestRandWithSeed(t *testing.T) {
 	for _, test := range tests {
 		rng := NewWithSeed(test.seed)
 		got1 := rng.Gen()
-		require.True(t, got1 == test.once)
+		require.Equal(t, got1, test.once)
 		got2 := rng.Gen()
-		require.True(t, got2 == test.twice)
+		require.Equal(t, got2, test.twice)
 	}
+}
+
+func TestRandWithSeed1AndSeed2(t *testing.T) {
+	t.Parallel()
+
+	seed1 := uint32(10000000)
+	seed2 := uint32(1000000)
+
+	rng := NewWithTime()
+	rng.SetSeed1(seed1)
+	rng.SetSeed2(seed2)
+
+	require.Equal(t, rng.Gen(), 0.028870999839968048)
+	require.Equal(t, rng.Gen(), 0.11641535266900002)
+	require.Equal(t, rng.Gen(), 0.49546379455874096)
 }

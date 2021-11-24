@@ -2333,8 +2333,12 @@ func (b *builtinBitLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-
-	return int64(len(val) * 8), false, nil
+	argTp := b.args[0].GetType()
+	dBytes, err := charset.NewEncoding(argTp.Charset).Encode(nil, hack.Slice(val))
+	if err != nil {
+		return 0, isNull, err
+	}
+	return int64(len(dBytes) * 8), false, nil
 }
 
 type charFunctionClass struct {
@@ -2895,14 +2899,21 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, err
 	}
 
-	ord, err := chooseOrdFunc(b.args[0].GetType().Charset)
+	charSet := b.args[0].GetType().Charset
+	ord, err := chooseOrdFunc(charSet)
 	if err != nil {
 		return 0, false, err
 	}
-	return ord(str), false, nil
+
+	enc := charset.NewEncoding(charSet)
+	leftMost, err := enc.EncodeFirstChar(nil, hack.Slice(str))
+	if err != nil {
+		return 0, false, err
+	}
+	return ord(leftMost), false, nil
 }
 
-func chooseOrdFunc(charSet string) (func(string) int64, error) {
+func chooseOrdFunc(charSet string) (func([]byte) int64, error) {
 	// use utf8 by default
 	if charSet == "" {
 		charSet = charset.CharsetUTF8
@@ -2914,22 +2925,17 @@ func chooseOrdFunc(charSet string) (func(string) int64, error) {
 	if desc.Maxlen == 1 {
 		return ordSingleByte, nil
 	}
-	return ordUtf8, nil
+	return ordOthers, nil
 }
 
-func ordSingleByte(str string) int64 {
-	if len(str) == 0 {
+func ordSingleByte(src []byte) int64 {
+	if len(src) == 0 {
 		return 0
 	}
-	return int64(str[0])
+	return int64(src[0])
 }
 
-func ordUtf8(str string) int64 {
-	if len(str) == 0 {
-		return 0
-	}
-	_, size := utf8.DecodeRuneInString(str)
-	leftMost := str[:size]
+func ordOthers(leftMost []byte) int64 {
 	var result int64
 	var factor int64 = 1
 	for i := len(leftMost) - 1; i >= 0; i-- {
@@ -3666,7 +3672,7 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, errors.Trace(err)
 	}
 
-	if types.IsBinaryStr(args[0].GetType()) {
+	if types.IsBinaryStr(bf.tp) {
 		sig = &builtinInsertSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Insert)
 	} else {

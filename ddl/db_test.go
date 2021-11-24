@@ -5664,6 +5664,30 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
 }
 
+func (s *testSerialDBSuite) TestForbitCacheTableForSystemTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	sysTables := make([]string, 0, 24)
+	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
+	for _, db := range memOrSysDB {
+		tk.MustExec("use " + db)
+		tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+		rows := tk.MustQuery("show tables").Rows()
+		for i := 0; i < len(rows); i++ {
+			sysTables = append(sysTables, rows[i][0].(string))
+		}
+		for _, one := range sysTables {
+			_, err := tk.Exec(fmt.Sprintf("alter table `%s` cache", one))
+			if db == "MySQL" {
+				c.Assert(err.Error(), Equals, "[ddl:8200]ALTER table cache for tables in system database is currently unsupported")
+			} else {
+				c.Assert(err.Error(), Equals, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)))
+			}
+
+		}
+		sysTables = sysTables[:0]
+	}
+}
+
 func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	sysTables := make([]string, 0, 24)
@@ -5942,6 +5966,36 @@ func (s *testSerialDBSuite) TestSkipSchemaChecker(c *C) {
 	tk2.MustExec("alter table t1 add column b int;")
 	_, err = tk.Exec("commit")
 	c.Assert(terror.ErrorEqual(domain.ErrInfoSchemaChanged, err), IsTrue)
+}
+
+// See issue: https://github.com/pingcap/tidb/issues/29752
+// Ref https://dev.mysql.com/doc/refman/8.0/en/rename-table.html
+func (s *testDBSuite2) TestRenameTableWithLocked(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database renamedb")
+	tk.MustExec("create database renamedb2")
+	tk.MustExec("use renamedb")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (a int);")
+
+	tk.MustExec("LOCK TABLES t1 WRITE;")
+	tk.MustGetErrCode("drop database renamedb2;", errno.ErrLockOrActiveTransaction)
+	tk.MustExec("RENAME TABLE t1 TO t2;")
+	tk.MustQuery("select * from renamedb.t2").Check(testkit.Rows())
+	tk.MustExec("UNLOCK TABLES")
+	tk.MustExec("RENAME TABLE t2 TO t1;")
+	tk.MustQuery("select * from renamedb.t1").Check(testkit.Rows())
+
+	tk.MustExec("LOCK TABLES t1 READ;")
+	tk.MustGetErrCode("RENAME TABLE t1 TO t2;", errno.ErrTableNotLockedForWrite)
+	tk.MustExec("UNLOCK TABLES")
+
+	tk.MustExec("drop database renamedb")
 }
 
 func (s *testDBSuite2) TestLockTables(c *C) {

@@ -118,8 +118,8 @@ func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, t
 		return stream.Send(h.buildErrorResponse(err))
 	}
 
-	for _, c := range chunks {
-		resp := h.buildStreamResponse(&c)
+	for i := range chunks {
+		resp := h.buildStreamResponse(&chunks[i])
 		if err = stream.Send(resp); err != nil {
 			return err
 		}
