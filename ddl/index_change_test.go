@@ -48,7 +48,8 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 		err := d.Stop()
 		c.Assert(err, IsNil)
 	}()
-	s.dbInfo = testSchemaInfo(c, d, "test_index_change")
+	s.dbInfo, err = testSchemaInfo(d, "test_index_change")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
 }
 

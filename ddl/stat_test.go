@@ -62,7 +62,8 @@ func (s *testSerialStatSuite) TestDDLStatsInfo(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	dbInfo := testSchemaInfo(c, d, "test_stat")
+	dbInfo, err := testSchemaInfo(d, "test_stat")
+	c.Assert(err, IsNil)
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 	tblInfo := testTableInfo(c, d, "t", 2)
 	ctx := testNewContext(d)
