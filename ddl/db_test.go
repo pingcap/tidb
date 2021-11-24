@@ -5031,6 +5031,9 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 	// For issue #13189
 	// Use `DEFAULT()` in `INSERT` / `INSERT ON DUPLICATE KEY UPDATE` statement
 	tk.MustExec("create table t1 (a int primary key, b int default 20, c int default 30, d int default 40);")
+	tk.MustExec("SET @@time_zone = '+00:00'")
+	defer tk.MustExec("SET @@time_zone = DEFAULT")
+	tk.MustQuery("SELECT @@time_zone").Check(testkit.Rows("+00:00"))
 	tk.MustExec("create table t2 (a int primary key, b timestamp DEFAULT CURRENT_TIMESTAMP, c timestamp DEFAULT '2000-01-01 00:00:00')")
 	tk.MustExec("insert into t1 set a = 1, b = default(c);")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 30 30 40"))
@@ -5043,14 +5046,13 @@ func (s *testDBSuite5) TestDefaultSQLFunction(c *C) {
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("10 20 30 40"))
 	tk.MustExec("set @@timestamp = 1321009871")
 	defer tk.MustExec("set @@timestamp = DEFAULT")
+	tk.MustQuery("SELECT NOW()").Check(testkit.Rows("2011-11-11 11:11:11"))
 	tk.MustExec("insert into t2 set a = 1, b = default(c)")
 	tk.MustExec("insert into t2 set a = 2, c = default(b)")
 	tk.MustGetErrCode("insert into t2 set a = 3, b = default(a)", errno.ErrNoDefaultForField)
 	tk.MustExec("insert into t2 set a = 4, b = default(b), c = default(c)")
 	tk.MustExec("insert into t2 set a = 5, b = default, c = default")
 	tk.MustExec("insert into t2 set a = 6")
-	tk.MustExec("SET @@time_zone = '+00:00'")
-	defer tk.MustExec("SET @@time_zone = DEFAULT")
 	tk.MustQuery("select * from t2").Sort().Check(testkit.Rows(
 		"1 2000-01-01 00:00:00 2000-01-01 00:00:00",
 		"2 2011-11-11 11:11:11 2011-11-11 11:11:11",
