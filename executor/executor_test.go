@@ -8692,6 +8692,7 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
 
 	var sqlDigest, planDigest *parser.Digest
+	var tagLabel tipb.ResourceGroupTagLabel
 	checkFn := func() {}
 	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
 		var startKey []byte
@@ -8734,6 +8735,7 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 		c.Assert(err, IsNil)
 		sqlDigest = parser.NewDigest(tag.SqlDigest)
 		planDigest = parser.NewDigest(tag.PlanDigest)
+		tagLabel = *tag.Label
 		checkFn()
 	}
 
@@ -8743,19 +8745,78 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 	}
 
 	cases := []struct {
-		sql    string
-		ignore bool
+		sql       string
+		tagLabels []tipb.ResourceGroupTagLabel
+		ignore    bool
 	}{
-		{sql: "insert into t values(1,1),(2,2),(3,3)"},
-		{sql: "select * from t use index (idx) where a=1"},
-		{sql: "select * from t use index (idx) where a in (1,2,3)"},
-		{sql: "select * from t use index (idx) where a>1"},
-		{sql: "select * from t where b>1"},
-		{sql: "begin pessimistic", ignore: true},
-		{sql: "insert into t values(4,4)"},
-		{sql: "commit", ignore: true},
-		{sql: "update t set a=5,b=5 where a=5"},
-		{sql: "replace into t values(6,6)"},
+		{
+			sql: "insert into t values(1,1),(2,2),(3,3)",
+			tagLabels: []tipb.ResourceGroupTagLabel{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+			},
+		},
+		{
+			sql: "select * from t use index (idx) where a=1",
+			tagLabels: []tipb.ResourceGroupTagLabel{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			},
+		},
+		{
+			sql: "select * from t use index (idx) where a in (1,2,3)",
+			tagLabels: []tipb.ResourceGroupTagLabel{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			},
+		},
+		{
+			sql: "select * from t use index (idx) where a>1",
+			tagLabels: []tipb.ResourceGroupTagLabel{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			},
+		},
+		{
+			sql: "select * from t where b>1",
+			tagLabels: []tipb.ResourceGroupTagLabel{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			},
+		},
+		{
+			sql: "select a from t use index (idx) where a>1",
+			tagLabels: []tipb.ResourceGroupTagLabel{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+			},
+		},
+		{
+			sql:    "begin pessimistic",
+			ignore: true,
+		},
+		{
+			sql: "insert into t values(4,4)",
+			tagLabels: []tipb.ResourceGroupTagLabel{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow,
+			},
+		},
+		{
+			sql:    "commit",
+			ignore: true,
+		},
+		{
+			sql: "update t set a=5,b=5 where a=5",
+			tagLabels: []tipb.ResourceGroupTagLabel{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+			},
+		},
+		{
+			sql: "replace into t values(6,6)",
+			tagLabels: []tipb.ResourceGroupTagLabel{
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex,
+			},
+		},
 	}
 	for _, ca := range cases {
 		resetVars()
@@ -8777,6 +8838,10 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 			}
 			c.Assert(sqlDigest.String(), Equals, expectSQLDigest.String(), commentf)
 			c.Assert(planDigest.String(), Equals, expectPlanDigest.String())
+			if len(ca.tagLabels) > 0 {
+				c.Assert(tagLabel, Equals, ca.tagLabels[0])
+				ca.tagLabels = ca.tagLabels[1:] // next label
+			}
 			checkCnt++
 		}
 

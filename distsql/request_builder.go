@@ -235,7 +235,7 @@ func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 }
 
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
-// "Concurrency", "IsolationLevel", "NotFillCache", "ReplicaRead", "SchemaVar".
+// "Concurrency", "IsolationLevel", "NotFillCache", "TaskID", "Priority", "ReplicaRead", "ResourceGroupTagger".
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
 	if builder.Request.Concurrency == 0 {
 		// Concurrency may be set to 1 by SetDAGRequest
@@ -246,7 +246,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	builder.SetResourceGroupTag(sv.StmtCtx)
+	builder.SetResourceGroupTagger(sv.StmtCtx)
 	return builder
 }
 
@@ -282,10 +282,10 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 	return builder
 }
 
-// SetResourceGroupTag sets the request resource group tag.
-func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext) *RequestBuilder {
+// SetResourceGroupTagger sets the request resource group tagger.
+func (builder *RequestBuilder) SetResourceGroupTagger(sc *stmtctx.StatementContext) *RequestBuilder {
 	if variable.TopSQLEnabled() {
-		builder.Request.ResourceGroupTag = sc.GetResourceGroupTag()
+		builder.Request.ResourceGroupTagger = sc.GetResourceGroupTagger()
 	}
 	return builder
 }
