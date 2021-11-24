@@ -92,7 +92,7 @@ func TestRunServer(t *testing.T) {
 	resp, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
-	require.Equal(t, http.MethodPost, resp.Header.Get("Allow"))
+	require.Contains(t, resp.Header.Get("Allow"), http.MethodPost)
 	require.NoError(t, resp.Body.Close())
 
 	resp, err = http.Post(url, "application/toml", strings.NewReader("????"))
