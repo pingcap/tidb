@@ -1391,16 +1391,24 @@ func TestBitLength(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
+		chs      string
 		expected int64
 		isNil    bool
 		getErr   bool
 	}{
-		{"hi", 16, false, false},
-		{"你好", 48, false, false},
-		{"", 0, false, false},
+		{"hi", "", 16, false, false},
+		{"你好", "", 48, false, false},
+		{"", "", 0, false, false},
+		{"abc", "gbk", 24, false, false},
+		{"一二三", "gbk", 48, false, false},
+		{"一二三", "", 72, false, false},
+		{"一二三!", "gbk", 56, false, false},
+		{"一二三!", "", 80, false, false},
 	}
 
 	for _, c := range cases {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.BitLength, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})

@@ -142,10 +142,10 @@ import (
 	"strings"
 
 	"github.com/cznic/mathutil"
-	parser "github.com/cznic/parser/yacc"
 	"github.com/cznic/sortutil"
 	"github.com/cznic/strutil"
-	"github.com/cznic/y"
+	parser "modernc.org/parser/yacc"
+	"modernc.org/y"
 )
 
 var (

@@ -277,8 +277,8 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		schema4Agg.Append(newCol)
 		names = append(names, p.OutputNames()[i])
 	}
-	if join, isJoin := p.(*LogicalJoin); isJoin && join.redundantSchema != nil {
-		for i, col := range join.redundantSchema.Columns {
+	if join, isJoin := p.(*LogicalJoin); isJoin && join.fullSchema != nil {
+		for i, col := range join.fullSchema.Columns {
 			if p.Schema().Contains(col) {
 				continue
 			}
@@ -290,7 +290,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 			newCol, _ := col.Clone().(*expression.Column)
 			newCol.RetType = newFunc.RetTp
 			schema4Agg.Append(newCol)
-			names = append(names, join.redundantNames[i])
+			names = append(names, join.fullNames[i])
 		}
 	}
 	hasGroupBy := len(gbyItems) > 0
@@ -721,25 +721,50 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 		joinPlan.JoinType = InnerJoin
 	}
 
-	// Merge sub join's redundantSchema into this join plan. When handle query like
-	// select t2.a from (t1 join t2 using (a)) join t3 using (a);
-	// we can simply search in the top level join plan to find redundant column.
+	// Merge sub-plan's fullSchema into this join plan.
+	// Please read the comment of LogicalJoin.fullSchema for the details.
 	var (
-		lRedundantSchema, rRedundantSchema *expression.Schema
-		lRedundantNames, rRedundantNames   types.NameSlice
+		lFullSchema, rFullSchema *expression.Schema
+		lFullNames, rFullNames   types.NameSlice
 	)
-	if left, ok := leftPlan.(*LogicalJoin); ok && left.redundantSchema != nil {
-		lRedundantSchema = left.redundantSchema
-		lRedundantNames = left.redundantNames
+	if left, ok := leftPlan.(*LogicalJoin); ok && left.fullSchema != nil {
+		lFullSchema = left.fullSchema
+		lFullNames = left.fullNames
+	} else {
+		lFullSchema = leftPlan.Schema()
+		lFullNames = leftPlan.OutputNames()
 	}
-	if right, ok := rightPlan.(*LogicalJoin); ok && right.redundantSchema != nil {
-		rRedundantSchema = right.redundantSchema
-		rRedundantNames = right.redundantNames
+	if right, ok := rightPlan.(*LogicalJoin); ok && right.fullSchema != nil {
+		rFullSchema = right.fullSchema
+		rFullNames = right.fullNames
+	} else {
+		rFullSchema = rightPlan.Schema()
+		rFullNames = rightPlan.OutputNames()
 	}
-	joinPlan.redundantSchema = expression.MergeSchema(lRedundantSchema, rRedundantSchema)
-	joinPlan.redundantNames = make([]*types.FieldName, len(lRedundantNames)+len(rRedundantNames))
-	copy(joinPlan.redundantNames, lRedundantNames)
-	copy(joinPlan.redundantNames[len(lRedundantNames):], rRedundantNames)
+	if joinNode.Tp == ast.RightJoin {
+		// Make sure lFullSchema means outer full schema and rFullSchema means inner full schema.
+		lFullSchema, rFullSchema = rFullSchema, lFullSchema
+		lFullNames, rFullNames = rFullNames, lFullNames
+	}
+	joinPlan.fullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
+
+	// Clear NotNull flag for the inner side schema if it's an outer join.
+	if joinNode.Tp == ast.LeftJoin || joinNode.Tp == ast.RightJoin {
+		resetNotNullFlag(joinPlan.fullSchema, lFullSchema.Len(), joinPlan.fullSchema.Len())
+	}
+
+	// Merge sub-plan's fullNames into this join plan, similar to the fullSchema logic above.
+	joinPlan.fullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
+	for _, lName := range lFullNames {
+		name := *lName
+		name.Redundant = true
+		joinPlan.fullNames = append(joinPlan.fullNames, &name)
+	}
+	for _, rName := range rFullNames {
+		name := *rName
+		name.Redundant = true
+		joinPlan.fullNames = append(joinPlan.fullNames, &name)
+	}
 
 	// Set preferred join algorithm if some join hints is specified by user.
 	joinPlan.setPreferredJoinType(b.TableHints())
@@ -942,21 +967,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.names = names
-	// We record the full `rightPlan.Schema` as `redundantSchema` in order to
-	// record the redundant column in `rightPlan` and the output columns order
-	// of the `rightPlan`.
-	// For SQL like `select t1.*, t2.* from t1 left join t2 using(a)`, we can
-	// retrieve the column order of `t2.*` from the `redundantSchema`.
-	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rightPlan.Schema().Clone().Columns...))
-	p.redundantNames = p.redundantNames.Shallow()
-	for _, name := range rightPlan.OutputNames() {
-		cpyName := *name
-		cpyName.Redundant = true
-		p.redundantNames = append(p.redundantNames, &cpyName)
-	}
-	if joinTp == ast.RightJoin || joinTp == ast.LeftJoin {
-		resetNotNullFlag(p.redundantSchema, 0, p.redundantSchema.Len())
-	}
+
 	p.OtherConditions = append(conds, p.OtherConditions...)
 
 	return nil
@@ -1209,9 +1220,9 @@ func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *t
 	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 		return findColFromNaturalUsingJoin(p.Children()[0], col)
 	case *LogicalJoin:
-		if x.redundantSchema != nil {
-			idx := x.redundantSchema.ColumnIndex(col)
-			return x.redundantNames[idx]
+		if x.fullSchema != nil {
+			idx := x.fullSchema.ColumnIndex(col)
+			return x.fullNames[idx]
 		}
 	}
 	return nil
@@ -1997,9 +2008,9 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 		case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 			return a.resolveFromPlan(v, p.Children()[0])
 		case *LogicalJoin:
-			if len(x.redundantNames) != 0 {
-				idx, err = expression.FindFieldName(x.redundantNames, v.Name)
-				schemaCols, outputNames = x.redundantSchema.Columns, x.redundantNames
+			if len(x.fullNames) != 0 {
+				idx, err = expression.FindFieldName(x.fullNames, v.Name)
+				schemaCols, outputNames = x.fullSchema.Columns, x.fullNames
 			}
 		}
 		if err != nil || idx < 0 {
@@ -3147,14 +3158,11 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 			return nil, ErrInvalidWildCard
 		}
 		list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns)
-		// For sql like `select t1.*, t2.* from t1 join t2 using(a)`, we should
-		// not coalesce the `t2.a` in the output result. Thus we need to unfold
-		// the wildstar from the underlying join.redundantSchema.
-		if isJoin && join.redundantSchema != nil && field.WildCard.Table.L != "" {
-			redundantList := unfoldWildStar(field, join.redundantNames, join.redundantSchema.Columns)
-			if len(redundantList) > len(list) {
-				list = redundantList
-			}
+		// For sql like `select t1.*, t2.* from t1 join t2 using(a)` or `select t1.*, t2.* from t1 natual join t2`,
+		// the schema of the Join doesn't contain enough columns because the join keys are coalesced in this schema.
+		// We should collect the columns from the fullSchema.
+		if isJoin && join.fullSchema != nil && field.WildCard.Table.L != "" {
+			list = unfoldWildStar(field, join.fullNames, join.fullSchema.Columns)
 		}
 		if len(list) == 0 {
 			return nil, ErrBadTable.GenWithStackByArgs(field.WildCard.Table)
@@ -3190,7 +3198,8 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 	return resultList
 }
 
-func (b *PlanBuilder) addAliasName(ctx context.Context, selectFields []*ast.SelectField, p LogicalPlan) (resultList []*ast.SelectField, err error) {
+func (b *PlanBuilder) addAliasName(ctx context.Context, selectStmt *ast.SelectStmt, p LogicalPlan) (resultList []*ast.SelectField, err error) {
+	selectFields := selectStmt.Fields.Fields
 	projOutNames := make([]*types.FieldName, 0, len(selectFields))
 	for _, field := range selectFields {
 		colNameField, isColumnNameExpr := field.Expr.(*ast.ColumnNameExpr)
@@ -3217,13 +3226,49 @@ func (b *PlanBuilder) addAliasName(ctx context.Context, selectFields []*ast.Sele
 		}
 	}
 
+	// dedupMap is used for renaming a duplicated anonymous column
+	dedupMap := make(map[string]int)
+	anonymousFields := make([]bool, len(selectFields))
+
 	for i, field := range selectFields {
 		newField := *field
 		if newField.AsName.L == "" {
 			newField.AsName = projOutNames[i].ColName
 		}
+
+		if _, ok := field.Expr.(*ast.ColumnNameExpr); !ok && field.AsName.L == "" {
+			anonymousFields[i] = true
+		} else {
+			anonymousFields[i] = false
+			// dedupMap should be inited with all non-anonymous fields before renaming other duplicated anonymous fields
+			dedupMap[newField.AsName.L] = 0
+		}
+
 		resultList = append(resultList, &newField)
 	}
+
+	// We should rename duplicated anonymous fields in the first SelectStmt of CreateViewStmt
+	// See: https://github.com/pingcap/tidb/issues/29326
+	if selectStmt.AsViewSchema {
+		for i, field := range resultList {
+			if !anonymousFields[i] {
+				continue
+			}
+
+			oldName := field.AsName
+			if dup, ok := dedupMap[field.AsName.L]; ok {
+				if dup == 0 {
+					field.AsName = model.NewCIStr(fmt.Sprintf("Name_exp_%s", field.AsName.O))
+				} else {
+					field.AsName = model.NewCIStr(fmt.Sprintf("Name_exp_%d_%s", dup, field.AsName.O))
+				}
+				dedupMap[oldName.L] = dup + 1
+			} else {
+				dedupMap[oldName.L] = 0
+			}
+		}
+	}
+
 	return resultList, nil
 }
 
@@ -3517,7 +3562,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 	if b.capFlag&canExpandAST != 0 {
 		// To be compabitle with MySQL, we add alias name for each select field when creating view.
-		sel.Fields.Fields, err = b.addAliasName(ctx, sel.Fields.Fields, p)
+		sel.Fields.Fields, err = b.addAliasName(ctx, sel, p)
 		if err != nil {
 			return nil, err
 		}
@@ -4158,18 +4203,18 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			us.SetChildren(ds)
 			result = us
 		} else {
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-					}
-				}()
-				if !b.inUpdateStmt && !b.inDeleteStmt && !b.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			if !b.inUpdateStmt && !b.inDeleteStmt && !sessionVars.StmtCtx.InExplainStmt {
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+						}
+					}()
 					err := cachedTable.UpdateLockForRead(b.ctx.GetStore(), txn.StartTS())
 					if err != nil {
 						log.Warn("Update Lock Info Error")
 					}
-				}
-			}()
+				}()
+			}
 		}
 	}
 
