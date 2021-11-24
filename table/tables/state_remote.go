@@ -468,10 +468,6 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, now
 			if _, err = h.execSQL(ctx, "update mysql.table_cache_meta set lock_type='INTEND', oldReadLease=%?, lease=%? where tid=%?", lease, ts, tid); err != nil {
 				return errors.Trace(err)
 			}
-			if err = h.commitTxn(ctx); err != nil {
-				return errors.Trace(err)
-			}
-
 			// Wait for lease to expire, and then retry.
 			waitAndRetry = waitForLeaseExpire(oldReadLease, now)
 		case CachedTableLockIntend, CachedTableLockWrite:
