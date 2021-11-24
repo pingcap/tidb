@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -1378,7 +1379,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		}
 		return con, false
 	}
-	c, err := intDatum.CompareDatum(sc, &con.Value)
+	c, err := intDatum.Compare(sc, &con.Value, collate.GetBinaryCollator())
 	if err != nil {
 		return con, false
 	}

@@ -899,6 +899,36 @@ func (s *testPointGetSuite) TestIssue18042(c *C) {
 	tk.MustExec("drop table t")
 }
 
+func (s *testPointGetSuite) TestIssue26638(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a float, unique index uidx(a));")
+	tk.MustExec("insert into t values(9.46347e37), (1.1);")
+	// If we do not define the precision for the float type. We can not use the equal/ in conditions to find the result. We can only use like to find the result. There is no such restriction for the double type.
+	tk.MustQuery("explain format='brief' select * from t where a = 9.46347e37;").Check(testkit.Rows("TableDual 0.00 root  rows:0"))
+	tk.MustQuery("explain format='brief' select * from t where a in (-1.56018e38, -1.96716e38, 9.46347e37);").Check(testkit.Rows("TableDual 0.00 root  rows:0"))
+	tk.MustQuery("explain format='brief' select * from t where a in (1.1, 9.46347e37);").Check(testkit.Rows("TableDual 0.00 root  rows:0"))
+	tk.MustExec("prepare stmt from 'select * from t where a in (?, ?, ?);';")
+	tk.MustExec("prepare stmt1 from 'select * from t where a = ?;';")
+	tk.MustExec("prepare stmt2 from 'select * from t where a in (?, ?);';")
+	tk.MustExec("set @a=-1.56018e38, @b=-1.96716e38, @c=9.46347e37, @d=1.1, @e=0, @f=-1, @g=1, @h=2, @i=-1.1;")
+	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt1 using @c;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt2 using @c, @d;").Check(testkit.Rows())
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2(a float, b float, c float, primary key(a, b, c));")
+	tk.MustExec("insert into t2 values(-1, 0, 1), (-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37), (0, 1, 2);")
+	tk.MustQuery("explain format='brief' select * from t2 where (a, b, c) in ((-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37));").Check(testkit.Rows("TableDual 0.00 root  rows:0"))
+	tk.MustQuery("select * from t2 where (a, b, c) in ((-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37), (-1, 0, 1));").Check(testkit.Rows("-1 0 1"))
+	tk.MustQuery("select * from t2 where (a, b, c) in ((-1.1, 0, 1.1), (-1.56018e38, -1.96716e38, 9.46347e37), (0, 1, 2));").Check(testkit.Rows("0 1 2"))
+	tk.MustExec("prepare stmt3 from 'select * from t2 where (a, b, c) in ((?, ?, ?), (?, ?, ?));';")
+	tk.MustExec("prepare stmt4 from 'select * from t2 where (a, b, c) in ((?, ?, ?), (?, ?, ?), (?, ?, ?));';")
+	tk.MustQuery("execute stmt3 using @i,@e,@d,@a,@b,@c;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt4 using @i,@e,@d,@a,@b,@c,@f,@e,@g;").Check(testkit.Rows("-1 0 1"))
+	tk.MustQuery("execute stmt4 using @i,@e,@d,@a,@b,@c,@e,@g,@h;").Check(testkit.Rows("0 1 2"))
+}
+
 func (s *testPointGetSuite) TestIssue23511(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
