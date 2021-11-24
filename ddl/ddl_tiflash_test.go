@@ -277,7 +277,7 @@ func (s *tiflashDDLTestSuite) TestTiFlashReplicaAvailable(c *C) {
 
 // When set TiFlash replica, tidb shall add one Pd Rule for this table.
 // When drop/truncate table, Pd Rule shall be removed in limited time.
-func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
+func (s *tiflashDDLTestSuite) TestSetPlacementRuleNormal(c *C) {
 	// TODO: Seems we can use some sql to do this, like in `TestTiFlashReplica`.
 	oldInterval := gcworker.GetGcSafePointCacheInterval()
 	gcworker.SetGcSafePointCacheInterval(oldInterval)
@@ -301,9 +301,9 @@ func (s *tiflashDDLTestSuite) TestSetPlacementRule(c *C) {
 	ddl.PullTiFlashPdTick = 1
 	// Wait GC
 	//time.Sleep(ddl.PollTiFlashInterval * 5)
-	//gcworker.SetGcSafePointCacheInterval(oldInterval)
 	//res = s.CheckPlacementRule(*expectRule)
 	//c.Assert(res, Equals, false)
+	//gcworker.SetGcSafePointCacheInterval(oldInterval)
 }
 
 func (s *tiflashDDLTestSuite) TestSetPlacementRuleFail(c *C) {
