@@ -449,7 +449,8 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 		}
 	case mysql.TypeDouble:
 		f64s := column.Float64s()
-		for i, f := range f64s {
+		for i := range f64s {
+			f := f64s[i]
 			if sel != nil && !sel[i] {
 				continue
 			}
@@ -962,7 +963,7 @@ func peek(b []byte) (length int, err error) {
 		return 0, errors.Trace(err)
 	}
 	length += l
-	if length < 0 {
+	if length <= 0 {
 		return 0, errors.New("invalid encoded key")
 	} else if length > originLength {
 		return 0, errors.Errorf("invalid encoded key, "+

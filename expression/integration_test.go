@@ -794,6 +794,10 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	tk.MustQuery("select rand(1) from t").Sort().Check(testkit.Rows("0.1418603212962489", "0.40540353712197724", "0.8716141803857071"))
 	tk.MustQuery("select rand(a) from t").Check(testkit.Rows("0.40540353712197724", "0.6555866465490187", "0.9057697559760601"))
 	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.40540353712197724 0.6555866465490187 0.9057697559760601"))
+	tk.MustQuery("set @@rand_seed1=10000000,@@rand_seed2=1000000")
+	tk.MustQuery("select rand()").Check(testkit.Rows("0.028870999839968048"))
+	tk.MustQuery("select rand(1)").Check(testkit.Rows("0.40540353712197724"))
+	tk.MustQuery("select rand()").Check(testkit.Rows("0.11641535266900002"))
 }
 
 func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
@@ -1180,7 +1184,7 @@ func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 
 	// for insert
 	result = tk.MustQuery(`select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");`)
-	result.Check(testkit.Rows("aaa文 ba aaa ba"))
+	result.Check(testkit.Rows("aaa\xb8\xad文 ba aaa ba"))
 	result = tk.MustQuery(`select insert("bb", NULL, 1, "aa"), insert("bb", 1, NULL, "aa"), insert(NULL, 1, 1, "aaa"), insert("bb", 1, 1, NULL);`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery(`SELECT INSERT("bb", 0, 1, NULL), INSERT("bb", 0, NULL, "aaa");`)
@@ -5202,7 +5206,7 @@ func (s *testIntegrationSuite) TestUnknowHintIgnore(c *C) {
 	tk.MustExec("USE test")
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("select /*+ unknown_hint(c1)*/ 1").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8064]Optimizer hint syntax error at line 1 column 23 near \"unknown_hint(c1)*/\" "))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 Optimizer hint syntax error at line 1 column 23 near \"unknown_hint(c1)*/\" "))
 	_, err := tk.Exec("select 1 from /*+ test1() */ t")
 	c.Assert(err, IsNil)
 }
@@ -6205,6 +6209,39 @@ func (s *testIntegrationSerialSuite) TestPreparePlanCache(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustExec("execute stmt using @a;")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+}
+
+func (s *testIntegrationSerialSuite) TestPreparePlanCacheNotForCacheTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	plannercore.SetPreparedPlanCache(true)
+	c.Assert(plannercore.PreparedPlanCacheEnabled(), Equals, true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("alter table t cache")
+
+	tk.MustQuery("select * from t where a = 1")
+	// already read cache after reading first time
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
+		"Projection 10.00 root  test.t.a",
+		"└─UnionScan 10.00 root  eq(test.t.a, 1)",
+		"  └─TableReader 10.00 root  data:Selection",
+		"    └─Selection 10.00 cop[tikv]  eq(test.t.a, 1)",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+
+	tk.MustExec("prepare stmt from 'select * from t where a = ?';")
+	tk.MustExec("set @a = 1;")
+	tk.MustExec("execute stmt using @a;")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt using @a;")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue16205(c *C) {
@@ -9503,6 +9540,11 @@ func (s *testIntegrationSuite) TestEnumPushDown(c *C) {
 	tk.MustExec("insert into tdm values (1, 'a');")
 	tk.MustExec("update tdm set c12 = 2 where id = 1;")
 	tk.MustQuery("select * from tdm").Check(testkit.Rows("1 b"))
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("update tdm set c12 = 0 where id = 1;")
+	tk.MustQuery("select c12+0 from tdm").Check(testkit.Rows("0"))
+	tk.MustExec("update tdm set c12 = '0' where id = 1;")
+	tk.MustQuery("select c12+0 from tdm").Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSuite) TestJiraSetInnoDBDefaultRowFormat(c *C) {
@@ -10568,6 +10610,15 @@ func (s *testIntegrationSuite) TestIssue29434(c *C) {
 	tk.MustQuery("select least(c1, '99999999999999') from t1;").Check(testkit.Rows("2021-12-12 10:10:10"))
 }
 
+func (s *testIntegrationSuite) TestIssue29417(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (f1 decimal(5,5));")
+	tk.MustExec("insert into t1 values (-0.12345);")
+	tk.MustQuery("select concat(f1) from t1;").Check(testkit.Rows("-0.12345"))
+}
+
 func (s *testIntegrationSuite) TestIssue29244(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -10579,4 +10630,17 @@ func (s *testIntegrationSuite) TestIssue29244(c *C) {
 	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
 	tk.MustExec("set tidb_enable_vectorized_expression = off;")
 	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
+}
+
+func (s *testIntegrationSuite) TestIssue29513(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("select '123' union select cast(45678 as char);").Sort().Check(testkit.Rows("123", "45678"))
+	tk.MustQuery("select '123' union select cast(45678 as char(2));").Sort().Check(testkit.Rows("123", "45"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(45678);")
+	tk.MustQuery("select '123' union select cast(a as char) from t;").Sort().Check(testkit.Rows("123", "45678"))
+	tk.MustQuery("select '123' union select cast(a as char(2)) from t;").Sort().Check(testkit.Rows("123", "45"))
 }

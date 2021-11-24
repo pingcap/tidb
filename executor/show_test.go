@@ -612,6 +612,17 @@ func (s *testSuite5) TestShowOpenTables(c *C) {
 	tk.MustQuery("show open tables")
 	tk.MustQuery("show open tables in test")
 }
+func (s *testSuite5) TestShowCreateViewDefiner(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%", AuthUsername: "root", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk.Se = se
+	tk.MustExec("use test")
+	tk.MustExec("create or replace view v1 as select 1")
+	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1`|utf8mb4|utf8mb4_bin"))
+	tk.MustExec("drop view v1")
+}
 
 func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

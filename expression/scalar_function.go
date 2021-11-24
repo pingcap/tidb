@@ -183,6 +183,10 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		return BuildCastFunction(ctx, args[0], retType), nil
 	case ast.GetVar:
 		return BuildGetVarFunction(ctx, args[0], retType)
+	case InternalFuncFromBinary:
+		return BuildFromBinaryFunction(ctx, args[0], retType), nil
+	case InternalFuncToBinary:
+		return BuildToBinaryFunction(ctx, args[0]), nil
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
@@ -364,6 +368,14 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
 		if !isNull && err == nil && tp.Tp == mysql.TypeEnum {
 			res, err = types.ParseEnum(tp.Elems, str, tp.Collate)
+			if ctx := sf.GetCtx(); ctx != nil {
+				if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
+					if sc.TruncateAsWarning {
+						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						err = nil
+					}
+				}
+			}
 		} else {
 			res = str
 		}
