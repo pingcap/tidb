@@ -478,6 +478,13 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	switch tp {
 	case types.ETInt:
+		//default signed, if one field is unsigned, return unsigned result
+		for _, arg := range args {
+			if mysql.HasUnsignedFlag(arg.GetType().Flag) {
+				bf.tp.Flag |= mysql.UnsignedFlag
+				break
+			}
+		}
 		sig = &builtinGreatestIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestInt)
 	case types.ETReal:
@@ -745,6 +752,14 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	switch tp {
 	case types.ETInt:
+		// default unsigned, if one field is signed, return signed result
+		bf.tp.Flag |= mysql.UnsignedFlag
+		for _, arg := range args {
+			if !mysql.HasUnsignedFlag(arg.GetType().Flag) {
+				bf.tp.Flag &= ^mysql.UnsignedFlag
+				break
+			}
+		}
 		sig = &builtinLeastIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastInt)
 	case types.ETReal:
