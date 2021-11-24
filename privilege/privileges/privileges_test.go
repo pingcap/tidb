@@ -2971,3 +2971,34 @@ func TestSkipGrantTable(t *testing.T) {
 	tk.MustExec(`GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'test2'@'%';`)
 	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN ON *.* TO 'test2'@'%';`)
 }
+
+func TestIssue29823(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create user u1")
+	tk.MustExec("create role r1")
+	tk.MustExec("create table t1 (c1 int)")
+	tk.MustExec("grant select on t1 to r1")
+	tk.MustExec("grant r1 to u1")
+
+	tk2 := testkit.NewTestKit(t, store)
+	require.True(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil))
+	tk2.MustExec("set role all")
+	tk2.MustQuery("select current_role()").Check(testkit.Rows("`r1`@`%`"))
+	tk2.MustQuery("select * from test.t1").Check(testkit.Rows())
+	tk2.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
+	tk2.MustQuery("show tables from test").Check(testkit.Rows("t1"))
+
+	tk.MustExec("revoke r1 from u1")
+	tk2.MustQuery("select current_role()").Check(testkit.Rows("`r1`@`%`"))
+	err := tk2.ExecToErr("select * from test.t1")
+	require.EqualError(t, err, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't1'")
+	tk2.MustQuery("show databases like 'test'").Check(testkit.Rows())
+	err = tk2.QueryToErr("show tables from test")
+	require.EqualError(t, err, "[executor:1044]Access denied for user 'u1'@'%' to database 'test'")
+}
