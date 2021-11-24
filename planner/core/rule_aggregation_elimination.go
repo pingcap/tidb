@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"math"
 
 	"github.com/pingcap/tidb/expression"
@@ -37,7 +38,7 @@ type aggregationEliminateChecker struct {
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
-func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation) *LogicalProjection {
+func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation, opt *logicalOptimizeOp) *LogicalProjection {
 	for _, af := range agg.AggFuncs {
 		// TODO(issue #9968): Actually, we can rewrite GROUP_CONCAT when all the
 		// arguments it accepts are promised to be NOT-NULL.
@@ -54,9 +55,11 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 	}
 	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
 	coveredByUniqueKey := false
+	var uniqueKey expression.KeyInfo
 	for _, key := range agg.children[0].Schema().Keys {
 		if schemaByGroupby.ColumnsIndices(key) != nil {
 			coveredByUniqueKey = true
+			uniqueKey = key
 			break
 		}
 	}
@@ -64,12 +67,17 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 		// GroupByCols has unique key, so this aggregation can be removed.
 		if ok, proj := ConvertAggToProj(agg, agg.schema); ok {
 			proj.SetChildren(agg.children[0])
+			opt.appendStepToCurrent(agg.ID(), agg.TP(),
+				fmt.Sprintf("%s is unique key", uniqueKey.String()),
+				"aggregation eliminated to projection")
 			return proj
 		}
 	}
 	return nil
 }
 
+// tryToEliminateDistinct will eliminate distinct in the aggregation function if the aggregation args
+// have unique key column. see detail example in https://github.com/pingcap/tidb/issues/23436
 func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregation, opt *logicalOptimizeOp) {
 	for _, af := range agg.AggFuncs {
 		if af.HasDistinct {
@@ -86,22 +94,26 @@ func (a *aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggrega
 			if canEliminate {
 				distinctByUniqueKey := false
 				schemaByDistinct := expression.NewSchema(cols...)
+				var uniqueKey expression.KeyInfo
 				for _, key := range agg.children[0].Schema().Keys {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
+						uniqueKey = key
 						break
 					}
 				}
 				for _, key := range agg.children[0].Schema().UniqueKeys {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
+						uniqueKey = key
 						break
 					}
 				}
 				if distinctByUniqueKey {
 					af.HasDistinct = false
-					// TODO: fulfill in future pr
-					opt.appendStepToCurrent(agg.ID(), agg.TP(), "", "")
+					opt.appendStepToCurrent(agg.ID(), agg.TP(),
+						fmt.Sprintf("%s is unique key", uniqueKey.String()),
+						fmt.Sprintf("agg[%s]'s distinct eliminated", af.Name))
 				}
 			}
 		}
@@ -196,7 +208,7 @@ func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan, opt
 		return p, nil
 	}
 	a.tryToEliminateDistinct(agg, opt)
-	if proj := a.tryToEliminateAggregation(agg); proj != nil {
+	if proj := a.tryToEliminateAggregation(agg, opt); proj != nil {
 		return proj, nil
 	}
 	return p, nil

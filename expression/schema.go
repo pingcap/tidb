@@ -30,6 +30,14 @@ func (ki KeyInfo) Clone() KeyInfo {
 	return result
 }
 
+func (ki KeyInfo) String() string {
+	ukColStrs := make([]string, 0, len(ki))
+	for _, col := range ki {
+		ukColStrs = append(ukColStrs, col.String())
+	}
+	return "[" + strings.Join(ukColStrs, ",") + "]"
+}
+
 // Schema stands for the row schema and unique key information get from input.
 type Schema struct {
 	Columns []*Column

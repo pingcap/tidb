@@ -40,11 +40,13 @@ func (tracer *LogicalOptimizeTracer) AppendRuleTracerBeforeRuleOptimize(name str
 
 // AppendRuleTracerStepToCurrent add rule optimize step to current
 func (tracer *LogicalOptimizeTracer) AppendRuleTracerStepToCurrent(id int, tp, reason, action string) {
+	index := len(tracer.curRuleTracer.Steps)
 	tracer.curRuleTracer.Steps = append(tracer.curRuleTracer.Steps, LogicalRuleOptimizeTraceStep{
 		ID:     id,
 		TP:     tp,
 		Reason: reason,
 		Action: action,
+		Index:  index,
 	})
 }
 
@@ -78,4 +80,5 @@ type LogicalRuleOptimizeTraceStep struct {
 	Reason string
 	ID     int
 	TP     string
+	Index  int
 }
