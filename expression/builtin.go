@@ -220,7 +220,9 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		}
-		fieldType.Flag |= args[i].GetType().Flag
+		if mysql.HasUnsignedFlag(args[i].GetType().Flag) {
+			fieldType.Flag |= mysql.UnsignedFlag
+		}
 	}
 
 	bf = baseBuiltinFunc{
