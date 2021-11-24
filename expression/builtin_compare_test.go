@@ -279,6 +279,8 @@ func TestGreatestLeastFunc(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
+	decG := &types.MyDecimal{}
+	decL := &types.MyDecimal{}
 	defer func() {
 		sc.IgnoreTruncate = originIgnoreTruncate
 	}()
@@ -291,12 +293,16 @@ func TestGreatestLeastFunc(t *testing.T) {
 		getErr           bool
 	}{
 		{
-			[]interface{}{1, 2, 3, 4},
-			int64(4), int64(1), false, false,
+			[]interface{}{int64(-9223372036854775808), uint64(9223372036854775809)},
+			decG.FromUint(9223372036854775809), decL.FromInt(-9223372036854775808), false, false,
 		},
 		{
 			[]interface{}{uint64(9223372036854775808), uint64(9223372036854775809)},
 			uint64(9223372036854775809), uint64(9223372036854775808), false, false,
+		},
+		{
+			[]interface{}{1, 2, 3, 4},
+			int64(4), int64(1), false, false,
 		},
 		{
 			[]interface{}{"a", "b", "c"},
