@@ -17,6 +17,8 @@ package core_test
 import (
 	"bytes"
 	"fmt"
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -37,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	"strings"
 )
 
 var _ = Suite(&testIntegrationSuite{})

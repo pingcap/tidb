@@ -18,8 +18,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"hash"
 	"io"
 	"time"
@@ -34,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // First byte in the encoded value which specifies the encoding type.
