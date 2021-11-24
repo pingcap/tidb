@@ -2172,15 +2172,7 @@ func (cr *chunkRestore) encodeLoop(
 				err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
 				return
 			}
-<<<<<<< HEAD
 			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: columnNames, offset: newOffset, rowID: rowID})
-=======
-			if hasIgnoredEncodeErr {
-				continue
-			}
-
-			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset, rowID: rowID})
->>>>>>> c68791566... lightning: let ignore columns be compatible with tidb backend (#27850)
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))
