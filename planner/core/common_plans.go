@@ -405,6 +405,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
+	noParams := len(e.UsingVars) == 0
 	for i, param := range e.UsingVars {
 		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
 		tps[i] = sctx.GetSessionVars().UserVarTypes[name]
@@ -419,17 +420,19 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		// so you don't need to consider whether prepared.useCache is enabled.
 		plan := prepared.CachedPlan.(Plan)
 		names := prepared.CachedNames.(types.NameSlice)
-		err := e.rebuildRange(plan)
-		if err != nil {
-			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
-			goto REBUILD
+		if !noParams {
+			err := e.rebuildRange(plan)
+			if err != nil {
+				logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+				goto REBUILD
+			}
 		}
 		if metrics.ResettablePlanCacheCounterFortTest {
 			metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 		} else {
 			planCacheCounter.Inc()
 		}
-		err = e.setFoundInPlanCache(sctx, true)
+		err := e.setFoundInPlanCache(sctx, true)
 		if err != nil {
 			return err
 		}
@@ -459,12 +462,14 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					}
 				}
 				if planValid {
-					err := e.rebuildRange(cachedVal.Plan)
-					if err != nil {
-						logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
-						goto REBUILD
+					if !noParams {
+						err := e.rebuildRange(cachedVal.Plan)
+						if err != nil {
+							logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
+							goto REBUILD
+						}
 					}
-					err = e.setFoundInPlanCache(sctx, true)
+					err := e.setFoundInPlanCache(sctx, true)
 					if err != nil {
 						return err
 					}
