@@ -89,6 +89,7 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
+	b.curClause = fieldList
 	rewriter := b.getExpressionRewriter(ctx, mockPlan)
 	// The rewriter maybe is obtained from "b.rewriterPool", "rewriter.err" is
 	// not nil means certain previous procedure has not handled this error.
@@ -1941,8 +1942,7 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	isCurrentTimestamp := hasCurrentDatetimeDefault(col)
 	var val *expression.Constant
 	switch {
-	case isCurrentTimestamp && !v.NameIsGiven && (col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeTimestamp):
-		// SET col = DEFAULT
+	case isCurrentTimestamp && (col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeTimestamp):
 		t, err := expression.GetTimeValue(er.sctx, ast.CurrentTimestamp, col.Tp, int8(col.Decimal))
 		if err != nil {
 			return
@@ -1950,18 +1950,6 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 		val = &expression.Constant{
 			Value:   t,
 			RetType: types.NewFieldType(col.Tp),
-		}
-	case isCurrentTimestamp && v.NameIsGiven && col.Tp == mysql.TypeDatetime:
-		// for DATETIME column with current_timestamp, use NULL to be compatible with MySQL 5.7
-		// DEFAULT(colname)
-		val = expression.NewNull()
-	case isCurrentTimestamp && v.NameIsGiven && col.Tp == mysql.TypeTimestamp:
-		// for TIMESTAMP column with current_timestamp, use 0 to be compatible with MySQL 5.7
-		// DEFAULT(colname)
-		zero := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, int8(col.Decimal))
-		val = &expression.Constant{
-			Value:   types.NewDatum(zero),
-			RetType: types.NewFieldType(mysql.TypeTimestamp),
 		}
 	default:
 		// for other columns, just use what it is

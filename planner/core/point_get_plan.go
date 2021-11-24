@@ -1405,6 +1405,11 @@ func buildOrderedList(ctx sessionctx.Context, plan Plan, list []*ast.Assignment,
 			Col:     col,
 			ColName: plan.OutputNames()[idx].ColName,
 		}
+		// TODO: Check if needed!
+		defaultExpr := extractDefaultExpr(assign.Expr)
+		if defaultExpr != nil {
+			defaultExpr.Name = assign.Column
+		}
 		expr, err := expression.RewriteSimpleExprWithNames(ctx, assign.Expr, plan.Schema(), plan.OutputNames())
 		if err != nil {
 			return nil, true
