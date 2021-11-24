@@ -493,7 +493,7 @@ func TestVarsutil(t *testing.T) {
 	err = SetSessionSystemVar(v, TiDBAnalyzeVersion, "4")
 	require.NoError(t, err) // converts to max value
 	warn := v.StmtCtx.GetWarnings()[0]
-	require.Regexp(t, "Truncated incorrect tidb_analyze_version value$", warn.Err.Error())
+	require.Regexp(t, "Truncated incorrect tidb_analyze_version value", warn.Err.Error())
 }
 
 func TestValidate(t *testing.T) {
