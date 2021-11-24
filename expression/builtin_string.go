@@ -3672,7 +3672,7 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, errors.Trace(err)
 	}
 
-	if types.IsBinaryStr(args[0].GetType()) {
+	if types.IsBinaryStr(bf.tp) {
 		sig = &builtinInsertSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Insert)
 	} else {
