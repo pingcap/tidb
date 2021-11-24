@@ -1354,5 +1354,5 @@ func (s *testAutoRandomSuite) TestInsertIssue29892(c *C) {
 	// which will duplicate with what has been inserted in tk1.
 	_, err := tk1.Exec("commit")
 	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "Duplicate entry"), Equals, true)
+	c.Assert(strings.Contains(err.Error(), "Write conflict"), Equals, true)
 }
